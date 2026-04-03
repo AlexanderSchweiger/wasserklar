@@ -69,6 +69,301 @@ def register_commands(app):
             conn.commit()
         print("Datenbank aktualisiert.")
 
+    @app.cli.command("seed-testdata")
+    def seed_testdata():
+        """Testdaten für alle Tabellen einfügen (nur wenn DB leer ist)."""
+        from datetime import date
+        from decimal import Decimal
+        from app.models import (
+            User, Customer, Property, PropertyOwnership,
+            WaterMeter, MeterReading, WaterTariff,
+            Invoice, InvoiceItem, Account, Booking, OpenItem,
+        )
+
+        if Customer.query.count() > 0:
+            print("Testdaten bereits vorhanden – abgebrochen.")
+            return
+
+        db.create_all()
+
+        # ------------------------------------------------------------------
+        # Benutzer
+        # ------------------------------------------------------------------
+        admin = User.query.filter_by(username="admin").first()
+        if not admin:
+            admin = User(username="admin", email="admin@wassergenossenschaft.at", role="admin")
+            admin.set_password("admin123")
+            db.session.add(admin)
+        if not User.query.filter_by(username="sachbearbeiter").first():
+            user1 = User(username="sachbearbeiter", email="sachbearbeiter@wassergenossenschaft.at", role="user")
+            user1.set_password("user123")
+            db.session.add(user1)
+        db.session.flush()
+        # admin neu laden falls bereits vorhanden
+        admin = User.query.filter_by(username="admin").first()
+
+        # ------------------------------------------------------------------
+        # Konten sicherstellen
+        # ------------------------------------------------------------------
+        if Account.query.count() == 0:
+            default_accounts = [
+                Account(name="Wassergebühren", type="Einnahme", description="Jährliche Wasserabrechnung"),
+                Account(name="Sonstige Einnahmen", type="Einnahme", description=""),
+                Account(name="Wartung und Reparatur", type="Ausgabe", description=""),
+                Account(name="Strom (Pumpen)", type="Ausgabe", description=""),
+                Account(name="Versicherung", type="Ausgabe", description=""),
+                Account(name="Verwaltung", type="Ausgabe", description=""),
+                Account(name="Sonstige Ausgaben", type="Ausgabe", description=""),
+            ]
+            db.session.add_all(default_accounts)
+        db.session.flush()
+        income_account = Account.query.filter_by(type="Einnahme").first()
+        expense_account_wartung = Account.query.filter_by(name="Wartung und Reparatur").first()
+        expense_account_strom = Account.query.filter_by(name="Strom (Pumpen)").first()
+
+        # ------------------------------------------------------------------
+        # Tarife
+        # ------------------------------------------------------------------
+        tarif2022 = WaterTariff(
+            name="Tarif 2022",
+            valid_from=2022, valid_to=2023,
+            base_fee=Decimal("30.00"), price_per_m3=Decimal("1.20"),
+        )
+        tarif2024 = WaterTariff(
+            name="Tarif 2024",
+            valid_from=2024, valid_to=None,
+            base_fee=Decimal("35.00"), price_per_m3=Decimal("1.45"),
+            notes="Preisanpassung wegen gestiegener Betriebskosten",
+        )
+        db.session.add_all([tarif2022, tarif2024])
+        db.session.flush()
+
+        # ------------------------------------------------------------------
+        # Kunden
+        # ------------------------------------------------------------------
+        kunden_daten = [
+            dict(name="Franz Huber", strasse="Dorfstraße", hausnummer="4",
+                 plz="4232", ort="Hagenberg", email="f.huber@example.at",
+                 phone="07236 12345", member_since=date(2010, 3, 15)),
+            dict(name="Maria Gruber", strasse="Hauptstraße", hausnummer="12",
+                 plz="4232", ort="Hagenberg", email="m.gruber@example.at",
+                 phone="07236 23456", member_since=date(2012, 6, 1)),
+            dict(name="Johann Mayr", strasse="Birkenweg", hausnummer="3a",
+                 plz="4233", ort="Katsdorf", email="j.mayr@example.at",
+                 member_since=date(2015, 1, 20)),
+            dict(name="Anna Leitner", strasse="Gartenstraße", hausnummer="8",
+                 plz="4232", ort="Hagenberg", email="a.leitner@example.at",
+                 phone="0664 9876543", member_since=date(2018, 9, 10)),
+            dict(name="Klaus Steinbauer", strasse="Wiesenweg", hausnummer="2",
+                 plz="4233", ort="Katsdorf", member_since=date(2020, 4, 5)),
+            dict(name="Elisabeth Weidinger", strasse="Am Bach", hausnummer="1",
+                 plz="4232", ort="Hagenberg", email="e.weidinger@example.at",
+                 phone="0699 11223344", member_since=date(2008, 11, 30),
+                 notes="Langjähriges Mitglied, Zahlungseingang immer pünktlich"),
+        ]
+        kunden = []
+        for d in kunden_daten:
+            k = Customer(**d)
+            db.session.add(k)
+            kunden.append(k)
+        db.session.flush()
+
+        # ------------------------------------------------------------------
+        # Objekte (Liegenschaften)
+        # ------------------------------------------------------------------
+        objekte_daten = [
+            dict(object_number="OBJ-001", object_type="Haus",
+                 strasse="Dorfstraße", hausnummer="4", plz="4232", ort="Hagenberg"),
+            dict(object_number="OBJ-002", object_type="Haus",
+                 strasse="Hauptstraße", hausnummer="12", plz="4232", ort="Hagenberg"),
+            dict(object_number="OBJ-003", object_type="Haus",
+                 strasse="Birkenweg", hausnummer="3a", plz="4233", ort="Katsdorf"),
+            dict(object_number="OBJ-004", object_type="Garten",
+                 strasse="Gartenstraße", hausnummer="8", plz="4232", ort="Hagenberg",
+                 notes="Kleingarten, Saisonbetrieb"),
+            dict(object_number="OBJ-005", object_type="Haus",
+                 strasse="Wiesenweg", hausnummer="2", plz="4233", ort="Katsdorf"),
+            dict(object_number="OBJ-006", object_type="Haus",
+                 strasse="Am Bach", hausnummer="1", plz="4232", ort="Hagenberg"),
+        ]
+        objekte = []
+        for d in objekte_daten:
+            p = Property(**d)
+            db.session.add(p)
+            objekte.append(p)
+        db.session.flush()
+
+        # ------------------------------------------------------------------
+        # Eigentümerverhältnisse
+        # ------------------------------------------------------------------
+        for kunde, objekt in zip(kunden, objekte):
+            po = PropertyOwnership(
+                property_id=objekt.id,
+                customer_id=kunde.id,
+                valid_from=kunde.member_since,
+            )
+            db.session.add(po)
+        db.session.flush()
+
+        # ------------------------------------------------------------------
+        # Wasserzähler + Ablesungen
+        # ------------------------------------------------------------------
+        zähler_daten = [
+            dict(meter_number="WZ-2010-001", location="Keller", installed_from=date(2010, 3, 15), initial_value=Decimal("0.000")),
+            dict(meter_number="WZ-2012-002", location="Keller", installed_from=date(2012, 6, 1),  initial_value=Decimal("0.000")),
+            dict(meter_number="WZ-2015-003", location="Außen",  installed_from=date(2015, 1, 20), initial_value=Decimal("0.000")),
+            dict(meter_number="WZ-2018-004", location="Außen",  installed_from=date(2018, 9, 10), initial_value=Decimal("0.000")),
+            dict(meter_number="WZ-2020-005", location="Keller", installed_from=date(2020, 4, 5),  initial_value=Decimal("0.000")),
+            dict(meter_number="WZ-2008-006", location="Keller", installed_from=date(2008, 11, 30),initial_value=Decimal("0.000")),
+        ]
+        # Jahresstände pro Zähler (Anfangsstand + jährlicher Verbrauch)
+        jahres_ablesungen = [
+            [(2022, Decimal("125.000")), (2023, Decimal("152.500")), (2024, Decimal("181.000")), (2025, Decimal("208.000"))],
+            [(2022, Decimal("310.000")), (2023, Decimal("342.000")), (2024, Decimal("375.000")), (2025, Decimal("411.500"))],
+            [(2022, Decimal("89.000")),  (2023, Decimal("108.000")), (2024, Decimal("130.500")), (2025, Decimal("155.000"))],
+            [(2022, Decimal("22.000")),  (2023, Decimal("30.000")),  (2024, Decimal("38.500")),  (2025, Decimal("45.000"))],
+            [(2022, Decimal("45.000")),  (2023, Decimal("68.000")),  (2024, Decimal("92.000")),  (2025, Decimal("118.500"))],
+            [(2022, Decimal("520.000")), (2023, Decimal("558.000")), (2024, Decimal("598.000")), (2025, Decimal("640.000"))],
+        ]
+        zähler_liste = []
+        for objekt, zd, ablesungen in zip(objekte, zähler_daten, jahres_ablesungen):
+            meter = WaterMeter(property_id=objekt.id, **zd)
+            db.session.add(meter)
+            db.session.flush()
+            prev_val = zd["initial_value"]
+            for jahr, wert in ablesungen:
+                verbrauch = wert - prev_val
+                reading = MeterReading(
+                    meter_id=meter.id,
+                    year=jahr,
+                    reading_date=date(jahr, 12, 31),
+                    value=wert,
+                    consumption=verbrauch,
+                    created_by_id=admin.id,
+                )
+                db.session.add(reading)
+                prev_val = wert
+            zähler_liste.append(meter)
+        db.session.flush()
+
+        # ------------------------------------------------------------------
+        # Rechnungen + Positionen + Buchungen
+        # ------------------------------------------------------------------
+        def make_invoice(nr, kunde, objekt, jahr, status, tarif, verbrauch_m3, created_by):
+            base = tarif.base_fee
+            preis = tarif.price_per_m3
+            wasserkosten = (preis * verbrauch_m3).quantize(Decimal("0.01"))
+            gesamt = (base + wasserkosten).quantize(Decimal("0.01"))
+            inv = Invoice(
+                invoice_number=f"RE-{jahr}-{nr:04d}",
+                customer_id=kunde.id,
+                property_id=objekt.id,
+                period_year=jahr,
+                date=date(jahr + 1, 1, 15),
+                due_date=date(jahr + 1, 2, 28),
+                status=status,
+                total_amount=gesamt,
+                created_by_id=created_by.id,
+            )
+            db.session.add(inv)
+            db.session.flush()
+            db.session.add(InvoiceItem(
+                invoice_id=inv.id,
+                description="Grundgebühr Wasserversorgung",
+                quantity=Decimal("1"), unit="Stk",
+                unit_price=base, amount=base,
+            ))
+            db.session.add(InvoiceItem(
+                invoice_id=inv.id,
+                description=f"Wasserverbrauch {jahr} ({verbrauch_m3} m³)",
+                quantity=verbrauch_m3, unit="m³",
+                unit_price=preis, amount=wasserkosten,
+            ))
+            db.session.flush()
+            if status == Invoice.STATUS_PAID:
+                db.session.add(Booking(
+                    date=date(jahr + 1, 3, 5),
+                    account_id=income_account.id,
+                    amount=gesamt,
+                    description=f"Zahlung {inv.invoice_number}",
+                    reference=inv.invoice_number,
+                    invoice_id=inv.id,
+                    created_by_id=created_by.id,
+                ))
+            return inv
+
+        # 2022-Rechnungen (alle bezahlt)
+        verbrauch_2022 = [Decimal("27.5"), Decimal("32.0"), Decimal("19.0"),
+                          Decimal("8.0"),  Decimal("23.0"), Decimal("38.0")]
+        for i, (kunde, objekt, verbr) in enumerate(zip(kunden, objekte, verbrauch_2022), start=1):
+            make_invoice(i, kunde, objekt, 2022, Invoice.STATUS_PAID, tarif2022, verbr, admin)
+
+        # 2023-Rechnungen (alle bezahlt)
+        verbrauch_2023 = [Decimal("28.5"), Decimal("33.0"), Decimal("22.5"),
+                          Decimal("8.5"),  Decimal("24.0"), Decimal("40.0")]
+        for i, (kunde, objekt, verbr) in enumerate(zip(kunden, objekte, verbrauch_2023), start=7):
+            make_invoice(i, kunde, objekt, 2023, Invoice.STATUS_PAID, tarif2022, verbr, admin)
+
+        # 2024-Rechnungen (gemischte Status)
+        verbrauch_2024 = [Decimal("28.5"), Decimal("33.0"), Decimal("22.5"),
+                          Decimal("8.5"),  Decimal("26.0"), Decimal("40.0")]
+        status_2024 = [Invoice.STATUS_PAID, Invoice.STATUS_PAID, Invoice.STATUS_SENT,
+                       Invoice.STATUS_SENT, Invoice.STATUS_DRAFT, Invoice.STATUS_PAID]
+        for i, (kunde, objekt, verbr, st) in enumerate(
+                zip(kunden, objekte, verbrauch_2024, status_2024), start=13):
+            make_invoice(i, kunde, objekt, 2024, st, tarif2024, verbr, admin)
+
+        db.session.flush()
+
+        # ------------------------------------------------------------------
+        # Zusätzliche Ausgaben-Buchungen
+        # ------------------------------------------------------------------
+        ausgaben = [
+            Booking(date=date(2024, 3, 10), account_id=expense_account_wartung.id,
+                    amount=Decimal("-450.00"), description="Reparatur Hydrant Dorfstraße",
+                    reference="RG-2024-0034", created_by_id=admin.id),
+            Booking(date=date(2024, 6, 22), account_id=expense_account_strom.id,
+                    amount=Decimal("-280.50"), description="Strom Pumpwerk Q2 2024",
+                    reference="E-2024-Q2", created_by_id=admin.id),
+            Booking(date=date(2024, 9, 5), account_id=expense_account_wartung.id,
+                    amount=Decimal("-125.00"), description="Wartung Druckbehälter",
+                    reference="RG-2024-0078", created_by_id=admin.id),
+            Booking(date=date(2025, 1, 8), account_id=expense_account_strom.id,
+                    amount=Decimal("-310.00"), description="Strom Pumpwerk Q4 2024",
+                    reference="E-2024-Q4", created_by_id=admin.id),
+        ]
+        db.session.add_all(ausgaben)
+
+        # ------------------------------------------------------------------
+        # Offene Posten
+        # ------------------------------------------------------------------
+        op1 = OpenItem(
+            customer_id=kunden[2].id,
+            description="Mahngebühr Rechnung RE-2024-0009",
+            amount=Decimal("15.00"),
+            date=date(2025, 3, 1),
+            due_date=date(2025, 3, 31),
+            status=OpenItem.STATUS_OPEN,
+            created_by_id=admin.id,
+        )
+        op2 = OpenItem(
+            customer_id=kunden[3].id,
+            description="Anschlussgebühr Gartenzähler Nachrüstung",
+            amount=Decimal("120.00"),
+            date=date(2025, 2, 15),
+            due_date=date(2025, 4, 30),
+            status=OpenItem.STATUS_OPEN,
+            notes="Nachrüstung auf Fernablesung vereinbart",
+            created_by_id=admin.id,
+        )
+        db.session.add_all([op1, op2])
+
+        db.session.commit()
+        print("Testdaten erfolgreich eingefügt:")
+        print(f"  2 Benutzer, {len(kunden)} Kunden, {len(objekte)} Objekte")
+        print(f"  {len(zähler_liste)} Wasserzähler mit je 4 Ablesungen (2022–2025)")
+        print(f"  2 Tarife, 18 Rechnungen (2022–2024), 4 Ausgabenbuchungen, 2 Offene Posten")
+
     @app.cli.command("create-admin")
     def create_admin():
         """Admin-Benutzer interaktiv anlegen."""
