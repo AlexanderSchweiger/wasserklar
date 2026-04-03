@@ -58,6 +58,8 @@ class Customer(db.Model):
     notes = db.Column(db.Text)
     active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    base_fee_override = db.Column(db.Numeric(10, 2), nullable=True)       # überschreibt Tarif-Grundgebühr
+    additional_fee_override = db.Column(db.Numeric(10, 2), nullable=True)  # überschreibt Tarif-Zusatzgebühr
 
     invoices = db.relationship("Invoice", backref="customer", lazy="dynamic")
     ownerships = db.relationship("PropertyOwnership", backref="customer", lazy="dynamic")
@@ -98,6 +100,8 @@ class Property(db.Model):
     notes = db.Column(db.Text)
     active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    base_fee_override = db.Column(db.Numeric(10, 2), nullable=True)       # überschreibt Kunden-/Tarif-Grundgebühr
+    additional_fee_override = db.Column(db.Numeric(10, 2), nullable=True)  # überschreibt Kunden-/Tarif-Zusatzgebühr
 
     meters = db.relationship("WaterMeter", backref="property", lazy="dynamic",
                              cascade="all, delete-orphan")
@@ -212,7 +216,10 @@ class WaterTariff(db.Model):
     valid_from = db.Column(db.Integer, nullable=False)   # Jahr
     valid_to = db.Column(db.Integer)                      # Jahr (None = aktuell gültig)
     base_fee = db.Column(db.Numeric(10, 2), default=0)   # Grundgebühr €
-    price_per_m3 = db.Column(db.Numeric(10, 4), nullable=False)  # Preis pro m³
+    base_fee_label = db.Column(db.String(100), default="Grundgebühr")
+    additional_fee = db.Column(db.Numeric(10, 2), default=0)  # Zusatzgebühr €
+    additional_fee_label = db.Column(db.String(100), default="Zusatzgebühr")
+    price_per_m3 = db.Column(db.Numeric(10, 2), nullable=False)  # Preis pro m³
     notes = db.Column(db.Text)
 
     def __repr__(self):
@@ -268,6 +275,15 @@ class Invoice(db.Model):
     def open_balance(self):
         from decimal import Decimal
         return Decimal(str(self.total_amount or 0)) - Decimal(str(self.paid_amount))
+
+    @property
+    def consumption(self):
+        from decimal import Decimal
+        return sum(
+            (item.quantity or Decimal("0"))
+            for item in self.items
+            if item.unit == "m³"
+        ) or None
 
     def __repr__(self):
         return f"<Invoice {self.invoice_number}>"
@@ -351,6 +367,7 @@ class OpenItem(db.Model):
     amount = db.Column(db.Numeric(10, 2), nullable=False)
     date = db.Column(db.Date, default=date.today, nullable=False)
     due_date = db.Column(db.Date, nullable=True)
+    period_year = db.Column(db.Integer, nullable=True)
     status = db.Column(db.String(20), default=STATUS_OPEN, nullable=False)
     invoice_id = db.Column(db.Integer, db.ForeignKey("invoices.id"), nullable=True)
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))

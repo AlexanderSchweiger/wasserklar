@@ -66,6 +66,7 @@ def deactivate(customer_id):
 
 def _customer_from_form(customer):
     from datetime import date
+    from decimal import Decimal
     customer.name = request.form.get("name", "").strip()
     customer.strasse = request.form.get("strasse", "").strip()
     customer.hausnummer = request.form.get("hausnummer", "").strip()
@@ -79,4 +80,8 @@ def _customer_from_form(customer):
     if ms:
         from datetime import datetime
         customer.member_since = datetime.strptime(ms, "%Y-%m-%d").date()
+    raw_base = request.form.get("base_fee_override", "").strip().replace(",", ".")
+    customer.base_fee_override = Decimal(raw_base) if raw_base else None
+    raw_add = request.form.get("additional_fee_override", "").strip().replace(",", ".")
+    customer.additional_fee_override = Decimal(raw_add) if raw_add else None
     return customer

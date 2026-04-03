@@ -1,5 +1,6 @@
 <tr id="meter-row-{{ meter.id }}">
   {% set prev_reading = prev_readings_map.get(meter.id) %}
+  {% set repl = replacement_map.get(meter.id) if replacement_map is defined else none %}
   <td>
     <a href="{{ url_for('properties.detail', property_id=meter.property_id) }}">
       {{ meter.property.label() }}
@@ -7,9 +8,25 @@
   </td>
   <td><code>{{ meter.meter_number }}</code></td>
   <td>{{ meter.location or '—' }}</td>
+
+  {# Stand Vorjahr #}
   <td class="text-right text-muted">
-    {{ "%d"|format(prev_reading.value) ~ ' m³' if prev_reading else '—' }}
+    {% if repl %}
+      {# Zählertausch: Anfangsstand des neuen Zählers anzeigen #}
+      {% if meter.initial_value is not none %}
+        {{ "%d"|format(meter.initial_value) }} m³
+      {% else %}
+        —
+      {% endif %}
+      <span class="badge badge-warning ml-1" title="Zähler wurde in {{ year }} gewechselt">Tausch</span>
+    {% elif prev_reading %}
+      {{ "%d"|format(prev_reading.value) }} m³
+    {% else %}
+      —
+    {% endif %}
   </td>
+
+  {# Stand aktuelles Jahr #}
   <td class="text-right">
     {% if reading %}
       <strong>{{ "%d"|format(reading.value) }}</strong> m³
@@ -17,9 +34,31 @@
       <span class="text-danger"><i class="fas fa-exclamation-circle mr-1"></i>fehlt</span>
     {% endif %}
   </td>
+
+  {# Verbrauch #}
   <td class="text-right">
-    {{ "%d"|format(reading.consumption) ~ ' m³' if reading and reading.consumption else '—' }}
+    {% if repl %}
+      {# Tausch: alter Verbrauch + neuer Verbrauch = Gesamt #}
+      {% set old_cons = repl.old_reading.consumption if repl.old_reading and repl.old_reading.consumption is not none else none %}
+      {% set new_cons = reading.consumption if reading and reading.consumption is not none else none %}
+      {% if old_cons is not none or new_cons is not none %}
+        <span class="text-muted" title="Verbrauch alter Zähler">{{ "%d"|format(old_cons) if old_cons is not none else '?' }} m³</span>
+        <span class="text-muted mx-1">+</span>
+        <span class="text-muted" title="Verbrauch neuer Zähler">{{ "%d"|format(new_cons) if new_cons is not none else '?' }} m³</span>
+        <span class="text-muted mx-1">=</span>
+        {% if old_cons is not none and new_cons is not none %}
+          <strong>{{ "%d"|format(old_cons + new_cons) }} m³</strong>
+        {% else %}
+          <span class="text-muted">—</span>
+        {% endif %}
+      {% else %}
+        —
+      {% endif %}
+    {% else %}
+      {{ "%d"|format(reading.consumption) ~ ' m³' if reading and reading.consumption is not none else '—' }}
+    {% endif %}
   </td>
+
   <td>{{ reading.reading_date.strftime('%d.%m.%Y') if reading else '—' }}</td>
   <td class="text-right">
     <a href="{{ url_for('meters.add_reading', meter_id=meter.id, year=year) }}"

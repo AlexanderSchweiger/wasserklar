@@ -50,11 +50,30 @@
           <div class="form-group">
             <label>Zählerstand (m³) <span class="text-danger">*</span></label>
             <div class="input-group">
-              <input type="number" name="value" step="1" class="form-control form-control-lg"
+              <input type="number" name="value" id="valueInput" step="1" class="form-control form-control-lg"
                 value="{{ existing.value|int if existing else '' }}" required autofocus>
               <div class="input-group-append">
                 <span class="input-group-text">m³</span>
               </div>
+            </div>
+          </div>
+
+          <!-- Live-Verbrauchsanzeige -->
+          <div id="consumptionBox" class="d-none">
+            <div class="callout callout-success" id="consumptionOk">
+              <h6>Verbrauch {{ year }}</h6>
+              <p class="mb-0"><strong><span id="consumptionValue">—</span> m³</strong></p>
+              {% if avg_consumption is not none %}
+              <small class="text-muted">Ø letzte {{ avg_years }} Jahr{{ 'e' if avg_years != 1 }}: {{ avg_consumption }} m³</small>
+              {% endif %}
+            </div>
+            <div class="callout callout-danger d-none" id="consumptionNegative">
+              <h6><i class="fas fa-exclamation-triangle mr-1"></i> Negativer Verbrauch</h6>
+              <p class="mb-0">Der eingegebene Zählerstand ist kleiner als der Vorjahreswert. Bitte prüfen.</p>
+            </div>
+            <div class="callout callout-warning d-none" id="consumptionWarning">
+              <h6><i class="fas fa-exclamation-triangle mr-1"></i> Ungewöhnlicher Verbrauch</h6>
+              <p class="mb-0" id="consumptionWarningText"></p>
             </div>
           </div>
         </div>
@@ -68,4 +87,62 @@
     </div>
   </div>
 </div>
+
+<script>
+(function () {
+  var prevValue = {{ prev_value if prev_value is not none else 'null' }};
+  var avgConsumption = {{ avg_consumption if avg_consumption is not none else 'null' }};
+
+  var input = document.getElementById('valueInput');
+  var box = document.getElementById('consumptionBox');
+  var okBox = document.getElementById('consumptionOk');
+  var negBox = document.getElementById('consumptionNegative');
+  var warnBox = document.getElementById('consumptionWarning');
+  var warnText = document.getElementById('consumptionWarningText');
+  var consumptionSpan = document.getElementById('consumptionValue');
+
+  function update() {
+    var val = parseInt(input.value, 10);
+    if (isNaN(val) || prevValue === null) {
+      box.classList.add('d-none');
+      return;
+    }
+    box.classList.remove('d-none');
+
+    var consumption = val - prevValue;
+    consumptionSpan.textContent = consumption;
+
+    // Negativer Verbrauch
+    if (consumption < 0) {
+      okBox.classList.add('d-none');
+      negBox.classList.remove('d-none');
+      warnBox.classList.add('d-none');
+      return;
+    }
+    negBox.classList.add('d-none');
+    okBox.classList.remove('d-none');
+
+    // Abweichung vom Durchschnitt prüfen (±50 %)
+    if (avgConsumption !== null && avgConsumption > 0) {
+      var deviation = Math.abs(consumption - avgConsumption) / avgConsumption;
+      if (deviation > 0.5) {
+        var pct = Math.round(deviation * 100);
+        var dir = consumption > avgConsumption ? 'höher' : 'niedriger';
+        warnText.textContent =
+          'Verbrauch ' + consumption + ' m³ ist ' + pct + ' % ' + dir +
+          ' als der Durchschnitt (' + avgConsumption + ' m³). Bitte prüfen.';
+        warnBox.classList.remove('d-none');
+      } else {
+        warnBox.classList.add('d-none');
+      }
+    } else {
+      warnBox.classList.add('d-none');
+    }
+  }
+
+  input.addEventListener('input', update);
+  // Beim Laden sofort auslösen falls ein Wert vorausgefüllt ist
+  if (input.value) update();
+})();
+</script>
 {% endblock %}

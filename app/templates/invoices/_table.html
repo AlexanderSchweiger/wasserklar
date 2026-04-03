@@ -3,9 +3,11 @@
     <tr>
       <th>Rechnungsnr.</th>
       <th>Kunde</th>
+      <th>Objekt</th>
       <th>Jahr</th>
       <th>Datum</th>
       <th>Fällig</th>
+      <th class="text-right">Verbrauch</th>
       <th class="text-right">Betrag</th>
       <th>Status</th>
       <th></th>
@@ -20,9 +22,24 @@
           {{ inv.customer.name }}
         </a>
       </td>
-      <td>{{ inv.period_year or '—' }}</td>
+      <td>
+        {% if inv.property %}
+        <a href="{{ url_for('properties.detail', property_id=inv.property_id) }}">
+          {{ inv.property.object_number or inv.property_id }}
+        </a>
+        {% else %}—{% endif %}
+      </td>
+      <td>
+        {% if inv.period_year %}
+        <span class="badge badge-primary">{{ inv.period_year }}</span>
+        {% else %}—{% endif %}
+      </td>
       <td>{{ inv.date.strftime('%d.%m.%Y') }}</td>
       <td>{{ inv.due_date.strftime('%d.%m.%Y') if inv.due_date else '—' }}</td>
+      <td class="text-right text-nowrap">
+        {% set cons = inv.consumption %}
+        {% if cons %}{{ "%.3g"|format(cons|float) }} m³{% else %}—{% endif %}
+      </td>
       <td class="text-right"><strong>{{ "%.2f"|format(inv.total_amount) }} €</strong></td>
       <td>{% with invoice = inv %}{% include "invoices/_status_badge.html" %}{% endwith %}</td>
       <td class="text-right">
@@ -34,7 +51,7 @@
     </tr>
     {% else %}
     <tr>
-      <td colspan="8" class="text-center text-muted py-3">Keine Rechnungen gefunden.</td>
+      <td colspan="10" class="text-center text-muted py-3">Keine Rechnungen gefunden.</td>
     </tr>
     {% endfor %}
   </tbody>

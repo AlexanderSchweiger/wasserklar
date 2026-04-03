@@ -17,7 +17,8 @@
             <label>Objekt <span class="text-danger">*</span></label>
             <select name="property_id" class="form-control" required>
               {% for p in properties %}
-              <option value="{{ p.id }}" {{ 'selected' if meter and meter.property_id == p.id }}>
+              <option value="{{ p.id }}"
+                {{ 'selected' if (meter and meter.property_id == p.id) or (not meter and selected_property_id == p.id) }}>
                 {{ p.label() }}
               </option>
               {% endfor %}
@@ -32,6 +33,19 @@
             <label>Standort</label>
             <input type="text" name="location" class="form-control"
               value="{{ meter.location if meter else '' }}">
+          </div>
+          <div class="form-row">
+            <div class="form-group col-md-6">
+              <label>Einbaudatum</label>
+              <input type="date" name="installed_from" class="form-control"
+                value="{{ meter.installed_from.strftime('%Y-%m-%d') if meter and meter.installed_from else '' }}">
+            </div>
+            <div class="form-group col-md-6">
+              <label>Anfangsstand (m³)</label>
+              <input type="number" name="initial_value" class="form-control" step="0.001" min="0"
+                value="{{ meter.initial_value|int if meter and meter.initial_value is not none else '' }}"
+                placeholder="z. B. 0">
+            </div>
           </div>
           <div class="form-group">
             <label>Notizen</label>

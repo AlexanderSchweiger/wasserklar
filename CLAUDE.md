@@ -33,6 +33,18 @@ docker compose exec wg flask --app run create-admin
 
 **No tests, linting, or formatter are configured.** No `migrations/` directory exists — schema is managed via `db.create_all()` in `init-db`.
 
+## Schema-Änderungen (neue Spalten)
+
+Neue Datenbankspalten werden **ausschließlich** über den `upgrade-db`-Befehl in [`cli.py`](cli.py) verwaltet. Bei jeder Modelländerung, die eine neue Spalte hinzufügt:
+
+1. Eintrag in `_add_col_if_missing(...)` **sowohl** im `init-db`- als auch im `upgrade-db`-Block ergänzen.
+2. Beide Blöcke müssen identisch sein — `upgrade-db` ist der primäre Ort, `init-db` übernimmt dieselben Einträge damit Neuinstallationen ebenfalls funktionieren.
+3. Die Funktion ist idempotent (bereits vorhandene Spalten werden übersprungen) — kein manuelles SQL nötig.
+
+```python
+_add_col_if_missing("tabelle", "spalte TYP DEFAULT wert", "spalte")
+```
+
 ## Architecture
 
 **App factory** in `app/__init__.py` (`create_app`). Entry point is `run.py` (`run:app` for gunicorn). Config loaded from `.env` via `config.py` (DevelopmentConfig / ProductionConfig selected by `FLASK_ENV`).

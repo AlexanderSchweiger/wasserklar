@@ -19,20 +19,38 @@
         </select>
       </div>
       <div class="form-group">
-        <label class="mb-0 mr-1">Jahr</label>
+        <label class="mb-0 mr-1">Rechn.Lauf Jahr</label>
         <input type="number" name="year" value="{{ year_filter }}" placeholder="—"
           class="form-control form-control-sm" style="width:90px"
           hx-get="{{ url_for('invoices.index') }}"
           hx-trigger="change"
           hx-target="#invoices-table"
-          hx-include="[name='status'],[name='year'],[name='q']">
+          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q']">
+      </div>
+      <div class="form-group">
+        <label class="mb-0 mr-1">Datum von</label>
+        <input type="date" name="date_from" value="{{ date_from }}"
+          class="form-control form-control-sm" style="width:145px"
+          hx-get="{{ url_for('invoices.index') }}"
+          hx-trigger="change"
+          hx-target="#invoices-table"
+          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q']">
+      </div>
+      <div class="form-group">
+        <label class="mb-0 mr-1">bis</label>
+        <input type="date" name="date_to" value="{{ date_to }}"
+          class="form-control form-control-sm" style="width:145px"
+          hx-get="{{ url_for('invoices.index') }}"
+          hx-trigger="change"
+          hx-target="#invoices-table"
+          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q']">
       </div>
       <div class="input-group input-group-sm" style="width:220px">
         <input type="search" name="q" placeholder="Kundenname…" class="form-control"
           hx-get="{{ url_for('invoices.index') }}"
           hx-trigger="input changed delay:300ms"
           hx-target="#invoices-table"
-          hx-include="[name='status'],[name='year'],[name='q']">
+          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q']">
         <div class="input-group-append">
           <span class="input-group-text"><i class="fas fa-search"></i></span>
         </div>

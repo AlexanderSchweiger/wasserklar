@@ -30,6 +30,14 @@ def register_commands(app):
             _add_col_if_missing("water_meters", "initial_value NUMERIC(12,3)", "initial_value")
             _add_col_if_missing("bookings", "open_item_id INTEGER REFERENCES open_items(id)", "open_item_id")
             _add_col_if_missing("invoice_items", "tax_rate NUMERIC(5,2)", "tax_rate")
+            _add_col_if_missing("water_tariffs", "base_fee_label VARCHAR(100) DEFAULT 'Grundgebühr'", "base_fee_label")
+            _add_col_if_missing("water_tariffs", "additional_fee NUMERIC(10,2) DEFAULT 0", "additional_fee")
+            _add_col_if_missing("water_tariffs", "additional_fee_label VARCHAR(100) DEFAULT 'Zusatzgebühr'", "additional_fee_label")
+            _add_col_if_missing("customers", "base_fee_override NUMERIC(10,2)", "base_fee_override")
+            _add_col_if_missing("customers", "additional_fee_override NUMERIC(10,2)", "additional_fee_override")
+            _add_col_if_missing("properties", "base_fee_override NUMERIC(10,2)", "base_fee_override")
+            _add_col_if_missing("properties", "additional_fee_override NUMERIC(10,2)", "additional_fee_override")
+            _add_col_if_missing("open_items", "period_year INTEGER", "period_year")
             conn.commit()
 
         if Account.query.count() == 0:
@@ -66,7 +74,40 @@ def register_commands(app):
             _add_col_if_missing("water_meters", "initial_value NUMERIC(12,3)", "initial_value")
             _add_col_if_missing("bookings", "open_item_id INTEGER REFERENCES open_items(id)", "open_item_id")
             _add_col_if_missing("invoice_items", "tax_rate NUMERIC(5,2)", "tax_rate")
+            _add_col_if_missing("water_tariffs", "base_fee_label VARCHAR(100) DEFAULT 'Grundgebühr'", "base_fee_label")
+            _add_col_if_missing("water_tariffs", "additional_fee NUMERIC(10,2) DEFAULT 0", "additional_fee")
+            _add_col_if_missing("water_tariffs", "additional_fee_label VARCHAR(100) DEFAULT 'Zusatzgebühr'", "additional_fee_label")
+            _add_col_if_missing("customers", "base_fee_override NUMERIC(10,2)", "base_fee_override")
+            _add_col_if_missing("customers", "additional_fee_override NUMERIC(10,2)", "additional_fee_override")
+            _add_col_if_missing("properties", "base_fee_override NUMERIC(10,2)", "base_fee_override")
+            _add_col_if_missing("properties", "additional_fee_override NUMERIC(10,2)", "additional_fee_override")
+            _add_col_if_missing("open_items", "period_year INTEGER", "period_year")
             conn.commit()
+
+        # Datenmigration: für alle bereits versendeten Rechnungen ohne OpenItem einen anlegen
+        from app.models import Invoice, OpenItem
+        sent_no_oi = (
+            Invoice.query
+            .filter(Invoice.status == Invoice.STATUS_SENT)
+            .filter(~Invoice.open_item.has())
+            .all()
+        )
+        for inv in sent_no_oi:
+            oi = OpenItem(
+                customer_id=inv.customer_id,
+                description=inv.invoice_number,
+                amount=inv.total_amount,
+                date=inv.date,
+                due_date=inv.due_date,
+                period_year=inv.period_year,
+                status=OpenItem.STATUS_OPEN,
+                invoice_id=inv.id,
+            )
+            db.session.add(oi)
+        db.session.commit()
+        if sent_no_oi:
+            print(f"  {len(sent_no_oi)} Rechnungen → OpenItem migriert.")
+
         print("Datenbank aktualisiert.")
 
     @app.cli.command("seed-testdata")
@@ -124,6 +165,11 @@ def register_commands(app):
         # ------------------------------------------------------------------
         # Tarife
         # ------------------------------------------------------------------
+        tarif2021 = WaterTariff(
+            name="Tarif 2021",
+            valid_from=2021, valid_to=2021,
+            base_fee=Decimal("28.00"), price_per_m3=Decimal("1.10"),
+        )
         tarif2022 = WaterTariff(
             name="Tarif 2022",
             valid_from=2022, valid_to=2023,
@@ -135,7 +181,7 @@ def register_commands(app):
             base_fee=Decimal("35.00"), price_per_m3=Decimal("1.45"),
             notes="Preisanpassung wegen gestiegener Betriebskosten",
         )
-        db.session.add_all([tarif2022, tarif2024])
+        db.session.add_all([tarif2021, tarif2022, tarif2024])
         db.session.flush()
 
         # ------------------------------------------------------------------
@@ -209,21 +255,21 @@ def register_commands(app):
         # Wasserzähler + Ablesungen
         # ------------------------------------------------------------------
         zähler_daten = [
-            dict(meter_number="WZ-2010-001", location="Keller", installed_from=date(2010, 3, 15), initial_value=Decimal("0.000")),
-            dict(meter_number="WZ-2012-002", location="Keller", installed_from=date(2012, 6, 1),  initial_value=Decimal("0.000")),
-            dict(meter_number="WZ-2015-003", location="Außen",  installed_from=date(2015, 1, 20), initial_value=Decimal("0.000")),
-            dict(meter_number="WZ-2018-004", location="Außen",  installed_from=date(2018, 9, 10), initial_value=Decimal("0.000")),
-            dict(meter_number="WZ-2020-005", location="Keller", installed_from=date(2020, 4, 5),  initial_value=Decimal("0.000")),
-            dict(meter_number="WZ-2008-006", location="Keller", installed_from=date(2008, 11, 30),initial_value=Decimal("0.000")),
+            dict(meter_number="Dorfstraße 4",    location="Keller", installed_from=date(2010, 3, 15), initial_value=Decimal("0.000")),
+            dict(meter_number="Hauptstraße 12",  location="Keller", installed_from=date(2012, 6, 1),  initial_value=Decimal("0.000")),
+            dict(meter_number="Birkenweg 3a",    location="Außen",  installed_from=date(2015, 1, 20), initial_value=Decimal("0.000")),
+            dict(meter_number="Gartenstraße 8",  location="Außen",  installed_from=date(2018, 9, 10), initial_value=Decimal("0.000")),
+            dict(meter_number="Wiesenweg 2",     location="Keller", installed_from=date(2020, 4, 5),  initial_value=Decimal("0.000")),
+            dict(meter_number="Am Bach 1",       location="Keller", installed_from=date(2008, 11, 30),initial_value=Decimal("0.000")),
         ]
-        # Jahresstände pro Zähler (Anfangsstand + jährlicher Verbrauch)
+        # Jahresstände pro Zähler (Anfangsstand + jährlicher Verbrauch), letzte 5 Jahre
         jahres_ablesungen = [
-            [(2022, Decimal("125.000")), (2023, Decimal("152.500")), (2024, Decimal("181.000")), (2025, Decimal("208.000"))],
-            [(2022, Decimal("310.000")), (2023, Decimal("342.000")), (2024, Decimal("375.000")), (2025, Decimal("411.500"))],
-            [(2022, Decimal("89.000")),  (2023, Decimal("108.000")), (2024, Decimal("130.500")), (2025, Decimal("155.000"))],
-            [(2022, Decimal("22.000")),  (2023, Decimal("30.000")),  (2024, Decimal("38.500")),  (2025, Decimal("45.000"))],
-            [(2022, Decimal("45.000")),  (2023, Decimal("68.000")),  (2024, Decimal("92.000")),  (2025, Decimal("118.500"))],
-            [(2022, Decimal("520.000")), (2023, Decimal("558.000")), (2024, Decimal("598.000")), (2025, Decimal("640.000"))],
+            [(2021, Decimal("97.500")),  (2022, Decimal("125.000")), (2023, Decimal("152.500")), (2024, Decimal("181.000")), (2025, Decimal("208.000"))],
+            [(2021, Decimal("278.000")), (2022, Decimal("310.000")), (2023, Decimal("342.000")), (2024, Decimal("375.000")), (2025, Decimal("411.500"))],
+            [(2021, Decimal("70.000")),  (2022, Decimal("89.000")),  (2023, Decimal("108.000")), (2024, Decimal("130.500")), (2025, Decimal("155.000"))],
+            [(2021, Decimal("14.000")),  (2022, Decimal("22.000")),  (2023, Decimal("30.000")),  (2024, Decimal("38.500")),  (2025, Decimal("45.000"))],
+            [(2021, Decimal("22.000")),  (2022, Decimal("45.000")),  (2023, Decimal("68.000")),  (2024, Decimal("92.000")),  (2025, Decimal("118.500"))],
+            [(2021, Decimal("482.000")), (2022, Decimal("520.000")), (2023, Decimal("558.000")), (2024, Decimal("598.000")), (2025, Decimal("640.000"))],
         ]
         zähler_liste = []
         for objekt, zd, ablesungen in zip(objekte, zähler_daten, jahres_ablesungen):
@@ -292,16 +338,22 @@ def register_commands(app):
                 ))
             return inv
 
+        # 2021-Rechnungen (alle bezahlt)
+        verbrauch_2021 = [Decimal("97.5"), Decimal("278.0"), Decimal("70.0"),
+                          Decimal("14.0"), Decimal("22.0"),  Decimal("482.0")]
+        for i, (kunde, objekt, verbr) in enumerate(zip(kunden, objekte, verbrauch_2021), start=1):
+            make_invoice(i, kunde, objekt, 2021, Invoice.STATUS_PAID, tarif2021, verbr, admin)
+
         # 2022-Rechnungen (alle bezahlt)
         verbrauch_2022 = [Decimal("27.5"), Decimal("32.0"), Decimal("19.0"),
                           Decimal("8.0"),  Decimal("23.0"), Decimal("38.0")]
-        for i, (kunde, objekt, verbr) in enumerate(zip(kunden, objekte, verbrauch_2022), start=1):
+        for i, (kunde, objekt, verbr) in enumerate(zip(kunden, objekte, verbrauch_2022), start=7):
             make_invoice(i, kunde, objekt, 2022, Invoice.STATUS_PAID, tarif2022, verbr, admin)
 
         # 2023-Rechnungen (alle bezahlt)
         verbrauch_2023 = [Decimal("28.5"), Decimal("33.0"), Decimal("22.5"),
                           Decimal("8.5"),  Decimal("24.0"), Decimal("40.0")]
-        for i, (kunde, objekt, verbr) in enumerate(zip(kunden, objekte, verbrauch_2023), start=7):
+        for i, (kunde, objekt, verbr) in enumerate(zip(kunden, objekte, verbrauch_2023), start=13):
             make_invoice(i, kunde, objekt, 2023, Invoice.STATUS_PAID, tarif2022, verbr, admin)
 
         # 2024-Rechnungen (gemischte Status)
@@ -310,7 +362,7 @@ def register_commands(app):
         status_2024 = [Invoice.STATUS_PAID, Invoice.STATUS_PAID, Invoice.STATUS_SENT,
                        Invoice.STATUS_SENT, Invoice.STATUS_DRAFT, Invoice.STATUS_PAID]
         for i, (kunde, objekt, verbr, st) in enumerate(
-                zip(kunden, objekte, verbrauch_2024, status_2024), start=13):
+                zip(kunden, objekte, verbrauch_2024, status_2024), start=19):
             make_invoice(i, kunde, objekt, 2024, st, tarif2024, verbr, admin)
 
         db.session.flush()
@@ -361,8 +413,8 @@ def register_commands(app):
         db.session.commit()
         print("Testdaten erfolgreich eingefügt:")
         print(f"  2 Benutzer, {len(kunden)} Kunden, {len(objekte)} Objekte")
-        print(f"  {len(zähler_liste)} Wasserzähler mit je 4 Ablesungen (2022–2025)")
-        print(f"  2 Tarife, 18 Rechnungen (2022–2024), 4 Ausgabenbuchungen, 2 Offene Posten")
+        print(f"  {len(zähler_liste)} Wasserzähler mit je 5 Ablesungen (2021–2025)")
+        print(f"  3 Tarife, 24 Rechnungen (2021–2024), 4 Ausgabenbuchungen, 2 Offene Posten")
 
     @app.cli.command("create-admin")
     def create_admin():

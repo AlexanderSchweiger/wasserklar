@@ -10,8 +10,29 @@ from flask_login import login_required, current_user
 
 from app.invoices import bp
 from app.extensions import db, mail
-from app.models import Invoice, InvoiceItem, Customer, WaterMeter, MeterReading, WaterTariff, Booking, Account, Property
+from app.models import Invoice, InvoiceItem, Customer, WaterMeter, MeterReading, WaterTariff, Booking, Account, Property, OpenItem
 from app.utils import next_invoice_number as _next_invoice_number
+
+
+def _create_or_update_open_item(invoice):
+    """Erzeugt oder aktualisiert den verknüpften OpenItem wenn eine Rechnung versendet wird."""
+    oi = invoice.open_item
+    if oi is None:
+        oi = OpenItem(
+            customer_id=invoice.customer_id,
+            description=invoice.invoice_number,
+            amount=invoice.total_amount,
+            date=invoice.date,
+            due_date=invoice.due_date,
+            period_year=invoice.period_year,
+            status=OpenItem.STATUS_OPEN,
+            invoice_id=invoice.id,
+        )
+        db.session.add(oi)
+    else:
+        oi.amount = invoice.total_amount
+        oi.due_date = invoice.due_date
+        oi.period_year = invoice.period_year
 
 
 @bp.route("/")
@@ -19,15 +40,32 @@ from app.utils import next_invoice_number as _next_invoice_number
 def index():
     status_filter = request.args.get("status", "")
     year_filter = request.args.get("year", "", type=str)
+    date_from = request.args.get("date_from", date(date.today().year, 1, 1).isoformat()).strip()
+    date_to = request.args.get("date_to", "").strip()
     q = request.args.get("q", "").strip()
 
-    query = Invoice.query.join(Customer, Invoice.customer_id == Customer.id).order_by(Invoice.date.desc())
+    query = (
+        Invoice.query
+        .join(Customer, Invoice.customer_id == Customer.id)
+        .outerjoin(Property, Invoice.property_id == Property.id)
+        .order_by(Invoice.date.desc())
+    )
     if status_filter:
         query = query.filter(Invoice.status == status_filter)
     if year_filter:
         query = query.filter(Invoice.period_year == int(year_filter))
+    if date_from:
+        query = query.filter(Invoice.date >= date.fromisoformat(date_from))
+    if date_to:
+        query = query.filter(Invoice.date <= date.fromisoformat(date_to))
     if q:
-        query = query.filter(Customer.name.ilike(f"%{q}%"))
+        from sqlalchemy import or_
+        query = query.filter(or_(
+            Customer.name.ilike(f"%{q}%"),
+            Invoice.invoice_number.ilike(f"%{q}%"),
+            Property.object_number.ilike(f"%{q}%"),
+            Property.strasse.ilike(f"%{q}%"),
+        ))
 
     invoices = query.all()
     if request.headers.get("HX-Request"):
@@ -38,6 +76,8 @@ def index():
         statuses=Invoice.ALL_STATUSES,
         status_filter=status_filter,
         year_filter=year_filter,
+        date_from=date_from,
+        date_to=date_to,
     )
 
 
@@ -85,6 +125,22 @@ def generate():
                 skipped += 1
                 continue
 
+            customer = db.session.get(Customer, ownership.customer_id)
+
+            # Priorität: Objekt > Kunde > Tarif
+            effective_base_fee = (
+                prop.base_fee_override if prop.base_fee_override is not None
+                else customer.base_fee_override if customer.base_fee_override is not None
+                else (tariff.base_fee or Decimal("0"))
+            )
+            effective_additional_fee = (
+                prop.additional_fee_override if prop.additional_fee_override is not None
+                else customer.additional_fee_override if customer.additional_fee_override is not None
+                else (tariff.additional_fee or Decimal("0"))
+            )
+            base_fee_label = tariff.base_fee_label or "Grundgebühr"
+            additional_fee_label = tariff.additional_fee_label or "Zusatzgebühr"
+
             inv = Invoice(
                 invoice_number=_next_invoice_number(),
                 customer_id=ownership.customer_id,
@@ -99,14 +155,25 @@ def generate():
             db.session.flush()
 
             # Grundgebühr
-            if tariff.base_fee:
+            if effective_base_fee:
                 db.session.add(InvoiceItem(
                     invoice_id=inv.id,
-                    description="Grundgebühr",
+                    description=base_fee_label,
                     quantity=1,
                     unit="Jahr",
-                    unit_price=tariff.base_fee,
-                    amount=tariff.base_fee,
+                    unit_price=effective_base_fee,
+                    amount=effective_base_fee,
+                ))
+
+            # Zusatzgebühr
+            if effective_additional_fee:
+                db.session.add(InvoiceItem(
+                    invoice_id=inv.id,
+                    description=additional_fee_label,
+                    quantity=1,
+                    unit="Jahr",
+                    unit_price=effective_additional_fee,
+                    amount=effective_additional_fee,
                 ))
 
             # Verbrauchspositionen — bei Zählerwechsel je Zähler eine Zeile
@@ -145,7 +212,8 @@ def generate():
                 ))
 
             inv.total_amount = (
-                (tariff.base_fee or Decimal("0"))
+                effective_base_fee
+                + effective_additional_fee
                 + (total_consumption * tariff.price_per_m3).quantize(Decimal("0.01"))
             )
             created += 1
@@ -193,6 +261,11 @@ def set_status(invoice_id):
     old_status = invoice.status
     invoice.status = new_status
 
+    if new_status == Invoice.STATUS_SENT:
+        _create_or_update_open_item(invoice)
+    elif new_status == Invoice.STATUS_CANCELLED and invoice.open_item:
+        invoice.open_item.status = OpenItem.STATUS_PAID
+
     # Automatische Buchung bei Bezahlt-Markierung
     if new_status == Invoice.STATUS_PAID and old_status != Invoice.STATUS_PAID:
         acc = Account.query.filter_by(type=Account.TYPE_INCOME, active=True).first()
@@ -207,6 +280,8 @@ def set_status(invoice_id):
                 created_by_id=current_user.id,
             )
             db.session.add(booking)
+        if invoice.open_item:
+            invoice.open_item.status = OpenItem.STATUS_PAID
 
     db.session.commit()
     flash(f"Status auf '{new_status}' gesetzt.", "success")
@@ -262,6 +337,16 @@ def pay(invoice_id):
     else:
         invoice.status = Invoice.STATUS_CREDIT
         flash(f"\u00dcberzahlung von {abs(balance):.2f} \u20ac. Rechnung als Gutschrift markiert.", "info")
+
+    if invoice.open_item:
+        oi = invoice.open_item
+        booking.open_item_id = oi.id
+        if balance > Decimal("0"):
+            oi.status = OpenItem.STATUS_PARTIAL
+        elif balance == Decimal("0"):
+            oi.status = OpenItem.STATUS_PAID
+        else:
+            oi.status = OpenItem.STATUS_CREDIT
 
     db.session.commit()
     return redirect(url_for("accounting.open_items"))
@@ -322,6 +407,7 @@ def send_email(invoice_id):
     mail.send(msg)
     invoice.status = Invoice.STATUS_SENT
     invoice.pdf_path = pdf_path
+    _create_or_update_open_item(invoice)
     db.session.commit()
     flash(f"Rechnung an {invoice.customer.email} versendet.", "success")
     return redirect(url_for("invoices.detail", invoice_id=invoice.id))
@@ -347,6 +433,9 @@ def tariff_new():
             valid_from=int(request.form["valid_from"]),
             valid_to=int(request.form["valid_to"]) if request.form.get("valid_to") else None,
             base_fee=Decimal(request.form.get("base_fee", "0").replace(",", ".")),
+            base_fee_label=request.form.get("base_fee_label", "").strip() or "Grundgebühr",
+            additional_fee=Decimal(request.form.get("additional_fee", "0").replace(",", ".")),
+            additional_fee_label=request.form.get("additional_fee_label", "").strip() or "Zusatzgebühr",
             price_per_m3=Decimal(request.form["price_per_m3"].replace(",", ".")),
             notes=request.form.get("notes", ""),
         )
@@ -366,6 +455,9 @@ def tariff_edit(tariff_id):
         t.valid_from = int(request.form["valid_from"])
         t.valid_to = int(request.form["valid_to"]) if request.form.get("valid_to") else None
         t.base_fee = Decimal(request.form.get("base_fee", "0").replace(",", "."))
+        t.base_fee_label = request.form.get("base_fee_label", "").strip() or "Grundgebühr"
+        t.additional_fee = Decimal(request.form.get("additional_fee", "0").replace(",", "."))
+        t.additional_fee_label = request.form.get("additional_fee_label", "").strip() or "Zusatzgebühr"
         t.price_per_m3 = Decimal(request.form["price_per_m3"].replace(",", "."))
         t.notes = request.form.get("notes", "")
         db.session.commit()

@@ -127,6 +127,7 @@ def ownership_end(property_id, ownership_id):
 
 
 def _property_from_form(prop):
+    from decimal import Decimal
     prop.object_number = request.form.get("object_number", "").strip() or None
     prop.object_type = request.form.get("object_type", "").strip()
     prop.strasse = request.form.get("strasse", "").strip()
@@ -135,4 +136,8 @@ def _property_from_form(prop):
     prop.ort = request.form.get("ort", "").strip()
     prop.land = request.form.get("land", "Österreich").strip()
     prop.notes = request.form.get("notes", "").strip()
+    raw_base = request.form.get("base_fee_override", "").strip().replace(",", ".")
+    prop.base_fee_override = Decimal(raw_base) if raw_base else None
+    raw_add = request.form.get("additional_fee_override", "").strip().replace(",", ".")
+    prop.additional_fee_override = Decimal(raw_add) if raw_add else None
     return prop

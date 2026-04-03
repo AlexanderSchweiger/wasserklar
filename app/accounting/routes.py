@@ -164,28 +164,52 @@ def booking_delete(booking_id):
 @bp.route("/open-items")
 @login_required
 def open_items():
-    invoices = (
-        Invoice.query
-        .filter(Invoice.status.in_([Invoice.STATUS_SENT, Invoice.STATUS_CREDIT]))
-        .order_by(Invoice.due_date)
-        .all()
-    )
-    manual_items = (
-        OpenItem.query
-        .filter(OpenItem.status.in_([OpenItem.STATUS_OPEN, OpenItem.STATUS_PARTIAL, OpenItem.STATUS_CREDIT]))
-        .order_by(OpenItem.due_date)
-        .all()
-    )
-    from decimal import Decimal
-    invoice_total = sum(inv.open_balance for inv in invoices)
-    manual_total = sum(item.open_balance for item in manual_items)
+    show_closed = request.args.get("show_closed", "0") == "1"
+    amount_min_raw = request.args.get("amount_min", "").strip()
+    amount_max_raw = request.args.get("amount_max", "").strip()
+    customer_q = request.args.get("customer", "").strip()
+    ref_q = request.args.get("ref", "").strip()  # Rechnungsnr. oder Beschreibung
+    year_q = request.args.get("year", "").strip()
+
+    item_q = OpenItem.query.join(Customer, OpenItem.customer_id == Customer.id)
+
+    if not show_closed:
+        item_q = item_q.filter(OpenItem.status.in_([OpenItem.STATUS_OPEN, OpenItem.STATUS_PARTIAL]))
+
+    if customer_q:
+        item_q = item_q.filter(Customer.name.ilike(f"%{customer_q}%"))
+    if ref_q:
+        item_q = item_q.filter(OpenItem.description.ilike(f"%{ref_q}%"))
+    if year_q:
+        try:
+            item_q = item_q.filter(OpenItem.period_year == int(year_q))
+        except ValueError:
+            pass
+    if amount_min_raw:
+        try:
+            item_q = item_q.filter(OpenItem.amount >= Decimal(amount_min_raw.replace(",", ".")))
+        except Exception:
+            pass
+    if amount_max_raw:
+        try:
+            item_q = item_q.filter(OpenItem.amount <= Decimal(amount_max_raw.replace(",", ".")))
+        except Exception:
+            pass
+
+    items = item_q.order_by(OpenItem.due_date).all()
+    total_open = sum(item.open_balance for item in items)
+
     return render_template(
         "accounting/open_items.html",
-        invoices=invoices,
-        manual_items=manual_items,
-        invoice_total=invoice_total,
-        manual_total=manual_total,
+        items=items,
+        total_open=total_open,
         today=date.today(),
+        show_closed=show_closed,
+        f_customer=customer_q,
+        f_ref=ref_q,
+        f_year=year_q,
+        f_amount_min=amount_min_raw,
+        f_amount_max=amount_max_raw,
     )
 
 
@@ -234,13 +258,15 @@ def open_item_pay(item_id):
         flash("Kein aktives Einnahmenkonto gefunden.", "danger")
         return redirect(url_for("accounting.open_items"))
 
+    ref = item.invoice.invoice_number if item.invoice_id else f"OP-{item.id}"
     booking = Booking(
         date=date.today(),
         account_id=acc.id,
         amount=amount,
         description=f"Zahlung – {item.description} – {item.customer.name}",
-        reference=f"OP-{item.id}",
+        reference=ref,
         open_item_id=item.id,
+        invoice_id=item.invoice_id,
         created_by_id=current_user.id,
     )
     db.session.add(booking)
@@ -260,6 +286,17 @@ def open_item_pay(item_id):
     else:
         item.status = OpenItem.STATUS_CREDIT
         flash(f"\u00dcberzahlung von {abs(balance):.2f} \u20ac. Offener Posten als Gutschrift markiert.", "info")
+
+    # Verknüpfte Rechnung synchronisieren
+    if item.invoice_id:
+        inv = db.session.get(Invoice, item.invoice_id)
+        if inv:
+            if balance > Decimal("0"):
+                inv.status = Invoice.STATUS_SENT
+            elif balance == Decimal("0"):
+                inv.status = Invoice.STATUS_PAID
+            else:
+                inv.status = Invoice.STATUS_CREDIT
 
     db.session.commit()
     return redirect(url_for("accounting.open_items"))

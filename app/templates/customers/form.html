@@ -88,6 +88,38 @@
             <label>Notizen</label>
             <textarea name="notes" class="form-control" rows="3">{{ customer.notes if customer else '' }}</textarea>
           </div>
+
+          <hr>
+          <h6 class="text-muted mb-1">Abrechnungseinstellungen</h6>
+          <p class="text-muted small mb-3">Überschreibt die Tarif-Gebühren für diesen Kunden beim Rechnungslauf. Leer lassen = Tarif-Standardwert verwenden.</p>
+          <div class="row">
+            <div class="col-md-6">
+              <div class="form-group">
+                <label>Grundgebühr – Kundenwert (€/Jahr)</label>
+                <div class="input-group">
+                  <input type="number" name="base_fee_override" step="0.01" class="form-control"
+                    placeholder="Tarif-Standard"
+                    value="{{ '%.2f'|format(customer.base_fee_override) if customer and customer.base_fee_override is not none else '' }}">
+                  <div class="input-group-append">
+                    <span class="input-group-text">€</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="form-group">
+                <label>Zusatzgebühr – Kundenwert (€/Jahr)</label>
+                <div class="input-group">
+                  <input type="number" name="additional_fee_override" step="0.01" class="form-control"
+                    placeholder="Tarif-Standard"
+                    value="{{ '%.2f'|format(customer.additional_fee_override) if customer and customer.additional_fee_override is not none else '' }}">
+                  <div class="input-group-append">
+                    <span class="input-group-text">€</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="card-footer">
           <button type="submit" class="btn btn-primary">

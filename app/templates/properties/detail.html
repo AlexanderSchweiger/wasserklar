@@ -38,6 +38,16 @@
         <hr>
         <p class="text-muted mb-0"><em>{{ property.notes }}</em></p>
         {% endif %}
+        {% if property.base_fee_override is not none or property.additional_fee_override is not none %}
+        <hr>
+        <small class="text-muted d-block mb-1"><i class="fas fa-sliders-h mr-1"></i> Individuelle Gebühren</small>
+        {% if property.base_fee_override is not none %}
+        <small class="d-block">Grundgebühr: <strong>{{ "%.2f"|format(property.base_fee_override) }} €</strong></small>
+        {% endif %}
+        {% if property.additional_fee_override is not none %}
+        <small class="d-block">Zusatzgebühr: <strong>{{ "%.2f"|format(property.additional_fee_override) }} €</strong></small>
+        {% endif %}
+        {% endif %}
         <form method="post" action="{{ url_for('properties.deactivate', property_id=property.id) }}" class="mt-3">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button type="submit" class="btn btn-sm btn-outline-danger"
@@ -53,7 +63,7 @@
       <div class="card-header">
         <h3 class="card-title">Wasserzähler</h3>
         <div class="card-tools">
-          <a href="{{ url_for('meters.meter_new') }}" class="btn btn-sm btn-outline-info">
+          <a href="{{ url_for('meters.meter_new', property_id=property.id) }}" class="btn btn-sm btn-outline-info">
             <i class="fas fa-plus"></i>
           </a>
         </div>
@@ -190,7 +200,7 @@
               <td>{{ inv.period_year or '—' }}</td>
               <td>{{ inv.date.strftime('%d.%m.%Y') }}</td>
               <td class="text-right"><strong>{{ "%.2f"|format(inv.total_amount) }} €</strong></td>
-              <td>{% include "invoices/_status_badge.html" %}</td>
+              <td>{% with invoice = inv %}{% include "invoices/_status_badge.html" %}{% endwith %}</td>
               <td class="text-right">
                 <a href="{{ url_for('invoices.detail', invoice_id=inv.id) }}"
                    class="btn btn-sm btn-outline-secondary">

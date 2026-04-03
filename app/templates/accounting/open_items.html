@@ -4,95 +4,76 @@
 {% block content %}
 
 {# ------------------------------------------------------------------ #}
-{# Rechnungsbasierte offene Posten                                     #}
+{# Filter                                                              #}
 {# ------------------------------------------------------------------ #}
-<div class="card">
+<div class="card card-outline card-secondary mb-3">
   <div class="card-header">
-    <h3 class="card-title"><i class="fas fa-file-invoice-dollar mr-1"></i> Unbezahlte Rechnungen</h3>
+    <h3 class="card-title"><i class="fas fa-filter mr-1"></i> Filter</h3>
     <div class="card-tools">
-      <span class="badge badge-warning badge-lg" style="font-size:1rem;padding:.4rem .7rem">
-        Gesamt offen: <strong>{{ "%.2f"|format(invoice_total) }} €</strong>
-      </span>
+      <button type="button" class="btn btn-tool" data-card-widget="collapse">
+        <i class="fas fa-minus"></i>
+      </button>
     </div>
   </div>
-  <div class="card-body p-0">
-    <table class="table table-hover mb-0">
-      <thead class="thead-light">
-        <tr>
-          <th>Rechnungsnr.</th>
-          <th>Kunde</th>
-          <th>Jahr</th>
-          <th>Datum</th>
-          <th>Fällig</th>
-          <th class="text-right">Gesamt</th>
-          <th class="text-right">Offen</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for inv in invoices %}
-        {% set bal = inv.open_balance %}
-        <tr class="{{ 'table-success' if inv.status == 'Guthaben' else ('table-warning' if inv.due_date and inv.due_date < today) }}">
-          <td>
-            <code>{{ inv.invoice_number }}</code>
-            {% if inv.status == 'Guthaben' %}<span class="badge badge-success ml-1">Gutschrift</span>{% endif %}
-          </td>
-          <td>
-            <a href="{{ url_for('customers.detail', customer_id=inv.customer_id) }}">
-              {{ inv.customer.name }}
-            </a>
-          </td>
-          <td>{{ inv.period_year or '—' }}</td>
-          <td>{{ inv.date.strftime('%d.%m.%Y') }}</td>
-          <td>
-            {{ inv.due_date.strftime('%d.%m.%Y') if inv.due_date else '—' }}
-            {% if inv.due_date and inv.due_date < today and inv.status != 'Guthaben' %}
-            <span class="badge badge-danger ml-1">überfällig</span>
-            {% endif %}
-          </td>
-          <td class="text-right">{{ "%.2f"|format(inv.total_amount) }} €</td>
-          <td class="text-right">
-            <strong class="{{ 'text-danger' if bal < 0 }}">{{ "%.2f"|format(bal) }} €</strong>
-          </td>
-          <td class="text-right" style="white-space:nowrap">
-            <form method="post" action="{{ url_for('invoices.pay', invoice_id=inv.id) }}"
-                  class="form-inline d-inline-flex align-items-center">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <input type="number" name="amount" step="0.01" min="0.01"
-                     value="{{ '%.2f'|format(bal) }}"
-                     class="form-control form-control-sm mr-1" style="width:90px"
-                     title="Zahlungsbetrag">
-              <button type="submit" class="btn btn-sm btn-success mr-1" title="Zahlung buchen">
-                <i class="fas fa-check"></i> Bezahlen
-              </button>
-            </form>
-            <a href="{{ url_for('invoices.detail', invoice_id=inv.id) }}"
-               class="btn btn-sm btn-outline-secondary" title="Rechnung anzeigen">
-              <i class="fas fa-eye"></i>
-            </a>
-          </td>
-        </tr>
-        {% else %}
-        <tr>
-          <td colspan="8" class="text-center text-muted py-3">
-            <i class="fas fa-check-circle text-success mr-2"></i>Keine offenen Rechnungen.
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  <div class="card-body pb-1">
+    <form method="get" action="{{ url_for('accounting.open_items') }}">
+      <div class="form-row">
+        <div class="form-group col-md-3">
+          <label>Kunde</label>
+          <input type="text" name="customer" class="form-control form-control-sm"
+                 value="{{ f_customer }}" placeholder="Kundenname …">
+        </div>
+        <div class="form-group col-md-3">
+          <label>Rechnungsnr. / Beschreibung</label>
+          <input type="text" name="ref" class="form-control form-control-sm"
+                 value="{{ f_ref }}" placeholder="RE-2024-… oder Beschreibung">
+        </div>
+        <div class="form-group col-md-2">
+          <label>Rechn.Lauf Jahr</label>
+          <input type="number" name="year" class="form-control form-control-sm"
+                 value="{{ f_year }}" placeholder="{{ today.year }}">
+        </div>
+        <div class="form-group col-md-2">
+          <label>Betrag ≥ (€)</label>
+          <input type="number" name="amount_min" class="form-control form-control-sm"
+                 step="0.01" min="0" value="{{ f_amount_min }}" placeholder="0.00">
+        </div>
+        <div class="form-group col-md-2">
+          <label>Betrag ≤ (€)</label>
+          <input type="number" name="amount_max" class="form-control form-control-sm"
+                 step="0.01" min="0" value="{{ f_amount_max }}" placeholder="9999.00">
+        </div>
+      </div>
+      <div class="form-row align-items-center mb-2">
+        <div class="col-auto">
+          <div class="custom-control custom-switch">
+            <input type="checkbox" class="custom-control-input" id="show_closed"
+                   name="show_closed" value="1" {{ 'checked' if show_closed }}>
+            <label class="custom-control-label" for="show_closed">Geschlossene anzeigen</label>
+          </div>
+        </div>
+        <div class="col-auto ml-3">
+          <button type="submit" class="btn btn-sm btn-primary mr-2">
+            <i class="fas fa-search mr-1"></i> Filtern
+          </button>
+          <a href="{{ url_for('accounting.open_items') }}" class="btn btn-sm btn-outline-secondary">
+            <i class="fas fa-times mr-1"></i> Zurücksetzen
+          </a>
+        </div>
+      </div>
+    </form>
   </div>
 </div>
 
 {# ------------------------------------------------------------------ #}
-{# Manuelle offene Posten                                              #}
+{# Offene-Posten-Tabelle                                              #}
 {# ------------------------------------------------------------------ #}
 <div class="card">
   <div class="card-header">
-    <h3 class="card-title"><i class="fas fa-list mr-1"></i> Manuelle offene Posten</h3>
+    <h3 class="card-title"><i class="fas fa-exclamation-circle mr-1"></i> Offene Posten</h3>
     <div class="card-tools d-flex align-items-center">
       <span class="badge badge-warning badge-lg mr-2" style="font-size:1rem;padding:.4rem .7rem">
-        Gesamt offen: <strong>{{ "%.2f"|format(manual_total) }} €</strong>
+        Gesamt offen: <strong>{{ "%.2f"|format(total_open) }} €</strong>
       </span>
       <a href="{{ url_for('accounting.open_item_new') }}" class="btn btn-sm btn-primary">
         <i class="fas fa-plus mr-1"></i> Neuer offener Posten
@@ -103,8 +84,9 @@
     <table class="table table-hover mb-0">
       <thead class="thead-light">
         <tr>
-          <th>Beschreibung</th>
+          <th>Rechnungsnr. / Beschreibung</th>
           <th>Kunde</th>
+          <th>Rechn.Lauf Jahr</th>
           <th>Datum</th>
           <th>Fällig</th>
           <th>Status</th>
@@ -114,42 +96,67 @@
         </tr>
       </thead>
       <tbody>
-        {% for item in manual_items %}
+        {% for item in items %}
         {% set bal = item.open_balance %}
-        <tr class="{{ 'table-success' if item.status == 'Gutschrift' else ('table-warning' if item.due_date and item.due_date < today and item.status != 'Gutschrift') }}">
+        {% set is_closed = item.status in ('Bezahlt', 'Gutschrift') %}
+        <tr class="{{ 'table-secondary' if is_closed else ('table-warning' if item.due_date and item.due_date < today) }}">
+
+          {# Rechnungsnr. / Beschreibung #}
           <td>
-            {{ item.description }}
             {% if item.invoice_id %}
-            <a href="{{ url_for('invoices.detail', invoice_id=item.invoice_id) }}"
-               class="badge badge-info ml-1" title="Verknüpfte Rechnung">
-              <i class="fas fa-file-invoice"></i> RE
-            </a>
+              <code>{{ item.description }}</code>
+            {% else %}
+              {{ item.description }}
+              {% if item.invoice %}
+              <a href="{{ url_for('invoices.detail', invoice_id=item.invoice_id) }}"
+                 class="badge badge-info ml-1" title="Verknüpfte Rechnung">
+                <i class="fas fa-file-invoice"></i> RE
+              </a>
+              {% endif %}
             {% endif %}
           </td>
+
+          {# Kunde #}
           <td>
             <a href="{{ url_for('customers.detail', customer_id=item.customer_id) }}">
               {{ item.customer.name }}
             </a>
           </td>
+
+          {# Rechn.Lauf Jahr #}
+          <td>{{ item.period_year or '—' }}</td>
+
+          {# Datum #}
           <td>{{ item.date.strftime('%d.%m.%Y') }}</td>
+
+          {# Fällig #}
           <td>
             {{ item.due_date.strftime('%d.%m.%Y') if item.due_date else '—' }}
-            {% if item.due_date and item.due_date < today and item.status not in ('Gutschrift',) %}
+            {% if item.due_date and item.due_date < today and not is_closed %}
             <span class="badge badge-danger ml-1">überfällig</span>
             {% endif %}
           </td>
+
+          {# Status #}
           <td>
             {% if item.status == 'Offen' %}<span class="badge badge-warning">Offen</span>
             {% elif item.status == 'Teilbezahlt' %}<span class="badge badge-info">Teilbezahlt</span>
             {% elif item.status == 'Bezahlt' %}<span class="badge badge-success">Bezahlt</span>
-            {% elif item.status == 'Gutschrift' %}<span class="badge badge-success">Gutschrift</span>
+            {% elif item.status == 'Gutschrift' %}<span class="badge badge-secondary">Gutschrift</span>
             {% endif %}
           </td>
+
+          {# Gesamt #}
           <td class="text-right">{{ "%.2f"|format(item.amount) }} €</td>
+
+          {# Offen #}
           <td class="text-right">
             <strong class="{{ 'text-danger' if bal < 0 }}">{{ "%.2f"|format(bal) }} €</strong>
           </td>
+
+          {# Aktionen #}
           <td class="text-right" style="white-space:nowrap">
+            {% if not is_closed %}
             <form method="post" action="{{ url_for('accounting.open_item_pay', item_id=item.id) }}"
                   class="form-inline d-inline-flex align-items-center">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -167,13 +174,19 @@
               <i class="fas fa-file-invoice"></i>
             </a>
             {% endif %}
+            {% endif %}
+            {% if item.invoice_id %}
+            <a href="{{ url_for('invoices.detail', invoice_id=item.invoice_id) }}"
+               class="btn btn-sm btn-outline-secondary" title="Rechnung anzeigen">
+              <i class="fas fa-eye"></i>
+            </a>
+            {% endif %}
           </td>
         </tr>
         {% else %}
         <tr>
-          <td colspan="8" class="text-center text-muted py-3">
-            <i class="fas fa-info-circle mr-2"></i>Keine manuellen offenen Posten.
-            <a href="{{ url_for('accounting.open_item_new') }}" class="ml-2">Neuen Posten anlegen →</a>
+          <td colspan="9" class="text-center text-muted py-3">
+            <i class="fas fa-check-circle text-success mr-2"></i>Keine offenen Posten.
           </td>
         </tr>
         {% endfor %}
