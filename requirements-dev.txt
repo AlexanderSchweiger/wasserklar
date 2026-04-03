@@ -1,0 +1,15 @@
+# Für lokale Entwicklung auf Windows (ohne WeasyPrint / gunicorn)
+Flask==3.1.0
+Flask-SQLAlchemy==3.1.1
+Flask-Login==0.6.3
+Flask-Mail==0.10.0
+Flask-WTF==1.2.2
+Flask-Migrate==4.0.7
+WTForms==3.2.1
+pandas>=2.2
+openpyxl>=3.1
+python-dotenv==1.0.1
+email-validator==2.2.0
+# WeasyPrint wird für PDF-Erzeugung benötigt, braucht auf Windows GTK3:
+# https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#windows
+# Im Docker-Container ist es enthalten.

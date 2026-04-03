@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Zähler bearbeiten' if meter else 'Neuer Zähler' }}{% endblock %}
+{% block page_title %}
+  <i class="fas fa-tachometer-alt mr-2"></i> {{ 'Zähler bearbeiten' if meter else 'Neuer Zähler' }}
+{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="col-md-6">
+    <div class="card card-primary">
+      <div class="card-header">
+        <h3 class="card-title">{{ meter.meter_number if meter else 'Neuer Zähler' }}</h3>
+      </div>
+      <form method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="card-body">
+          <div class="form-group">
+            <label>Objekt <span class="text-danger">*</span></label>
+            <select name="property_id" class="form-control" required>
+              {% for p in properties %}
+              <option value="{{ p.id }}" {{ 'selected' if meter and meter.property_id == p.id }}>
+                {{ p.label() }}
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Zählernummer <span class="text-danger">*</span></label>
+            <input type="text" name="meter_number" class="form-control"
+              value="{{ meter.meter_number if meter else '' }}" required>
+          </div>
+          <div class="form-group">
+            <label>Standort</label>
+            <input type="text" name="location" class="form-control"
+              value="{{ meter.location if meter else '' }}">
+          </div>
+          <div class="form-group">
+            <label>Notizen</label>
+            <textarea name="notes" class="form-control" rows="3">{{ meter.notes if meter else '' }}</textarea>
+          </div>
+        </div>
+        <div class="card-footer">
+          <button type="submit" class="btn btn-primary">
+            <i class="fas fa-save mr-1"></i> Speichern
+          </button>
+          <a href="{{ url_for('meters.index') }}" class="btn btn-secondary ml-2">Abbrechen</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

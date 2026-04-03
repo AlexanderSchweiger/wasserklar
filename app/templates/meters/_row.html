@@ -1,0 +1,31 @@
+<tr id="meter-row-{{ meter.id }}">
+  {% set prev_reading = prev_readings_map.get(meter.id) %}
+  <td>
+    <a href="{{ url_for('properties.detail', property_id=meter.property_id) }}">
+      {{ meter.property.label() }}
+    </a>
+  </td>
+  <td><code>{{ meter.meter_number }}</code></td>
+  <td>{{ meter.location or '—' }}</td>
+  <td class="text-right text-muted">
+    {{ "%d"|format(prev_reading.value) ~ ' m³' if prev_reading else '—' }}
+  </td>
+  <td class="text-right">
+    {% if reading %}
+      <strong>{{ "%d"|format(reading.value) }}</strong> m³
+    {% else %}
+      <span class="text-danger"><i class="fas fa-exclamation-circle mr-1"></i>fehlt</span>
+    {% endif %}
+  </td>
+  <td class="text-right">
+    {{ "%d"|format(reading.consumption) ~ ' m³' if reading and reading.consumption else '—' }}
+  </td>
+  <td>{{ reading.reading_date.strftime('%d.%m.%Y') if reading else '—' }}</td>
+  <td class="text-right">
+    <a href="{{ url_for('meters.add_reading', meter_id=meter.id, year=year) }}"
+       class="btn btn-sm {{ 'btn-outline-secondary' if reading else 'btn-warning' }}">
+      <i class="fas fa-{{ 'edit' if reading else 'plus' }} mr-1"></i>
+      {{ 'Bearbeiten' if reading else 'Ablesen' }}
+    </a>
+  </td>
+</tr>

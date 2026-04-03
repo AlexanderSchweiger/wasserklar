@@ -1,0 +1,78 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+Wassergenossenschaft Verwaltung — a Flask web app for Austrian water cooperative management. All UI text, flash messages, and documentation are in **German**.
+
+Stack: Flask 3.1, SQLAlchemy, Flask-Login, Flask-Mail, Flask-Migrate, WeasyPrint (PDF), pandas (CSV/Excel import), AdminLTE 3 (Bootstrap 4), HTMX 2.0.4, SQLite.
+
+## Common Commands
+
+```bash
+# Local dev setup (Windows, uses requirements-dev.txt which excludes WeasyPrint)
+python -m venv .venv
+.venv/Scripts/pip install -r requirements-dev.txt
+cp .env.example .env
+
+# Initialize database (creates tables + seeds 7 default accounting accounts)
+flask --app run init-db
+
+# Create admin user (interactive prompts)
+flask --app run create-admin
+
+# Run dev server (http://127.0.0.1:5000)
+flask --app run run
+
+# Docker (production on Synology NAS)
+docker compose up -d --build
+docker compose exec wg flask --app run init-db
+docker compose exec wg flask --app run create-admin
+```
+
+**No tests, linting, or formatter are configured.** No `migrations/` directory exists — schema is managed via `db.create_all()` in `init-db`.
+
+## Architecture
+
+**App factory** in `app/__init__.py` (`create_app`). Entry point is `run.py` (`run:app` for gunicorn). Config loaded from `.env` via `config.py` (DevelopmentConfig / ProductionConfig selected by `FLASK_ENV`).
+
+**Extensions** (`app/extensions.py`): `db`, `login_manager`, `mail`, `migrate`, `csrf` — instantiated once, initialized in factory.
+
+### Blueprints (6 modules)
+
+| Blueprint | Prefix | Purpose |
+|-----------|--------|---------|
+| `auth` | `/auth` | Login/logout, user CRUD (admin only) |
+| `customers` | `/customers` | Customer CRUD, soft-delete (active flag) |
+| `meters` | `/meters` | Meter CRUD, yearly readings, CSV/Excel import with column mapping |
+| `invoices` | `/invoices` | Invoice generation/edit/PDF/email, tariff CRUD under `/invoices/tariffs` |
+| `accounting` | `/accounting` | Accounts, bookings, open items, annual report, CSV export |
+| `main` | `/` | Dashboard (open invoices, missing readings, income/expense summary) |
+
+Each blueprint follows the pattern: `app/<name>/__init__.py` (registers blueprint) + `app/<name>/routes.py` (all routes).
+
+### Data Model (`app/models.py`)
+
+- **User** — auth with role ("admin"/"user"), active flag
+- **Customer** → has many **WaterMeter** → has many **MeterReading** (unique per meter+year, consumption = current − previous reading)
+- **WaterTariff** — base_fee + price_per_m3, valid for year range
+- **Invoice** → has many **InvoiceItem** + **Booking** links; statuses: Entwurf → Versendet → Bezahlt → Storniert; invoice_number format "RE-YYYY-NNNN"
+- **Account** (Einnahme/Ausgabe) → has many **Booking**
+
+Setting invoice status to "Bezahlt" auto-creates a Booking in the first active income account.
+
+### HTMX Pattern
+
+Many routes check `request.headers.get("HX-Request")` and return partial HTML fragments (`_table.html`, `_row.html`, `_status_badge.html`) instead of full pages. This enables dynamic search/filter without full reloads.
+
+### Forms
+
+All form handling uses raw `request.form` — no WTForms form classes, though Flask-WTF/CSRFProtect is active for CSRF tokens.
+
+## Key Constraints
+
+- **WeasyPrint** (PDF generation, email with PDF) requires GTK3 and only works inside the Docker container. `requirements-dev.txt` excludes it. Routes handle `ImportError` gracefully.
+- **Templates** use AdminLTE 3 layout (`templates/base.html`) with all assets loaded from CDNs.
+- **SQLite** database lives at `instance/wg.db`; generated PDFs go to `instance/pdfs/`.
+- **Cooperative identity** (name, address, IBAN, etc.) is configured via env vars (`WG_NAME`, `WG_ADDRESS`, etc.) and appears on invoices.

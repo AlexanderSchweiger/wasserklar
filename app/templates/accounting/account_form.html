@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Konto bearbeiten' if account else 'Neues Konto' }}{% endblock %}
+{% block page_title %}
+  <i class="fas fa-list mr-2"></i> {{ 'Konto bearbeiten' if account else 'Neues Konto' }}
+{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="col-md-5">
+    <div class="card card-primary">
+      <div class="card-header">
+        <h3 class="card-title">{{ account.name if account else 'Neues Konto' }}</h3>
+      </div>
+      <form method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="card-body">
+          <div class="form-group">
+            <label>Name <span class="text-danger">*</span></label>
+            <input type="text" name="name" class="form-control"
+              value="{{ account.name if account else '' }}" required>
+          </div>
+          <div class="form-group">
+            <label>Typ <span class="text-danger">*</span></label>
+            <select name="type" class="form-control">
+              <option value="Einnahme" {{ 'selected' if account and account.type == 'Einnahme' }}>
+                Einnahme
+              </option>
+              <option value="Ausgabe" {{ 'selected' if account and account.type == 'Ausgabe' }}>
+                Ausgabe
+              </option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Beschreibung</label>
+            <textarea name="description" class="form-control" rows="3">{{ account.description if account else '' }}</textarea>
+          </div>
+          {% if account %}
+          <div class="form-check">
+            <input type="checkbox" name="active" class="form-check-input" id="active"
+              {{ 'checked' if account.active }}>
+            <label class="form-check-label" for="active">Aktiv</label>
+          </div>
+          {% endif %}
+        </div>
+        <div class="card-footer">
+          <button type="submit" class="btn btn-primary">
+            <i class="fas fa-save mr-1"></i> Speichern
+          </button>
+          <a href="{{ url_for('accounting.accounts') }}" class="btn btn-secondary ml-2">Abbrechen</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

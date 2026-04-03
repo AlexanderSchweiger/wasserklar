@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Rechnungen{% endblock %}
+{% block page_title %}<i class="fas fa-file-invoice-dollar mr-2"></i> Rechnungen{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="card-header">
+    <div class="filter-bar">
+      <div class="form-group">
+        <label class="mb-0 mr-1">Status</label>
+        <select name="status" class="form-control form-control-sm"
+          hx-get="{{ url_for('invoices.index') }}"
+          hx-trigger="change"
+          hx-target="#invoices-table"
+          hx-include="[name='status'],[name='year'],[name='q']">
+          <option value="">Alle Status</option>
+          {% for s in statuses %}
+          <option value="{{ s }}" {{ 'selected' if status_filter == s }}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="mb-0 mr-1">Jahr</label>
+        <input type="number" name="year" value="{{ year_filter }}" placeholder="—"
+          class="form-control form-control-sm" style="width:90px"
+          hx-get="{{ url_for('invoices.index') }}"
+          hx-trigger="change"
+          hx-target="#invoices-table"
+          hx-include="[name='status'],[name='year'],[name='q']">
+      </div>
+      <div class="input-group input-group-sm" style="width:220px">
+        <input type="search" name="q" placeholder="Kundenname…" class="form-control"
+          hx-get="{{ url_for('invoices.index') }}"
+          hx-trigger="input changed delay:300ms"
+          hx-target="#invoices-table"
+          hx-include="[name='status'],[name='year'],[name='q']">
+        <div class="input-group-append">
+          <span class="input-group-text"><i class="fas fa-search"></i></span>
+        </div>
+      </div>
+    </div>
+    <div class="card-tools">
+      <a href="{{ url_for('invoices.generate') }}" class="btn btn-primary btn-sm">
+        <i class="fas fa-play mr-1"></i> Rechnungslauf
+      </a>
+      <a href="{{ url_for('invoices.tariffs') }}" class="btn btn-secondary btn-sm ml-1">
+        <i class="fas fa-sliders-h mr-1"></i> Tarife
+      </a>
+    </div>
+  </div>
+  <div class="card-body p-0" id="invoices-table">
+    {% include "invoices/_table.html" %}
+  </div>
+</div>
+{% endblock %}

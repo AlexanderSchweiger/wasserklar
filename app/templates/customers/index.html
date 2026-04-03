@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Kunden{% endblock %}
+{% block page_title %}<i class="fas fa-users mr-2"></i> Kunden{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="card-header">
+    <div class="input-group input-group-sm" style="width:280px">
+      <input type="search" name="q" value="{{ q }}" class="form-control"
+        placeholder="Kunden suchen…"
+        hx-get="{{ url_for('customers.index') }}"
+        hx-trigger="input changed delay:300ms, search"
+        hx-target="#customer-table"
+        hx-include="[name='q']">
+      <div class="input-group-append">
+        <span class="input-group-text"><i class="fas fa-search"></i></span>
+      </div>
+    </div>
+    <div class="card-tools">
+      <a href="{{ url_for('customers.new') }}" class="btn btn-primary btn-sm">
+        <i class="fas fa-plus mr-1"></i> Neuer Kunde
+      </a>
+    </div>
+  </div>
+  <div class="card-body p-0" id="customer-table">
+    {% include "customers/_table.html" %}
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,272 @@
+{% extends "base.html" %}
+{% block title %}Rechnung aus offenem Posten{% endblock %}
+{% block page_title %}<i class="fas fa-file-invoice mr-2"></i> Rechnung generieren{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="col-md-10">
+    <div class="card card-success card-outline">
+      <div class="card-header">
+        <h3 class="card-title">
+          Rechnung für: <strong>{{ item.customer.name }}</strong>
+          <small class="text-muted ml-2">– {{ item.description }}</small>
+        </h3>
+      </div>
+      <form method="post" id="invoiceForm">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="card-body">
+
+          {# ---- Rechnungskopf ---- #}
+          <div class="row">
+            <div class="col-md-4">
+              <div class="form-group">
+                <label>Rechnungsdatum <span class="text-danger">*</span></label>
+                <input type="date" name="date" class="form-control" required value="{{ today.isoformat() }}">
+              </div>
+            </div>
+            <div class="col-md-4">
+              <div class="form-group">
+                <label>Fällig bis</label>
+                <input type="date" name="due_date" class="form-control">
+              </div>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Notizen / Freitext (erscheint auf der Rechnung)</label>
+            <textarea name="notes" class="form-control" rows="2"
+                      placeholder="z.B. Nachzahlung gemäß Abrechnung …">{{ item.notes or '' }}</textarea>
+          </div>
+
+          <hr>
+
+          {# ---- Rechnungspositionen ---- #}
+          <h5>Rechnungspositionen</h5>
+          <p class="text-muted small mb-2">
+            Fügen Sie Positionen hinzu: Tarif-Paket (Grundgebühr + Verbrauch), manuelle Wasserzeile oder freie Position.
+          </p>
+
+          <div id="rowsContainer">
+            {# Rows are injected here by JavaScript #}
+          </div>
+
+          {# Buttons: add row #}
+          <div class="btn-group mt-2" role="group">
+            {% if tariffs %}
+            <button type="button" class="btn btn-outline-info btn-sm" onclick="addTariffRow()">
+              <i class="fas fa-plus mr-1"></i> Tarif-Paket
+            </button>
+            {% endif %}
+            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="addWaterRow()">
+              <i class="fas fa-plus mr-1"></i> Wasser m³
+            </button>
+            <button type="button" class="btn btn-outline-primary btn-sm" onclick="addFreeRow()">
+              <i class="fas fa-plus mr-1"></i> Freie Position
+            </button>
+          </div>
+
+          {# Row templates (hidden) #}
+          <template id="tmplTariff">
+            <div class="row-item border rounded p-2 mb-2 bg-light">
+              <input type="hidden" name="row_type[]" value="tariff">
+              <input type="hidden" name="row_description[]" value="">
+              <input type="hidden" name="row_quantity[]" value="">
+              <input type="hidden" name="row_unit[]" value="">
+              <input type="hidden" name="row_unit_prices_placeholder[]" value="">
+              <input type="hidden" name="row_tax_rate[]" value="0">
+              <div class="row align-items-end">
+                <div class="col-md-4">
+                  <label class="small">Tarif <span class="text-danger">*</span></label>
+                  <select name="row_tariff_id[]" class="form-control form-control-sm tariff-select" required onchange="updateTariffPrice(this)">
+                    <option value="">— Tarif wählen —</option>
+                    {% for t in tariffs %}
+                    <option value="{{ t.id }}"
+                            data-price="{{ t.price_per_m3 }}"
+                            data-base="{{ t.base_fee or 0 }}">
+                      {{ t.name }} ({{ t.valid_from }}{% if t.valid_to %}–{{ t.valid_to }}{% else %} aktuell{% endif %})
+                      – {{ t.price_per_m3 }} €/m³{% if t.base_fee %}, Grundgebühr {{ t.base_fee }} €{% endif %}
+                    </option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="col-md-2">
+                  <label class="small">Verbrauch (m³) <span class="text-danger">*</span></label>
+                  <input type="number" name="row_consumption_m3[]" class="form-control form-control-sm consumption-input"
+                         step="0.001" min="0" placeholder="0.000" required onchange="calcTariffAmount(this)">
+                </div>
+                <div class="col-md-2">
+                  <label class="small">Preis/m³ €</label>
+                  <input type="text" name="row_unit_price[]" class="form-control form-control-sm price-display"
+                         readonly placeholder="—">
+                </div>
+                <div class="col-md-2">
+                  <label class="small">Betrag (ca.)</label>
+                  <input type="text" class="form-control form-control-sm amount-display" readonly placeholder="—">
+                </div>
+                <div class="col-md-1 d-flex align-items-end">
+                  <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeRow(this)">
+                    <i class="fas fa-times"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <template id="tmplWater">
+            <div class="row-item border rounded p-2 mb-2 bg-light">
+              <input type="hidden" name="row_type[]" value="water">
+              <input type="hidden" name="row_tariff_id[]" value="">
+              <input type="hidden" name="row_tax_rate[]" value="0">
+              <div class="row align-items-end">
+                <div class="col-md-4">
+                  <label class="small">Beschreibung</label>
+                  <input type="text" name="row_description[]" class="form-control form-control-sm"
+                         placeholder="Wasserverbrauch (leer = automatisch)">
+                </div>
+                <div class="col-md-2">
+                  <label class="small">Menge (m³) <span class="text-danger">*</span></label>
+                  <input type="number" name="row_consumption_m3[]" class="form-control form-control-sm water-consumption"
+                         step="0.001" min="0" placeholder="0.000" required onchange="calcWaterAmount(this)">
+                </div>
+                <div class="col-md-2">
+                  <label class="small">Preis/m³ € <span class="text-danger">*</span></label>
+                  <input type="number" name="row_unit_price[]" class="form-control form-control-sm water-price"
+                         step="0.0001" min="0" placeholder="0.0000" required onchange="calcWaterAmount(this)">
+                </div>
+                <div class="col-md-2">
+                  <label class="small">Betrag (ca.)</label>
+                  <input type="text" class="form-control form-control-sm amount-display" readonly placeholder="—">
+                </div>
+                <div class="col-md-1 d-flex align-items-end">
+                  <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeRow(this)">
+                    <i class="fas fa-times"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <template id="tmplFree">
+            <div class="row-item border rounded p-2 mb-2">
+              <input type="hidden" name="row_type[]" value="free">
+              <input type="hidden" name="row_tariff_id[]" value="">
+              <input type="hidden" name="row_consumption_m3[]" value="">
+              <div class="row align-items-end">
+                <div class="col-md-3">
+                  <label class="small">Beschreibung <span class="text-danger">*</span></label>
+                  <input type="text" name="row_description[]" class="form-control form-control-sm" required
+                         placeholder="z.B. Mahngebühr">
+                </div>
+                <div class="col-md-1">
+                  <label class="small">Menge</label>
+                  <input type="number" name="row_quantity[]" class="form-control form-control-sm free-qty"
+                         step="0.001" value="1" onchange="calcFreeAmount(this)">
+                </div>
+                <div class="col-md-1">
+                  <label class="small">Einheit</label>
+                  <input type="text" name="row_unit[]" class="form-control form-control-sm" value="Stk">
+                </div>
+                <div class="col-md-2">
+                  <label class="small">Einzelpreis € <span class="text-danger">*</span></label>
+                  <input type="number" name="row_unit_price[]" class="form-control form-control-sm free-price"
+                         step="0.01" min="0" placeholder="0.00" required onchange="calcFreeAmount(this)">
+                </div>
+                <div class="col-md-1">
+                  <label class="small">MwSt %</label>
+                  <input type="number" name="row_tax_rate[]" class="form-control form-control-sm"
+                         step="0.01" min="0" max="100" placeholder="0">
+                </div>
+                <div class="col-md-2">
+                  <label class="small">Betrag (ca.)</label>
+                  <input type="text" class="form-control form-control-sm amount-display" readonly placeholder="—">
+                </div>
+                <div class="col-md-1 d-flex align-items-end">
+                  <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeRow(this)">
+                    <i class="fas fa-times"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </template>
+
+        </div>
+        <div class="card-footer">
+          <button type="submit" class="btn btn-success" id="submitBtn" disabled>
+            <i class="fas fa-file-invoice mr-1"></i> Rechnung erstellen (Entwurf)
+          </button>
+          <a href="{{ url_for('accounting.open_items') }}" class="btn btn-secondary ml-2">Abbrechen</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+const rowsContainer = document.getElementById('rowsContainer');
+
+function cloneTemplate(id) {
+  const tmpl = document.getElementById(id);
+  return tmpl.content.cloneNode(true);
+}
+
+function updateSubmitBtn() {
+  const rows = rowsContainer.querySelectorAll('.row-item');
+  document.getElementById('submitBtn').disabled = rows.length === 0;
+}
+
+function removeRow(btn) {
+  btn.closest('.row-item').remove();
+  updateSubmitBtn();
+}
+
+function addTariffRow() {
+  rowsContainer.appendChild(cloneTemplate('tmplTariff'));
+  updateSubmitBtn();
+}
+
+function addWaterRow() {
+  rowsContainer.appendChild(cloneTemplate('tmplWater'));
+  updateSubmitBtn();
+}
+
+function addFreeRow() {
+  rowsContainer.appendChild(cloneTemplate('tmplFree'));
+  updateSubmitBtn();
+}
+
+function updateTariffPrice(select) {
+  const row = select.closest('.row-item');
+  const opt = select.options[select.selectedIndex];
+  const price = opt.dataset.price || '';
+  row.querySelector('.price-display').value = price ? parseFloat(price).toFixed(4) : '';
+  // recalc if consumption filled
+  calcTariffAmount(row.querySelector('.consumption-input'));
+}
+
+function calcTariffAmount(input) {
+  const row = input.closest('.row-item');
+  const consumption = parseFloat(row.querySelector('.consumption-input').value) || 0;
+  const priceStr = row.querySelector('.price-display').value;
+  const price = parseFloat(priceStr) || 0;
+  const select = row.querySelector('.tariff-select');
+  const opt = select ? select.options[select.selectedIndex] : null;
+  const baseFee = opt ? (parseFloat(opt.dataset.base) || 0) : 0;
+  const total = (consumption * price + baseFee).toFixed(2);
+  row.querySelector('.amount-display').value = price > 0 ? total + ' €' : '';
+}
+
+function calcWaterAmount(input) {
+  const row = input.closest('.row-item');
+  const qty = parseFloat(row.querySelector('.water-consumption').value) || 0;
+  const price = parseFloat(row.querySelector('.water-price').value) || 0;
+  const amount = (qty * price).toFixed(2);
+  row.querySelector('.amount-display').value = price > 0 ? amount + ' €' : '';
+}
+
+function calcFreeAmount(input) {
+  const row = input.closest('.row-item');
+  const qty = parseFloat(row.querySelector('.free-qty').value) || 1;
+  const price = parseFloat(row.querySelector('.free-price').value) || 0;
+  const amount = (qty * price).toFixed(2);
+  row.querySelector('.amount-display').value = price > 0 ? amount + ' €' : '';
+}
+</script>
+{% endblock %}

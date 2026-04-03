@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Buchhaltung{% endblock %}
+{% block page_title %}<i class="fas fa-calculator mr-2"></i> Buchhaltung {{ year }}{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="col-md-3 col-sm-6">
+    <a href="{{ url_for('accounting.bookings', year=year) }}" class="small-box-link">
+      <div class="small-box bg-info">
+        <div class="inner"><h3>Buchungen</h3><p>Einnahmen &amp; Ausgaben</p></div>
+        <div class="icon"><i class="fas fa-book"></i></div>
+      </div>
+    </a>
+  </div>
+  <div class="col-md-3 col-sm-6">
+    <a href="{{ url_for('accounting.open_items') }}" class="small-box-link">
+      <div class="small-box bg-warning">
+        <div class="inner"><h3>Offene Posten</h3><p>Unbezahlte Rechnungen</p></div>
+        <div class="icon"><i class="fas fa-exclamation-circle"></i></div>
+      </div>
+    </a>
+  </div>
+  <div class="col-md-3 col-sm-6">
+    <a href="{{ url_for('accounting.report', year=year) }}" class="small-box-link">
+      <div class="small-box bg-success">
+        <div class="inner"><h3>Jahresbericht</h3><p>EÜR {{ year }}</p></div>
+        <div class="icon"><i class="fas fa-chart-bar"></i></div>
+      </div>
+    </a>
+  </div>
+  <div class="col-md-3 col-sm-6">
+    <a href="{{ url_for('accounting.accounts') }}" class="small-box-link">
+      <div class="small-box bg-secondary">
+        <div class="inner"><h3>Kontenplan</h3><p>Konten verwalten</p></div>
+        <div class="icon"><i class="fas fa-list"></i></div>
+      </div>
+    </a>
+  </div>
+</div>
+{% endblock %}

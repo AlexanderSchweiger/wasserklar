@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}{{ invoice.invoice_number }}{% endblock %}
+{% block page_title %}
+  <i class="fas fa-file-invoice mr-2"></i> {{ invoice.invoice_number }}
+{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="col-md-4">
+    <!-- Rechnungsinfo -->
+    <div class="card card-primary card-outline">
+      <div class="card-header">
+        <h3 class="card-title">Rechnungsinfo</h3>
+      </div>
+      <div class="card-body">
+        <dl class="row mb-0">
+          <dt class="col-sm-5">Kunde</dt>
+          <dd class="col-sm-7">
+            <a href="{{ url_for('customers.detail', customer_id=invoice.customer_id) }}">
+              {{ invoice.customer.name }}
+            </a>
+          </dd>
+          {% if invoice.property %}
+          <dt class="col-sm-5">Objekt</dt>
+          <dd class="col-sm-7">
+            <a href="{{ url_for('properties.detail', property_id=invoice.property_id) }}">
+              {{ invoice.property.label() }}
+            </a>
+          </dd>
+          {% endif %}
+          <dt class="col-sm-5">Jahr</dt>
+          <dd class="col-sm-7">{{ invoice.period_year or '—' }}</dd>
+          <dt class="col-sm-5">Datum</dt>
+          <dd class="col-sm-7">{{ invoice.date.strftime('%d.%m.%Y') }}</dd>
+          <dt class="col-sm-5">Fällig</dt>
+          <dd class="col-sm-7">{{ invoice.due_date.strftime('%d.%m.%Y') if invoice.due_date else '—' }}</dd>
+          <dt class="col-sm-5">Gesamt</dt>
+          <dd class="col-sm-7"><strong>{{ "%.2f"|format(invoice.total_amount) }} €</strong></dd>
+          <dt class="col-sm-5">Status</dt>
+          <dd class="col-sm-7" id="status-badge">{% include "invoices/_status_badge.html" %}</dd>
+        </dl>
+        {% if invoice.notes %}
+        <hr>
+        <p class="text-muted mb-0"><em>{{ invoice.notes }}</em></p>
+        {% endif %}
+      </div>
+      <div class="card-footer">
+        <a href="{{ url_for('invoices.edit', invoice_id=invoice.id) }}"
+           class="btn btn-sm btn-secondary">
+          <i class="fas fa-edit mr-1"></i> Bearbeiten
+        </a>
+        <a href="{{ url_for('invoices.pdf', invoice_id=invoice.id) }}"
+           class="btn btn-sm btn-outline-danger ml-1" target="_blank">
+          <i class="fas fa-file-pdf mr-1"></i> PDF
+        </a>
+        <form method="post" action="{{ url_for('invoices.send_email', invoice_id=invoice.id) }}"
+              style="display:inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-sm btn-outline-primary ml-1">
+            <i class="fas fa-envelope mr-1"></i> E-Mail
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Status setzen -->
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Status ändern</h3>
+      </div>
+      <div class="card-body">
+        <form method="post" action="{{ url_for('invoices.set_status', invoice_id=invoice.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="input-group">
+            <select name="status" class="form-control">
+              {% for s in invoice.ALL_STATUSES %}
+              <option value="{{ s }}" {{ 'selected' if invoice.status == s }}>{{ s }}</option>
+              {% endfor %}
+            </select>
+            <div class="input-group-append">
+              <button type="submit" class="btn btn-default">
+                <i class="fas fa-check"></i>
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Positionen -->
+  <div class="col-md-8">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Rechnungspositionen</h3>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-bordered mb-0">
+          <thead class="thead-light">
+            <tr>
+              <th>Beschreibung</th>
+              <th class="text-right">Menge</th>
+              <th>Einheit</th>
+              <th class="text-right">Einzelpreis</th>
+              <th class="text-right">Betrag</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in invoice.items %}
+            <tr>
+              <td>{{ item.description }}</td>
+              <td class="text-right">{{ "%.3f"|format(item.quantity) }}</td>
+              <td>{{ item.unit }}</td>
+              <td class="text-right">{{ "%.4f"|format(item.unit_price) }} €</td>
+              <td class="text-right">{{ "%.2f"|format(item.amount) }} €</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot>
+            <tr class="table-active">
+              <th colspan="4" class="text-right">Gesamtbetrag</th>
+              <th class="text-right">{{ "%.2f"|format(invoice.total_amount) }} €</th>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

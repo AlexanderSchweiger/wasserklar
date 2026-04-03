@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Ablesungen importieren{% endblock %}
+{% block page_title %}<i class="fas fa-file-import mr-2"></i> Ablesungen importieren{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="col-md-6">
+    <div class="card card-info">
+      <div class="card-header">
+        <h3 class="card-title">CSV / Excel hochladen</h3>
+      </div>
+      <form method="post" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="card-body">
+          <div class="callout callout-info">
+            Unterstützte Formate: <strong>CSV</strong> oder <strong>Excel (.xlsx)</strong><br>
+            Im nächsten Schritt können Sie die Spalten zuordnen.
+          </div>
+          <div class="form-group">
+            <label>Datei auswählen</label>
+            <div class="custom-file">
+              <input type="file" name="file" class="custom-file-input"
+                id="importFile" accept=".csv,.xlsx,.xls" required>
+              <label class="custom-file-label" for="importFile">Datei wählen…</label>
+            </div>
+          </div>
+        </div>
+        <div class="card-footer">
+          <button type="submit" class="btn btn-info">
+            <i class="fas fa-arrow-right mr-1"></i> Weiter
+          </button>
+          <a href="{{ url_for('meters.index') }}" class="btn btn-secondary ml-2">Abbrechen</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  // Dateiname im Label anzeigen
+  document.getElementById('importFile').addEventListener('change', function() {
+    var name = this.files[0] ? this.files[0].name : 'Datei wählen…';
+    this.nextElementSibling.textContent = name;
+  });
+</script>
+{% endblock %}

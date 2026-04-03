@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Benutzerverwaltung{% endblock %}
+{% block page_title %}<i class="fas fa-user-cog mr-2"></i> Benutzerverwaltung{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="card-header">
+    <h3 class="card-title">Benutzer</h3>
+    <div class="card-tools">
+      <a href="{{ url_for('auth.user_new') }}" class="btn btn-primary btn-sm">
+        <i class="fas fa-plus mr-1"></i> Neuer Benutzer
+      </a>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <table class="table table-hover table-striped mb-0">
+      <thead class="thead-light">
+        <tr>
+          <th>Benutzername</th>
+          <th>E-Mail</th>
+          <th>Rolle</th>
+          <th>Aktiv</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in users %}
+        <tr>
+          <td>{{ u.username }}</td>
+          <td>{{ u.email }}</td>
+          <td>
+            <span class="badge badge-{{ 'danger' if u.role == 'admin' else 'secondary' }}">
+              {{ u.role }}
+            </span>
+          </td>
+          <td>
+            {% if u.active %}
+              <i class="fas fa-check-circle text-success"></i>
+            {% else %}
+              <i class="fas fa-times-circle text-danger"></i>
+            {% endif %}
+          </td>
+          <td class="text-right">
+            <a href="{{ url_for('auth.user_edit', user_id=u.id) }}" class="btn btn-sm btn-outline-secondary">
+              <i class="fas fa-edit"></i>
+            </a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

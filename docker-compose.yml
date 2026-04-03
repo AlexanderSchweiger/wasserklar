@@ -1,0 +1,15 @@
+services:
+  wg:
+    build: .
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./instance:/app/instance    # SQLite DB + generierte PDFs
+    env_file:
+      - .env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/auth/login"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

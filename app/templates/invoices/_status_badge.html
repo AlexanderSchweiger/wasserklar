@@ -1,0 +1,3 @@
+<span class="badge badge-{{ 'secondary' if invoice.status == 'Entwurf' else ('info' if invoice.status == 'Versendet' else ('success' if invoice.status == 'Bezahlt' else 'danger')) }}">
+  {{ invoice.status }}
+</span>

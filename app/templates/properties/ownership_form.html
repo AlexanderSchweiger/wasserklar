@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Neuer Besitzer – {{ property.label() }}{% endblock %}
+{% block page_title %}
+  <i class="fas fa-user-plus mr-2"></i> Neuer Besitzer
+{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="col-md-6">
+    <div class="card card-warning">
+      <div class="card-header">
+        <h3 class="card-title">Besitzer zuweisen für {{ property.label() }}</h3>
+      </div>
+      <form method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="card-body">
+          <div class="form-group">
+            <label>Kunde <span class="text-danger">*</span></label>
+            <select name="customer_id" class="form-control" required>
+              {% for c in customers %}
+              <option value="{{ c.id }}">{{ c.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Gültig ab <span class="text-danger">*</span></label>
+            <input type="date" name="valid_from" class="form-control" required
+              value="{{ today.isoformat() }}">
+          </div>
+          <div class="callout callout-info">
+            Ein bereits aktiver Besitzer wird automatisch zum Vortag des neuen Startdatums beendet.
+          </div>
+        </div>
+        <div class="card-footer">
+          <button type="submit" class="btn btn-warning">
+            <i class="fas fa-save mr-1"></i> Besitzer zuweisen
+          </button>
+          <a href="{{ url_for('properties.detail', property_id=property.id) }}"
+             class="btn btn-secondary ml-2">Abbrechen</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

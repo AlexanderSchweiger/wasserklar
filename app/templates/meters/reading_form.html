@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Ablesen: {{ meter.property.label() }}{% endblock %}
+{% block page_title %}
+  <i class="fas fa-tachometer-alt mr-2"></i> Ablesen: {{ meter.property.label() }}
+{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="col-md-5">
+    <div class="card card-warning card-outline">
+      <div class="card-header">
+        <h3 class="card-title">Zähler <code>{{ meter.meter_number }}</code>
+          {% if meter.location %}<small class="text-muted ml-2">{{ meter.location }}</small>{% endif %}
+        </h3>
+      </div>
+      <form method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="card-body">
+          {% set prev = meter.readings.filter_by(year=year-1).first() %}
+          {% if prev %}
+          <div class="callout callout-info">
+            <h6>Vorjahreswert ({{ year - 1 }})</h6>
+            <p class="mb-0"><strong>{{ "%d"|format(prev.value) }} m³</strong></p>
+          </div>
+          {% elif meter.initial_value is not none %}
+          <div class="callout callout-warning">
+            <h6>Anfangsstand (neuer Zähler)</h6>
+            <p class="mb-0"><strong>{{ meter.initial_value|int }} m³</strong>
+            {% if meter.installed_from %}
+            <small class="text-muted ml-2">eingebaut {{ meter.installed_from.strftime('%d.%m.%Y') }}</small>
+            {% endif %}
+            </p>
+          </div>
+          {% endif %}
+          <div class="row">
+            <div class="col-md-6">
+              <div class="form-group">
+                <label>Jahr <span class="text-danger">*</span></label>
+                <input type="number" name="year" class="form-control"
+                  value="{{ year }}" min="2000" max="2100" required>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="form-group">
+                <label>Ablesedatum</label>
+                <input type="date" name="reading_date" class="form-control"
+                  value="{{ existing.reading_date.isoformat() if existing else '' }}">
+              </div>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Zählerstand (m³) <span class="text-danger">*</span></label>
+            <div class="input-group">
+              <input type="number" name="value" step="1" class="form-control form-control-lg"
+                value="{{ existing.value|int if existing else '' }}" required autofocus>
+              <div class="input-group-append">
+                <span class="input-group-text">m³</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="card-footer">
+          <button type="submit" class="btn btn-warning">
+            <i class="fas fa-save mr-1"></i> Speichern
+          </button>
+          <a href="{{ url_for('meters.index', year=year) }}" class="btn btn-secondary ml-2">Abbrechen</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

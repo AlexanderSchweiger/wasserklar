@@ -1,0 +1,37 @@
+<table class="table table-hover table-striped mb-0">
+  <thead class="thead-light">
+    <tr>
+      <th>Name</th>
+      <th>Adresse</th>
+      <th>E-Mail</th>
+      <th>Telefon</th>
+      <th>Mitglied seit</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for c in customers %}
+    <tr>
+      <td>
+        <a href="{{ url_for('customers.detail', customer_id=c.id) }}">
+          <strong>{{ c.name }}</strong>
+        </a>
+      </td>
+      <td>{{ c.address or '—' }}</td>
+      <td>{{ c.email or '—' }}</td>
+      <td>{{ c.phone or '—' }}</td>
+      <td>{{ c.member_since.strftime('%d.%m.%Y') if c.member_since else '—' }}</td>
+      <td class="text-right">
+        <a href="{{ url_for('customers.edit', customer_id=c.id) }}"
+           class="btn btn-sm btn-outline-secondary">
+          <i class="fas fa-edit"></i>
+        </a>
+      </td>
+    </tr>
+    {% else %}
+    <tr>
+      <td colspan="6" class="text-center text-muted py-3">Keine Kunden gefunden.</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>

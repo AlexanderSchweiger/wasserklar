@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+{% block title %}{{ property.label() }}{% endblock %}
+{% block page_title %}<i class="fas fa-home mr-2"></i> {{ property.label() }}{% endblock %}
+{% block content %}
+<div class="row">
+  <!-- Objektdaten -->
+  <div class="col-md-4">
+    <div class="card card-primary card-outline">
+      <div class="card-header">
+        <h3 class="card-title">Objektdaten</h3>
+        <div class="card-tools">
+          <a href="{{ url_for('properties.edit', property_id=property.id) }}"
+             class="btn btn-sm btn-outline-primary">
+            <i class="fas fa-edit"></i> Bearbeiten
+          </a>
+        </div>
+      </div>
+      <div class="card-body">
+        <dl class="row mb-0">
+          <dt class="col-sm-5">Nummer</dt>
+          <dd class="col-sm-7">{{ property.object_number or '—' }}</dd>
+          <dt class="col-sm-5">Typ</dt>
+          <dd class="col-sm-7">{{ property.object_type }}</dd>
+          {% if property.strasse %}
+          <dt class="col-sm-5">Straße</dt>
+          <dd class="col-sm-7">{{ property.strasse }} {{ property.hausnummer or '' }}</dd>
+          {% endif %}
+          {% if property.plz or property.ort %}
+          <dt class="col-sm-5">Ort</dt>
+          <dd class="col-sm-7">{{ property.plz or '' }} {{ property.ort or '' }}</dd>
+          {% endif %}
+          {% if property.land and property.land != 'Österreich' %}
+          <dt class="col-sm-5">Land</dt>
+          <dd class="col-sm-7">{{ property.land }}</dd>
+          {% endif %}
+        </dl>
+        {% if property.notes %}
+        <hr>
+        <p class="text-muted mb-0"><em>{{ property.notes }}</em></p>
+        {% endif %}
+        <form method="post" action="{{ url_for('properties.deactivate', property_id=property.id) }}" class="mt-3">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-sm btn-outline-danger"
+            onclick="return confirm('Objekt wirklich archivieren?')">
+            <i class="fas fa-archive mr-1"></i> Archivieren
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Wasserzähler -->
+    <div class="card card-info card-outline">
+      <div class="card-header">
+        <h3 class="card-title">Wasserzähler</h3>
+        <div class="card-tools">
+          <a href="{{ url_for('meters.meter_new') }}" class="btn btn-sm btn-outline-info">
+            <i class="fas fa-plus"></i>
+          </a>
+        </div>
+      </div>
+      <div class="card-body p-0">
+        <ul class="list-group list-group-flush">
+          {% for meter in property.meters %}
+          <li class="list-group-item">
+            <div class="d-flex justify-content-between align-items-start">
+              <span>
+                <i class="fas fa-tachometer-alt mr-2 text-muted"></i>
+                <strong>{{ meter.meter_number }}</strong>
+                {% if not meter.active %}
+                <span class="badge badge-secondary ml-1">ausgebaut</span>
+                {% else %}
+                <span class="badge badge-success ml-1">aktiv</span>
+                {% endif %}
+                {% if meter.location %}
+                <br><small class="text-muted">{{ meter.location }}</small>
+                {% endif %}
+                {% if meter.installed_from or meter.installed_to %}
+                <br><small class="text-muted">
+                  {% if meter.installed_from %}Einbau: {{ meter.installed_from.strftime('%d.%m.%Y') }}{% endif %}
+                  {% if meter.installed_to %} · Ausbau: {{ meter.installed_to.strftime('%d.%m.%Y') }}{% endif %}
+                </small>
+                {% endif %}
+                {% if meter.initial_value is not none %}
+                <br><small class="text-muted">Anfangsstand: {{ meter.initial_value|int }} m³</small>
+                {% endif %}
+              </span>
+              <div class="btn-group btn-group-sm">
+                <a href="{{ url_for('meters.meter_edit', meter_id=meter.id) }}"
+                   class="btn btn-outline-secondary btn-sm">
+                  <i class="fas fa-edit"></i>
+                </a>
+                {% if meter.active %}
+                <a href="{{ url_for('meters.meter_replace', meter_id=meter.id) }}"
+                   class="btn btn-outline-danger btn-sm" title="Zähler wechseln">
+                  <i class="fas fa-exchange-alt"></i>
+                </a>
+                {% endif %}
+              </div>
+            </div>
+          </li>
+          {% else %}
+          <li class="list-group-item text-muted">Kein Zähler zugeordnet.</li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-8">
+    <!-- Besitzer-Historie -->
+    <div class="card card-warning card-outline">
+      <div class="card-header">
+        <h3 class="card-title">Besitzer</h3>
+        <div class="card-tools">
+          <a href="{{ url_for('properties.ownership_new', property_id=property.id) }}"
+             class="btn btn-sm btn-outline-warning">
+            <i class="fas fa-plus mr-1"></i> Neuer Besitzer
+          </a>
+        </div>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-hover mb-0">
+          <thead class="thead-light">
+            <tr>
+              <th>Kunde</th>
+              <th>Von</th>
+              <th>Bis</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for ow in property.ownerships %}
+            <tr {% if not ow.valid_to %}class="table-success"{% endif %}>
+              <td>
+                <a href="{{ url_for('customers.detail', customer_id=ow.customer_id) }}">
+                  {{ ow.customer.name }}
+                </a>
+              </td>
+              <td>{{ ow.valid_from.strftime('%d.%m.%Y') }}</td>
+              <td>{{ ow.valid_to.strftime('%d.%m.%Y') if ow.valid_to else '<strong>aktiv</strong>' | safe }}</td>
+              <td class="text-right">
+                {% if not ow.valid_to %}
+                <form method="post"
+                      action="{{ url_for('properties.ownership_end', property_id=property.id, ownership_id=ow.id) }}"
+                      style="display:inline">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button type="submit" class="btn btn-sm btn-outline-secondary"
+                    onclick="return confirm('Besitzverhältnis heute beenden?')">
+                    <i class="fas fa-stop-circle mr-1"></i> Beenden
+                  </button>
+                </form>
+                {% endif %}
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4" class="text-center text-muted py-3">Noch kein Besitzer zugewiesen.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Rechnungen -->
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Rechnungen</h3>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-hover table-striped mb-0">
+          <thead class="thead-light">
+            <tr>
+              <th>Rechnungsnr.</th>
+              <th>Kunde</th>
+              <th>Jahr</th>
+              <th>Datum</th>
+              <th class="text-right">Betrag</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for inv in invoices %}
+            <tr>
+              <td>{{ inv.invoice_number }}</td>
+              <td>
+                <a href="{{ url_for('customers.detail', customer_id=inv.customer_id) }}">
+                  {{ inv.customer.name }}
+                </a>
+              </td>
+              <td>{{ inv.period_year or '—' }}</td>
+              <td>{{ inv.date.strftime('%d.%m.%Y') }}</td>
+              <td class="text-right"><strong>{{ "%.2f"|format(inv.total_amount) }} €</strong></td>
+              <td>{% include "invoices/_status_badge.html" %}</td>
+              <td class="text-right">
+                <a href="{{ url_for('invoices.detail', invoice_id=inv.id) }}"
+                   class="btn btn-sm btn-outline-secondary">
+                  <i class="fas fa-eye"></i>
+                </a>
+              </td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="7" class="text-center text-muted py-3">Noch keine Rechnungen.</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

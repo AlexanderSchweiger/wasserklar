@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Objekte{% endblock %}
+{% block page_title %}<i class="fas fa-home mr-2"></i> Objekte{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="card-header">
+    <div class="input-group input-group-sm" style="width:280px">
+      <input type="search" name="q" value="{{ q }}" class="form-control"
+        placeholder="Nummer, Straße, Ort…"
+        hx-get="{{ url_for('properties.index') }}"
+        hx-trigger="input changed delay:300ms, search"
+        hx-target="#property-table"
+        hx-include="[name='q']">
+      <div class="input-group-append">
+        <span class="input-group-text"><i class="fas fa-search"></i></span>
+      </div>
+    </div>
+    <div class="card-tools">
+      <a href="{{ url_for('properties.new') }}" class="btn btn-primary btn-sm">
+        <i class="fas fa-plus mr-1"></i> Neues Objekt
+      </a>
+    </div>
+  </div>
+  <div class="card-body p-0" id="property-table">
+    {% include "properties/_table.html" %}
+  </div>
+</div>
+{% endblock %}

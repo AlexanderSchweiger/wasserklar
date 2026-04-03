@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Zählerablesungen{% endblock %}
+{% block page_title %}<i class="fas fa-tachometer-alt mr-2"></i> Zählerablesungen{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="card-header">
+    <div class="filter-bar">
+      <div class="form-group">
+        <label class="mb-0 mr-1">Jahr</label>
+        <input type="number" id="year-select" name="year" value="{{ year }}"
+          min="2000" max="2100" class="form-control form-control-sm" style="width:90px"
+          hx-get="{{ url_for('meters.index') }}"
+          hx-trigger="change"
+          hx-target="#meters-table"
+          hx-include="[name='q'],[id='year-select']">
+      </div>
+      <div class="input-group input-group-sm" style="width:240px">
+        <input type="search" name="q" value="{{ q }}" class="form-control"
+          placeholder="Objekt suchen…"
+          hx-get="{{ url_for('meters.index') }}"
+          hx-trigger="input changed delay:300ms"
+          hx-target="#meters-table"
+          hx-include="[name='q'],[id='year-select']">
+        <div class="input-group-append">
+          <span class="input-group-text"><i class="fas fa-search"></i></span>
+        </div>
+      </div>
+    </div>
+    <div class="card-tools">
+      <a href="{{ url_for('meters.meter_new') }}" class="btn btn-secondary btn-sm">
+        <i class="fas fa-plus mr-1"></i> Zähler
+      </a>
+      <a href="{{ url_for('meters.import_readings') }}" class="btn btn-outline-secondary btn-sm ml-1">
+        <i class="fas fa-file-import mr-1"></i> Import
+      </a>
+    </div>
+  </div>
+  <div class="card-body p-0" id="meters-table">
+    {% include "meters/_table.html" %}
+  </div>
+</div>
+{% endblock %}

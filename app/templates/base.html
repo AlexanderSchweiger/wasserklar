@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}WG Verwaltung{% endblock %}</title>
+
+  <!-- Font Awesome -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+  <!-- AdminLTE -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/admin-lte@3.2/dist/css/adminlte.min.css">
+  <!-- Google Fonts -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Source+Sans+Pro:300,400,400i,700&display=fallback">
+  <!-- Custom -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body class="hold-transition sidebar-mini layout-fixed">
+<div class="wrapper">
+
+  <!-- ===== Navbar ===== -->
+  <nav class="main-header navbar navbar-expand navbar-white navbar-light">
+    <ul class="navbar-nav">
+      <li class="nav-item">
+        <a class="nav-link" data-widget="pushmenu" href="#" role="button">
+          <i class="fas fa-bars"></i>
+        </a>
+      </li>
+    </ul>
+    <ul class="navbar-nav ml-auto">
+      {% if current_user.is_authenticated %}
+      <li class="nav-item dropdown">
+        <a class="nav-link" data-toggle="dropdown" href="#">
+          <i class="far fa-user"></i> {{ current_user.username }}
+        </a>
+        <div class="dropdown-menu dropdown-menu-right">
+          {% if current_user.is_admin %}
+          <a href="{{ url_for('auth.users') }}" class="dropdown-item">
+            <i class="fas fa-users mr-2"></i> Benutzerverwaltung
+          </a>
+          <div class="dropdown-divider"></div>
+          {% endif %}
+          <a href="{{ url_for('auth.logout') }}" class="dropdown-item">
+            <i class="fas fa-sign-out-alt mr-2"></i> Abmelden
+          </a>
+        </div>
+      </li>
+      {% endif %}
+    </ul>
+  </nav>
+
+  <!-- ===== Sidebar ===== -->
+  {% if current_user.is_authenticated %}
+  <aside class="main-sidebar sidebar-dark-primary elevation-4">
+    <a href="{{ url_for('main.dashboard') }}" class="brand-link">
+      <i class="fas fa-tint brand-image ml-3" style="font-size:1.4rem;opacity:.8"></i>
+      <span class="brand-text font-weight-light">
+        {{ config.WG_NAME | truncate(22, true, '…') }}
+      </span>
+    </a>
+    <div class="sidebar">
+      <div class="user-panel mt-3 pb-3 mb-3 d-flex align-items-center">
+        <div class="info">
+          <span class="d-block text-white">{{ current_user.username }}</span>
+          <small class="text-muted">{{ current_user.role }}</small>
+        </div>
+      </div>
+
+      <nav class="mt-2">
+        <ul class="nav nav-pills nav-sidebar flex-column nav-compact nav-child-indent"
+            data-widget="treeview" data-accordion="false" role="menu">
+
+          <li class="nav-item">
+            <a href="{{ url_for('main.dashboard') }}" class="nav-link {% if request.endpoint == 'main.dashboard' %}active{% endif %}">
+              <i class="nav-icon fas fa-tachometer-alt"></i>
+              <p>Dashboard</p>
+            </a>
+          </li>
+
+          <li class="nav-item">
+            <a href="{{ url_for('customers.index') }}" class="nav-link {% if request.blueprint == 'customers' %}active{% endif %}">
+              <i class="nav-icon fas fa-users"></i>
+              <p>Kunden</p>
+            </a>
+          </li>
+
+          <li class="nav-item">
+            <a href="{{ url_for('properties.index') }}" class="nav-link {% if request.blueprint == 'properties' %}active{% endif %}">
+              <i class="nav-icon fas fa-home"></i>
+              <p>Objekte</p>
+            </a>
+          </li>
+
+          <li class="nav-item">
+            <a href="{{ url_for('meters.index') }}" class="nav-link {% if request.blueprint == 'meters' %}active{% endif %}">
+              <i class="nav-icon fas fa-tachometer-alt"></i>
+              <p>Zähler</p>
+            </a>
+          </li>
+
+          <li class="nav-item {% if request.blueprint == 'invoices' %}menu-open{% endif %}">
+            <a href="#" class="nav-link {% if request.blueprint == 'invoices' %}active{% endif %}">
+              <i class="nav-icon fas fa-file-invoice-dollar"></i>
+              <p>Rechnungen <i class="right fas fa-angle-left"></i></p>
+            </a>
+            <ul class="nav nav-treeview">
+              <li class="nav-item">
+                <a href="{{ url_for('invoices.index') }}" class="nav-link {% if request.endpoint == 'invoices.index' %}active{% endif %}">
+                  <i class="far fa-circle nav-icon"></i><p>Alle Rechnungen</p>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a href="{{ url_for('invoices.generate') }}" class="nav-link {% if request.endpoint == 'invoices.generate' %}active{% endif %}">
+                  <i class="far fa-circle nav-icon"></i><p>Rechnungslauf</p>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a href="{{ url_for('invoices.tariffs') }}" class="nav-link {% if request.endpoint in ('invoices.tariffs','invoices.tariff_new','invoices.tariff_edit') %}active{% endif %}">
+                  <i class="far fa-circle nav-icon"></i><p>Tarife</p>
+                </a>
+              </li>
+            </ul>
+          </li>
+
+          <li class="nav-item {% if request.blueprint == 'accounting' %}menu-open{% endif %}">
+            <a href="#" class="nav-link {% if request.blueprint == 'accounting' %}active{% endif %}">
+              <i class="nav-icon fas fa-calculator"></i>
+              <p>Buchhaltung <i class="right fas fa-angle-left"></i></p>
+            </a>
+            <ul class="nav nav-treeview">
+              <li class="nav-item">
+                <a href="{{ url_for('accounting.bookings') }}" class="nav-link {% if request.endpoint in ('accounting.bookings','accounting.booking_new','accounting.booking_edit') %}active{% endif %}">
+                  <i class="far fa-circle nav-icon"></i><p>Buchungen</p>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a href="{{ url_for('accounting.open_items') }}" class="nav-link {% if request.endpoint == 'accounting.open_items' %}active{% endif %}">
+                  <i class="far fa-circle nav-icon"></i><p>Offene Posten</p>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a href="{{ url_for('accounting.open_item_new') }}" class="nav-link {% if request.endpoint == 'accounting.open_item_new' %}active{% endif %}">
+                  <i class="far fa-circle nav-icon"></i><p>Neuer off. Posten</p>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a href="{{ url_for('accounting.report') }}" class="nav-link {% if request.endpoint == 'accounting.report' %}active{% endif %}">
+                  <i class="far fa-circle nav-icon"></i><p>Jahresbericht</p>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a href="{{ url_for('accounting.accounts') }}" class="nav-link {% if request.endpoint in ('accounting.accounts','accounting.account_new','accounting.account_edit') %}active{% endif %}">
+                  <i class="far fa-circle nav-icon"></i><p>Kontenplan</p>
+                </a>
+              </li>
+            </ul>
+          </li>
+
+          {% if current_user.is_admin %}
+          <li class="nav-item">
+            <a href="{{ url_for('auth.users') }}" class="nav-link {% if request.blueprint == 'auth' and request.endpoint != 'auth.login' %}active{% endif %}">
+              <i class="nav-icon fas fa-user-cog"></i>
+              <p>Benutzer</p>
+            </a>
+          </li>
+          {% endif %}
+
+        </ul>
+      </nav>
+    </div>
+  </aside>
+  {% endif %}
+
+  <!-- ===== Content Wrapper ===== -->
+  <div class="content-wrapper">
+    {% if current_user.is_authenticated %}
+    <div class="content-header">
+      <div class="container-fluid">
+        <h1 class="m-0">{% block page_title %}{% endblock %}</h1>
+      </div>
+    </div>
+    {% endif %}
+
+    <section class="content">
+      <div class="container-fluid">
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% for category, message in messages %}
+            <div class="alert alert-{{ 'danger' if category == 'danger' else ('warning' if category == 'warning' else ('info' if category == 'info' else 'success')) }} alert-dismissible fade show" role="alert">
+              {{ message }}
+              <button type="button" class="close" data-dismiss="alert">
+                <span>&times;</span>
+              </button>
+            </div>
+          {% endfor %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+
+      </div>
+    </section>
+  </div>
+
+  <!-- ===== Footer ===== -->
+  {% if current_user.is_authenticated %}
+  <footer class="main-footer">
+    <strong>{{ config.WG_NAME }}</strong>
+    <div class="float-right d-none d-sm-inline-block">
+      <small>Wassergenossenschaft Verwaltung</small>
+    </div>
+  </footer>
+  {% endif %}
+
+</div><!-- /wrapper -->
+
+<!-- Scripts -->
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/admin-lte@3.2/dist/js/adminlte.min.js"></script>
+<script src="https://unpkg.com/htmx.org@2.0.4"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,22 @@
+<table class="table table-hover table-striped mb-0">
+  <thead class="thead-light">
+    <tr>
+      <th>Objekt</th>
+      <th>Zählernummer</th>
+      <th>Standort</th>
+      <th class="text-right">Stand {{ year - 1 }}</th>
+      <th class="text-right">Stand {{ year }}</th>
+      <th class="text-right">Verbrauch (m³)</th>
+      <th>Datum</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for meter in meters %}
+    {% set reading = readings_map.get(meter.id) %}
+    {% include "meters/_row.html" %}
+    {% else %}
+    <tr><td colspan="8" class="text-center text-muted py-3">Keine Zähler gefunden.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>

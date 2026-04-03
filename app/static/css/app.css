@@ -1,0 +1,40 @@
+/* WG Verwaltung – AdminLTE Custom Styles */
+
+/* Status-Badges */
+.badge-entwurf    { background-color: #6c757d; }
+.badge-versendet  { background-color: #17a2b8; }
+.badge-bezahlt    { background-color: #28a745; }
+.badge-storniert  { background-color: #dc3545; }
+
+/* Überfällige Zeilen */
+tr.overdue { background-color: #fff3cd !important; }
+
+/* HTMX Loading-Indikator */
+.htmx-indicator { opacity: 0; transition: opacity 200ms ease-in; }
+.htmx-request .htmx-indicator { opacity: 1; }
+
+/* Kompaktere Tabellen in Cards */
+.card-body .table { margin-bottom: 0; }
+
+/* Inline-Form-Buttons (z.B. Löschen) */
+.btn-link-danger {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #dc3545;
+  cursor: pointer;
+  font-size: inherit;
+}
+.btn-link-danger:hover { text-decoration: underline; }
+
+/* Filter-Leiste */
+.filter-bar {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+.filter-bar .form-group { margin-bottom: 0; }
+.filter-bar select,
+.filter-bar input { margin-bottom: 0; }

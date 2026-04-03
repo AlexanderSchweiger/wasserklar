@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Kunde bearbeiten' if customer else 'Neuer Kunde' }}{% endblock %}
+{% block page_title %}
+  <i class="fas fa-user mr-2"></i> {{ 'Kunde bearbeiten' if customer else 'Neuer Kunde' }}
+{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="col-md-8">
+    <div class="card card-primary">
+      <div class="card-header">
+        <h3 class="card-title">{{ customer.name if customer else 'Neuer Kunde' }}</h3>
+      </div>
+      <form method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="card-body">
+          <div class="row">
+            <div class="col-md-8">
+              <div class="form-group">
+                <label>Name <span class="text-danger">*</span></label>
+                <input type="text" name="name" class="form-control"
+                  value="{{ customer.name if customer else '' }}" required>
+              </div>
+            </div>
+            <div class="col-md-4">
+              <div class="form-group">
+                <label>Telefon</label>
+                <input type="tel" name="phone" class="form-control"
+                  value="{{ customer.phone if customer else '' }}">
+              </div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="col-md-8">
+              <div class="form-group">
+                <label>Straße</label>
+                <input type="text" name="strasse" class="form-control"
+                  value="{{ customer.strasse if customer else '' }}">
+              </div>
+            </div>
+            <div class="col-md-4">
+              <div class="form-group">
+                <label>Hausnummer</label>
+                <input type="text" name="hausnummer" class="form-control"
+                  value="{{ customer.hausnummer if customer else '' }}">
+              </div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="col-md-3">
+              <div class="form-group">
+                <label>PLZ</label>
+                <input type="text" name="plz" class="form-control"
+                  value="{{ customer.plz if customer else '' }}">
+              </div>
+            </div>
+            <div class="col-md-5">
+              <div class="form-group">
+                <label>Ort / Stadt</label>
+                <input type="text" name="ort" class="form-control"
+                  value="{{ customer.ort if customer else '' }}">
+              </div>
+            </div>
+            <div class="col-md-4">
+              <div class="form-group">
+                <label>Land</label>
+                <input type="text" name="land" class="form-control"
+                  value="{{ customer.land if customer else 'Österreich' }}">
+              </div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="col-md-6">
+              <div class="form-group">
+                <label>E-Mail</label>
+                <input type="email" name="email" class="form-control"
+                  value="{{ customer.email if customer else '' }}">
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="form-group">
+                <label>Mitglied seit</label>
+                <input type="date" name="member_since" class="form-control"
+                  value="{{ customer.member_since.isoformat() if customer and customer.member_since else '' }}">
+              </div>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Notizen</label>
+            <textarea name="notes" class="form-control" rows="3">{{ customer.notes if customer else '' }}</textarea>
+          </div>
+        </div>
+        <div class="card-footer">
+          <button type="submit" class="btn btn-primary">
+            <i class="fas fa-save mr-1"></i> Speichern
+          </button>
+          <a href="{{ url_for('customers.index') }}" class="btn btn-secondary ml-2">Abbrechen</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

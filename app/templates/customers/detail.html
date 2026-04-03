@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}{{ customer.name }}{% endblock %}
+{% block page_title %}<i class="fas fa-user mr-2"></i> {{ customer.name }}{% endblock %}
+{% block content %}
+<div class="row">
+  <!-- Kontaktdaten -->
+  <div class="col-md-4">
+    <div class="card card-primary card-outline">
+      <div class="card-header">
+        <h3 class="card-title">Kontaktdaten</h3>
+        <div class="card-tools">
+          <a href="{{ url_for('customers.edit', customer_id=customer.id) }}"
+             class="btn btn-sm btn-outline-primary">
+            <i class="fas fa-edit"></i> Bearbeiten
+          </a>
+        </div>
+      </div>
+      <div class="card-body">
+        {% set street = [customer.strasse, customer.hausnummer] | select | join(' ') %}
+        {% set city = [customer.plz, customer.ort] | select | join(' ') %}
+        {% if street or city %}
+        <p>
+          <i class="fas fa-map-marker-alt mr-2 text-muted"></i>
+          {{ street }}{% if street and city %}, {% endif %}{{ city }}
+          {% if customer.land and customer.land != 'Österreich' %}, {{ customer.land }}{% endif %}
+        </p>
+        {% endif %}
+        {% if customer.email %}
+        <p><i class="fas fa-envelope mr-2 text-muted"></i>{{ customer.email }}</p>
+        {% endif %}
+        {% if customer.phone %}
+        <p><i class="fas fa-phone mr-2 text-muted"></i>{{ customer.phone }}</p>
+        {% endif %}
+        {% if customer.member_since %}
+        <p><i class="fas fa-calendar mr-2 text-muted"></i>Mitglied seit {{ customer.member_since.strftime('%d.%m.%Y') }}</p>
+        {% endif %}
+        {% if customer.notes %}
+        <p class="text-muted"><em>{{ customer.notes }}</em></p>
+        {% endif %}
+        <form method="post" action="{{ url_for('customers.deactivate', customer_id=customer.id) }}" class="mt-3">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-sm btn-outline-danger"
+            onclick="return confirm('Kunden wirklich archivieren?')">
+            <i class="fas fa-archive mr-1"></i> Archivieren
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Objekte -->
+    <div class="card card-info card-outline">
+      <div class="card-header">
+        <h3 class="card-title">Objekte</h3>
+      </div>
+      <div class="card-body p-0">
+        <ul class="list-group list-group-flush">
+          {% for ow in customer.ownerships %}
+          <li class="list-group-item d-flex justify-content-between align-items-center">
+            <span>
+              <i class="fas fa-home mr-2 text-muted"></i>
+              <a href="{{ url_for('properties.detail', property_id=ow.property_id) }}">
+                {{ ow.property.label() }}
+              </a>
+              {% if not ow.valid_to %}
+              <span class="badge badge-success ml-1">aktiv</span>
+              {% else %}
+              <br><small class="text-muted">Bis {{ ow.valid_to.strftime('%d.%m.%Y') }}</small>
+              {% endif %}
+            </span>
+          </li>
+          {% else %}
+          <li class="list-group-item text-muted">Keine Objekte zugeordnet.</li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Rechnungen -->
+  <div class="col-md-8">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Rechnungen</h3>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-hover table-striped mb-0">
+          <thead class="thead-light">
+            <tr>
+              <th>Rechnungsnr.</th>
+              <th>Jahr</th>
+              <th>Datum</th>
+              <th class="text-right">Betrag</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for inv in invoices %}
+            <tr>
+              <td>{{ inv.invoice_number }}</td>
+              <td>{{ inv.period_year or '—' }}</td>
+              <td>{{ inv.date.strftime('%d.%m.%Y') }}</td>
+              <td class="text-right"><strong>{{ "%.2f"|format(inv.total_amount) }} €</strong></td>
+              <td>{% include "invoices/_status_badge.html" %}</td>
+              <td class="text-right">
+                <a href="{{ url_for('invoices.detail', invoice_id=inv.id) }}"
+                   class="btn btn-sm btn-outline-secondary">
+                  <i class="fas fa-eye"></i>
+                </a>
+              </td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="6" class="text-center text-muted py-3">Noch keine Rechnungen.</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

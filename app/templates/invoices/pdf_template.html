@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; font-size: 11pt; color: #333; }
+  .header { display: flex; justify-content: space-between; margin-bottom: 2cm; }
+  .sender-info { font-size: 9pt; color: #666; }
+  .recipient { margin-top: 0.5cm; }
+  .invoice-meta { float: right; text-align: right; margin-bottom: 1cm; }
+  h1 { font-size: 18pt; margin: 1cm 0 0.5cm 0; clear: both; }
+  table { width: 100%; border-collapse: collapse; margin: 0.5cm 0; }
+  th { background: #f0f0f0; padding: 6px 8px; text-align: left; border-bottom: 2px solid #333; font-size: 10pt; }
+  td { padding: 5px 8px; border-bottom: 1px solid #ddd; font-size: 10pt; }
+  .text-right { text-align: right; }
+  .total-row td { font-weight: bold; border-top: 2px solid #333; border-bottom: none; }
+  .footer { margin-top: 2cm; font-size: 9pt; color: #666; border-top: 1px solid #ddd; padding-top: 0.5cm; }
+  .payment-info { margin-top: 1cm; padding: 0.5cm; background: #f9f9f9; border: 1px solid #ddd; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <strong>{{ config.WG_NAME }}</strong><br>
+    <span class="sender-info">{{ config.WG_ADDRESS | replace('\n', '<br>') | safe }}</span>
+  </div>
+  <div>
+    {% if config.WG_EMAIL %}<div>{{ config.WG_EMAIL }}</div>{% endif %}
+    {% if config.WG_PHONE %}<div>{{ config.WG_PHONE }}</div>{% endif %}
+  </div>
+</div>
+
+<div class="invoice-meta">
+  <strong>Rechnungsnummer:</strong> {{ invoice.invoice_number }}<br>
+  <strong>Datum:</strong> {{ invoice.date.strftime('%d.%m.%Y') }}<br>
+  <strong>Fällig bis:</strong> {{ invoice.due_date.strftime('%d.%m.%Y') if invoice.due_date else '—' }}<br>
+  {% if invoice.period_year %}<strong>Abrechnungsjahr:</strong> {{ invoice.period_year }}{% endif %}
+</div>
+
+<div class="recipient">
+  {{ invoice.customer.name }}<br>
+  {% set street = [invoice.customer.strasse, invoice.customer.hausnummer] | select | join(' ') %}
+  {% set city = [invoice.customer.plz, invoice.customer.ort] | select | join(' ') %}
+  {% if street %}{{ street }}<br>{% endif %}
+  {% if city %}{{ city }}<br>{% endif %}
+  {% if invoice.customer.land and invoice.customer.land != 'Österreich' %}{{ invoice.customer.land }}<br>{% endif %}
+  {% if invoice.property %}
+  <br><small>Betr.: {{ invoice.property.label() }}</small>
+  {% endif %}
+</div>
+
+<h1>Rechnung</h1>
+
+<table>
+  {% set has_tax = invoice.items | selectattr('tax_rate') | list | length > 0 %}
+  <thead>
+    <tr>
+      <th>Beschreibung</th>
+      <th class="text-right">Menge</th>
+      <th>Einheit</th>
+      <th class="text-right">Einzelpreis</th>
+      {% if has_tax %}<th class="text-right">MwSt</th>{% endif %}
+      <th class="text-right">Betrag</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in invoice.items %}
+    <tr>
+      <td>{{ item.description }}</td>
+      <td class="text-right">{{ "%.3f"|format(item.quantity) }}</td>
+      <td>{{ item.unit }}</td>
+      <td class="text-right">{{ "%.4f"|format(item.unit_price) }} €</td>
+      {% if has_tax %}<td class="text-right">{{ "%.0f"|format(item.tax_rate) if item.tax_rate else '—' }} %</td>{% endif %}
+      <td class="text-right">{{ "%.2f"|format(item.amount) }} €</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+  <tfoot>
+    {% if has_tax %}
+    {% set tax_total = [] %}
+    {% for item in invoice.items %}
+      {% if item.tax_rate and item.tax_rate > 0 %}
+        {% set _ = tax_total.append(item.amount * item.tax_rate / 100) %}
+      {% endif %}
+    {% endfor %}
+    {% if tax_total %}
+    <tr>
+      <td colspan="{{ 5 if has_tax else 4 }}">Nettobetrag</td>
+      <td class="text-right">{{ "%.2f"|format(invoice.total_amount) }} €</td>
+    </tr>
+    <tr>
+      <td colspan="{{ 5 if has_tax else 4 }}">MwSt</td>
+      <td class="text-right">{{ "%.2f"|format(tax_total | sum) }} €</td>
+    </tr>
+    <tr class="total-row">
+      <td colspan="{{ 5 if has_tax else 4 }}">Gesamtbetrag inkl. MwSt</td>
+      <td class="text-right">{{ "%.2f"|format(invoice.total_amount + (tax_total | sum)) }} €</td>
+    </tr>
+    {% else %}
+    <tr class="total-row">
+      <td colspan="{{ 5 if has_tax else 4 }}">Gesamtbetrag</td>
+      <td class="text-right">{{ "%.2f"|format(invoice.total_amount) }} €</td>
+    </tr>
+    {% endif %}
+    {% else %}
+    <tr class="total-row">
+      <td colspan="4">Gesamtbetrag</td>
+      <td class="text-right">{{ "%.2f"|format(invoice.total_amount) }} €</td>
+    </tr>
+    {% endif %}
+  </tfoot>
+    </tr>
+  </tfoot>
+</table>
+
+{% if invoice.notes %}
+<p style="margin-top:0.5cm"><em>{{ invoice.notes }}</em></p>
+{% endif %}
+
+<div class="payment-info">
+  <strong>Zahlungsinformationen</strong><br>
+  Bitte überweisen Sie den Betrag von <strong>{{ "%.2f"|format(invoice.total_amount) }} €</strong>
+  bis zum {{ invoice.due_date.strftime('%d.%m.%Y') if invoice.due_date else '—' }}<br>
+  {% if config.WG_IBAN %}IBAN: <strong>{{ config.WG_IBAN }}</strong><br>{% endif %}
+  Empfänger: {{ config.WG_NAME }}<br>
+  Verwendungszweck: <strong>{{ invoice.invoice_number }}</strong>
+</div>
+
+<div class="footer">
+  {{ config.WG_NAME }}
+  {% if config.WG_ADDRESS %} &mdash; {{ config.WG_ADDRESS | replace('\n', ' | ') | replace('\\n', ' | ') }}{% endif %}
+  {% if config.WG_EMAIL %} &mdash; {{ config.WG_EMAIL }}{% endif %}
+</div>
+
+</body>
+</html>

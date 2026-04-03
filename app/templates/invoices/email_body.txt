@@ -1,0 +1,17 @@
+Sehr geehrte(r) {{ invoice.customer.name }},
+
+anbei erhalten Sie Ihre Rechnung {{ invoice.invoice_number }} vom {{ invoice.date.strftime('%d.%m.%Y') }}.
+
+Rechnungsbetrag: {{ "%.2f"|format(invoice.total_amount) }} Euro
+Fälligkeitsdatum: {{ invoice.due_date.strftime('%d.%m.%Y') if invoice.due_date else '—' }}
+{% if config.WG_IBAN %}
+IBAN: {{ config.WG_IBAN }}
+Verwendungszweck: {{ invoice.invoice_number }}
+{% endif %}
+
+Das PDF-Dokument finden Sie im Anhang.
+
+Mit freundlichen Grüßen
+{{ config.WG_NAME }}
+{% if config.WG_EMAIL %}{{ config.WG_EMAIL }}{% endif %}
+{% if config.WG_PHONE %}{{ config.WG_PHONE }}{% endif %}
