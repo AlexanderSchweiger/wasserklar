@@ -1,6 +1,7 @@
 <tr id="meter-row-{{ meter.id }}">
   {% set prev_reading = prev_readings_map.get(meter.id) %}
   {% set repl = replacement_map.get(meter.id) if replacement_map is defined else none %}
+  <td class="text-nowrap">{{ (owners_map.get(meter.property_id) if owners_map is defined else none) or '—' }}</td>
   <td>
     <a href="{{ url_for('properties.detail', property_id=meter.property_id) }}">
       {{ meter.property.label() }}
@@ -8,6 +9,7 @@
   </td>
   <td><code>{{ meter.meter_number }}</code></td>
   <td>{{ meter.location or '—' }}</td>
+  <td>{{ meter.eichjahr or '—' }}</td>
 
   {# Stand Vorjahr #}
   <td class="text-right text-muted">

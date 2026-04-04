@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+{% block title %}Spalten zuordnen{% endblock %}
+{% block page_title %}<i class="fas fa-sliders-h mr-2"></i> Spalten zuordnen{% endblock %}
+{% block content %}
+<form method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+  <div class="row">
+    <div class="col-lg-8">
+
+      {# ------------------------------------------------------------------ #}
+      {# Pflicht- und optionale Felder                                       #}
+      {# ------------------------------------------------------------------ #}
+      <div class="card card-warning">
+        <div class="card-header">
+          <h3 class="card-title">Felder zuordnen</h3>
+          <div class="card-tools">
+            <small class="text-muted">* Pflichtfeld</small>
+          </div>
+        </div>
+        <div class="card-body p-0">
+          <table class="table table-sm table-bordered mb-0">
+            <thead class="thead-light">
+              <tr>
+                <th style="width:35%">Programmfeld</th>
+                <th>CSV-Spalte</th>
+              </tr>
+            </thead>
+            <tbody>
+
+              {% macro col_select(field_key, label, required=False) %}
+              <tr>
+                <td class="align-middle">
+                  {{ label }}{% if required %} <span class="text-danger">*</span>{% endif %}
+                </td>
+                <td>
+                  <select name="col_{{ field_key }}" class="form-control form-control-sm">
+                    {% if not required %}
+                    <option value="">— nicht zuordnen —</option>
+                    {% endif %}
+                    {% for col in columns %}
+                    <option value="{{ col }}"
+                      {% if suggestions.get(field_key) == col %}selected{% endif %}>
+                      {{ col }}
+                    </option>
+                    {% endfor %}
+                  </select>
+                </td>
+              </tr>
+              {% endmacro %}
+
+              {# Kunden-Felder #}
+              <tr class="table-secondary">
+                <td colspan="2"><strong>Kunde</strong></td>
+              </tr>
+              {{ col_select("customer_number", "Kunden-Nr.", required=True) }}
+              {{ col_select("customer_name", "Name / Kombinierter Name") }}
+              {{ col_select("name_last", "Nachname (Fallback)") }}
+              {{ col_select("name_first", "Vorname (Fallback)") }}
+              {{ col_select("strasse", "Straße (Rechnungsadresse)") }}
+              {{ col_select("plz", "PLZ (Rechnungsadresse)") }}
+              {{ col_select("ort", "Ort (Rechnungsadresse)") }}
+              {{ col_select("land", "Land (Rechnungsadresse)") }}
+              {{ col_select("phone", "Telefon") }}
+              {{ col_select("email", "E-Mail") }}
+              {{ col_select("notes", "Kommentar / Notizen") }}
+
+              {# Objekt-Felder #}
+              <tr class="table-secondary">
+                <td colspan="2"><strong>Objekt</strong></td>
+              </tr>
+              {{ col_select("property_name", "Objekt (Bezeichnung / Adresse)", required=True) }}
+              {{ col_select("property_type", "Typ (Stall → Sonstiges)") }}
+
+              {# Zähler-Felder #}
+              <tr class="table-secondary">
+                <td colspan="2"><strong>Zähler</strong></td>
+              </tr>
+              {{ col_select("meter_number", "Zählernummer", required=True) }}
+              {{ col_select("meter_eichjahr", "Eichjahr") }}
+
+            </tbody>
+          </table>
+        </div>
+      </div><!-- /card -->
+
+      {# ------------------------------------------------------------------ #}
+      {# Auto-erkannte Stand-Spalten                                         #}
+      {# ------------------------------------------------------------------ #}
+      {% if stand_columns %}
+      <div class="callout callout-success">
+        <h6><i class="fas fa-check-circle mr-1"></i> Automatisch erkannte Ablesungen</h6>
+        <p class="mb-1">Folgende Spalten werden automatisch als Zählerstände importiert:</p>
+        <ul class="mb-0">
+          {% for col, year in stand_columns %}
+          <li><code>{{ col }}</code> → Jahr {{ year }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% else %}
+      <div class="callout callout-warning">
+        <i class="fas fa-exclamation-triangle mr-1"></i>
+        Keine <code>Stand YYYY</code>-Spalten gefunden. Zählerstände werden nicht importiert.
+      </div>
+      {% endif %}
+
+      {# ------------------------------------------------------------------ #}
+      {# Duplikate-Behandlung                                                #}
+      {# ------------------------------------------------------------------ #}
+      <div class="card card-outline card-secondary">
+        <div class="card-header">
+          <h3 class="card-title"><i class="fas fa-copy mr-1"></i> Duplikate-Behandlung</h3>
+        </div>
+        <div class="card-body">
+          <div class="form-group mb-0">
+            <div class="form-check mb-2">
+              <input class="form-check-input" type="radio" name="duplicate_mode"
+                     id="mode_skip" value="skip" checked>
+              <label class="form-check-label" for="mode_skip">
+                <strong>Überspringen</strong> –
+                Vorhandene Kunden (gleiche Kunden-Nr.) werden nicht verändert
+              </label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="duplicate_mode"
+                     id="mode_overwrite" value="overwrite">
+              <label class="form-check-label" for="mode_overwrite">
+                <strong>Überschreiben</strong> –
+                Kunden, Objekte und Zähler werden neu angelegt
+                <span class="text-danger">(nur möglich wenn keine Rechnungen vorhanden)</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /col-lg-8 -->
+
+    <div class="col-lg-4">
+      {# ------------------------------------------------------------------ #}
+      {# Daten-Vorschau                                                       #}
+      {# ------------------------------------------------------------------ #}
+      <div class="card card-outline card-info">
+        <div class="card-header">
+          <h3 class="card-title">Datenvorschau (erste 5 Zeilen)</h3>
+        </div>
+        <div class="card-body p-0" style="overflow-x:auto;">
+          <table class="table table-bordered table-sm mb-0" style="font-size:.75rem;min-width:600px">
+            <thead class="thead-light">
+              <tr>
+                {% for col in columns %}
+                <th>{{ col }}</th>
+                {% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in preview %}
+              <tr>
+                {% for col in columns %}
+                <td>{{ row[col] }}</td>
+                {% endfor %}
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div><!-- /col-lg-4 -->
+  </div><!-- /row -->
+
+  {# ------------------------------------------------------------------ #}
+  {# Footer-Buttons                                                       #}
+  {# ------------------------------------------------------------------ #}
+  <div class="row">
+    <div class="col-12">
+      <button type="submit" class="btn btn-warning">
+        <i class="fas fa-play mr-1"></i> Import starten
+      </button>
+      <a href="{{ url_for('import_csv.upload') }}" class="btn btn-secondary ml-2">
+        <i class="fas fa-arrow-left mr-1"></i> Zurück
+      </a>
+    </div>
+  </div>
+
+</form>
+{% endblock %}

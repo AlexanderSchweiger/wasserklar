@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{{ customer.name }}{% endblock %}
-{% block page_title %}<i class="fas fa-user mr-2"></i> {{ customer.name }}{% endblock %}
+{% block page_title %}<i class="fas fa-user mr-2"></i> {{ customer.name }}{% if customer.customer_number %} <small class="text-muted">#{{ customer.customer_number }}</small>{% endif %}{% endblock %}
 {% block content %}
 <div class="row">
   <!-- Kontaktdaten -->
@@ -16,6 +16,12 @@
         </div>
       </div>
       <div class="card-body">
+        {% if customer.customer_number %}
+        <p><i class="fas fa-hashtag mr-2 text-muted"></i>Kundennummer: <strong>{{ customer.customer_number }}</strong></p>
+        {% endif %}
+        {% if customer.externe_kennung %}
+        <p><i class="fas fa-tag mr-2 text-muted"></i>Externe Kennung: <strong>{{ customer.externe_kennung }}</strong></p>
+        {% endif %}
         {% set street = [customer.strasse, customer.hausnummer] | select | join(' ') %}
         {% set city = [customer.plz, customer.ort] | select | join(' ') %}
         {% if street or city %}

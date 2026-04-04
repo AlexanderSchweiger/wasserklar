@@ -41,8 +41,14 @@ def create_app(config_name=None):
     from app.accounting import bp as accounting_bp
     app.register_blueprint(accounting_bp)
 
+    from app.projects import bp as projects_bp
+    app.register_blueprint(projects_bp)
+
     from app.main import bp as main_bp
     app.register_blueprint(main_bp)
+
+    from app.import_csv import bp as import_csv_bp
+    app.register_blueprint(import_csv_bp)
 
     # CLI-Befehle
     from cli import register_commands

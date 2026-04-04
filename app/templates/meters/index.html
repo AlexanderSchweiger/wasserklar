@@ -2,6 +2,7 @@
 {% block title %}Zählerablesungen{% endblock %}
 {% block page_title %}<i class="fas fa-tachometer-alt mr-2"></i> Zählerablesungen{% endblock %}
 {% block content %}
+<input type="hidden" name="mode" id="mode-input" value="{{ mode }}">
 <div class="card">
   <div class="card-header">
     <div class="filter-bar">
@@ -12,21 +13,33 @@
           hx-get="{{ url_for('meters.index') }}"
           hx-trigger="change"
           hx-target="#meters-table"
-          hx-include="[name='q'],[id='year-select']">
+          hx-include="[name='q'],[id='year-select'],[name='mode']">
       </div>
       <div class="input-group input-group-sm" style="width:240px">
         <input type="search" name="q" value="{{ q }}" class="form-control"
-          placeholder="Objekt suchen…"
+          placeholder="Objekt oder Besitzer suchen…"
           hx-get="{{ url_for('meters.index') }}"
           hx-trigger="input changed delay:300ms"
           hx-target="#meters-table"
-          hx-include="[name='q'],[id='year-select']">
+          hx-include="[name='q'],[id='year-select'],[name='mode']">
         <div class="input-group-append">
           <span class="input-group-text"><i class="fas fa-search"></i></span>
         </div>
       </div>
     </div>
     <div class="card-tools">
+      <button type="button" id="btn-toggle-mode"
+          class="btn btn-sm {{ 'btn-secondary' if mode == 'quick' else 'btn-info' }} mr-1"
+          hx-get="{{ url_for('meters.index') }}"
+          hx-target="#meters-table"
+          hx-include="[name='q'],[id='year-select'],[name='mode']"
+          onclick="toggleQuickMode(this)">
+        {% if mode == 'quick' %}
+          <i class="fas fa-list mr-1"></i> Normale Ansicht
+        {% else %}
+          <i class="fas fa-bolt mr-1"></i> Schnelleingabe
+        {% endif %}
+      </button>
       <a href="{{ url_for('meters.meter_new') }}" class="btn btn-secondary btn-sm">
         <i class="fas fa-plus mr-1"></i> Zähler
       </a>
@@ -36,7 +49,25 @@
     </div>
   </div>
   <div class="card-body p-0" id="meters-table">
-    {% include "meters/_table.html" %}
+    {% if mode == 'quick' %}
+      {% include "meters/_table_quick.html" %}
+    {% else %}
+      {% include "meters/_table.html" %}
+    {% endif %}
   </div>
 </div>
+<script>
+function toggleQuickMode(btn) {
+  const inp = document.getElementById('mode-input');
+  if (inp.value === 'normal') {
+    inp.value = 'quick';
+    btn.innerHTML = '<i class="fas fa-list mr-1"></i> Normale Ansicht';
+    btn.classList.replace('btn-info', 'btn-secondary');
+  } else {
+    inp.value = 'normal';
+    btn.innerHTML = '<i class="fas fa-bolt mr-1"></i> Schnelleingabe';
+    btn.classList.replace('btn-secondary', 'btn-info');
+  }
+}
+</script>
 {% endblock %}

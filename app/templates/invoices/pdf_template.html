@@ -34,6 +34,7 @@
 
 <div class="invoice-meta">
   <strong>Rechnungsnummer:</strong> {{ invoice.invoice_number }}<br>
+  {% if invoice.customer.customer_number %}<strong>Kundennummer:</strong> {{ invoice.customer.customer_number }}<br>{% endif %}
   <strong>Datum:</strong> {{ invoice.date.strftime('%d.%m.%Y') }}<br>
   <strong>Fällig bis:</strong> {{ invoice.due_date.strftime('%d.%m.%Y') if invoice.due_date else '—' }}<br>
   {% if invoice.period_year %}<strong>Abrechnungsjahr:</strong> {{ invoice.period_year }}{% endif %}

@@ -1,21 +1,31 @@
-<table class="table table-hover table-striped mb-0">
+<table class="table table-hover mb-0">
   <thead class="thead-light">
     <tr>
       <th>Datum</th>
       <th>Konto</th>
       <th>Beschreibung</th>
+      <th>Projekt</th>
       <th>Belegnr.</th>
+      <th>Status</th>
       <th class="text-right">Betrag</th>
       <th></th>
     </tr>
   </thead>
   <tbody>
     {% for b in bookings %}
-    <tr>
+    <tr class="{% if b.status == 'Storniert' %}table-danger{% elif b.storno_of_id %}table-warning{% endif %}">
       <td>{{ b.date.strftime('%d.%m.%Y') }}</td>
       <td>{{ b.account.name }}</td>
       <td>
-        {{ b.description }}
+        {% if b.storno_of_id %}
+        <span class="text-muted mr-1" title="Storno zu Buchung #{{ b.storno_of_id }}">&#8629;</span>
+        {% endif %}
+        <span class="{% if b.status == 'Storniert' %}text-decoration-line-through text-muted{% endif %}">
+          {{ b.description }}
+        </span>
+        {% if b.storno_reason %}
+        <br><small class="text-muted"><em>Grund: {{ b.storno_reason }}</em></small>
+        {% endif %}
         {% if b.invoice_id %}
         <a href="{{ url_for('invoices.detail', invoice_id=b.invoice_id) }}"
            class="badge badge-light ml-1">
@@ -23,28 +33,52 @@
         </a>
         {% endif %}
       </td>
+      <td>
+        {% if b.project %}
+        <a href="{{ url_for('projects.detail', project_id=b.project.id) }}"
+           class="badge badge-info">{{ b.project.name }}</a>
+        {% else %}
+        <span class="text-muted">—</span>
+        {% endif %}
+      </td>
       <td>{{ b.reference or '—' }}</td>
+      <td>
+        {% if b.status == 'Offen' %}
+        <span class="badge badge-success">Offen</span>
+        {% elif b.status == 'Verbucht' %}
+        <span class="badge badge-secondary">Verbucht</span>
+        {% elif b.status == 'Storniert' %}
+        <span class="badge badge-danger">Storniert</span>
+        {% endif %}
+      </td>
       <td class="text-right font-weight-bold {{ 'text-success' if b.amount > 0 else 'text-danger' }}">
         {{ "%.2f"|format(b.amount) }} €
       </td>
       <td class="text-right" style="white-space:nowrap">
+        {% if b.status == 'Offen' %}
         <a href="{{ url_for('accounting.booking_edit', booking_id=b.id) }}"
-           class="btn btn-sm btn-outline-secondary">
+           class="btn btn-sm btn-outline-secondary" title="Bearbeiten">
           <i class="fas fa-edit"></i>
         </a>
         <form method="post" action="{{ url_for('accounting.booking_delete', booking_id=b.id) }}"
               style="display:inline"
               onsubmit="return confirm('Buchung wirklich löschen?')">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button type="submit" class="btn btn-sm btn-outline-danger">
+          <button type="submit" class="btn btn-sm btn-outline-danger" title="Löschen">
             <i class="fas fa-trash"></i>
           </button>
         </form>
+        {% elif b.status == 'Verbucht' %}
+        <a href="{{ url_for('accounting.booking_stornieren', booking_id=b.id) }}"
+           class="btn btn-sm btn-outline-danger" title="Stornieren">
+          <i class="fas fa-ban"></i>
+        </a>
+        {% endif %}
       </td>
     </tr>
     {% else %}
     <tr>
-      <td colspan="6" class="text-center text-muted py-3">Keine Buchungen.</td>
+      <td colspan="8" class="text-center text-muted py-3">Keine Buchungen.</td>
     </tr>
     {% endfor %}
   </tbody>

@@ -46,6 +46,8 @@ class Customer(db.Model):
     __tablename__ = "customers"
 
     id = db.Column(db.Integer, primary_key=True)
+    customer_number = db.Column(db.Integer, unique=True, nullable=True)    # fortlaufende Kundennummer
+    externe_kennung = db.Column(db.String(100), nullable=True)             # optionale externe Kennung
     name = db.Column(db.String(200), nullable=False)
     strasse = db.Column(db.String(200))
     hausnummer = db.Column(db.String(20))
@@ -166,6 +168,7 @@ class WaterMeter(db.Model):
     installed_from = db.Column(db.Date, nullable=True)   # Einbaudatum
     installed_to = db.Column(db.Date, nullable=True)     # Ausbaudatum
     initial_value = db.Column(db.Numeric(12, 3), nullable=True)  # Stand bei Einbau
+    eichjahr = db.Column(db.Integer, nullable=True)              # Eichjahr des Zählers
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     readings = db.relationship("MeterReading", backref="meter", lazy="dynamic",
@@ -306,6 +309,24 @@ class InvoiceItem(db.Model):
 
 
 # ---------------------------------------------------------------------------
+# Projekte
+# ---------------------------------------------------------------------------
+
+class Project(db.Model):
+    __tablename__ = "projects"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False, unique=True)
+    description = db.Column(db.Text, nullable=True)
+    closed = db.Column(db.Boolean, default=False, nullable=False)
+
+    bookings = db.relationship("Booking", backref="project", lazy="dynamic")
+
+    def __repr__(self):
+        return f"<Project {self.name}>"
+
+
+# ---------------------------------------------------------------------------
 # Buchhaltung
 # ---------------------------------------------------------------------------
 
@@ -330,6 +351,10 @@ class Account(db.Model):
 class Booking(db.Model):
     __tablename__ = "bookings"
 
+    STATUS_OFFEN = "Offen"
+    STATUS_VERBUCHT = "Verbucht"
+    STATUS_STORNIERT = "Storniert"
+
     id = db.Column(db.Integer, primary_key=True)
     date = db.Column(db.Date, default=date.today, nullable=False)
     account_id = db.Column(db.Integer, db.ForeignKey("accounts.id"), nullable=False)
@@ -338,10 +363,16 @@ class Booking(db.Model):
     reference = db.Column(db.String(100))   # Belegnummer
     invoice_id = db.Column(db.Integer, db.ForeignKey("invoices.id"), nullable=True)
     open_item_id = db.Column(db.Integer, db.ForeignKey("open_items.id"), nullable=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("projects.id"), nullable=True)
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    status = db.Column(db.String(20), nullable=False, default="Offen")
+    storno_of_id = db.Column(db.Integer, db.ForeignKey("bookings.id"), nullable=True)
+    storno_reason = db.Column(db.String(500), nullable=True)
+    storno_date = db.Column(db.Date, nullable=True)
 
     created_by = db.relationship("User", foreign_keys=[created_by_id])
+    storno_of = db.relationship("Booking", remote_side="Booking.id", foreign_keys="Booking.storno_of_id", backref=db.backref("storno_buchung", uselist=False))
 
     def __repr__(self):
         return f"<Booking {self.date} {self.amount}>"

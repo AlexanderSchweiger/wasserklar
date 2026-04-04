@@ -2,21 +2,45 @@ from flask import render_template, redirect, url_for, flash, request
 from flask_login import login_required
 from app.customers import bp
 from app.extensions import db
-from app.models import Customer
+from app.models import Customer, PropertyOwnership
 
 
 @bp.route("/")
 @login_required
 def index():
     q = request.args.get("q", "").strip()
+    ohne_objekt = request.args.get("ohne_objekt", "0") == "1"
+
+    # Subquery: Kunden-IDs mit laufender Eigentumsbeziehung
+    owned_ids = db.session.query(PropertyOwnership.customer_id).filter(
+        PropertyOwnership.valid_to.is_(None)
+    ).subquery()
+
     query = Customer.query.filter_by(active=True).order_by(Customer.name)
     if q:
         query = query.filter(Customer.name.ilike(f"%{q}%"))
+    if ohne_objekt:
+        query = query.filter(~Customer.id.in_(owned_ids))
+    else:
+        query = query.filter(Customer.id.in_(owned_ids))
     customers = query.all()
+
+    # Property-Map für Anzeige aufbauen
+    if customers:
+        ownerships = PropertyOwnership.query.filter(
+            PropertyOwnership.valid_to.is_(None),
+            PropertyOwnership.customer_id.in_([c.id for c in customers])
+        ).all()
+    else:
+        ownerships = []
+    property_map = {o.customer_id: o.property for o in ownerships}
+
     # HTMX: nur Tabellen-Fragment zurückgeben
     if request.headers.get("HX-Request"):
-        return render_template("customers/_table.html", customers=customers)
-    return render_template("customers/index.html", customers=customers, q=q)
+        return render_template("customers/_table.html", customers=customers,
+                               property_map=property_map, ohne_objekt=ohne_objekt)
+    return render_template("customers/index.html", customers=customers, q=q,
+                           property_map=property_map, ohne_objekt=ohne_objekt)
 
 
 @bp.route("/new", methods=["GET", "POST"])
@@ -24,6 +48,9 @@ def index():
 def new():
     if request.method == "POST":
         c = _customer_from_form(Customer())
+        from sqlalchemy import func
+        max_nr = db.session.query(func.max(Customer.customer_number)).scalar() or 0
+        c.customer_number = max_nr + 1
         db.session.add(c)
         db.session.commit()
         flash(f"Kunde '{c.name}' angelegt.", "success")
@@ -80,6 +107,7 @@ def _customer_from_form(customer):
     if ms:
         from datetime import datetime
         customer.member_since = datetime.strptime(ms, "%Y-%m-%d").date()
+    customer.externe_kennung = request.form.get("externe_kennung", "").strip() or None
     raw_base = request.form.get("base_fee_override", "").strip().replace(",", ".")
     customer.base_fee_override = Decimal(raw_base) if raw_base else None
     raw_add = request.form.get("additional_fee_override", "").strip().replace(",", ".")

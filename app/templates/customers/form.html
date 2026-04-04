@@ -14,7 +14,15 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="card-body">
           <div class="row">
-            <div class="col-md-8">
+            <div class="col-md-2">
+              <div class="form-group">
+                <label>Kundennr.</label>
+                <input type="text" class="form-control" readonly
+                  value="{{ customer.customer_number if customer and customer.customer_number else 'wird vergeben' }}"
+                  style="background:#f8f9fa;">
+              </div>
+            </div>
+            <div class="col-md-6">
               <div class="form-group">
                 <label>Name <span class="text-danger">*</span></label>
                 <input type="text" name="name" class="form-control"
@@ -26,6 +34,16 @@
                 <label>Telefon</label>
                 <input type="tel" name="phone" class="form-control"
                   value="{{ customer.phone if customer else '' }}">
+              </div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="col-md-4">
+              <div class="form-group">
+                <label>Externe Kennung</label>
+                <input type="text" name="externe_kennung" class="form-control"
+                  placeholder="optional"
+                  value="{{ customer.externe_kennung if customer and customer.externe_kennung else '' }}">
               </div>
             </div>
           </div>

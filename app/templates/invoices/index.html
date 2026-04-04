@@ -11,7 +11,7 @@
           hx-get="{{ url_for('invoices.index') }}"
           hx-trigger="change"
           hx-target="#invoices-table"
-          hx-include="[name='status'],[name='year'],[name='q']">
+          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id']">
           <option value="">Alle Status</option>
           {% for s in statuses %}
           <option value="{{ s }}" {{ 'selected' if status_filter == s }}>{{ s }}</option>
@@ -25,7 +25,7 @@
           hx-get="{{ url_for('invoices.index') }}"
           hx-trigger="change"
           hx-target="#invoices-table"
-          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q']">
+          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id']">
       </div>
       <div class="form-group">
         <label class="mb-0 mr-1">Datum von</label>
@@ -34,7 +34,7 @@
           hx-get="{{ url_for('invoices.index') }}"
           hx-trigger="change"
           hx-target="#invoices-table"
-          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q']">
+          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id']">
       </div>
       <div class="form-group">
         <label class="mb-0 mr-1">bis</label>
@@ -43,14 +43,29 @@
           hx-get="{{ url_for('invoices.index') }}"
           hx-trigger="change"
           hx-target="#invoices-table"
-          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q']">
+          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id']">
+      </div>
+      <div class="form-group">
+        <label class="mb-0 mr-1">Projekt</label>
+        <select name="project_id" class="form-control form-control-sm"
+          hx-get="{{ url_for('invoices.index') }}"
+          hx-trigger="change"
+          hx-target="#invoices-table"
+          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id']">
+          <option value="">Alle Projekte</option>
+          {% for p in projects_for_filter %}
+          <option value="{{ p.id }}" {{ 'selected' if project_id_filter|string == p.id|string }}>
+            {{ p.name }}{% if p.closed %} (abgeschlossen){% endif %}
+          </option>
+          {% endfor %}
+        </select>
       </div>
       <div class="input-group input-group-sm" style="width:220px">
         <input type="search" name="q" placeholder="Kundenname…" class="form-control"
           hx-get="{{ url_for('invoices.index') }}"
           hx-trigger="input changed delay:300ms"
           hx-target="#invoices-table"
-          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q']">
+          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id']">
         <div class="input-group-append">
           <span class="input-group-text"><i class="fas fa-search"></i></span>
         </div>

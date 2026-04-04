@@ -1,0 +1,102 @@
+<form method="post" action="{{ url_for('meters.bulk_read') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="year" value="{{ year }}">
+  <div class="px-3 py-2 border-bottom">
+    <button type="submit" class="btn btn-success btn-sm">
+      <i class="fas fa-save mr-1"></i> Alle speichern
+    </button>
+    <small class="text-muted ml-2">Nur befüllte Felder werden gespeichert.</small>
+  </div>
+  <table class="table table-hover table-striped mb-0">
+    <thead class="thead-light">
+      <tr>
+        <th>Besitzer</th>
+        <th>Objekt</th>
+        <th>Zählernummer</th>
+        <th>Standort</th>
+        <th class="text-right">Stand {{ year - 1 }}</th>
+        <th class="text-right">Neuer Stand (m³)</th>
+        <th class="text-right">Verbrauch</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for meter in meters %}
+      {% set prev_reading = prev_readings_map.get(meter.id) %}
+      {% set reading = readings_map.get(meter.id) %}
+      {% set repl = replacement_map.get(meter.id) if replacement_map is defined else none %}
+      {% if repl %}
+        {% set prev_val = meter.initial_value|int if meter.initial_value is not none else none %}
+      {% elif prev_reading %}
+        {% set prev_val = prev_reading.value|int %}
+      {% elif meter.initial_value is not none %}
+        {% set prev_val = meter.initial_value|int %}
+      {% else %}
+        {% set prev_val = none %}
+      {% endif %}
+      <tr>
+        <td class="text-nowrap">{{ (owners_map.get(meter.property_id) if owners_map is defined else none) or '—' }}</td>
+        <td>{{ meter.property.label() }}</td>
+        <td><code>{{ meter.meter_number }}</code></td>
+        <td>{{ meter.location or '—' }}</td>
+        <td class="text-right text-muted">
+          {% if repl %}
+            {% if meter.initial_value is not none %}
+              {{ "%d"|format(meter.initial_value) }} m³
+            {% else %}—{% endif %}
+            <span class="badge badge-warning ml-1" title="Zähler wurde in {{ year }} gewechselt">Tausch</span>
+          {% elif prev_reading %}
+            {{ "%d"|format(prev_reading.value) }} m³
+          {% else %}—{% endif %}
+        </td>
+        <td class="text-right">
+          <input type="number"
+                 name="value_{{ meter.id }}"
+                 class="form-control form-control-sm d-inline-block quick-input"
+                 style="width:110px"
+                 value="{{ reading.value|int if reading else '' }}"
+                 data-prev="{{ prev_val if prev_val is not none else '' }}"
+                 data-meter="{{ meter.id }}"
+                 oninput="calcConsumption(this)"
+                 step="1" min="0"
+                 placeholder="Stand eingeben">
+        </td>
+        <td class="text-right consumption-display" id="cons-{{ meter.id }}">
+          {% if reading and reading.consumption is not none %}
+            {{ "%d"|format(reading.consumption) }} m³
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="text-center text-muted py-3">Keine Zähler gefunden.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</form>
+<script>
+function calcConsumption(input) {
+  const prev = input.dataset.prev !== '' ? parseFloat(input.dataset.prev) : NaN;
+  const val = input.value !== '' ? parseFloat(input.value) : NaN;
+  const cell = document.getElementById('cons-' + input.dataset.meter);
+  if (!isNaN(prev) && !isNaN(val)) {
+    cell.textContent = Math.round(val - prev) + ' m³';
+  } else {
+    cell.textContent = '—';
+  }
+}
+// Vorhandene Stände beim Laden einmalig berechnen
+const quickInputs = Array.from(document.querySelectorAll('.quick-input'));
+quickInputs.forEach(function(inp) {
+  if (inp.value !== '') calcConsumption(inp);
+});
+
+// Enter springt zur nächsten Eingabe statt Formular abzusenden
+quickInputs.forEach(function(inp, i) {
+  inp.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const next = quickInputs[i + 1];
+      if (next) next.focus();
+    }
+  });
+});
+</script>

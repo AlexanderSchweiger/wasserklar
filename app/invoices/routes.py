@@ -10,7 +10,7 @@ from flask_login import login_required, current_user
 
 from app.invoices import bp
 from app.extensions import db, mail
-from app.models import Invoice, InvoiceItem, Customer, WaterMeter, MeterReading, WaterTariff, Booking, Account, Property, OpenItem
+from app.models import Invoice, InvoiceItem, Customer, WaterMeter, MeterReading, WaterTariff, Booking, Account, Property, OpenItem, Project
 from app.utils import next_invoice_number as _next_invoice_number
 
 
@@ -43,6 +43,7 @@ def index():
     date_from = request.args.get("date_from", date(date.today().year, 1, 1).isoformat()).strip()
     date_to = request.args.get("date_to", "").strip()
     q = request.args.get("q", "").strip()
+    project_id_filter = request.args.get("project_id", "", type=str)
 
     query = (
         Invoice.query
@@ -66,8 +67,17 @@ def index():
             Property.object_number.ilike(f"%{q}%"),
             Property.strasse.ilike(f"%{q}%"),
         ))
+    if project_id_filter:
+        from sqlalchemy import exists
+        query = query.filter(
+            exists().where(
+                (Booking.invoice_id == Invoice.id) &
+                (Booking.project_id == int(project_id_filter))
+            )
+        )
 
     invoices = query.all()
+    projects_for_filter = Project.query.order_by(Project.name).all()
     if request.headers.get("HX-Request"):
         return render_template("invoices/_table.html", invoices=invoices)
     return render_template(
@@ -78,6 +88,8 @@ def index():
         year_filter=year_filter,
         date_from=date_from,
         date_to=date_to,
+        projects_for_filter=projects_for_filter,
+        project_id_filter=project_id_filter,
     )
 
 

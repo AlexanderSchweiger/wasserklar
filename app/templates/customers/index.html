@@ -3,19 +3,32 @@
 {% block page_title %}<i class="fas fa-users mr-2"></i> Kunden{% endblock %}
 {% block content %}
 <div class="card">
-  <div class="card-header">
+  <div class="card-header d-flex align-items-center flex-wrap" style="gap:.5rem">
     <div class="input-group input-group-sm" style="width:280px">
       <input type="search" name="q" value="{{ q }}" class="form-control"
         placeholder="Kunden suchen…"
         hx-get="{{ url_for('customers.index') }}"
         hx-trigger="input changed delay:300ms, search"
         hx-target="#customer-table"
-        hx-include="[name='q']">
+        hx-include="[name='q'],[name='ohne_objekt']">
       <div class="input-group-append">
         <span class="input-group-text"><i class="fas fa-search"></i></span>
       </div>
     </div>
-    <div class="card-tools">
+    <input type="hidden" name="ohne_objekt" value="{{ '1' if ohne_objekt else '0' }}">
+    {% if ohne_objekt %}
+    <a href="{{ url_for('customers.index', q=q) }}"
+       class="btn btn-sm btn-warning">
+      <i class="fas fa-filter mr-1"></i> Ohne Objekt
+      <i class="fas fa-times ml-1"></i>
+    </a>
+    {% else %}
+    <a href="{{ url_for('customers.index', q=q, ohne_objekt=1) }}"
+       class="btn btn-sm btn-outline-secondary">
+      <i class="fas fa-filter mr-1"></i> Ohne Objekt anzeigen
+    </a>
+    {% endif %}
+    <div class="card-tools ml-auto">
       <a href="{{ url_for('customers.new') }}" class="btn btn-primary btn-sm">
         <i class="fas fa-plus mr-1"></i> Neuer Kunde
       </a>

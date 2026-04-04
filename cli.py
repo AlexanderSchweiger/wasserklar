@@ -29,6 +29,11 @@ def register_commands(app):
             _add_col_if_missing("water_meters", "installed_to DATE", "installed_to")
             _add_col_if_missing("water_meters", "initial_value NUMERIC(12,3)", "initial_value")
             _add_col_if_missing("bookings", "open_item_id INTEGER REFERENCES open_items(id)", "open_item_id")
+            _add_col_if_missing("bookings", "project_id INTEGER REFERENCES projects(id)", "project_id")
+            _add_col_if_missing("bookings", "status VARCHAR(20) NOT NULL DEFAULT 'Offen'", "status")
+            _add_col_if_missing("bookings", "storno_of_id INTEGER REFERENCES bookings(id)", "storno_of_id")
+            _add_col_if_missing("bookings", "storno_reason VARCHAR(500)", "storno_reason")
+            _add_col_if_missing("bookings", "storno_date DATE", "storno_date")
             _add_col_if_missing("invoice_items", "tax_rate NUMERIC(5,2)", "tax_rate")
             _add_col_if_missing("water_tariffs", "base_fee_label VARCHAR(100) DEFAULT 'Grundgebühr'", "base_fee_label")
             _add_col_if_missing("water_tariffs", "additional_fee NUMERIC(10,2) DEFAULT 0", "additional_fee")
@@ -38,6 +43,9 @@ def register_commands(app):
             _add_col_if_missing("properties", "base_fee_override NUMERIC(10,2)", "base_fee_override")
             _add_col_if_missing("properties", "additional_fee_override NUMERIC(10,2)", "additional_fee_override")
             _add_col_if_missing("open_items", "period_year INTEGER", "period_year")
+            _add_col_if_missing("water_meters", "eichjahr INTEGER", "eichjahr")
+            _add_col_if_missing("customers", "customer_number INTEGER", "customer_number")
+            _add_col_if_missing("customers", "externe_kennung VARCHAR(100)", "externe_kennung")
             conn.commit()
 
         if Account.query.count() == 0:
@@ -73,6 +81,11 @@ def register_commands(app):
             _add_col_if_missing("water_meters", "installed_to DATE", "installed_to")
             _add_col_if_missing("water_meters", "initial_value NUMERIC(12,3)", "initial_value")
             _add_col_if_missing("bookings", "open_item_id INTEGER REFERENCES open_items(id)", "open_item_id")
+            _add_col_if_missing("bookings", "project_id INTEGER REFERENCES projects(id)", "project_id")
+            _add_col_if_missing("bookings", "status VARCHAR(20) NOT NULL DEFAULT 'Offen'", "status")
+            _add_col_if_missing("bookings", "storno_of_id INTEGER REFERENCES bookings(id)", "storno_of_id")
+            _add_col_if_missing("bookings", "storno_reason VARCHAR(500)", "storno_reason")
+            _add_col_if_missing("bookings", "storno_date DATE", "storno_date")
             _add_col_if_missing("invoice_items", "tax_rate NUMERIC(5,2)", "tax_rate")
             _add_col_if_missing("water_tariffs", "base_fee_label VARCHAR(100) DEFAULT 'Grundgebühr'", "base_fee_label")
             _add_col_if_missing("water_tariffs", "additional_fee NUMERIC(10,2) DEFAULT 0", "additional_fee")
@@ -82,7 +95,27 @@ def register_commands(app):
             _add_col_if_missing("properties", "base_fee_override NUMERIC(10,2)", "base_fee_override")
             _add_col_if_missing("properties", "additional_fee_override NUMERIC(10,2)", "additional_fee_override")
             _add_col_if_missing("open_items", "period_year INTEGER", "period_year")
+            _add_col_if_missing("water_meters", "eichjahr INTEGER", "eichjahr")
+            _add_col_if_missing("customers", "customer_number INTEGER", "customer_number")
+            _add_col_if_missing("customers", "externe_kennung VARCHAR(100)", "externe_kennung")
             conn.commit()
+
+        # Datenmigration: Kundennummern für bestehende Kunden ohne Kundennummer vergeben
+        from app.models import Customer
+        kunden_ohne_nr = (
+            Customer.query
+            .filter(Customer.customer_number == None)
+            .order_by(Customer.id)
+            .all()
+        )
+        if kunden_ohne_nr:
+            from sqlalchemy import func
+            max_nr = db.session.query(func.max(Customer.customer_number)).scalar() or 0
+            for kunde in kunden_ohne_nr:
+                max_nr += 1
+                kunde.customer_number = max_nr
+            db.session.commit()
+            print(f"  {len(kunden_ohne_nr)} Kunden mit Kundennummern versehen.")
 
         # Datenmigration: für alle bereits versendeten Rechnungen ohne OpenItem einen anlegen
         from app.models import Invoice, OpenItem
@@ -208,8 +241,8 @@ def register_commands(app):
                  notes="Langjähriges Mitglied, Zahlungseingang immer pünktlich"),
         ]
         kunden = []
-        for d in kunden_daten:
-            k = Customer(**d)
+        for i, d in enumerate(kunden_daten, start=1):
+            k = Customer(customer_number=i, **d)
             db.session.add(k)
             kunden.append(k)
         db.session.flush()
@@ -415,6 +448,23 @@ def register_commands(app):
         print(f"  2 Benutzer, {len(kunden)} Kunden, {len(objekte)} Objekte")
         print(f"  {len(zähler_liste)} Wasserzähler mit je 5 Ablesungen (2021–2025)")
         print(f"  3 Tarife, 24 Rechnungen (2021–2024), 4 Ausgabenbuchungen, 2 Offene Posten")
+
+    @app.cli.command("mark-posted")
+    def mark_posted():
+        """Alle 'Offen'-Buchungen von Vortagen als 'Verbucht' markieren."""
+        from datetime import date as date_cls
+        from app.models import Booking
+        today = date_cls.today()
+        updated = (
+            db.session.query(Booking)
+            .filter(
+                Booking.status == Booking.STATUS_OFFEN,
+                Booking.date < today,
+            )
+            .update({"status": Booking.STATUS_VERBUCHT}, synchronize_session=False)
+        )
+        db.session.commit()
+        print(f"{updated} Buchung(en) als 'Verbucht' markiert.")
 
     @app.cli.command("create-admin")
     def create_admin():

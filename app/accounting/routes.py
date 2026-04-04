@@ -8,11 +8,11 @@ from flask import (
     Response, stream_with_context,
 )
 from flask_login import login_required, current_user
-from sqlalchemy import extract, func
+from sqlalchemy import extract, func, case
 
 from app.accounting import bp
 from app.extensions import db
-from app.models import Account, Booking, Invoice, OpenItem, WaterTariff, Customer, InvoiceItem
+from app.models import Account, Booking, Invoice, OpenItem, WaterTariff, Customer, InvoiceItem, Project
 from app.utils import next_invoice_number
 
 
@@ -70,22 +70,41 @@ def account_edit(account_id):
 # Buchungen
 # ---------------------------------------------------------------------------
 
+def _auto_post_bookings():
+    """Markiert alle 'Offen'-Buchungen mit Buchungsdatum < heute als 'Verbucht'."""
+    today = date.today()
+    Booking.query.filter(
+        Booking.status == Booking.STATUS_OFFEN,
+        Booking.date < today,
+    ).update({"status": Booking.STATUS_VERBUCHT}, synchronize_session=False)
+    db.session.commit()
+
+
 @bp.route("/bookings")
 @login_required
 def bookings():
+    _auto_post_bookings()
+
     year = request.args.get("year", date.today().year, type=int)
     account_id = request.args.get("account_id", "", type=str)
+    project_id = request.args.get("project_id", "", type=str)
 
     query = (
         Booking.query
         .filter(extract("year", Booking.date) == year)
-        .order_by(Booking.date.desc())
+        .order_by(
+            func.coalesce(Booking.storno_of_id, Booking.id),
+            Booking.id,
+        )
     )
     if account_id:
         query = query.filter(Booking.account_id == int(account_id))
+    if project_id:
+        query = query.filter(Booking.project_id == int(project_id))
 
     bkgs = query.all()
     accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
+    projects = Project.query.order_by(Project.name).all()
 
     if request.headers.get("HX-Request"):
         return render_template(
@@ -93,8 +112,8 @@ def bookings():
         )
     return render_template(
         "accounting/bookings.html",
-        bookings=bkgs, accounts=accounts, year=year,
-        account_id=account_id,
+        bookings=bkgs, accounts=accounts, projects=projects, year=year,
+        account_id=account_id, project_id=project_id,
     )
 
 
@@ -102,6 +121,7 @@ def bookings():
 @login_required
 def booking_new():
     accounts = Account.query.filter_by(active=True).order_by(Account.type, Account.name).all()
+    active_projects = Project.query.filter_by(closed=False).order_by(Project.name).all()
     if request.method == "POST":
         amount_raw = request.form.get("amount", "0").replace(",", ".")
         amount = Decimal(amount_raw)
@@ -109,52 +129,131 @@ def booking_new():
         # Ausgaben → negativer Betrag
         if acc.type == Account.TYPE_EXPENSE and amount > 0:
             amount = -amount
-
+        project_id_raw = request.form.get("project_id") or None
         b = Booking(
             date=date.fromisoformat(request.form["date"]),
             account_id=acc.id,
             amount=amount,
             description=request.form.get("description", "").strip(),
             reference=request.form.get("reference", "").strip(),
+            project_id=int(project_id_raw) if project_id_raw else None,
             created_by_id=current_user.id,
         )
         db.session.add(b)
         db.session.commit()
         flash("Buchung gespeichert.", "success")
         return redirect(url_for("accounting.bookings"))
-    return render_template("accounting/booking_form.html", booking=None, accounts=accounts)
+    return render_template(
+        "accounting/booking_form.html", booking=None, accounts=accounts, projects=active_projects,
+    )
 
 
 @bp.route("/bookings/<int:booking_id>/edit", methods=["GET", "POST"])
 @login_required
 def booking_edit(booking_id):
     b = db.get_or_404(Booking, booking_id)
+    if b.status != Booking.STATUS_OFFEN:
+        flash("Nur offene Buchungen können bearbeitet werden.", "warning")
+        return redirect(url_for("accounting.bookings"))
     accounts = Account.query.filter_by(active=True).order_by(Account.type, Account.name).all()
+    active_projects = Project.query.filter_by(closed=False).order_by(Project.name).all()
     if request.method == "POST":
         amount_raw = request.form.get("amount", "0").replace(",", ".")
         amount = Decimal(amount_raw)
         acc = db.get_or_404(Account, int(request.form["account_id"]))
         if acc.type == Account.TYPE_EXPENSE and amount > 0:
             amount = -amount
+        project_id_raw = request.form.get("project_id") or None
         b.date = date.fromisoformat(request.form["date"])
         b.account_id = acc.id
         b.amount = amount
         b.description = request.form.get("description", "").strip()
         b.reference = request.form.get("reference", "").strip()
+        b.project_id = int(project_id_raw) if project_id_raw else None
         db.session.commit()
         flash("Buchung aktualisiert.", "success")
         return redirect(url_for("accounting.bookings"))
-    return render_template("accounting/booking_form.html", booking=b, accounts=accounts)
+    return render_template(
+        "accounting/booking_form.html", booking=b, accounts=accounts, projects=active_projects,
+    )
 
 
 @bp.route("/bookings/<int:booking_id>/delete", methods=["POST"])
 @login_required
 def booking_delete(booking_id):
     b = db.get_or_404(Booking, booking_id)
+    if b.status != Booking.STATUS_OFFEN:
+        flash("Nur offene Buchungen können gelöscht werden.", "warning")
+        return redirect(url_for("accounting.bookings"))
     db.session.delete(b)
     db.session.commit()
     flash("Buchung gelöscht.", "info")
     return redirect(url_for("accounting.bookings"))
+
+
+@bp.route("/bookings/<int:booking_id>/stornieren", methods=["GET", "POST"])
+@login_required
+def booking_stornieren(booking_id):
+    b = db.get_or_404(Booking, booking_id)
+
+    if b.status == Booking.STATUS_STORNIERT:
+        flash("Diese Buchung ist bereits storniert.", "warning")
+        return redirect(url_for("accounting.bookings"))
+    if b.storno_of_id is not None:
+        flash("Eine Storno-Buchung kann nicht erneut storniert werden.", "warning")
+        return redirect(url_for("accounting.bookings"))
+    if b.date.year != date.today().year:
+        flash("Buchungen aus Vorjahren können nicht storniert werden.", "warning")
+        return redirect(url_for("accounting.bookings"))
+
+    if request.method == "POST":
+        reason = request.form.get("storno_reason", "").strip()
+        if not reason:
+            flash("Bitte einen Storno-Grund angeben.", "danger")
+            return render_template("accounting/storno_form.html", booking=b)
+
+        # Storno-Buchung anlegen (gleiches Datum wie Ursprungsbuchung)
+        storno = Booking(
+            date=b.date,
+            account_id=b.account_id,
+            amount=b.amount * -1,
+            description=f"Storno: {b.description}",
+            invoice_id=b.invoice_id,
+            open_item_id=b.open_item_id,
+            project_id=b.project_id,
+            storno_of_id=b.id,
+            storno_reason=reason,
+            storno_date=date.today(),
+            status=Booking.STATUS_VERBUCHT,
+            created_by_id=current_user.id,
+        )
+        db.session.add(storno)
+
+        # Ursprungsbuchung als storniert markieren
+        b.status = Booking.STATUS_STORNIERT
+
+        # Verknüpfte Rechnung stornieren
+        if b.invoice_id:
+            inv = db.session.get(Invoice, b.invoice_id)
+            if inv and inv.status not in (Invoice.STATUS_CANCELLED,):
+                inv.status = Invoice.STATUS_CANCELLED
+                flash(
+                    f"Rechnung {inv.invoice_number} wurde storniert. "
+                    f"Bitte eine neue Rechnung ausstellen.",
+                    "warning",
+                )
+
+        # Offenen Posten zurücksetzen wenn gewünscht
+        if b.open_item_id and request.form.get("close_open_item"):
+            oi = db.session.get(OpenItem, b.open_item_id)
+            if oi:
+                oi.status = OpenItem.STATUS_OPEN
+
+        db.session.commit()
+        flash("Buchung erfolgreich storniert.", "success")
+        return redirect(url_for("accounting.bookings"))
+
+    return render_template("accounting/storno_form.html", booking=b)
 
 
 # ---------------------------------------------------------------------------
@@ -447,6 +546,54 @@ def report():
     total_expense = sum(r[1] for r in expense_rows)
     balance = total_income - total_expense
 
+    # Projektübersicht
+    project_rows = (
+        db.session.query(
+            Project.id.label("project_id"),
+            Project.name.label("project_name"),
+            Account.name.label("account_name"),
+            Account.type.label("account_type"),
+            func.sum(Booking.amount).label("total"),
+        )
+        .select_from(Booking)
+        .outerjoin(Project, Booking.project_id == Project.id)
+        .join(Account, Booking.account_id == Account.id)
+        .filter(extract("year", Booking.date) == year)
+        .group_by(Project.id, Project.name, Account.id, Account.name, Account.type)
+        .order_by(
+            case((Project.id == None, 1), else_=0),
+            Project.name,
+            Account.type,
+            Account.name,
+        )
+        .all()
+    )
+
+    project_summary = {}
+    for row in project_rows:
+        key = row.project_id
+        if key not in project_summary:
+            project_summary[key] = {
+                "name": row.project_name or "Ohne Projekt",
+                "accounts": [],
+                "income": Decimal("0"),
+                "expense": Decimal("0"),
+            }
+        project_summary[key]["accounts"].append(
+            (row.account_name, row.account_type, row.total)
+        )
+        if row.account_type == Account.TYPE_INCOME:
+            project_summary[key]["income"] += row.total or Decimal("0")
+        else:
+            project_summary[key]["expense"] += abs(row.total or Decimal("0"))
+
+    project_summary_list = [
+        v for k, v in sorted(
+            project_summary.items(),
+            key=lambda x: (x[0] is None, x[1]["name"]),
+        )
+    ]
+
     return render_template(
         "accounting/report.html",
         year=year,
@@ -455,6 +602,7 @@ def report():
         total_income=total_income,
         total_expense=total_expense,
         balance=balance,
+        project_summary_list=project_summary_list,
     )
 
 

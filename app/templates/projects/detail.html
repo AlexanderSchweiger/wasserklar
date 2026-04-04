@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+{% block title %}Projekt: {{ project.name }}{% endblock %}
+{% block page_title %}
+  <i class="fas fa-project-diagram mr-2"></i> {{ project.name }}
+{% endblock %}
+{% block content %}
+
+<!-- Projekt-Infobox -->
+<div class="row">
+  <div class="col-md-8">
+    <div class="card card-outline {{ 'card-secondary' if project.closed else 'card-primary' }}">
+      <div class="card-header">
+        <h3 class="card-title font-weight-bold">{{ project.name }}</h3>
+        <div class="card-tools">
+          {% if project.closed %}
+          <span class="badge badge-secondary mr-2">Abgeschlossen</span>
+          {% else %}
+          <span class="badge badge-success mr-2">Aktiv</span>
+          {% endif %}
+          <a href="{{ url_for('projects.edit', project_id=project.id) }}"
+             class="btn btn-sm btn-outline-secondary">
+            <i class="fas fa-edit mr-1"></i> Bearbeiten
+          </a>
+          <form method="post" action="{{ url_for('projects.toggle_closed', project_id=project.id) }}"
+                style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-sm {{ 'btn-outline-success' if project.closed else 'btn-outline-secondary' }} ml-1">
+              <i class="fas {{ 'fa-folder-open' if project.closed else 'fa-check' }} mr-1"></i>
+              {{ 'Wiedereröffnen' if project.closed else 'Abschließen' }}
+            </button>
+          </form>
+          {% if bookings|length == 0 %}
+          <form method="post" action="{{ url_for('projects.delete', project_id=project.id) }}"
+                style="display:inline"
+                onsubmit="return confirm('Projekt „{{ project.name }}" wirklich löschen?')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-sm btn-outline-danger ml-1">
+              <i class="fas fa-trash"></i>
+            </button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+      {% if project.description %}
+      <div class="card-body">
+        <p class="mb-0">{{ project.description }}</p>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Buchungen -->
+<div class="row">
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title"><i class="fas fa-book mr-1"></i> Buchungen</h3>
+        <div class="card-tools">
+          <span class="badge badge-light">{{ bookings|length }}</span>
+        </div>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-hover table-striped mb-0">
+          <thead class="thead-light">
+            <tr>
+              <th>Datum</th>
+              <th>Konto</th>
+              <th>Beschreibung</th>
+              <th>Belegnr.</th>
+              <th class="text-right">Betrag</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for b in bookings %}
+            <tr>
+              <td>{{ b.date.strftime('%d.%m.%Y') }}</td>
+              <td>{{ b.account.name }}</td>
+              <td>{{ b.description }}</td>
+              <td>{{ b.reference or '—' }}</td>
+              <td class="text-right font-weight-bold {{ 'text-success' if b.amount > 0 else 'text-danger' }}">
+                {{ "%.2f"|format(b.amount) }} €
+              </td>
+              <td class="text-right" style="white-space:nowrap">
+                {% if b.invoice_id %}
+                <a href="{{ url_for('invoices.detail', invoice_id=b.invoice_id) }}"
+                   class="btn btn-sm btn-outline-info"
+                   title="Rechnung öffnen">
+                  <i class="fas fa-file-invoice"></i>
+                </a>
+                {% endif %}
+              </td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="6" class="text-center text-muted py-3">
+                Keine Buchungen diesem Projekt zugeordnet.
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+          {% if bookings %}
+          <tfoot class="thead-light">
+            <tr>
+              <td colspan="4" class="font-weight-bold">Summe</td>
+              <td class="text-right font-weight-bold">
+                {% set total = bookings|sum(attribute='amount') %}
+                <span class="{{ 'text-success' if total >= 0 else 'text-danger' }}">
+                  {{ "%.2f"|format(total) }} €
+                </span>
+              </td>
+              <td></td>
+            </tr>
+          </tfoot>
+          {% endif %}
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Offene Posten -->
+{% if open_items %}
+<div class="row">
+  <div class="col-12">
+    <div class="card card-warning card-outline">
+      <div class="card-header">
+        <h3 class="card-title"><i class="fas fa-exclamation-circle mr-1"></i> Offene Posten</h3>
+        <div class="card-tools">
+          <span class="badge badge-warning">{{ open_items|length }}</span>
+        </div>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-hover mb-0">
+          <thead class="thead-light">
+            <tr>
+              <th>Beschreibung</th>
+              <th>Kunde</th>
+              <th>Fälligkeit</th>
+              <th>Status</th>
+              <th class="text-right">Restbetrag</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in open_items %}
+            <tr>
+              <td>{{ item.description }}</td>
+              <td>{{ item.customer.name }}</td>
+              <td>{{ item.due_date.strftime('%d.%m.%Y') if item.due_date else '—' }}</td>
+              <td>
+                {% if item.status == 'Offen' %}
+                <span class="badge badge-danger">Offen</span>
+                {% elif item.status == 'Teilbezahlt' %}
+                <span class="badge badge-warning">Teilbezahlt</span>
+                {% else %}
+                <span class="badge badge-secondary">{{ item.status }}</span>
+                {% endif %}
+              </td>
+              <td class="text-right font-weight-bold text-danger">
+                {{ "%.2f"|format(item.open_balance) }} €
+              </td>
+              <td class="text-right">
+                {% if item.invoice_id %}
+                <a href="{{ url_for('invoices.detail', invoice_id=item.invoice_id) }}"
+                   class="btn btn-sm btn-outline-info" title="Rechnung öffnen">
+                  <i class="fas fa-file-invoice"></i>
+                </a>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}

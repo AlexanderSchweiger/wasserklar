@@ -1,26 +1,35 @@
 <table class="table table-hover table-striped mb-0">
   <thead class="thead-light">
     <tr>
+      <th style="width:80px">Kd.-Nr.</th>
       <th>Name</th>
-      <th>Adresse</th>
+      <th>Rechnungsadresse</th>
+      <th>Objekt</th>
       <th>E-Mail</th>
       <th>Telefon</th>
-      <th>Mitglied seit</th>
       <th></th>
     </tr>
   </thead>
   <tbody>
     {% for c in customers %}
-    <tr>
+    {% set prop = property_map.get(c.id) if property_map is defined else none %}
+    <tr{% if not prop %} class="table-warning"{% endif %}>
+      <td class="text-muted">{{ c.customer_number or '—' }}</td>
       <td>
         <a href="{{ url_for('customers.detail', customer_id=c.id) }}">
           <strong>{{ c.name }}</strong>
         </a>
       </td>
-      <td>{{ c.address or '—' }}</td>
+      <td>{{ c.address_display() or '—' }}</td>
+      <td>
+        {% if prop %}
+          {{ prop.object_number or prop.address_display() or '—' }}
+        {% else %}
+          <span class="text-muted"><em>kein Objekt</em></span>
+        {% endif %}
+      </td>
       <td>{{ c.email or '—' }}</td>
       <td>{{ c.phone or '—' }}</td>
-      <td>{{ c.member_since.strftime('%d.%m.%Y') if c.member_since else '—' }}</td>
       <td class="text-right">
         <a href="{{ url_for('customers.edit', customer_id=c.id) }}"
            class="btn btn-sm btn-outline-secondary">
@@ -30,7 +39,7 @@
     </tr>
     {% else %}
     <tr>
-      <td colspan="6" class="text-center text-muted py-3">Keine Kunden gefunden.</td>
+      <td colspan="7" class="text-center text-muted py-3">Keine Kunden gefunden.</td>
     </tr>
     {% endfor %}
   </tbody>

@@ -7,7 +7,7 @@ from flask_login import login_required, current_user
 
 from app.meters import bp
 from app.extensions import db
-from app.models import WaterMeter, MeterReading, Property
+from app.models import WaterMeter, MeterReading, Property, PropertyOwnership, Customer
 
 
 def _build_replacement_map(meters, year):
@@ -31,16 +31,36 @@ def _build_replacement_map(meters, year):
     return result
 
 
+def _build_owners_map():
+    """Gibt ein Dict {property_id: customer_name} für alle aktuellen Eigentümer zurück."""
+    rows = (
+        db.session.query(PropertyOwnership.property_id, Customer.name)
+        .join(Customer, Customer.id == PropertyOwnership.customer_id)
+        .filter(PropertyOwnership.valid_to == None)
+        .all()
+    )
+    return {row.property_id: row.name for row in rows}
+
+
 @bp.route("/")
 @login_required
 def index():
     year = request.args.get("year", date.today().year, type=int)
     q = request.args.get("q", "").strip()
+    mode = request.args.get("mode", "normal")
 
-    # Objekt + Zähler-Join, nach Objektnummer / Ort sortiert
+    # Objekt + Zähler-Join + aktueller Eigentümer (für Suche), nach Objektnummer / Ort sortiert
     meters_query = (
         WaterMeter.query
         .join(Property)
+        .outerjoin(
+            PropertyOwnership,
+            db.and_(
+                PropertyOwnership.property_id == Property.id,
+                PropertyOwnership.valid_to == None,
+            ),
+        )
+        .outerjoin(Customer, Customer.id == PropertyOwnership.customer_id)
         .filter(WaterMeter.active == True, Property.active == True)
         .order_by(Property.object_number, Property.ort)
     )
@@ -50,6 +70,7 @@ def index():
                 Property.object_number.ilike(f"%{q}%"),
                 Property.strasse.ilike(f"%{q}%"),
                 Property.ort.ilike(f"%{q}%"),
+                Customer.name.ilike(f"%{q}%"),
             )
         )
 
@@ -68,19 +89,72 @@ def index():
     # Zählertausch-Info: Zähler die in diesem Jahr eingebaut wurden
     replacement_map = _build_replacement_map(meters, year)
 
+    # Eigentümer-Map für Anzeige
+    owners_map = _build_owners_map()
+
     if request.headers.get("HX-Request"):
+        template = "meters/_table_quick.html" if mode == "quick" else "meters/_table.html"
         return render_template(
-            "meters/_table.html",
+            template,
             meters=meters, readings_map=readings_map,
             prev_readings_map=prev_readings_map, year=year,
-            replacement_map=replacement_map,
+            replacement_map=replacement_map, owners_map=owners_map,
         )
     return render_template(
         "meters/index.html",
         meters=meters, readings_map=readings_map,
         prev_readings_map=prev_readings_map, year=year, q=q,
-        replacement_map=replacement_map,
+        replacement_map=replacement_map, owners_map=owners_map,
+        mode=mode,
     )
+
+
+@bp.route("/bulk_read", methods=["POST"])
+@login_required
+def bulk_read():
+    year = int(request.form.get("year", date.today().year))
+    saved = 0
+    for key, value_str in request.form.items():
+        if not key.startswith("value_"):
+            continue
+        meter_id = int(key[len("value_"):])
+        value_str = value_str.strip().replace(",", ".")
+        if not value_str:
+            continue
+        try:
+            value = Decimal(value_str)
+        except Exception:
+            continue
+
+        meter = db.session.get(WaterMeter, meter_id)
+        if not meter:
+            continue
+
+        existing = MeterReading.query.filter_by(meter_id=meter_id, year=year).first()
+        prev = MeterReading.query.filter_by(meter_id=meter_id, year=year - 1).first()
+        consumption = None
+        if prev:
+            consumption = value - prev.value
+        elif meter.initial_value is not None:
+            consumption = value - meter.initial_value
+
+        if existing:
+            existing.value = value
+            existing.consumption = consumption
+            existing.created_by_id = current_user.id
+        else:
+            reading = MeterReading(
+                meter_id=meter_id, year=year, value=value,
+                reading_date=date.today(),
+                consumption=consumption,
+                created_by_id=current_user.id,
+            )
+            db.session.add(reading)
+        saved += 1
+
+    db.session.commit()
+    flash(f"{saved} Ablesung(en) gespeichert.", "success")
+    return redirect(url_for("meters.index", year=year))
 
 
 @bp.route("/<int:meter_id>/read", methods=["GET", "POST"])
@@ -125,10 +199,20 @@ def add_reading(meter_id):
         if request.headers.get("HX-Request"):
             prev = MeterReading.query.filter_by(meter_id=meter_id, year=year - 1).first()
             repl_map = _build_replacement_map([meter], year)
+            owner = (
+                db.session.query(Customer.name)
+                .join(PropertyOwnership, PropertyOwnership.customer_id == Customer.id)
+                .filter(
+                    PropertyOwnership.property_id == meter.property_id,
+                    PropertyOwnership.valid_to == None,
+                )
+                .scalar()
+            )
             return render_template(
                 "meters/_row.html", meter=meter, reading=reading, year=year,
                 prev_readings_map={meter_id: prev} if prev else {},
                 replacement_map=repl_map,
+                owners_map={meter.property_id: owner} if owner else {},
             )
         return redirect(url_for("meters.index", year=year))
 
@@ -169,6 +253,7 @@ def meter_new():
     if request.method == "POST":
         installed_from_str = request.form.get("installed_from", "")
         initial_value_str = request.form.get("initial_value", "").replace(",", ".")
+        eichjahr_str = request.form.get("eichjahr", "").strip()
         m = WaterMeter(
             property_id=int(request.form["property_id"]),
             meter_number=request.form.get("meter_number", "").strip(),
@@ -179,6 +264,7 @@ def meter_new():
                 if installed_from_str else None
             ),
             initial_value=Decimal(initial_value_str) if initial_value_str else None,
+            eichjahr=int(eichjahr_str) if eichjahr_str else None,
         )
         db.session.add(m)
         db.session.commit()
@@ -202,6 +288,7 @@ def meter_edit(meter_id):
     if request.method == "POST":
         installed_from_str = request.form.get("installed_from", "")
         initial_value_str = request.form.get("initial_value", "").replace(",", ".")
+        eichjahr_str = request.form.get("eichjahr", "").strip()
         meter.property_id = int(request.form["property_id"])
         meter.meter_number = request.form.get("meter_number", "").strip()
         meter.location = request.form.get("location", "").strip()
@@ -211,6 +298,7 @@ def meter_edit(meter_id):
             if installed_from_str else None
         )
         meter.initial_value = Decimal(initial_value_str) if initial_value_str else None
+        meter.eichjahr = int(eichjahr_str) if eichjahr_str else None
         db.session.commit()
         flash("Zähler aktualisiert.", "success")
         return redirect(url_for("meters.index"))
@@ -259,7 +347,7 @@ def import_readings():
         results = {"ok": 0, "skip": 0, "errors": []}
         for _, row in df.iterrows():
             meter_num = str(row.get(col_meter, "")).strip()
-            val_raw = str(row.get(col_value, "")).replace(",", ".").strip()
+            val_raw = str(row.get(col_value, "")).strip()
             year = int(row[col_year]) if col_year and row.get(col_year) else default_year
 
             meter = WaterMeter.query.filter_by(meter_number=meter_num).first()
@@ -267,8 +355,13 @@ def import_readings():
                 results["errors"].append(f"Zähler '{meter_num}' nicht gefunden")
                 results["skip"] += 1
                 continue
+            # Österreichisches Zahlenformat: Komma = Dezimal, Punkt = Tausender
+            val_raw_at = val_raw
+            if "," in val_raw_at and "." in val_raw_at:
+                val_raw_at = val_raw_at.replace(".", "")
+            val_raw_at = val_raw_at.replace(",", ".")
             try:
-                value = Decimal(val_raw)
+                value = Decimal(val_raw_at)
             except Exception:
                 results["errors"].append(f"Ungültiger Wert '{val_raw}' für {meter_num}")
                 results["skip"] += 1
@@ -337,6 +430,8 @@ def meter_replace(meter_id):
         new_meter_number = request.form.get("new_meter_number", "").strip()
         new_initial_str = request.form.get("new_initial_value", "0").replace(",", ".")
         new_initial_value = Decimal(new_initial_str) if new_initial_str else Decimal("0")
+        new_eichjahr_str = request.form.get("new_eichjahr", "").strip()
+        new_eichjahr = int(new_eichjahr_str) if new_eichjahr_str else None
 
         year = replacement_date.year
 
@@ -379,6 +474,7 @@ def meter_replace(meter_id):
             location=old_meter.location,
             installed_from=replacement_date,
             initial_value=new_initial_value,
+            eichjahr=new_eichjahr,
             notes=f"Nachfolger von {old_meter.meter_number}",
         )
         db.session.add(new_meter)

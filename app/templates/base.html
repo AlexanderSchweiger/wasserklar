@@ -155,7 +155,21 @@
             </ul>
           </li>
 
+          <li class="nav-item">
+            <a href="{{ url_for('projects.index') }}"
+               class="nav-link {% if request.blueprint == 'projects' %}active{% endif %}">
+              <i class="nav-icon fas fa-project-diagram"></i>
+              <p>Projekte</p>
+            </a>
+          </li>
+
           {% if current_user.is_admin %}
+          <li class="nav-item">
+            <a href="{{ url_for('import_csv.upload') }}" class="nav-link {% if request.blueprint == 'import_csv' %}active{% endif %}">
+              <i class="nav-icon fas fa-file-upload"></i>
+              <p>Stammdaten importieren</p>
+            </a>
+          </li>
           <li class="nav-item">
             <a href="{{ url_for('auth.users') }}" class="nav-link {% if request.blueprint == 'auth' and request.endpoint != 'auth.login' %}active{% endif %}">
               <i class="nav-icon fas fa-user-cog"></i>

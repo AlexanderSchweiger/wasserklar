@@ -47,6 +47,14 @@
                 placeholder="z. B. 0">
             </div>
           </div>
+          <div class="form-row">
+            <div class="form-group col-md-6">
+              <label>Eichjahr</label>
+              <input type="number" name="eichjahr" class="form-control" min="1900" max="2100"
+                value="{{ meter.eichjahr if meter and meter.eichjahr else '' }}"
+                placeholder="z. B. 2022">
+            </div>
+          </div>
           <div class="form-group">
             <label>Notizen</label>
             <textarea name="notes" class="form-control" rows="3">{{ meter.notes if meter else '' }}</textarea>
