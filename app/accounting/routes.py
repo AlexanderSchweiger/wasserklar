@@ -974,16 +974,29 @@ def export_csv():
 
     def generate():
         output = io.StringIO()
+        output.write("\ufeff")  # UTF-8 BOM für korrekte Darstellung in Excel
         writer = csv.writer(output, delimiter=";")
-        writer.writerow(["Datum", "Konto", "Typ", "Betrag", "Beschreibung", "Belegnummer"])
+        writer.writerow([
+            "Datum", "Bankkonto", "Konto", "Typ", "Beschreibung",
+            "Belegnummer", "Projekt", "Kunde", "MwSt %", "MwSt Betrag", "Betrag", "Status",
+        ])
         for b in bookings:
+            tax_amount = ""
+            if b.tax_rate and b.tax_rate > 0 and b.status != "Storniert":
+                tax_amount = str(round(abs(b.amount) * b.tax_rate / (100 + b.tax_rate), 2)).replace(".", ",")
             writer.writerow([
-                b.date.isoformat(),
+                b.date.strftime("%d.%m.%Y"),
+                b.real_account.name if b.real_account else "",
                 b.account.name,
                 b.account.type,
-                str(b.amount).replace(".", ","),
                 b.description,
                 b.reference or "",
+                b.project.name if b.project else "",
+                b.customer.name if b.customer else "",
+                str(int(b.tax_rate)).replace(".", ",") if b.tax_rate else "",
+                tax_amount,
+                str(b.amount).replace(".", ","),
+                b.status or "",
             ])
         return output.getvalue()
 

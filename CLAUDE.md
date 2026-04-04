@@ -51,7 +51,7 @@ _add_col_if_missing("tabelle", "spalte TYP DEFAULT wert", "spalte")
 
 **Extensions** (`app/extensions.py`): `db`, `login_manager`, `mail`, `migrate`, `csrf` — instantiated once, initialized in factory.
 
-### Blueprints (6 modules)
+### Blueprints (9 modules)
 
 | Blueprint | Prefix | Purpose |
 |-----------|--------|---------|
@@ -60,6 +60,9 @@ _add_col_if_missing("tabelle", "spalte TYP DEFAULT wert", "spalte")
 | `meters` | `/meters` | Meter CRUD, yearly readings, CSV/Excel import with column mapping |
 | `invoices` | `/invoices` | Invoice generation/edit/PDF/email, tariff CRUD under `/invoices/tariffs` |
 | `accounting` | `/accounting` | Accounts, bookings, open items, annual report, CSV export |
+| `properties` | `/properties` | Property (Objekt/Liegenschaft) CRUD, ownership history |
+| `projects` | `/projects` | Project tracking with associated bookings and open items |
+| `import_csv` | `/import-csv` | Bulk CSV/Excel import wizard (upload → column mapping → execute) for customers, properties, meters, readings |
 | `main` | `/` | Dashboard (open invoices, missing readings, income/expense summary) |
 
 Each blueprint follows the pattern: `app/<name>/__init__.py` (registers blueprint) + `app/<name>/routes.py` (all routes).
@@ -67,10 +70,17 @@ Each blueprint follows the pattern: `app/<name>/__init__.py` (registers blueprin
 ### Data Model (`app/models.py`)
 
 - **User** — auth with role ("admin"/"user"), active flag
-- **Customer** → has many **WaterMeter** → has many **MeterReading** (unique per meter+year, consumption = current − previous reading)
-- **WaterTariff** — base_fee + price_per_m3, valid for year range
-- **Invoice** → has many **InvoiceItem** + **Booking** links; statuses: Entwurf → Versendet → Bezahlt → Storniert; invoice_number format "RE-YYYY-NNNN"
+- **Customer** → has many **PropertyOwnership** records; also has `base_fee_override` / `additional_fee_override`
+- **Property** (Objekt/Liegenschaft) → has many **WaterMeter** and **PropertyOwnership**; also has fee overrides
+- **PropertyOwnership** — time-bounded Customer↔Property link (`valid_from` / `valid_to`); `valid_to=None` means currently active
+- **WaterMeter** → has many **MeterReading** (unique per meter+year, consumption = current − previous reading)
+- **WaterTariff** — base_fee + additional_fee + price_per_m3, valid for year range; fee overrides on Customer/Property take priority
+- **Invoice** → linked to Customer + optional Property; has many **InvoiceItem**; statuses: Entwurf → Versendet → Bezahlt → Storniert / Guthaben; invoice_number format "RE-YYYY-NNNN"
 - **Account** (Einnahme/Ausgabe) → has many **Booking**
+- **RealAccount** — real bank account (Girokonto etc.) with IBAN and opening balance; optionally linked to Bookings
+- **Booking** — links Account + optional Invoice/OpenItem/Project/Customer/RealAccount; `storno_of_id` enables cancellation chain
+- **OpenItem** — manually tracked receivable/payable; statuses: Offen → Teilbezahlt → Bezahlt / Gutschrift; settled via Bookings
+- **Project** — named cost/revenue center; bookings and open items can be assigned to a project
 
 Setting invoice status to "Bezahlt" auto-creates a Booking in the first active income account.
 
