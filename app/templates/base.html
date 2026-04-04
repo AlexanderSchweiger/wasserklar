@@ -152,6 +152,11 @@
                   <i class="far fa-circle nav-icon"></i><p>Kontenplan</p>
                 </a>
               </li>
+              <li class="nav-item">
+                <a href="{{ url_for('accounting.real_accounts') }}" class="nav-link {% if request.endpoint in ('accounting.real_accounts','accounting.real_account_new','accounting.real_account_edit') %}active{% endif %}">
+                  <i class="far fa-circle nav-icon"></i><p>Bankkonten</p>
+                </a>
+              </li>
             </ul>
           </li>
 

@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Bankkonten{% endblock %}
+{% block page_title %}<i class="fas fa-university mr-2"></i> Reale Bankkonten{% endblock %}
+{% block content %}
+
+<div class="row mb-3">
+  <div class="col">
+    <form class="form-inline" method="get">
+      <label class="mr-2">Jahr:</label>
+      <input type="number" name="year" value="{{ year }}" class="form-control form-control-sm mr-3" style="width:90px">
+      <button type="submit" class="btn btn-sm btn-secondary">Anzeigen</button>
+    </form>
+  </div>
+  <div class="col text-right">
+    <a href="{{ url_for('accounting.real_account_new') }}" class="btn btn-primary btn-sm">
+      <i class="fas fa-plus mr-1"></i> Neues Bankkonto
+    </a>
+  </div>
+</div>
+
+<div class="row">
+  {% for ra in real_accounts %}
+  {% set s = saldi[ra.id] %}
+  <div class="col-md-6 col-lg-4">
+    <div class="card {{ 'card-outline card-secondary' if not ra.active else 'card-primary card-outline' }}">
+      <div class="card-header">
+        <h3 class="card-title">
+          <i class="fas fa-university mr-1"></i>
+          {{ ra.name }}
+          {% if not ra.active %}<span class="badge badge-secondary ml-1">Inaktiv</span>{% endif %}
+        </h3>
+        <div class="card-tools">
+          <a href="{{ url_for('accounting.real_account_edit', ra_id=ra.id) }}"
+             class="btn btn-sm btn-tool" title="Bearbeiten">
+            <i class="fas fa-edit"></i>
+          </a>
+        </div>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-sm mb-0">
+          <tbody>
+            {% if ra.iban %}
+            <tr>
+              <td class="text-muted" style="width:50%">IBAN</td>
+              <td><code>{{ ra.iban }}</code></td>
+            </tr>
+            {% endif %}
+            {% if ra.description %}
+            <tr>
+              <td class="text-muted">Beschreibung</td>
+              <td>{{ ra.description }}</td>
+            </tr>
+            {% endif %}
+            <tr>
+              <td class="text-muted">Anfangssaldo</td>
+              <td class="font-weight-bold {{ 'text-success' if ra.opening_balance >= 0 else 'text-danger' }}">
+                {{ "%.2f"|format(ra.opening_balance) }} €
+              </td>
+            </tr>
+            <tr>
+              <td class="text-muted">Buchungen {{ year }}</td>
+              <td class="{{ 'text-success' if s.year_total >= 0 else 'text-danger' }}">
+                {{ "%+.2f"|format(s.year_total) }} €
+              </td>
+            </tr>
+            <tr class="table-active">
+              <td class="font-weight-bold">Saldo gesamt</td>
+              <td class="font-weight-bold {{ 'text-success' if s.balance >= 0 else 'text-danger' }}">
+                {{ "%.2f"|format(s.balance) }} €
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card-footer text-right py-2">
+        <a href="{{ url_for('accounting.bookings') }}?real_account_id={{ ra.id }}&year={{ year }}"
+           class="btn btn-sm btn-outline-secondary">
+          <i class="fas fa-list mr-1"></i> Buchungen anzeigen
+        </a>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="col">
+    <div class="callout callout-info">
+      Noch keine Bankkonten angelegt.
+      <a href="{{ url_for('accounting.real_account_new') }}">Erstes Bankkonto anlegen</a>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

@@ -3,28 +3,39 @@
     <tr>
       <th>Datum</th>
       <th>Konto</th>
+      <th>Bankkonto</th>
       <th>Beschreibung</th>
       <th>Projekt</th>
       <th>Belegnr.</th>
       <th>Status</th>
+      <th class="text-right">MwSt</th>
       <th class="text-right">Betrag</th>
       <th></th>
     </tr>
   </thead>
   <tbody>
     {% for b in bookings %}
-    <tr class="{% if b.status == 'Storniert' %}table-danger{% elif b.storno_of_id %}table-warning{% endif %}">
+    <tr class="{% if b.status == 'Storniert' %}text-muted{% endif %}" {% if b.status == 'Storniert' %}style="opacity:0.5"{% endif %}>
       <td>{{ b.date.strftime('%d.%m.%Y') }}</td>
       <td>{{ b.account.name }}</td>
       <td>
-        {% if b.storno_of_id %}
-        <span class="text-muted mr-1" title="Storno zu Buchung #{{ b.storno_of_id }}">&#8629;</span>
+        {% if b.real_account %}
+        <span class="badge badge-light border">
+          <i class="fas fa-university mr-1 text-muted"></i>{{ b.real_account.name }}
+        </span>
+        {% else %}
+        <span class="text-muted">—</span>
         {% endif %}
-        <span class="{% if b.status == 'Storniert' %}text-decoration-line-through text-muted{% endif %}">
+      </td>
+      <td>
+        {% if b.storno_of_id %}
+        <span class="mr-1" title="Storno zu Buchung #{{ b.storno_of_id }}">&#8629;</span>
+        {% endif %}
+        <span class="{% if b.status == 'Storniert' %}text-decoration-line-through{% endif %}">
           {{ b.description }}
         </span>
         {% if b.storno_reason %}
-        <br><small class="text-muted"><em>Grund: {{ b.storno_reason }}</em></small>
+        <small class="ml-1"><em>({{ b.storno_reason }})</em></small>
         {% endif %}
         {% if b.invoice_id %}
         <a href="{{ url_for('invoices.detail', invoice_id=b.invoice_id) }}"
@@ -49,6 +60,16 @@
         <span class="badge badge-secondary">Verbucht</span>
         {% elif b.status == 'Storniert' %}
         <span class="badge badge-danger">Storniert</span>
+        {% endif %}
+      </td>
+      <td class="text-right text-nowrap">
+        {% if b.tax_rate and b.tax_rate > 0 and b.status != 'Storniert' %}
+          <span class="badge badge-light border">{{ b.tax_rate | int }} %</span>
+          <small class="text-muted">
+            {{ "%.2f"|format(b.amount|abs * b.tax_rate / (100 + b.tax_rate)) }} €
+          </small>
+        {% else %}
+          <span class="text-muted">—</span>
         {% endif %}
       </td>
       <td class="text-right font-weight-bold {{ 'text-success' if b.amount > 0 else 'text-danger' }}">
@@ -78,8 +99,25 @@
     </tr>
     {% else %}
     <tr>
-      <td colspan="8" class="text-center text-muted py-3">Keine Buchungen.</td>
+      <td colspan="10" class="text-center text-muted py-3">Keine Buchungen.</td>
     </tr>
     {% endfor %}
   </tbody>
+  <tfoot class="thead-light">
+    <tr>
+      <td colspan="7" class="text-right font-weight-bold">Summe (ohne Storno):</td>
+      <td class="text-right text-nowrap">
+        {% if total_vorsteuer and total_vorsteuer > 0 %}
+        <small class="text-muted d-block">VSt: {{ "%.2f"|format(total_vorsteuer) }} €</small>
+        {% endif %}
+        {% if total_ust and total_ust > 0 %}
+        <small class="text-muted d-block">USt: {{ "%.2f"|format(total_ust) }} €</small>
+        {% endif %}
+      </td>
+      <td class="text-right font-weight-bold {{ 'text-success' if total_amount >= 0 else 'text-danger' }}">
+        {{ "%.2f"|format(total_amount) }} €
+      </td>
+      <td></td>
+    </tr>
+  </tfoot>
 </table>

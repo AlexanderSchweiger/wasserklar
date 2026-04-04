@@ -70,7 +70,7 @@
       <div class="card-body">
         <form method="post" action="{{ url_for('invoices.set_status', invoice_id=invoice.id) }}">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <div class="input-group">
+          <div class="input-group mb-2">
             <select name="status" class="form-control">
               {% for s in invoice.ALL_STATUSES %}
               <option value="{{ s }}" {{ 'selected' if invoice.status == s }}>{{ s }}</option>
@@ -82,6 +82,16 @@
               </button>
             </div>
           </div>
+          {% if real_accounts %}
+          <div class="form-group mb-0">
+            <select name="real_account_id" class="form-control form-control-sm">
+              <option value="">Bankkonto (bei Bezahlt) – optional</option>
+              {% for ra in real_accounts %}
+              <option value="{{ ra.id }}">{{ ra.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          {% endif %}
         </form>
       </div>
     </div>

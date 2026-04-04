@@ -10,7 +10,7 @@ from flask_login import login_required, current_user
 
 from app.invoices import bp
 from app.extensions import db, mail
-from app.models import Invoice, InvoiceItem, Customer, WaterMeter, MeterReading, WaterTariff, Booking, Account, Property, OpenItem, Project
+from app.models import Invoice, InvoiceItem, Customer, WaterMeter, MeterReading, WaterTariff, Booking, Account, Property, OpenItem, Project, RealAccount
 from app.utils import next_invoice_number as _next_invoice_number
 
 
@@ -245,7 +245,8 @@ def generate():
 @login_required
 def detail(invoice_id):
     invoice = db.get_or_404(Invoice, invoice_id)
-    return render_template("invoices/detail.html", invoice=invoice)
+    real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
+    return render_template("invoices/detail.html", invoice=invoice, real_accounts=real_accounts)
 
 
 @bp.route("/<int:invoice_id>/edit", methods=["GET", "POST"])
@@ -282,6 +283,7 @@ def set_status(invoice_id):
     if new_status == Invoice.STATUS_PAID and old_status != Invoice.STATUS_PAID:
         acc = Account.query.filter_by(type=Account.TYPE_INCOME, active=True).first()
         if acc:
+            real_account_id_raw = request.form.get("real_account_id") or None
             booking = Booking(
                 date=date.today(),
                 account_id=acc.id,
@@ -289,6 +291,7 @@ def set_status(invoice_id):
                 description=f"Zahlung {invoice.invoice_number} – {invoice.customer.name}",
                 reference=invoice.invoice_number,
                 invoice_id=invoice.id,
+                real_account_id=int(real_account_id_raw) if real_account_id_raw else None,
                 created_by_id=current_user.id,
             )
             db.session.add(booking)
@@ -322,6 +325,7 @@ def pay(invoice_id):
         flash("Kein aktives Einnahmenkonto gefunden.", "danger")
         return redirect(url_for("accounting.open_items"))
 
+    real_account_id_raw = request.form.get("real_account_id") or None
     booking = Booking(
         date=date.today(),
         account_id=acc.id,
@@ -329,6 +333,7 @@ def pay(invoice_id):
         description=f"Zahlung {invoice.invoice_number} – {invoice.customer.name}",
         reference=invoice.invoice_number,
         invoice_id=invoice.id,
+        real_account_id=int(real_account_id_raw) if real_account_id_raw else None,
         created_by_id=current_user.id,
     )
     db.session.add(booking)

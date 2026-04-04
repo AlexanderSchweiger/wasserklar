@@ -330,6 +330,23 @@ class Project(db.Model):
 # Buchhaltung
 # ---------------------------------------------------------------------------
 
+class RealAccount(db.Model):
+    """Reales Bankkonto (z. B. Girokonto, Kreditkonto)."""
+    __tablename__ = "real_accounts"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    description = db.Column(db.String(200))
+    iban = db.Column(db.String(34))
+    opening_balance = db.Column(db.Numeric(10, 2), default=0, nullable=False)
+    active = db.Column(db.Boolean, default=True)
+
+    bookings = db.relationship("Booking", backref="real_account", lazy="dynamic")
+
+    def __repr__(self):
+        return f"<RealAccount {self.name}>"
+
+
 class Account(db.Model):
     __tablename__ = "accounts"
 
@@ -367,11 +384,14 @@ class Booking(db.Model):
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     status = db.Column(db.String(20), nullable=False, default="Offen")
+    real_account_id = db.Column(db.Integer, db.ForeignKey("real_accounts.id"), nullable=True)
     storno_of_id = db.Column(db.Integer, db.ForeignKey("bookings.id"), nullable=True)
     storno_reason = db.Column(db.String(500), nullable=True)
     storno_date = db.Column(db.Date, nullable=True)
 
     created_by = db.relationship("User", foreign_keys=[created_by_id])
+    tax_rate = db.Column(db.Numeric(5, 2), nullable=True)  # MwSt in %; None = keine MwSt
+
     storno_of = db.relationship("Booking", remote_side="Booking.id", foreign_keys="Booking.storno_of_id", backref=db.backref("storno_buchung", uselist=False))
 
     def __repr__(self):

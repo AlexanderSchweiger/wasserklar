@@ -46,6 +46,8 @@ def register_commands(app):
             _add_col_if_missing("water_meters", "eichjahr INTEGER", "eichjahr")
             _add_col_if_missing("customers", "customer_number INTEGER", "customer_number")
             _add_col_if_missing("customers", "externe_kennung VARCHAR(100)", "externe_kennung")
+            _add_col_if_missing("bookings", "real_account_id INTEGER REFERENCES real_accounts(id)", "real_account_id")
+            _add_col_if_missing("bookings", "tax_rate NUMERIC(5,2)", "tax_rate")
             conn.commit()
 
         if Account.query.count() == 0:
@@ -98,6 +100,8 @@ def register_commands(app):
             _add_col_if_missing("water_meters", "eichjahr INTEGER", "eichjahr")
             _add_col_if_missing("customers", "customer_number INTEGER", "customer_number")
             _add_col_if_missing("customers", "externe_kennung VARCHAR(100)", "externe_kennung")
+            _add_col_if_missing("bookings", "real_account_id INTEGER REFERENCES real_accounts(id)", "real_account_id")
+            _add_col_if_missing("bookings", "tax_rate NUMERIC(5,2)", "tax_rate")
             conn.commit()
 
         # Datenmigration: Kundennummern für bestehende Kunden ohne Kundennummer vergeben

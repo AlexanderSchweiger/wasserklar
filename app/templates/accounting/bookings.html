@@ -12,7 +12,7 @@
           hx-get="{{ url_for('accounting.bookings') }}"
           hx-trigger="change"
           hx-target="#bookings-table"
-          hx-include="[name='year'],[name='account_id'],[name='project_id']">
+          hx-include="[name='year'],[name='account_id'],[name='project_id'],[name='real_account_id']">
       </div>
       <div class="form-group">
         <label class="mb-0 mr-1">Konto</label>
@@ -20,11 +20,26 @@
           hx-get="{{ url_for('accounting.bookings') }}"
           hx-trigger="change"
           hx-target="#bookings-table"
-          hx-include="[name='year'],[name='account_id'],[name='project_id']">
+          hx-include="[name='year'],[name='account_id'],[name='project_id'],[name='real_account_id']">
           <option value="">Alle Konten</option>
           {% for a in accounts %}
           <option value="{{ a.id }}" {{ 'selected' if account_id|string == a.id|string }}>
             {{ a.name }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="mb-0 mr-1">Bankkonto</label>
+        <select name="real_account_id" class="form-control form-control-sm"
+          hx-get="{{ url_for('accounting.bookings') }}"
+          hx-trigger="change"
+          hx-target="#bookings-table"
+          hx-include="[name='year'],[name='account_id'],[name='project_id'],[name='real_account_id']">
+          <option value="">Alle Bankkonten</option>
+          {% for ra in real_accounts %}
+          <option value="{{ ra.id }}" {{ 'selected' if real_account_id|string == ra.id|string }}>
+            {{ ra.name }}
           </option>
           {% endfor %}
         </select>
@@ -35,7 +50,7 @@
           hx-get="{{ url_for('accounting.bookings') }}"
           hx-trigger="change"
           hx-target="#bookings-table"
-          hx-include="[name='year'],[name='account_id'],[name='project_id']">
+          hx-include="[name='year'],[name='account_id'],[name='project_id'],[name='real_account_id']">
           <option value="">Alle Projekte</option>
           {% for p in projects %}
           <option value="{{ p.id }}" {{ 'selected' if project_id|string == p.id|string }}>

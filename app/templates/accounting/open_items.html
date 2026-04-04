@@ -164,6 +164,15 @@
                      value="{{ '%.2f'|format(bal) }}"
                      class="form-control form-control-sm mr-1" style="width:90px"
                      title="Zahlungsbetrag">
+              {% if real_accounts %}
+              <select name="real_account_id" class="form-control form-control-sm mr-1"
+                      title="Bankkonto" style="max-width:140px">
+                <option value="">Bankkonto …</option>
+                {% for ra in real_accounts %}
+                <option value="{{ ra.id }}">{{ ra.name }}</option>
+                {% endfor %}
+              </select>
+              {% endif %}
               <button type="submit" class="btn btn-sm btn-success mr-1" title="Zahlung buchen">
                 <i class="fas fa-check"></i> Bezahlen
               </button>

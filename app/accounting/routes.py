@@ -12,7 +12,7 @@ from sqlalchemy import extract, func, case
 
 from app.accounting import bp
 from app.extensions import db
-from app.models import Account, Booking, Invoice, OpenItem, WaterTariff, Customer, InvoiceItem, Project
+from app.models import Account, Booking, Invoice, OpenItem, WaterTariff, Customer, InvoiceItem, Project, RealAccount
 from app.utils import next_invoice_number
 
 
@@ -88,32 +88,59 @@ def bookings():
     year = request.args.get("year", date.today().year, type=int)
     account_id = request.args.get("account_id", "", type=str)
     project_id = request.args.get("project_id", "", type=str)
+    real_account_id = request.args.get("real_account_id", "", type=str)
 
     query = (
         Booking.query
         .filter(extract("year", Booking.date) == year)
         .order_by(
-            func.coalesce(Booking.storno_of_id, Booking.id),
-            Booking.id,
+            Booking.date.desc(),
+            func.coalesce(Booking.storno_of_id, Booking.id).desc(),
         )
     )
     if account_id:
         query = query.filter(Booking.account_id == int(account_id))
     if project_id:
         query = query.filter(Booking.project_id == int(project_id))
+    if real_account_id:
+        query = query.filter(Booking.real_account_id == int(real_account_id))
 
     bkgs = query.all()
     accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
     projects = Project.query.order_by(Project.name).all()
+    real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
+
+    active_bkgs = [b for b in bkgs if b.status != Booking.STATUS_STORNIERT]
+    total_amount = sum((b.amount for b in active_bkgs), Decimal("0"))
+
+    def _tax(b):
+        if not b.tax_rate or b.tax_rate == 0:
+            return Decimal("0")
+        rate = Decimal(str(b.tax_rate))
+        return (abs(b.amount) * rate / (100 + rate)).quantize(Decimal("0.01"))
+
+    total_vorsteuer = sum(
+        _tax(b) for b in active_bkgs if b.account.type == Account.TYPE_EXPENSE
+    )
+    total_ust = sum(
+        _tax(b) for b in active_bkgs if b.account.type == Account.TYPE_INCOME
+    )
+
+    table_ctx = dict(
+        bookings=bkgs, year=year,
+        total_amount=total_amount,
+        total_vorsteuer=total_vorsteuer,
+        total_ust=total_ust,
+    )
 
     if request.headers.get("HX-Request"):
-        return render_template(
-            "accounting/_bookings_table.html", bookings=bkgs, year=year,
-        )
+        return render_template("accounting/_bookings_table.html", **table_ctx)
     return render_template(
         "accounting/bookings.html",
-        bookings=bkgs, accounts=accounts, projects=projects, year=year,
+        accounts=accounts, projects=projects,
         account_id=account_id, project_id=project_id,
+        real_accounts=real_accounts, real_account_id=real_account_id,
+        **table_ctx,
     )
 
 
@@ -122,6 +149,7 @@ def bookings():
 def booking_new():
     accounts = Account.query.filter_by(active=True).order_by(Account.type, Account.name).all()
     active_projects = Project.query.filter_by(closed=False).order_by(Project.name).all()
+    real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
     if request.method == "POST":
         amount_raw = request.form.get("amount", "0").replace(",", ".")
         amount = Decimal(amount_raw)
@@ -130,6 +158,12 @@ def booking_new():
         if acc.type == Account.TYPE_EXPENSE and amount > 0:
             amount = -amount
         project_id_raw = request.form.get("project_id") or None
+        real_account_id_raw = request.form.get("real_account_id") or None
+        tax_rate_raw = request.form.get("tax_rate", "0") or "0"
+        try:
+            tax_rate = Decimal(tax_rate_raw)
+        except Exception:
+            tax_rate = Decimal("0")
         b = Booking(
             date=date.fromisoformat(request.form["date"]),
             account_id=acc.id,
@@ -137,6 +171,8 @@ def booking_new():
             description=request.form.get("description", "").strip(),
             reference=request.form.get("reference", "").strip(),
             project_id=int(project_id_raw) if project_id_raw else None,
+            real_account_id=int(real_account_id_raw) if real_account_id_raw else None,
+            tax_rate=tax_rate if tax_rate > 0 else None,
             created_by_id=current_user.id,
         )
         db.session.add(b)
@@ -144,7 +180,8 @@ def booking_new():
         flash("Buchung gespeichert.", "success")
         return redirect(url_for("accounting.bookings"))
     return render_template(
-        "accounting/booking_form.html", booking=None, accounts=accounts, projects=active_projects,
+        "accounting/booking_form.html", booking=None, accounts=accounts,
+        projects=active_projects, real_accounts=real_accounts,
     )
 
 
@@ -157,6 +194,7 @@ def booking_edit(booking_id):
         return redirect(url_for("accounting.bookings"))
     accounts = Account.query.filter_by(active=True).order_by(Account.type, Account.name).all()
     active_projects = Project.query.filter_by(closed=False).order_by(Project.name).all()
+    real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
     if request.method == "POST":
         amount_raw = request.form.get("amount", "0").replace(",", ".")
         amount = Decimal(amount_raw)
@@ -164,17 +202,26 @@ def booking_edit(booking_id):
         if acc.type == Account.TYPE_EXPENSE and amount > 0:
             amount = -amount
         project_id_raw = request.form.get("project_id") or None
+        real_account_id_raw = request.form.get("real_account_id") or None
+        tax_rate_raw = request.form.get("tax_rate", "0") or "0"
+        try:
+            tax_rate = Decimal(tax_rate_raw)
+        except Exception:
+            tax_rate = Decimal("0")
         b.date = date.fromisoformat(request.form["date"])
         b.account_id = acc.id
         b.amount = amount
         b.description = request.form.get("description", "").strip()
         b.reference = request.form.get("reference", "").strip()
         b.project_id = int(project_id_raw) if project_id_raw else None
+        b.real_account_id = int(real_account_id_raw) if real_account_id_raw else None
+        b.tax_rate = tax_rate if tax_rate > 0 else None
         db.session.commit()
         flash("Buchung aktualisiert.", "success")
         return redirect(url_for("accounting.bookings"))
     return render_template(
-        "accounting/booking_form.html", booking=b, accounts=accounts, projects=active_projects,
+        "accounting/booking_form.html", booking=b, accounts=accounts,
+        projects=active_projects, real_accounts=real_accounts,
     )
 
 
@@ -221,6 +268,7 @@ def booking_stornieren(booking_id):
             invoice_id=b.invoice_id,
             open_item_id=b.open_item_id,
             project_id=b.project_id,
+            tax_rate=b.tax_rate,
             storno_of_id=b.id,
             storno_reason=reason,
             storno_date=date.today(),
@@ -297,6 +345,7 @@ def open_items():
 
     items = item_q.order_by(OpenItem.due_date).all()
     total_open = sum(item.open_balance for item in items)
+    real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
 
     return render_template(
         "accounting/open_items.html",
@@ -309,6 +358,7 @@ def open_items():
         f_year=year_q,
         f_amount_min=amount_min_raw,
         f_amount_max=amount_max_raw,
+        real_accounts=real_accounts,
     )
 
 
@@ -357,6 +407,7 @@ def open_item_pay(item_id):
         flash("Kein aktives Einnahmenkonto gefunden.", "danger")
         return redirect(url_for("accounting.open_items"))
 
+    real_account_id_raw = request.form.get("real_account_id") or None
     ref = item.invoice.invoice_number if item.invoice_id else f"OP-{item.id}"
     booking = Booking(
         date=date.today(),
@@ -366,6 +417,7 @@ def open_item_pay(item_id):
         reference=ref,
         open_item_id=item.id,
         invoice_id=item.invoice_id,
+        real_account_id=int(real_account_id_raw) if real_account_id_raw else None,
         created_by_id=current_user.id,
     )
     db.session.add(booking)
@@ -641,3 +693,66 @@ def export_csv():
         mimetype="text/csv",
         headers={"Content-Disposition": f"attachment; filename=buchungen_{year}.csv"},
     )
+
+
+# ---------------------------------------------------------------------------
+# Reale Bankkonten
+# ---------------------------------------------------------------------------
+
+@bp.route("/real-accounts")
+@login_required
+def real_accounts():
+    year = request.args.get("year", date.today().year, type=int)
+    accounts = RealAccount.query.order_by(RealAccount.name).all()
+
+    # Saldo pro Konto = Anfangssaldo + Summe aller Buchungen (gefiltert nach Jahr optional)
+    saldi = {}
+    for ra in accounts:
+        total = db.session.query(func.sum(Booking.amount)).filter(
+            Booking.real_account_id == ra.id,
+            extract("year", Booking.date) == year,
+        ).scalar() or Decimal("0")
+        saldi[ra.id] = {
+            "year_total": total,
+            "balance": Decimal(str(ra.opening_balance)) + total,
+        }
+
+    return render_template(
+        "accounting/real_accounts.html",
+        real_accounts=accounts, saldi=saldi, year=year,
+    )
+
+
+@bp.route("/real-accounts/new", methods=["GET", "POST"])
+@login_required
+def real_account_new():
+    if request.method == "POST":
+        opening_raw = request.form.get("opening_balance", "0").replace(",", ".")
+        ra = RealAccount(
+            name=request.form["name"].strip(),
+            description=request.form.get("description", "").strip(),
+            iban=request.form.get("iban", "").strip(),
+            opening_balance=Decimal(opening_raw),
+        )
+        db.session.add(ra)
+        db.session.commit()
+        flash("Bankkonto angelegt.", "success")
+        return redirect(url_for("accounting.real_accounts"))
+    return render_template("accounting/real_account_form.html", real_account=None)
+
+
+@bp.route("/real-accounts/<int:ra_id>/edit", methods=["GET", "POST"])
+@login_required
+def real_account_edit(ra_id):
+    ra = db.get_or_404(RealAccount, ra_id)
+    if request.method == "POST":
+        opening_raw = request.form.get("opening_balance", "0").replace(",", ".")
+        ra.name = request.form["name"].strip()
+        ra.description = request.form.get("description", "").strip()
+        ra.iban = request.form.get("iban", "").strip()
+        ra.opening_balance = Decimal(opening_raw)
+        ra.active = "active" in request.form
+        db.session.commit()
+        flash("Bankkonto aktualisiert.", "success")
+        return redirect(url_for("accounting.real_accounts"))
+    return render_template("accounting/real_account_form.html", real_account=ra)
