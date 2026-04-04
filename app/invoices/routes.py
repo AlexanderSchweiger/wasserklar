@@ -284,17 +284,28 @@ def set_status(invoice_id):
         acc = Account.query.filter_by(type=Account.TYPE_INCOME, active=True).first()
         if acc:
             real_account_id_raw = request.form.get("real_account_id") or None
-            booking = Booking(
-                date=date.today(),
-                account_id=acc.id,
-                amount=invoice.total_amount,
-                description=f"Zahlung {invoice.invoice_number} – {invoice.customer.name}",
-                reference=invoice.invoice_number,
-                invoice_id=invoice.id,
-                real_account_id=int(real_account_id_raw) if real_account_id_raw else None,
-                created_by_id=current_user.id,
-            )
-            db.session.add(booking)
+            real_account_id = int(real_account_id_raw) if real_account_id_raw else None
+            # Buchungen pro Steuersatz aufteilen, damit USt-Voranmeldung korrekt ist
+            from collections import defaultdict
+            from decimal import Decimal as _D
+            groups = defaultdict(lambda: _D("0"))
+            for item in invoice.items:
+                rate = item.tax_rate if item.tax_rate is not None else _D("0")
+                groups[rate] += item.amount
+            if not groups:
+                groups[None] = invoice.total_amount
+            for rate, amount in groups.items():
+                db.session.add(Booking(
+                    date=date.today(),
+                    account_id=acc.id,
+                    amount=amount,
+                    description=f"Zahlung {invoice.invoice_number} – {invoice.customer.name}",
+                    reference=invoice.invoice_number,
+                    invoice_id=invoice.id,
+                    real_account_id=real_account_id,
+                    created_by_id=current_user.id,
+                    tax_rate=rate if rate and rate > 0 else None,
+                ))
         if invoice.open_item:
             invoice.open_item.status = OpenItem.STATUS_PAID
 

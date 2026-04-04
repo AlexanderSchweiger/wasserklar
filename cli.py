@@ -53,21 +53,6 @@ def register_commands(app):
             _add_col_if_missing("real_accounts", "icon VARCHAR(50) DEFAULT 'fa-university'", "icon")
             conn.commit()
 
-        if Account.query.count() == 0:
-            default_accounts = [
-                Account(name="Wassergebühren", type="Einnahme", description="Jährliche Wasserabrechnung"),
-                Account(name="Sonstige Einnahmen", type="Einnahme", description=""),
-                Account(name="Wartung und Reparatur", type="Ausgabe", description=""),
-                Account(name="Strom (Pumpen)", type="Ausgabe", description=""),
-                Account(name="Versicherung", type="Ausgabe", description=""),
-                Account(name="Verwaltung", type="Ausgabe", description=""),
-                Account(name="Sonstige Ausgaben", type="Ausgabe", description=""),
-            ]
-            for acc in default_accounts:
-                db.session.add(acc)
-            db.session.commit()
-            print(f"{len(default_accounts)} Standard-Konten angelegt.")
-
     @app.cli.command("upgrade-db")
     def upgrade_db():
         """Fehlende Spalten in bestehender Datenbank ergänzen (für Updates)."""

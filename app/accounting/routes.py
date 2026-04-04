@@ -686,31 +686,21 @@ def _parse_at_number(raw):
 
 
 def _find_customer(name, customers, customer_name_map):
-    """Fuzzy-Suche nach Kunde anhand des Namens. Gibt customer_id oder None zurück."""
+    """Exakte Suche nach Kunde anhand des Namens (Vor- und Nachname müssen übereinstimmen)."""
     if not name or not name.strip():
         return None
-    name = name.strip()
-    name_lower = name.lower()
+    name_lower = name.strip().lower()
 
     # Exakte Übereinstimmung
     if name_lower in customer_name_map:
         return customer_name_map[name_lower]
 
-    # Fuzzy-Matching
-    customer_names = list(customer_name_map.keys())
-    matches = difflib.get_close_matches(name_lower, customer_names, n=1, cutoff=0.6)
-    if matches:
-        return customer_name_map[matches[0]]
-
     # Umgekehrte Reihenfolge (Nachname Vorname → Vorname Nachname)
-    parts = name.split()
+    parts = name.strip().split()
     if len(parts) == 2:
         reversed_name = f"{parts[1]} {parts[0]}".lower()
         if reversed_name in customer_name_map:
             return customer_name_map[reversed_name]
-        matches = difflib.get_close_matches(reversed_name, customer_names, n=1, cutoff=0.6)
-        if matches:
-            return customer_name_map[matches[0]]
 
     return None
 
@@ -835,17 +825,23 @@ def import_bookings():
 
                 # Betrag bestimmen
                 amount = None
+                is_ausgabe = False
                 ausgaben_raw = _col(col_ausgaben)
                 einnahmen_raw = _col(col_einnahmen)
 
                 if ausgaben_raw:
                     amount = _parse_at_number(ausgaben_raw)
+                    is_ausgabe = True
                 elif einnahmen_raw:
                     amount = _parse_at_number(einnahmen_raw)
 
                 if amount is None:
                     results["skip"] += 1
                     continue
+
+                # Ausgaben-Spalte: Betrag muss negativ sein
+                if is_ausgabe and amount > 0:
+                    amount = -amount
 
                 # Datum parsen
                 datum_raw = _col(col_datum)
@@ -868,15 +864,16 @@ def import_bookings():
                     results["skip"] += 1
                     continue
 
-                if kst_name not in account_cache:
-                    acc = Account.query.filter_by(name=kst_name).first()
+                expected_type = Account.TYPE_EXPENSE if amount < 0 else Account.TYPE_INCOME
+                cache_key = (kst_name, expected_type)
+                if cache_key not in account_cache:
+                    acc = Account.query.filter_by(name=kst_name, type=expected_type).first()
                     if not acc:
-                        acc_type = Account.TYPE_EXPENSE if amount < 0 else Account.TYPE_INCOME
-                        acc = Account(name=kst_name, type=acc_type)
+                        acc = Account(name=kst_name, type=expected_type)
                         db.session.add(acc)
                         db.session.flush()
-                    account_cache[kst_name] = acc
-                acc = account_cache[kst_name]
+                    account_cache[cache_key] = acc
+                acc = account_cache[cache_key]
 
                 # Reales Bankkonto ermitteln / anlegen
                 real_account_id = None
