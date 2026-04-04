@@ -1,7 +1,9 @@
 import io
 import csv
+import base64
+import difflib
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from flask import (
     render_template, redirect, url_for, flash, request,
@@ -150,6 +152,7 @@ def booking_new():
     accounts = Account.query.filter_by(active=True).order_by(Account.type, Account.name).all()
     active_projects = Project.query.filter_by(closed=False).order_by(Project.name).all()
     real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
+    customers = Customer.query.filter_by(active=True).order_by(Customer.name).all()
     if request.method == "POST":
         amount_raw = request.form.get("amount", "0").replace(",", ".")
         amount = Decimal(amount_raw)
@@ -159,6 +162,7 @@ def booking_new():
             amount = -amount
         project_id_raw = request.form.get("project_id") or None
         real_account_id_raw = request.form.get("real_account_id") or None
+        customer_id_raw = request.form.get("customer_id") or None
         tax_rate_raw = request.form.get("tax_rate", "0") or "0"
         try:
             tax_rate = Decimal(tax_rate_raw)
@@ -172,6 +176,7 @@ def booking_new():
             reference=request.form.get("reference", "").strip(),
             project_id=int(project_id_raw) if project_id_raw else None,
             real_account_id=int(real_account_id_raw) if real_account_id_raw else None,
+            customer_id=int(customer_id_raw) if customer_id_raw else None,
             tax_rate=tax_rate if tax_rate > 0 else None,
             created_by_id=current_user.id,
         )
@@ -181,7 +186,7 @@ def booking_new():
         return redirect(url_for("accounting.bookings"))
     return render_template(
         "accounting/booking_form.html", booking=None, accounts=accounts,
-        projects=active_projects, real_accounts=real_accounts,
+        projects=active_projects, real_accounts=real_accounts, customers=customers,
     )
 
 
@@ -195,6 +200,7 @@ def booking_edit(booking_id):
     accounts = Account.query.filter_by(active=True).order_by(Account.type, Account.name).all()
     active_projects = Project.query.filter_by(closed=False).order_by(Project.name).all()
     real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
+    customers = Customer.query.filter_by(active=True).order_by(Customer.name).all()
     if request.method == "POST":
         amount_raw = request.form.get("amount", "0").replace(",", ".")
         amount = Decimal(amount_raw)
@@ -203,6 +209,7 @@ def booking_edit(booking_id):
             amount = -amount
         project_id_raw = request.form.get("project_id") or None
         real_account_id_raw = request.form.get("real_account_id") or None
+        customer_id_raw = request.form.get("customer_id") or None
         tax_rate_raw = request.form.get("tax_rate", "0") or "0"
         try:
             tax_rate = Decimal(tax_rate_raw)
@@ -215,13 +222,14 @@ def booking_edit(booking_id):
         b.reference = request.form.get("reference", "").strip()
         b.project_id = int(project_id_raw) if project_id_raw else None
         b.real_account_id = int(real_account_id_raw) if real_account_id_raw else None
+        b.customer_id = int(customer_id_raw) if customer_id_raw else None
         b.tax_rate = tax_rate if tax_rate > 0 else None
         db.session.commit()
         flash("Buchung aktualisiert.", "success")
         return redirect(url_for("accounting.bookings"))
     return render_template(
         "accounting/booking_form.html", booking=b, accounts=accounts,
-        projects=active_projects, real_accounts=real_accounts,
+        projects=active_projects, real_accounts=real_accounts, customers=customers,
     )
 
 
@@ -659,6 +667,297 @@ def report():
 
 
 # ---------------------------------------------------------------------------
+# Buchungen-Import
+# ---------------------------------------------------------------------------
+
+def _parse_at_number(raw):
+    """Österreichisches Zahlenformat: Leerzeichen/Punkt als Tausender, Komma als Dezimal."""
+    raw = str(raw).strip().replace('\xa0', '').replace(' ', '')
+    if not raw or raw == 'nan':
+        return None
+    if ',' in raw and '.' in raw:
+        raw = raw.replace('.', '')
+    raw = raw.replace(',', '.')
+    try:
+        return Decimal(raw)
+    except InvalidOperation:
+        return None
+
+
+def _find_customer(name, customers, customer_name_map):
+    """Fuzzy-Suche nach Kunde anhand des Namens. Gibt customer_id oder None zurück."""
+    if not name or not name.strip():
+        return None
+    name = name.strip()
+    name_lower = name.lower()
+
+    # Exakte Übereinstimmung
+    if name_lower in customer_name_map:
+        return customer_name_map[name_lower]
+
+    # Fuzzy-Matching
+    customer_names = list(customer_name_map.keys())
+    matches = difflib.get_close_matches(name_lower, customer_names, n=1, cutoff=0.6)
+    if matches:
+        return customer_name_map[matches[0]]
+
+    # Umgekehrte Reihenfolge (Nachname Vorname → Vorname Nachname)
+    parts = name.split()
+    if len(parts) == 2:
+        reversed_name = f"{parts[1]} {parts[0]}".lower()
+        if reversed_name in customer_name_map:
+            return customer_name_map[reversed_name]
+        matches = difflib.get_close_matches(reversed_name, customer_names, n=1, cutoff=0.6)
+        if matches:
+            return customer_name_map[matches[0]]
+
+    return None
+
+
+@bp.route("/bookings/import", methods=["GET", "POST"])
+@login_required
+def import_bookings():
+    import pandas as pd
+
+    if request.method == "POST":
+        # ------------------------------------------------------------------
+        # Stufe 1: Datei hochladen → Spaltenvorschau
+        # ------------------------------------------------------------------
+        if "file" in request.files and request.files["file"].filename:
+            f = request.files["file"]
+            try:
+                raw_bytes = f.read()
+                # Versuche UTF-8-sig, dann latin-1
+                for enc in ("utf-8-sig", "latin-1"):
+                    try:
+                        df = pd.read_csv(
+                            io.BytesIO(raw_bytes), sep=";", dtype=str,
+                            encoding=enc, keep_default_na=False,
+                        )
+                        break
+                    except Exception:
+                        continue
+                else:
+                    flash("Fehler beim Lesen der Datei.", "danger")
+                    return redirect(url_for("accounting.import_bookings"))
+            except Exception as e:
+                flash(f"Fehler beim Lesen der Datei: {e}", "danger")
+                return redirect(url_for("accounting.import_bookings"))
+
+            file_content_b64 = base64.b64encode(raw_bytes).decode("ascii")
+            columns = list(df.columns)
+            preview = df.head(5).to_dict(orient="records")
+
+            # Spalten automatisch vorauswählen
+            def _auto(names):
+                for n in names:
+                    if n in columns:
+                        return n
+                return ""
+
+            auto = {
+                "datum": _auto(["Datum"]),
+                "kst": _auto(["KST"]),
+                "ausgaben": _auto(["Ausgaben"]),
+                "einnahmen": _auto(["Einnahmen"]),
+                "konto": _auto(["Konto"]),
+                "ktr": _auto(["KTR"]),
+                "name": _auto(["Name"]),
+                "beschreibung": _auto(["Beschreibung"]),
+                "steuer": _auto(["Steuer"]),
+            }
+            return render_template(
+                "accounting/import_bookings_mapping.html",
+                columns=columns,
+                preview=preview,
+                file_content=file_content_b64,
+                auto=auto,
+            )
+
+        # ------------------------------------------------------------------
+        # Stufe 2: Mapping bestätigen → Buchungen anlegen
+        # ------------------------------------------------------------------
+        if request.form.get("confirm") == "1":
+            file_content_b64 = request.form.get("file_content", "")
+            if not file_content_b64:
+                flash("Import-Daten fehlen, bitte Datei erneut hochladen.", "danger")
+                return redirect(url_for("accounting.import_bookings"))
+
+            try:
+                raw_bytes = base64.b64decode(file_content_b64)
+                for enc in ("utf-8-sig", "latin-1"):
+                    try:
+                        df = pd.read_csv(
+                            io.BytesIO(raw_bytes), sep=";", dtype=str,
+                            encoding=enc, keep_default_na=False,
+                        )
+                        break
+                    except Exception:
+                        continue
+                else:
+                    flash("Fehler beim Lesen der Import-Daten.", "danger")
+                    return redirect(url_for("accounting.import_bookings"))
+            except Exception as e:
+                flash(f"Fehler: {e}", "danger")
+                return redirect(url_for("accounting.import_bookings"))
+
+            # Spaltenmapping aus Formular
+            col_datum = request.form.get("col_datum", "")
+            col_kst = request.form.get("col_kst", "")
+            col_ausgaben = request.form.get("col_ausgaben", "")
+            col_einnahmen = request.form.get("col_einnahmen", "")
+            col_konto = request.form.get("col_konto", "")
+            col_ktr = request.form.get("col_ktr", "")
+            col_name = request.form.get("col_name", "")
+            col_beschreibung = request.form.get("col_beschreibung", "")
+            col_steuer = request.form.get("col_steuer", "")
+
+            if not col_datum or not col_kst:
+                flash("Pflichtfelder Datum und KST (Konto) müssen zugeordnet sein.", "danger")
+                return redirect(url_for("accounting.import_bookings"))
+
+            # Kunden-Cache aufbauen
+            alle_kunden = Customer.query.filter_by(active=True).all()
+            customer_name_map = {c.name.lower(): c.id for c in alle_kunden}
+
+            # Konto/Projekt/Bankkonto-Caches
+            account_cache = {}      # name → Account
+            project_cache = {}      # name → Project
+            real_account_cache = {} # name → RealAccount
+
+            results = {"ok": 0, "skip": 0, "matched": 0}
+
+            for _, row in df.iterrows():
+                def _col(c):
+                    v = str(row.get(c, "")).strip() if c else ""
+                    return v if v and v.lower() != "nan" else ""
+
+                # Betrag bestimmen
+                amount = None
+                ausgaben_raw = _col(col_ausgaben)
+                einnahmen_raw = _col(col_einnahmen)
+
+                if ausgaben_raw:
+                    amount = _parse_at_number(ausgaben_raw)
+                elif einnahmen_raw:
+                    amount = _parse_at_number(einnahmen_raw)
+
+                if amount is None:
+                    results["skip"] += 1
+                    continue
+
+                # Datum parsen
+                datum_raw = _col(col_datum)
+                if not datum_raw:
+                    results["skip"] += 1
+                    continue
+                try:
+                    if "." in datum_raw:
+                        from datetime import datetime as _dt
+                        booking_date = _dt.strptime(datum_raw, "%d.%m.%Y").date()
+                    else:
+                        booking_date = date.fromisoformat(datum_raw)
+                except Exception:
+                    results["skip"] += 1
+                    continue
+
+                # Konto (KST) → Account ermitteln / anlegen
+                kst_name = _col(col_kst)
+                if not kst_name:
+                    results["skip"] += 1
+                    continue
+
+                if kst_name not in account_cache:
+                    acc = Account.query.filter_by(name=kst_name).first()
+                    if not acc:
+                        acc_type = Account.TYPE_EXPENSE if amount < 0 else Account.TYPE_INCOME
+                        acc = Account(name=kst_name, type=acc_type)
+                        db.session.add(acc)
+                        db.session.flush()
+                    account_cache[kst_name] = acc
+                acc = account_cache[kst_name]
+
+                # Reales Bankkonto ermitteln / anlegen
+                real_account_id = None
+                konto_name = _col(col_konto)
+                if konto_name:
+                    if konto_name not in real_account_cache:
+                        ra = RealAccount.query.filter_by(name=konto_name).first()
+                        if not ra:
+                            ra = RealAccount(name=konto_name)
+                            db.session.add(ra)
+                            db.session.flush()
+                        real_account_cache[konto_name] = ra
+                    real_account_id = real_account_cache[konto_name].id
+
+                # Projekt ermitteln / anlegen
+                project_id = None
+                ktr_name = _col(col_ktr)
+                if ktr_name:
+                    if ktr_name not in project_cache:
+                        proj = Project.query.filter_by(name=ktr_name).first()
+                        if not proj:
+                            proj = Project(name=ktr_name)
+                            db.session.add(proj)
+                            db.session.flush()
+                        project_cache[ktr_name] = proj
+                    project_id = project_cache[ktr_name].id
+
+                # Kunde suchen
+                import_name = _col(col_name)
+                customer_id = _find_customer(import_name, alle_kunden, customer_name_map)
+                if customer_id:
+                    results["matched"] += 1
+
+                # Beschreibung
+                beschreibung = _col(col_beschreibung)
+                if customer_id:
+                    description = beschreibung or import_name or "—"
+                else:
+                    parts = [p for p in [import_name, beschreibung] if p]
+                    description = " – ".join(parts) if parts else "—"
+
+                # Steuersatz
+                tax_rate = None
+                steuer_raw = _col(col_steuer)
+                if steuer_raw:
+                    try:
+                        tr = Decimal(steuer_raw.replace(",", "."))
+                        if tr > 0:
+                            tax_rate = tr
+                    except Exception:
+                        pass
+
+                b = Booking(
+                    date=booking_date,
+                    account_id=acc.id,
+                    amount=amount,
+                    description=description[:500],
+                    real_account_id=real_account_id,
+                    project_id=project_id,
+                    customer_id=customer_id,
+                    tax_rate=tax_rate,
+                    created_by_id=current_user.id,
+                    status=Booking.STATUS_OFFEN,
+                )
+                db.session.add(b)
+                results["ok"] += 1
+
+            db.session.commit()
+            msg = (
+                f"Import abgeschlossen: {results['ok']} importiert, "
+                f"{results['skip']} übersprungen"
+            )
+            if results["matched"]:
+                msg += f", {results['matched']} Kunden automatisch zugeordnet"
+            msg += "."
+            flash(msg, "success" if results["ok"] else "warning")
+            return redirect(url_for("accounting.bookings"))
+
+    return render_template("accounting/import_bookings.html")
+
+
+# ---------------------------------------------------------------------------
 # CSV-Export
 # ---------------------------------------------------------------------------
 
@@ -733,6 +1032,7 @@ def real_account_new():
             description=request.form.get("description", "").strip(),
             iban=request.form.get("iban", "").strip(),
             opening_balance=Decimal(opening_raw),
+            icon=request.form.get("icon", "fa-university").strip() or "fa-university",
         )
         db.session.add(ra)
         db.session.commit()
@@ -752,6 +1052,7 @@ def real_account_edit(ra_id):
         ra.iban = request.form.get("iban", "").strip()
         ra.opening_balance = Decimal(opening_raw)
         ra.active = "active" in request.form
+        ra.icon = request.form.get("icon", "fa-university").strip() or "fa-university"
         db.session.commit()
         flash("Bankkonto aktualisiert.", "success")
         return redirect(url_for("accounting.real_accounts"))

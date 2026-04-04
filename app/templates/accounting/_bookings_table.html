@@ -2,12 +2,11 @@
   <thead class="thead-light">
     <tr>
       <th>Datum</th>
+      <th class="text-center"><i class="fas fa-university"></i></th>
       <th>Konto</th>
-      <th>Bankkonto</th>
       <th>Beschreibung</th>
       <th>Projekt</th>
-      <th>Belegnr.</th>
-      <th>Status</th>
+      <th>Kunde</th>
       <th class="text-right">MwSt</th>
       <th class="text-right">Betrag</th>
       <th></th>
@@ -15,19 +14,24 @@
   </thead>
   <tbody>
     {% for b in bookings %}
-    <tr class="{% if b.status == 'Storniert' %}text-muted{% endif %}" {% if b.status == 'Storniert' %}style="opacity:0.5"{% endif %}>
+    <tr class="
+      {%- if b.status == 'Storniert' %} text-muted
+      {%- elif b.status == 'Offen' %} table-info
+      {%- endif %}"
+      {%- if b.status == 'Storniert' %} style="opacity:0.5"{% endif %}>
       <td>{{ b.date.strftime('%d.%m.%Y') }}</td>
-      <td>{{ b.account.name }}</td>
-      <td>
+      <td class="text-center">
         {% if b.real_account %}
-        <span class="badge badge-light border">
-          <i class="fas fa-university mr-1 text-muted"></i>{{ b.real_account.name }}
-        </span>
+        <i class="fas {{ b.real_account.icon or 'fa-university' }} text-muted" title="{{ b.real_account.name }}"></i>
         {% else %}
         <span class="text-muted">—</span>
         {% endif %}
       </td>
+      <td>{{ b.account.name }}</td>
       <td>
+        {% if b.reference %}
+        <span class="badge badge-secondary mr-1">{{ b.reference }}</span>
+        {% endif %}
         {% if b.storno_of_id %}
         <span class="mr-1" title="Storno zu Buchung #{{ b.storno_of_id }}">&#8629;</span>
         {% endif %}
@@ -46,20 +50,20 @@
       </td>
       <td>
         {% if b.project %}
+        {% set proj_color = b.project.color or '#3498db' %}
         <a href="{{ url_for('projects.detail', project_id=b.project.id) }}"
-           class="badge badge-info">{{ b.project.name }}</a>
+           class="badge"
+           style="background-color:{{ proj_color }}; color:#fff;">{{ b.project.name }}</a>
         {% else %}
         <span class="text-muted">—</span>
         {% endif %}
       </td>
-      <td>{{ b.reference or '—' }}</td>
       <td>
-        {% if b.status == 'Offen' %}
-        <span class="badge badge-success">Offen</span>
-        {% elif b.status == 'Verbucht' %}
-        <span class="badge badge-secondary">Verbucht</span>
-        {% elif b.status == 'Storniert' %}
-        <span class="badge badge-danger">Storniert</span>
+        {% if b.customer %}
+        <a href="{{ url_for('customers.detail', customer_id=b.customer.id) }}"
+           class="badge badge-secondary">{{ b.customer.name }}</a>
+        {% else %}
+        <span class="text-muted">—</span>
         {% endif %}
       </td>
       <td class="text-right text-nowrap">
@@ -99,13 +103,13 @@
     </tr>
     {% else %}
     <tr>
-      <td colspan="10" class="text-center text-muted py-3">Keine Buchungen.</td>
+      <td colspan="9" class="text-center text-muted py-3">Keine Buchungen.</td>
     </tr>
     {% endfor %}
   </tbody>
   <tfoot class="thead-light">
     <tr>
-      <td colspan="7" class="text-right font-weight-bold">Summe (ohne Storno):</td>
+      <td colspan="6" class="text-right font-weight-bold">Summe (ohne Storno):</td>
       <td class="text-right text-nowrap">
         {% if total_vorsteuer and total_vorsteuer > 0 %}
         <small class="text-muted d-block">VSt: {{ "%.2f"|format(total_vorsteuer) }} €</small>

@@ -13,6 +13,8 @@
       </div>
       <form method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="icon" id="icon-input"
+               value="{{ real_account.icon if real_account and real_account.icon else 'fa-university' }}">
         <div class="card-body">
           <div class="form-group">
             <label>Name <span class="text-danger">*</span></label>
@@ -45,6 +47,51 @@
               Wird zum Berechnen des aktuellen Saldos addiert.
             </small>
           </div>
+          <div class="form-group">
+            <label>Icon</label>
+            <div class="d-flex flex-wrap" style="gap:8px">
+              {% set icons = [
+                ('fa-university',         'Bank'),
+                ('fa-landmark',           'Gebäude'),
+                ('fa-money-bill-wave',    'Geldschein'),
+                ('fa-money-bill',         'Banknote'),
+                ('fa-coins',              'Münzen'),
+                ('fa-credit-card',        'Kreditkarte'),
+                ('fa-wallet',             'Geldbörse'),
+                ('fa-piggy-bank',         'Sparschwein'),
+                ('fa-hand-holding-usd',   'Geld'),
+                ('fa-file-invoice-dollar','Rechnung'),
+                ('fa-receipt',            'Kassenbon'),
+                ('fa-money-check-alt',    'Scheck'),
+                ('fa-exchange-alt',       'Überweisung'),
+                ('fa-euro-sign',          'Euro'),
+                ('fa-dollar-sign',        'Dollar'),
+                ('fa-percentage',         'Zinsen'),
+                ('fa-chart-line',         'Entwicklung'),
+                ('fa-balance-scale',      'Bilanz'),
+                ('fa-building',           'Firma'),
+                ('fa-cash-register',      'Kasse'),
+              ] %}
+              {% for fa_class, label in icons %}
+              <div class="icon-swatch"
+                   data-icon="{{ fa_class }}"
+                   title="{{ label }}"
+                   style="
+                     width:42px; height:42px; border-radius:6px;
+                     display:flex; align-items:center; justify-content:center;
+                     cursor:pointer; border: 2px solid #dee2e6;
+                     background:#f8f9fa; font-size:1.2rem;
+                     transition: border-color 0.15s, background 0.15s;
+                   ">
+                <i class="fas {{ fa_class }}"></i>
+              </div>
+              {% endfor %}
+            </div>
+            <small class="text-muted mt-1 d-block">
+              Gewählt: <i id="icon-preview" class="fas {{ real_account.icon if real_account and real_account.icon else 'fa-university' }} mr-1"></i>
+              <span id="icon-label">{{ real_account.icon if real_account and real_account.icon else 'fa-university' }}</span>
+            </small>
+          </div>
           {% if real_account %}
           <div class="form-group">
             <div class="custom-control custom-switch">
@@ -65,4 +112,33 @@
     </div>
   </div>
 </div>
+
+<script>
+(function () {
+  const input = document.getElementById('icon-input');
+  const preview = document.getElementById('icon-preview');
+  const label = document.getElementById('icon-label');
+  const swatches = document.querySelectorAll('.icon-swatch');
+
+  function selectIcon(fa) {
+    input.value = fa;
+    preview.className = 'fas ' + fa + ' mr-1';
+    label.textContent = fa;
+    swatches.forEach(s => {
+      if (s.dataset.icon === fa) {
+        s.style.borderColor = '#007bff';
+        s.style.background = '#e8f0fe';
+      } else {
+        s.style.borderColor = '#dee2e6';
+        s.style.background = '#f8f9fa';
+      }
+    });
+  }
+
+  swatches.forEach(s => s.addEventListener('click', () => selectIcon(s.dataset.icon)));
+
+  // Mark current selection on load
+  selectIcon(input.value);
+})();
+</script>
 {% endblock %}

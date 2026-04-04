@@ -48,6 +48,9 @@ def register_commands(app):
             _add_col_if_missing("customers", "externe_kennung VARCHAR(100)", "externe_kennung")
             _add_col_if_missing("bookings", "real_account_id INTEGER REFERENCES real_accounts(id)", "real_account_id")
             _add_col_if_missing("bookings", "tax_rate NUMERIC(5,2)", "tax_rate")
+            _add_col_if_missing("bookings", "customer_id INTEGER REFERENCES customers(id)", "customer_id")
+            _add_col_if_missing("projects", "color VARCHAR(20) DEFAULT '#3498db'", "color")
+            _add_col_if_missing("real_accounts", "icon VARCHAR(50) DEFAULT 'fa-university'", "icon")
             conn.commit()
 
         if Account.query.count() == 0:
@@ -102,6 +105,9 @@ def register_commands(app):
             _add_col_if_missing("customers", "externe_kennung VARCHAR(100)", "externe_kennung")
             _add_col_if_missing("bookings", "real_account_id INTEGER REFERENCES real_accounts(id)", "real_account_id")
             _add_col_if_missing("bookings", "tax_rate NUMERIC(5,2)", "tax_rate")
+            _add_col_if_missing("bookings", "customer_id INTEGER REFERENCES customers(id)", "customer_id")
+            _add_col_if_missing("projects", "color VARCHAR(20) DEFAULT '#3498db'", "color")
+            _add_col_if_missing("real_accounts", "icon VARCHAR(50) DEFAULT 'fa-university'", "icon")
             conn.commit()
 
         # Datenmigration: Kundennummern für bestehende Kunden ohne Kundennummer vergeben

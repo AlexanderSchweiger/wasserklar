@@ -319,6 +319,7 @@ class Project(db.Model):
     name = db.Column(db.String(100), nullable=False, unique=True)
     description = db.Column(db.Text, nullable=True)
     closed = db.Column(db.Boolean, default=False, nullable=False)
+    color = db.Column(db.String(20), nullable=True, default="#3498db")
 
     bookings = db.relationship("Booking", backref="project", lazy="dynamic")
 
@@ -340,6 +341,7 @@ class RealAccount(db.Model):
     iban = db.Column(db.String(34))
     opening_balance = db.Column(db.Numeric(10, 2), default=0, nullable=False)
     active = db.Column(db.Boolean, default=True)
+    icon = db.Column(db.String(50), nullable=True, default="fa-university")
 
     bookings = db.relationship("Booking", backref="real_account", lazy="dynamic")
 
@@ -389,8 +391,11 @@ class Booking(db.Model):
     storno_reason = db.Column(db.String(500), nullable=True)
     storno_date = db.Column(db.Date, nullable=True)
 
+    customer_id = db.Column(db.Integer, db.ForeignKey("customers.id"), nullable=True)
+
     created_by = db.relationship("User", foreign_keys=[created_by_id])
     tax_rate = db.Column(db.Numeric(5, 2), nullable=True)  # MwSt in %; None = keine MwSt
+    customer = db.relationship("Customer", foreign_keys=[customer_id], backref=db.backref("bookings", lazy="dynamic"))
 
     storno_of = db.relationship("Booking", remote_side="Booking.id", foreign_keys="Booking.storno_of_id", backref=db.backref("storno_buchung", uselist=False))
 

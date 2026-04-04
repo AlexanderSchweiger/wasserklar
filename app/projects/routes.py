@@ -34,7 +34,8 @@ def new():
         if Project.query.filter_by(name=name).first():
             flash("Ein Projekt mit diesem Namen existiert bereits.", "danger")
             return render_template("projects/form.html", project=None)
-        project = Project(name=name, description=description)
+        color = request.form.get("color", "#3498db").strip() or "#3498db"
+        project = Project(name=name, description=description, color=color)
         db.session.add(project)
         db.session.commit()
         flash(f'Projekt "{project.name}" wurde angelegt.', "success")
@@ -58,6 +59,7 @@ def edit(project_id):
             return render_template("projects/form.html", project=project)
         project.name = name
         project.description = description
+        project.color = request.form.get("color", "#3498db").strip() or "#3498db"
         db.session.commit()
         flash(f'Projekt "{project.name}" wurde gespeichert.', "success")
         return redirect(url_for("projects.detail", project_id=project.id))

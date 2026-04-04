@@ -15,6 +15,41 @@
           hx-include="[name='year'],[name='account_id'],[name='project_id'],[name='real_account_id']">
       </div>
       <div class="form-group">
+        {# Versteckter Select – HTMX hört darauf #}
+        <select name="real_account_id" id="ra-select" style="display:none"
+          hx-get="{{ url_for('accounting.bookings') }}"
+          hx-trigger="change"
+          hx-target="#bookings-table"
+          hx-include="[name='year'],[name='account_id'],[name='project_id'],[name='real_account_id']">
+          <option value=""></option>
+          {% for ra in real_accounts %}
+          <option value="{{ ra.id }}" {{ 'selected' if real_account_id|string == ra.id|string }}
+                  data-icon="{{ ra.icon or 'fa-university' }}">{{ ra.name }}</option>
+          {% endfor %}
+        </select>
+        {# Sichtbares Custom-Dropdown mit Icons #}
+        {% set sel_ra = real_accounts | selectattr('id', 'equalto', real_account_id | int) | first if real_account_id else None %}
+        <div class="dropdown d-inline-block">
+          <button type="button" class="btn btn-sm btn-outline-secondary dropdown-toggle"
+                  id="ra-btn" data-toggle="dropdown" style="min-width:160px; text-align:left;">
+            <i class="fas {{ sel_ra.icon if sel_ra and sel_ra.icon else 'fa-university' }} mr-1 text-muted" id="ra-btn-icon"></i>
+            <span id="ra-btn-label">{{ sel_ra.name if sel_ra else 'Alle Bankkonten' }}</span>
+          </button>
+          <div class="dropdown-menu">
+            <a class="dropdown-item" href="#" data-value="" data-icon="fa-university">
+              <i class="fas fa-university mr-1 text-muted"></i> Alle Bankkonten
+            </a>
+            <div class="dropdown-divider"></div>
+            {% for ra in real_accounts %}
+            <a class="dropdown-item" href="#"
+               data-value="{{ ra.id }}" data-icon="{{ ra.icon or 'fa-university' }}">
+              <i class="fas {{ ra.icon or 'fa-university' }} mr-1 text-muted"></i> {{ ra.name }}
+            </a>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+       <div class="form-group">
         <label class="mb-0 mr-1">Konto</label>
         <select name="account_id" class="form-control form-control-sm"
           hx-get="{{ url_for('accounting.bookings') }}"
@@ -25,21 +60,6 @@
           {% for a in accounts %}
           <option value="{{ a.id }}" {{ 'selected' if account_id|string == a.id|string }}>
             {{ a.name }}
-          </option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="form-group">
-        <label class="mb-0 mr-1">Bankkonto</label>
-        <select name="real_account_id" class="form-control form-control-sm"
-          hx-get="{{ url_for('accounting.bookings') }}"
-          hx-trigger="change"
-          hx-target="#bookings-table"
-          hx-include="[name='year'],[name='account_id'],[name='project_id'],[name='real_account_id']">
-          <option value="">Alle Bankkonten</option>
-          {% for ra in real_accounts %}
-          <option value="{{ ra.id }}" {{ 'selected' if real_account_id|string == ra.id|string }}>
-            {{ ra.name }}
           </option>
           {% endfor %}
         </select>
@@ -64,6 +84,10 @@
       <a href="{{ url_for('accounting.booking_new') }}" class="btn btn-primary btn-sm">
         <i class="fas fa-plus mr-1"></i> Neue Buchung
       </a>
+      <a href="{{ url_for('accounting.import_bookings') }}"
+         class="btn btn-info btn-sm ml-1">
+        <i class="fas fa-file-import mr-1"></i> Importieren
+      </a>
       <a href="{{ url_for('accounting.export_csv', year=year) }}"
          class="btn btn-secondary btn-sm ml-1">
         <i class="fas fa-file-csv mr-1"></i> CSV
@@ -74,4 +98,29 @@
     {% include "accounting/_bookings_table.html" %}
   </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var sel      = document.getElementById('ra-select');
+  var btnIcon  = document.getElementById('ra-btn-icon');
+  var btnLabel = document.getElementById('ra-btn-label');
+  if (!sel) return;
+
+  document.querySelectorAll('.dropdown-menu .dropdown-item[data-value]').forEach(function (item) {
+    item.addEventListener('click', function (e) {
+      e.preventDefault();
+      var icon  = this.dataset.icon || 'fa-university';
+      var label = this.textContent.trim();
+
+      sel.value = this.dataset.value;
+      btnIcon.className = 'fas ' + icon + ' mr-1 text-muted';
+      btnLabel.textContent = label;
+
+      sel.dispatchEvent(new Event('change'));
+    });
+  });
+})();
+</script>
 {% endblock %}

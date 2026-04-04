@@ -6,3 +6,4 @@ __pycache__/
 *.db
 *.pdf
 .DS_Store
+.venv

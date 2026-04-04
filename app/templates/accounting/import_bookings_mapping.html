@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block title %}Buchungs-Import: Spalten zuordnen{% endblock %}
+{% block page_title %}<i class="fas fa-columns mr-2"></i> Spalten zuordnen{% endblock %}
+{% block content %}
+<div class="card card-warning">
+  <div class="card-header">
+    <h3 class="card-title">Felder der Importdatei zuordnen</h3>
+  </div>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="confirm" value="1">
+    <input type="hidden" name="file_content" value="{{ file_content }}">
+    <div class="card-body">
+
+      <h6 class="mb-3">Pflichtfelder</h6>
+      <div class="row">
+        <div class="col-md-3">
+          <div class="form-group">
+            <label>Datum <span class="text-danger">*</span></label>
+            <select name="col_datum" class="form-control" required>
+              {% for col in columns %}
+              <option value="{{ col }}" {{ 'selected' if col == auto.datum }}>{{ col }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="form-group">
+            <label>Konto (KST) <span class="text-danger">*</span></label>
+            <select name="col_kst" class="form-control" required>
+              {% for col in columns %}
+              <option value="{{ col }}" {{ 'selected' if col == auto.kst }}>{{ col }}</option>
+              {% endfor %}
+            </select>
+            <small class="text-muted">Kostenstelle → wird als Buchungskonto verwendet</small>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="form-group">
+            <label>Ausgaben</label>
+            <select name="col_ausgaben" class="form-control">
+              <option value="">— keine —</option>
+              {% for col in columns %}
+              <option value="{{ col }}" {{ 'selected' if col == auto.ausgaben }}>{{ col }}</option>
+              {% endfor %}
+            </select>
+            <small class="text-muted">Negative Beträge (Ausgaben)</small>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="form-group">
+            <label>Einnahmen</label>
+            <select name="col_einnahmen" class="form-control">
+              <option value="">— keine —</option>
+              {% for col in columns %}
+              <option value="{{ col }}" {{ 'selected' if col == auto.einnahmen }}>{{ col }}</option>
+              {% endfor %}
+            </select>
+            <small class="text-muted">Positive Beträge (Einnahmen)</small>
+          </div>
+        </div>
+      </div>
+
+      <h6 class="mb-3 mt-2">Optionale Felder</h6>
+      <div class="row">
+        <div class="col-md-3">
+          <div class="form-group">
+            <label>Bankkonto (Konto)</label>
+            <select name="col_konto" class="form-control">
+              <option value="">— keines —</option>
+              {% for col in columns %}
+              <option value="{{ col }}" {{ 'selected' if col == auto.konto }}>{{ col }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="form-group">
+            <label>Projekt (KTR)</label>
+            <select name="col_ktr" class="form-control">
+              <option value="">— keines —</option>
+              {% for col in columns %}
+              <option value="{{ col }}" {{ 'selected' if col == auto.ktr }}>{{ col }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="form-group">
+            <label>Name (für Kunden-Zuordnung)</label>
+            <select name="col_name" class="form-control">
+              <option value="">— keiner —</option>
+              {% for col in columns %}
+              <option value="{{ col }}" {{ 'selected' if col == auto.name }}>{{ col }}</option>
+              {% endfor %}
+            </select>
+            <small class="text-muted">Wird für automatische Kunden-Zuordnung verwendet</small>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="form-group">
+            <label>Beschreibung</label>
+            <select name="col_beschreibung" class="form-control">
+              <option value="">— keine —</option>
+              {% for col in columns %}
+              <option value="{{ col }}" {{ 'selected' if col == auto.beschreibung }}>{{ col }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="row">
+        <div class="col-md-3">
+          <div class="form-group">
+            <label>Steuersatz</label>
+            <select name="col_steuer" class="form-control">
+              <option value="">— keiner —</option>
+              {% for col in columns %}
+              <option value="{{ col }}" {{ 'selected' if col == auto.steuer }}>{{ col }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout callout-info mt-2 mb-0">
+        <small>
+          <i class="fas fa-info-circle mr-1"></i>
+          Fehlende <strong>Konten</strong>, <strong>Projekte</strong> und <strong>Bankkonten</strong>
+          werden automatisch angelegt. Der <strong>Kunde</strong> wird per Namensähnlichkeit gesucht —
+          bei keiner Übereinstimmung wird der Name in die Beschreibung übernommen.
+          Zeilen ohne Betrag werden übersprungen.
+        </small>
+      </div>
+
+      <h5 class="mt-4">Vorschau <small class="text-muted">(erste 5 Zeilen)</small></h5>
+      <div class="table-responsive">
+        <table class="table table-bordered table-sm">
+          <thead class="thead-light">
+            <tr>{% for col in columns %}<th>{{ col }}</th>{% endfor %}</tr>
+          </thead>
+          <tbody>
+            {% for row in preview %}
+            <tr>{% for col in columns %}<td>{{ row[col] }}</td>{% endfor %}</tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card-footer">
+      <button type="submit" class="btn btn-warning">
+        <i class="fas fa-file-import mr-1"></i> Import starten
+      </button>
+      <a href="{{ url_for('accounting.import_bookings') }}" class="btn btn-secondary ml-2">
+        <i class="fas fa-arrow-left mr-1"></i> Zurück
+      </a>
+    </div>
+  </form>
+</div>
+{% endblock %}

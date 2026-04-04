@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Buchungen importieren{% endblock %}
+{% block page_title %}<i class="fas fa-file-import mr-2"></i> Buchungen importieren{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="col-md-7">
+    <div class="card card-info">
+      <div class="card-header">
+        <h3 class="card-title">CSV hochladen</h3>
+      </div>
+      <form method="post" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="card-body">
+          <div class="callout callout-info">
+            <h6><i class="fas fa-info-circle mr-1"></i> Erwartetes Format</h6>
+            <ul class="mb-2">
+              <li><strong>CSV</strong> mit Semikolon-Trennzeichen, Zeichensatz UTF-8</li>
+              <li>Zahlen im <strong>österreichischen Format</strong> (Komma als Dezimaltrennzeichen, z.&nbsp;B. <code>-1 577,94</code>)</li>
+              <li>Datum im Format <code>DD.MM.YYYY</code></li>
+              <li>Im nächsten Schritt können Sie die Spalten zuordnen.</li>
+            </ul>
+            <strong>Beispielspalten:</strong>
+            <pre class="mb-0" style="font-size:.8rem;background:#f8f9fa;padding:.5rem;border-radius:4px">Konto;Datum;KST;KTR;Name;Beschreibung;Steuer;Ausgaben;Einnahmen
+Girokonto;02.01.2025;Postgebühr;;Post;Wasserzähler retour;20;-38,82;
+Girokonto;02.01.2025;Instandhaltung;Rohrbruch;Huber;Arbeitsleistung;;;500,00</pre>
+            <small class="text-muted">
+              <strong>KST</strong> = Kostenstelle (Konto), <strong>KTR</strong> = Projekt,
+              <strong>Konto</strong> = reales Bankkonto.
+              Fehlende Konten, Projekte und Bankkonten werden automatisch angelegt.
+              Kunden werden per Namensähnlichkeit automatisch zugeordnet.
+            </small>
+          </div>
+          <div class="form-group">
+            <label>Datei auswählen</label>
+            <div class="custom-file">
+              <input type="file" name="file" class="custom-file-input"
+                id="importFile" accept=".csv" required>
+              <label class="custom-file-label" for="importFile">Datei wählen…</label>
+            </div>
+          </div>
+        </div>
+        <div class="card-footer">
+          <button type="submit" class="btn btn-info">
+            <i class="fas fa-arrow-right mr-1"></i> Weiter
+          </button>
+          <a href="{{ url_for('accounting.bookings') }}" class="btn btn-secondary ml-2">Abbrechen</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  document.getElementById('importFile').addEventListener('change', function() {
+    var name = this.files[0] ? this.files[0].name : 'Datei wählen…';
+    this.nextElementSibling.textContent = name;
+  });
+</script>
+{% endblock %}

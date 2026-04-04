@@ -13,6 +13,7 @@
       </div>
       <form method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="color" id="color-input" value="{{ project.color if project and project.color else '#3498db' }}">
         <div class="card-body">
           <div class="form-group">
             <label>Name <span class="text-danger">*</span></label>
@@ -22,6 +23,53 @@
           <div class="form-group">
             <label>Beschreibung</label>
             <textarea name="description" class="form-control" rows="4">{{ project.description if project else '' }}</textarea>
+          </div>
+          <div class="form-group">
+            <label>Farbe</label>
+            <div class="d-flex flex-wrap" style="gap:8px">
+              {% set colors = [
+                ('#e74c3c', 'Rot'),
+                ('#e67e22', 'Orange'),
+                ('#f1c40f', 'Gelb'),
+                ('#2ecc71', 'Grün'),
+                ('#1abc9c', 'Türkis'),
+                ('#3498db', 'Blau'),
+                ('#2980b9', 'Dunkelblau'),
+                ('#9b59b6', 'Lila'),
+                ('#8e44ad', 'Dunkelviolett'),
+                ('#e91e63', 'Pink'),
+                ('#ff5722', 'Tieforange'),
+                ('#00bcd4', 'Cyan'),
+                ('#8bc34a', 'Hellgrün'),
+                ('#009688', 'Dunkelgrün'),
+                ('#2196f3', 'Hellblau'),
+                ('#673ab7', 'Violett'),
+                ('#607d8b', 'Blaugrau'),
+                ('#795548', 'Braun'),
+                ('#34495e', 'Dunkelgrau'),
+                ('#ff9800', 'Hellorange'),
+              ] %}
+              {% for hex, label in colors %}
+              <div class="color-swatch"
+                   data-color="{{ hex }}"
+                   title="{{ label }}"
+                   style="
+                     width:32px; height:32px; border-radius:50%;
+                     background:{{ hex }}; cursor:pointer;
+                     border: 3px solid transparent;
+                     transition: border-color 0.15s, transform 0.15s;
+                   ">
+              </div>
+              {% endfor %}
+            </div>
+            <small class="text-muted mt-1 d-block">
+              Gewählte Farbe:
+              <span id="color-preview"
+                    style="display:inline-block; width:14px; height:14px; border-radius:50%;
+                           background:{{ project.color if project and project.color else '#3498db' }};
+                           vertical-align:middle; margin-right:4px;"></span>
+              <span id="color-label">{{ project.color if project and project.color else '#3498db' }}</span>
+            </small>
           </div>
         </div>
         <div class="card-footer">
@@ -38,4 +86,33 @@
     </div>
   </div>
 </div>
+
+<script>
+(function () {
+  const input = document.getElementById('color-input');
+  const preview = document.getElementById('color-preview');
+  const label = document.getElementById('color-label');
+  const swatches = document.querySelectorAll('.color-swatch');
+
+  function selectColor(hex) {
+    input.value = hex;
+    preview.style.background = hex;
+    label.textContent = hex;
+    swatches.forEach(s => {
+      if (s.dataset.color === hex) {
+        s.style.borderColor = '#333';
+        s.style.transform = 'scale(1.2)';
+      } else {
+        s.style.borderColor = 'transparent';
+        s.style.transform = 'scale(1)';
+      }
+    });
+  }
+
+  swatches.forEach(s => s.addEventListener('click', () => selectColor(s.dataset.color)));
+
+  // Mark current selection on load
+  selectColor(input.value);
+})();
+</script>
 {% endblock %}
