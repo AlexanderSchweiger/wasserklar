@@ -36,4 +36,14 @@
     </a>
   </div>
 </div>
+<div class="row">
+  <div class="col-md-3 col-sm-6">
+    <a href="{{ url_for('accounting.ust', year=year) }}" class="small-box-link">
+      <div class="small-box bg-purple">
+        <div class="inner"><h3>USt-Voranmeldung</h3><p>Umsatzsteuer {{ year }}</p></div>
+        <div class="icon"><i class="fas fa-percentage"></i></div>
+      </div>
+    </a>
+  </div>
+</div>
 {% endblock %}

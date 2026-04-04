@@ -1,6 +1,7 @@
 import io
 import csv
 import base64
+import calendar
 import difflib
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -1004,6 +1005,120 @@ def export_csv():
         generate(),
         mimetype="text/csv",
         headers={"Content-Disposition": f"attachment; filename=buchungen_{year}.csv"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Umsatzsteuervoranmeldung / Umsatzsteuererklärung
+# ---------------------------------------------------------------------------
+
+def _ust_period(year, quartal):
+    """Gibt (date_from, date_to) für ein Jahr/Quartal zurück."""
+    if quartal in (1, 2, 3, 4):
+        m_start = (quartal - 1) * 3 + 1
+        m_end = quartal * 3
+        return date(year, m_start, 1), date(year, m_end, calendar.monthrange(year, m_end)[1])
+    return date(year, 1, 1), date(year, 12, 31)
+
+
+def _ust_berechnen(year, quartal):
+    """Berechnet USt/Vorsteuer-Gruppen. Gibt (ust_rows, vst_rows) zurück."""
+    date_from, date_to = _ust_period(year, quartal)
+    bookings = (
+        Booking.query
+        .filter(Booking.date >= date_from, Booking.date <= date_to)
+        .filter(Booking.status != Booking.STATUS_STORNIERT)
+        .filter(Booking.tax_rate.isnot(None), Booking.tax_rate > 0)
+        .join(Booking.account)
+        .order_by(Booking.date)
+        .all()
+    )
+
+    def _tax(b):
+        rate = Decimal(str(b.tax_rate))
+        return (abs(b.amount) * rate / (100 + rate)).quantize(Decimal("0.01"))
+
+    ust_rows = {}
+    vst_rows = {}
+    for b in bookings:
+        tax = _tax(b)
+        brutto = abs(b.amount)
+        netto = brutto - tax
+        target = ust_rows if b.account.type == Account.TYPE_INCOME else vst_rows
+        rate_key = int(b.tax_rate)
+        if rate_key not in target:
+            target[rate_key] = {"brutto": Decimal("0"), "steuer": Decimal("0"), "netto": Decimal("0")}
+        target[rate_key]["brutto"] += brutto
+        target[rate_key]["steuer"] += tax
+        target[rate_key]["netto"] += netto
+    return sorted(ust_rows.items()), sorted(vst_rows.items())
+
+
+@bp.route("/ust")
+@login_required
+def ust():
+    year = request.args.get("year", date.today().year, type=int)
+    quartal = request.args.get("quartal", 0, type=int)
+    date_from, date_to = _ust_period(year, quartal)
+    ust_rows, vst_rows = _ust_berechnen(year, quartal)
+    total_ust = sum(v["steuer"] for _, v in ust_rows)
+    total_vst = sum(v["steuer"] for _, v in vst_rows)
+    zahllast = total_ust - total_vst
+    ust_brutto = sum(v["brutto"] for _, v in ust_rows)
+    ust_netto = sum(v["netto"] for _, v in ust_rows)
+    vst_brutto = sum(v["brutto"] for _, v in vst_rows)
+    vst_netto = sum(v["netto"] for _, v in vst_rows)
+    return render_template(
+        "accounting/ust.html",
+        year=year, quartal=quartal,
+        date_from=date_from, date_to=date_to,
+        ust_rows=ust_rows, vst_rows=vst_rows,
+        total_ust=total_ust, total_vst=total_vst, zahllast=zahllast,
+        ust_brutto=ust_brutto, ust_netto=ust_netto,
+        vst_brutto=vst_brutto, vst_netto=vst_netto,
+    )
+
+
+@bp.route("/ust/export")
+@login_required
+def export_ust_csv():
+    year = request.args.get("year", date.today().year, type=int)
+    quartal = request.args.get("quartal", 0, type=int)
+    date_from, date_to = _ust_period(year, quartal)
+    ust_rows, vst_rows = _ust_berechnen(year, quartal)
+    total_ust = sum(v["steuer"] for _, v in ust_rows)
+    total_vst = sum(v["steuer"] for _, v in vst_rows)
+    zahllast = total_ust - total_vst
+
+    label = f"Q{quartal}/{year}" if quartal else str(year)
+
+    def fmt(d):
+        return str(d.quantize(Decimal("0.01"))).replace(".", ",")
+
+    def generate():
+        output = io.StringIO()
+        output.write("\ufeff")  # UTF-8 BOM
+        writer = csv.writer(output, delimiter=";")
+        writer.writerow(["Zeitraum", label])
+        writer.writerow(["Von", date_from.strftime("%d.%m.%Y")])
+        writer.writerow(["Bis", date_to.strftime("%d.%m.%Y")])
+        writer.writerow([])
+        writer.writerow(["Abschnitt", "Steuersatz %", "Bruttobetrag", "Nettobetrag", "Steuerbetrag"])
+        for rate, v in ust_rows:
+            writer.writerow(["Umsatzsteuer", rate, fmt(v["brutto"]), fmt(v["netto"]), fmt(v["steuer"])])
+        for rate, v in vst_rows:
+            writer.writerow(["Vorsteuer", rate, fmt(v["brutto"]), fmt(v["netto"]), fmt(v["steuer"])])
+        writer.writerow([])
+        writer.writerow(["Umsatzsteuer gesamt", "", "", "", fmt(total_ust)])
+        writer.writerow(["Vorsteuer gesamt", "", "", "", fmt(total_vst)])
+        writer.writerow(["Zahllast", "", "", "", fmt(zahllast)])
+        return output.getvalue()
+
+    filename = f"ust_{label.replace('/', '_')}.csv"
+    return Response(
+        generate(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
 
 

@@ -157,6 +157,11 @@
                   <i class="far fa-circle nav-icon"></i><p>Bankkonten</p>
                 </a>
               </li>
+              <li class="nav-item">
+                <a href="{{ url_for('accounting.ust') }}" class="nav-link {% if request.endpoint in ('accounting.ust','accounting.export_ust_csv') %}active{% endif %}">
+                  <i class="far fa-circle nav-icon"></i><p>USt-Voranmeldung</p>
+                </a>
+              </li>
             </ul>
           </li>
 
