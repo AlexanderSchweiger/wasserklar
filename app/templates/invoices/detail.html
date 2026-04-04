@@ -87,7 +87,7 @@
             <select name="real_account_id" class="form-control form-control-sm">
               <option value="">Bankkonto (bei Bezahlt) – optional</option>
               {% for ra in real_accounts %}
-              <option value="{{ ra.id }}">{{ ra.name }}</option>
+              <option value="{{ ra.id }}" {{ 'selected' if default_real_account and ra.id == default_real_account.id }}>{{ ra.name }}</option>
               {% endfor %}
             </select>
           </div>

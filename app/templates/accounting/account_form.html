@@ -19,17 +19,6 @@
               value="{{ account.name if account else '' }}" required>
           </div>
           <div class="form-group">
-            <label>Typ <span class="text-danger">*</span></label>
-            <select name="type" class="form-control">
-              <option value="Einnahme" {{ 'selected' if account and account.type == 'Einnahme' }}>
-                Einnahme
-              </option>
-              <option value="Ausgabe" {{ 'selected' if account and account.type == 'Ausgabe' }}>
-                Ausgabe
-              </option>
-            </select>
-          </div>
-          <div class="form-group">
             <label>Beschreibung</label>
             <textarea name="description" class="form-control" rows="3">{{ account.description if account else '' }}</textarea>
           </div>
@@ -40,6 +29,13 @@
             <label class="form-check-label" for="active">Aktiv</label>
           </div>
           {% endif %}
+          <div class="callout callout-info mt-3 mb-0">
+            <small>
+              <i class="fas fa-info-circle mr-1"></i>
+              Ob eine Buchung eine <strong>Einnahme</strong> oder <strong>Ausgabe</strong> ist,
+              wird beim Erstellen der Buchung festgelegt (positiver = Einnahme, negativer Betrag = Ausgabe).
+            </small>
+          </div>
         </div>
         <div class="card-footer">
           <button type="submit" class="btn btn-primary">

@@ -8,7 +8,7 @@ Verwendung:
 
 def register_commands(app):
     from app.extensions import db
-    from app.models import User, Account
+    from app.models import User, Account, TaxRate
 
     @app.cli.command("init-db")
     def init_db():
@@ -51,7 +51,21 @@ def register_commands(app):
             _add_col_if_missing("bookings", "customer_id INTEGER REFERENCES customers(id)", "customer_id")
             _add_col_if_missing("projects", "color VARCHAR(20) DEFAULT '#3498db'", "color")
             _add_col_if_missing("real_accounts", "icon VARCHAR(50) DEFAULT 'fa-university'", "icon")
+            _add_col_if_missing("real_accounts", "is_default INTEGER NOT NULL DEFAULT 0", "is_default")
             conn.commit()
+
+        # Standard-Steuersätze anlegen
+        default_rates = [
+            (0,  "0 % – keine MwSt"),
+            (10, "10 %"),
+            (13, "13 %"),
+            (20, "20 %"),
+        ]
+        for rate_val, label in default_rates:
+            from decimal import Decimal
+            if not TaxRate.query.filter_by(rate=Decimal(str(rate_val))).first():
+                db.session.add(TaxRate(rate=Decimal(str(rate_val)), label=label))
+        db.session.commit()
 
     @app.cli.command("upgrade-db")
     def upgrade_db():
@@ -93,7 +107,24 @@ def register_commands(app):
             _add_col_if_missing("bookings", "customer_id INTEGER REFERENCES customers(id)", "customer_id")
             _add_col_if_missing("projects", "color VARCHAR(20) DEFAULT '#3498db'", "color")
             _add_col_if_missing("real_accounts", "icon VARCHAR(50) DEFAULT 'fa-university'", "icon")
+            _add_col_if_missing("real_accounts", "is_default INTEGER NOT NULL DEFAULT 0", "is_default")
             conn.commit()
+
+        # Standard-Steuersätze anlegen
+        default_rates = [
+            (0,  "0 % – keine MwSt"),
+            (10, "10 %"),
+            (13, "13 %"),
+            (20, "20 %"),
+        ]
+        for rate_val, label in default_rates:
+            from decimal import Decimal
+            if not TaxRate.query.filter_by(rate=Decimal(str(rate_val))).first():
+                db.session.add(TaxRate(rate=Decimal(str(rate_val)), label=label))
+                print(f"  + Steuersatz {rate_val}% angelegt.")
+            else:
+                print(f"  ✓ Steuersatz {rate_val}% bereits vorhanden.")
+        db.session.commit()
 
         # Datenmigration: Kundennummern für bestehende Kunden ohne Kundennummer vergeben
         from app.models import Customer
@@ -176,17 +207,17 @@ def register_commands(app):
         # ------------------------------------------------------------------
         if Account.query.count() == 0:
             default_accounts = [
-                Account(name="Wassergebühren", type="Einnahme", description="Jährliche Wasserabrechnung"),
-                Account(name="Sonstige Einnahmen", type="Einnahme", description=""),
-                Account(name="Wartung und Reparatur", type="Ausgabe", description=""),
-                Account(name="Strom (Pumpen)", type="Ausgabe", description=""),
-                Account(name="Versicherung", type="Ausgabe", description=""),
-                Account(name="Verwaltung", type="Ausgabe", description=""),
-                Account(name="Sonstige Ausgaben", type="Ausgabe", description=""),
+                Account(name="Wassergebühren", description="Jährliche Wasserabrechnung"),
+                Account(name="Sonstige Einnahmen", description=""),
+                Account(name="Wartung und Reparatur", description=""),
+                Account(name="Strom (Pumpen)", description=""),
+                Account(name="Versicherung", description=""),
+                Account(name="Verwaltung", description=""),
+                Account(name="Sonstige Ausgaben", description=""),
             ]
             db.session.add_all(default_accounts)
         db.session.flush()
-        income_account = Account.query.filter_by(type="Einnahme").first()
+        income_account = Account.query.filter_by(name="Wassergebühren").first()
         expense_account_wartung = Account.query.filter_by(name="Wartung und Reparatur").first()
         expense_account_strom = Account.query.filter_by(name="Strom (Pumpen)").first()
 

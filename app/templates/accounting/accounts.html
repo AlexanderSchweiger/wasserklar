@@ -3,10 +3,10 @@
 {% block page_title %}<i class="fas fa-list mr-2"></i> Kontenplan{% endblock %}
 {% block content %}
 <div class="row">
-  <div class="col-md-6">
-    <div class="card card-success card-outline">
+  <div class="col-md-8">
+    <div class="card card-primary card-outline">
       <div class="card-header">
-        <h3 class="card-title"><i class="fas fa-arrow-up mr-1"></i> Einnahmen</h3>
+        <h3 class="card-title"><i class="fas fa-list mr-1"></i> Konten</h3>
         <div class="card-tools">
           <a href="{{ url_for('accounting.account_new') }}" class="btn btn-primary btn-sm">
             <i class="fas fa-plus mr-1"></i> Neues Konto
@@ -19,7 +19,7 @@
             <tr><th>Name</th><th>Beschreibung</th><th>Aktiv</th><th></th></tr>
           </thead>
           <tbody>
-            {% for a in accounts if a.type == 'Einnahme' %}
+            {% for a in accounts %}
             <tr>
               <td><strong>{{ a.name }}</strong></td>
               <td>{{ a.description or '—' }}</td>
@@ -36,46 +36,22 @@
               </td>
             </tr>
             {% else %}
-            <tr><td colspan="4" class="text-muted py-2">Keine Einnahme-Konten.</td></tr>
+            <tr><td colspan="4" class="text-muted py-2">Keine Konten vorhanden.</td></tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
     </div>
   </div>
-  <div class="col-md-6">
-    <div class="card card-danger card-outline">
-      <div class="card-header">
-        <h3 class="card-title"><i class="fas fa-arrow-down mr-1"></i> Ausgaben</h3>
-      </div>
-      <div class="card-body p-0">
-        <table class="table table-hover mb-0">
-          <thead class="thead-light">
-            <tr><th>Name</th><th>Beschreibung</th><th>Aktiv</th><th></th></tr>
-          </thead>
-          <tbody>
-            {% for a in accounts if a.type == 'Ausgabe' %}
-            <tr>
-              <td><strong>{{ a.name }}</strong></td>
-              <td>{{ a.description or '—' }}</td>
-              <td>
-                {% if a.active %}
-                  <i class="fas fa-check-circle text-success"></i>
-                {% else %}
-                  <i class="fas fa-times-circle text-danger"></i>
-                {% endif %}
-              </td>
-              <td class="text-right">
-                <a href="{{ url_for('accounting.account_edit', account_id=a.id) }}"
-                   class="btn btn-sm btn-outline-secondary"><i class="fas fa-edit"></i></a>
-              </td>
-            </tr>
-            {% else %}
-            <tr><td colspan="4" class="text-muted py-2">Keine Ausgabe-Konten.</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
+  <div class="col-md-4">
+    <div class="callout callout-info">
+      <h5><i class="fas fa-info-circle mr-1"></i> Hinweis</h5>
+      <p class="mb-0">
+        Ob eine Buchung eine <strong>Einnahme</strong> oder <strong>Ausgabe</strong> ist,
+        wird beim Erstellen der Buchung durch den <strong>Betrag</strong> festgelegt:
+        <br><span class="text-success font-weight-bold">Positiver Betrag</span> = Einnahme
+        <br><span class="text-danger font-weight-bold">Negativer Betrag</span> = Ausgabe
+      </p>
     </div>
   </div>
 </div>

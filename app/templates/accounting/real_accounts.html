@@ -27,6 +27,7 @@
         <h3 class="card-title">
           <i class="fas fa-university mr-1"></i>
           {{ ra.name }}
+          {% if ra.is_default %}<span class="badge badge-success ml-1">Standard</span>{% endif %}
           {% if not ra.active %}<span class="badge badge-secondary ml-1">Inaktiv</span>{% endif %}
         </h3>
         <div class="card-tools">

@@ -97,8 +97,9 @@
             </a>
           </li>
 
-          <li class="nav-item {% if request.blueprint == 'invoices' %}menu-open{% endif %}">
-            <a href="#" class="nav-link {% if request.blueprint == 'invoices' %}active{% endif %}">
+          {% set invoices_active = request.blueprint == 'invoices' and request.endpoint not in ('invoices.tariffs','invoices.tariff_new','invoices.tariff_edit') %}
+          <li class="nav-item {% if invoices_active %}menu-open{% endif %}">
+            <a href="#" class="nav-link {% if invoices_active %}active{% endif %}">
               <i class="nav-icon fas fa-file-invoice-dollar"></i>
               <p>Rechnungen <i class="right fas fa-angle-left"></i></p>
             </a>
@@ -111,11 +112,6 @@
               <li class="nav-item">
                 <a href="{{ url_for('invoices.generate') }}" class="nav-link {% if request.endpoint == 'invoices.generate' %}active{% endif %}">
                   <i class="far fa-circle nav-icon"></i><p>Rechnungslauf</p>
-                </a>
-              </li>
-              <li class="nav-item">
-                <a href="{{ url_for('invoices.tariffs') }}" class="nav-link {% if request.endpoint in ('invoices.tariffs','invoices.tariff_new','invoices.tariff_edit') %}active{% endif %}">
-                  <i class="far fa-circle nav-icon"></i><p>Tarife</p>
                 </a>
               </li>
             </ul>
@@ -148,8 +144,30 @@
                 </a>
               </li>
               <li class="nav-item">
-                <a href="{{ url_for('accounting.accounts') }}" class="nav-link {% if request.endpoint in ('accounting.accounts','accounting.account_new','accounting.account_edit') %}active{% endif %}">
-                  <i class="far fa-circle nav-icon"></i><p>Kontenplan</p>
+                <a href="{{ url_for('accounting.ust') }}" class="nav-link {% if request.endpoint in ('accounting.ust','accounting.export_ust_csv') %}active{% endif %}">
+                  <i class="far fa-circle nav-icon"></i><p>USt-Voranmeldung</p>
+                </a>
+              </li>
+            </ul>
+          </li>
+
+          {% set stammdaten_active = request.blueprint in ('projects', 'import_csv') or request.endpoint in ('invoices.tariffs','invoices.tariff_new','invoices.tariff_edit','accounting.accounts','accounting.account_new','accounting.account_edit','accounting.real_accounts','accounting.real_account_new','accounting.real_account_edit','accounting.fiscal_years','accounting.fiscal_year_new','accounting.fiscal_year_close','accounting.fiscal_year_reopen') %}
+          <li class="nav-item {% if stammdaten_active %}menu-open{% endif %}">
+            <a href="#" class="nav-link {% if stammdaten_active %}active{% endif %}">
+              <i class="nav-icon fas fa-database"></i>
+              <p>Stammdaten <i class="right fas fa-angle-left"></i></p>
+            </a>
+            <ul class="nav nav-treeview">
+              {% if current_user.is_admin %}
+              <li class="nav-item">
+                <a href="{{ url_for('import_csv.upload') }}" class="nav-link {% if request.blueprint == 'import_csv' %}active{% endif %}">
+                  <i class="far fa-circle nav-icon"></i><p>Stammdaten importieren</p>
+                </a>
+              </li>
+              {% endif %}
+              <li class="nav-item">
+                <a href="{{ url_for('accounting.fiscal_years') }}" class="nav-link {% if request.endpoint in ('accounting.fiscal_years','accounting.fiscal_year_new','accounting.fiscal_year_close','accounting.fiscal_year_reopen') %}active{% endif %}">
+                  <i class="far fa-circle nav-icon"></i><p>Buchungsjahre</p>
                 </a>
               </li>
               <li class="nav-item">
@@ -158,28 +176,29 @@
                 </a>
               </li>
               <li class="nav-item">
-                <a href="{{ url_for('accounting.ust') }}" class="nav-link {% if request.endpoint in ('accounting.ust','accounting.export_ust_csv') %}active{% endif %}">
-                  <i class="far fa-circle nav-icon"></i><p>USt-Voranmeldung</p>
+                <a href="{{ url_for('accounting.accounts') }}" class="nav-link {% if request.endpoint in ('accounting.accounts','accounting.account_new','accounting.account_edit') %}active{% endif %}">
+                  <i class="far fa-circle nav-icon"></i><p>Kontenplan</p>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a href="{{ url_for('invoices.tariffs') }}" class="nav-link {% if request.endpoint in ('invoices.tariffs','invoices.tariff_new','invoices.tariff_edit') %}active{% endif %}">
+                  <i class="far fa-circle nav-icon"></i><p>Tarife</p>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a href="{{ url_for('invoices.counters') }}" class="nav-link {% if request.endpoint == 'invoices.counters' %}active{% endif %}">
+                  <i class="far fa-circle nav-icon"></i><p>Rechnungsnummern</p>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a href="{{ url_for('projects.index') }}" class="nav-link {% if request.blueprint == 'projects' %}active{% endif %}">
+                  <i class="far fa-circle nav-icon"></i><p>Projekte</p>
                 </a>
               </li>
             </ul>
           </li>
 
-          <li class="nav-item">
-            <a href="{{ url_for('projects.index') }}"
-               class="nav-link {% if request.blueprint == 'projects' %}active{% endif %}">
-              <i class="nav-icon fas fa-project-diagram"></i>
-              <p>Projekte</p>
-            </a>
-          </li>
-
           {% if current_user.is_admin %}
-          <li class="nav-item">
-            <a href="{{ url_for('import_csv.upload') }}" class="nav-link {% if request.blueprint == 'import_csv' %}active{% endif %}">
-              <i class="nav-icon fas fa-file-upload"></i>
-              <p>Stammdaten importieren</p>
-            </a>
-          </li>
           <li class="nav-item">
             <a href="{{ url_for('auth.users') }}" class="nav-link {% if request.blueprint == 'auth' and request.endpoint != 'auth.login' %}active{% endif %}">
               <i class="nav-icon fas fa-user-cog"></i>

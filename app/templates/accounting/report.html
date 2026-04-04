@@ -124,10 +124,10 @@
       <div class="card-body p-0">
         <table class="table table-sm mb-0">
           <tbody>
-            {% for acc_name, acc_type, total in ps.accounts %}
+            {% for acc_name, total in ps.accounts %}
             <tr>
               <td class="text-muted" style="font-size:.85em">{{ acc_name }}</td>
-              <td class="text-right {{ 'text-success' if acc_type == 'Einnahme' else 'text-danger' }}"
+              <td class="text-right {{ 'text-success' if total >= 0 else 'text-danger' }}"
                   style="font-size:.85em">
                 {{ "%.2f"|format(total|abs) }} €
               </td>

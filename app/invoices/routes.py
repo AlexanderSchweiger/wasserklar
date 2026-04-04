@@ -10,7 +10,7 @@ from flask_login import login_required, current_user
 
 from app.invoices import bp
 from app.extensions import db, mail
-from app.models import Invoice, InvoiceItem, Customer, WaterMeter, MeterReading, WaterTariff, Booking, Account, Property, OpenItem, Project, RealAccount
+from app.models import Invoice, InvoiceItem, Customer, WaterMeter, MeterReading, WaterTariff, Booking, Account, Property, OpenItem, Project, RealAccount, InvoiceCounter
 from app.utils import next_invoice_number as _next_invoice_number
 
 
@@ -154,7 +154,7 @@ def generate():
             additional_fee_label = tariff.additional_fee_label or "Zusatzgebühr"
 
             inv = Invoice(
-                invoice_number=_next_invoice_number(),
+                invoice_number=_next_invoice_number(year),
                 customer_id=ownership.customer_id,
                 property_id=prop.id,
                 period_year=year,
@@ -246,7 +246,9 @@ def generate():
 def detail(invoice_id):
     invoice = db.get_or_404(Invoice, invoice_id)
     real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
-    return render_template("invoices/detail.html", invoice=invoice, real_accounts=real_accounts)
+    default_real_account = RealAccount.query.filter_by(is_default=True, active=True).first()
+    return render_template("invoices/detail.html", invoice=invoice, real_accounts=real_accounts,
+                           default_real_account=default_real_account)
 
 
 @bp.route("/<int:invoice_id>/edit", methods=["GET", "POST"])
@@ -262,6 +264,50 @@ def edit(invoice_id):
         flash("Rechnung gespeichert.", "success")
         return redirect(url_for("invoices.detail", invoice_id=invoice.id))
     return render_template("invoices/edit.html", invoice=invoice, customers=customers)
+
+
+@bp.route("/bulk-action", methods=["POST"])
+@login_required
+def bulk_action():
+    invoice_ids = request.form.getlist("invoice_ids", type=int)
+    action = request.form.get("action", "")
+
+    if not invoice_ids:
+        flash("Keine Rechnungen ausgewählt.", "warning")
+        return redirect(url_for("invoices.index"))
+
+    invoices = Invoice.query.filter(Invoice.id.in_(invoice_ids)).all()
+
+    if action == "delete":
+        deletable = [inv for inv in invoices if inv.status == Invoice.STATUS_DRAFT]
+        skipped = len(invoices) - len(deletable)
+        for inv in deletable:
+            if inv.open_item:
+                db.session.delete(inv.open_item)
+            db.session.delete(inv)
+        db.session.commit()
+        msg = f"{len(deletable)} Rechnung(en) gelöscht."
+        if skipped:
+            msg += f" {skipped} übersprungen (nur Entwürfe können gelöscht werden)."
+        flash(msg, "success" if deletable else "warning")
+
+    elif action in Invoice.ALL_STATUSES:
+        changed = 0
+        for inv in invoices:
+            old_status = inv.status
+            inv.status = action
+            if action == Invoice.STATUS_SENT:
+                _create_or_update_open_item(inv)
+            elif action == Invoice.STATUS_CANCELLED and inv.open_item:
+                inv.open_item.status = OpenItem.STATUS_PAID
+            changed += 1
+        db.session.commit()
+        flash(f"{changed} Rechnung(en) auf '{action}' gesetzt.", "success")
+
+    else:
+        flash("Ungültige Aktion.", "danger")
+
+    return redirect(url_for("invoices.index"))
 
 
 @bp.route("/<int:invoice_id>/status", methods=["POST"])
@@ -281,7 +327,7 @@ def set_status(invoice_id):
 
     # Automatische Buchung bei Bezahlt-Markierung
     if new_status == Invoice.STATUS_PAID and old_status != Invoice.STATUS_PAID:
-        acc = Account.query.filter_by(type=Account.TYPE_INCOME, active=True).first()
+        acc = Account.query.filter_by(active=True).first()
         if acc:
             real_account_id_raw = request.form.get("real_account_id") or None
             real_account_id = int(real_account_id_raw) if real_account_id_raw else None
@@ -331,9 +377,9 @@ def pay(invoice_id):
         flash("Betrag muss positiv sein.", "danger")
         return redirect(url_for("accounting.open_items"))
 
-    acc = Account.query.filter_by(type=Account.TYPE_INCOME, active=True).first()
+    acc = Account.query.filter_by(active=True).first()
     if not acc:
-        flash("Kein aktives Einnahmenkonto gefunden.", "danger")
+        flash("Kein aktives Konto gefunden.", "danger")
         return redirect(url_for("accounting.open_items"))
 
     real_account_id_raw = request.form.get("real_account_id") or None
@@ -492,3 +538,88 @@ def tariff_edit(tariff_id):
         flash("Tarif aktualisiert.", "success")
         return redirect(url_for("invoices.tariffs"))
     return render_template("invoices/tariff_form.html", tariff=t)
+
+
+# ---------------------------------------------------------------------------
+# Rechnungsnummer-Zähler
+# ---------------------------------------------------------------------------
+
+@bp.route("/counters")
+@login_required
+def counters():
+    from sqlalchemy import func
+    # Alle Jahre aus bestehenden Rechnungen + vorhandenen Countern zusammenführen
+    invoice_years = db.session.query(
+        func.substr(Invoice.invoice_number, 1, 4).label("year"),
+        func.count(Invoice.id).label("count"),
+        func.max(Invoice.invoice_number).label("max_nr"),
+    ).group_by(func.substr(Invoice.invoice_number, 1, 4)).all()
+
+    all_counters = {c.year: c for c in InvoiceCounter.query.all()}
+
+    rows = []
+    for row in sorted(invoice_years, key=lambda r: r.year, reverse=True):
+        try:
+            y = int(row.year)
+        except (TypeError, ValueError):
+            continue
+        counter = all_counters.get(y)
+        rows.append({
+            "year": y,
+            "count": row.count,
+            "max_nr": row.max_nr,
+            "next_seq": counter.next_seq if counter else "–",
+        })
+    # Jahre mit Counter aber ohne Rechnungen ergänzen
+    for y, counter in all_counters.items():
+        if not any(r["year"] == y for r in rows):
+            rows.append({
+                "year": y,
+                "count": 0,
+                "max_nr": "–",
+                "next_seq": counter.next_seq,
+            })
+    rows.sort(key=lambda r: r["year"], reverse=True)
+    return render_template("invoices/counters.html", rows=rows)
+
+
+@bp.route("/counters/<int:year>/reset", methods=["POST"])
+@login_required
+def counter_reset(year):
+    from sqlalchemy import func
+    mode = request.form.get("mode", "auto")
+    counter = db.session.get(InvoiceCounter, year)
+
+    if mode == "manual":
+        try:
+            new_seq = int(request.form.get("next_seq", 1))
+            if new_seq < 1:
+                raise ValueError
+        except ValueError:
+            flash("Ungültiger Wert für den Zähler.", "danger")
+            return redirect(url_for("invoices.counters"))
+    else:
+        # auto: max vorhandene Nummer + 1
+        prefix = f"{year}-"
+        last = (
+            Invoice.query
+            .filter(Invoice.invoice_number.like(f"{prefix}%"))
+            .order_by(Invoice.invoice_number.desc())
+            .first()
+        )
+        if last:
+            try:
+                new_seq = int(last.invoice_number.split("-")[-1]) + 1
+            except ValueError:
+                new_seq = 1
+        else:
+            new_seq = 1
+
+    if counter is None:
+        counter = InvoiceCounter(year=year, next_seq=new_seq)
+        db.session.add(counter)
+    else:
+        counter.next_seq = new_seq
+    db.session.commit()
+    flash(f"Zähler für {year} auf {new_seq:05d} zurückgesetzt.", "success")
+    return redirect(url_for("invoices.counters"))

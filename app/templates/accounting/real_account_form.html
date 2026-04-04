@@ -92,6 +92,14 @@
               <span id="icon-label">{{ real_account.icon if real_account and real_account.icon else 'fa-university' }}</span>
             </small>
           </div>
+          <div class="form-group">
+            <div class="custom-control custom-switch">
+              <input type="checkbox" class="custom-control-input" id="is_default" name="is_default"
+                {{ 'checked' if real_account and real_account.is_default }}>
+              <label class="custom-control-label" for="is_default">Standardkonto für Rechnungen</label>
+            </div>
+            <small class="text-muted">Wird bei Zahlungsbuchungen zu Rechnungen automatisch vorausgewählt.</small>
+          </div>
           {% if real_account %}
           <div class="form-group">
             <div class="custom-control custom-switch">

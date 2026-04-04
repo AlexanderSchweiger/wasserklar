@@ -80,7 +80,10 @@
         {{ "%.2f"|format(b.amount) }} €
       </td>
       <td class="text-right" style="white-space:nowrap">
-        {% if b.status == 'Offen' %}
+        {% set fy_locked = b.id in locked_booking_ids %}
+        {% if fy_locked %}
+        <span class="text-muted" title="Buchungsjahr abgeschlossen"><i class="fas fa-lock"></i></span>
+        {% elif b.status == 'Offen' %}
         <a href="{{ url_for('accounting.booking_edit', booking_id=b.id) }}"
            class="btn btn-sm btn-outline-secondary" title="Bearbeiten">
           <i class="fas fa-edit"></i>
@@ -94,10 +97,16 @@
           </button>
         </form>
         {% elif b.status == 'Verbucht' %}
+        <a href="{{ url_for('accounting.booking_edit', booking_id=b.id) }}"
+           class="btn btn-sm btn-outline-secondary" title="Bearbeiten">
+          <i class="fas fa-edit"></i>
+        </a>
+        {% if not b.storno_of_id %}
         <a href="{{ url_for('accounting.booking_stornieren', booking_id=b.id) }}"
            class="btn btn-sm btn-outline-danger" title="Stornieren">
           <i class="fas fa-ban"></i>
         </a>
+        {% endif %}
         {% endif %}
       </td>
     </tr>

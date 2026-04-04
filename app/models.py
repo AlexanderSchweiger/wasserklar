@@ -328,6 +328,21 @@ class Project(db.Model):
 
 
 # ---------------------------------------------------------------------------
+# Steuersätze
+# ---------------------------------------------------------------------------
+
+class TaxRate(db.Model):
+    __tablename__ = "tax_rates"
+
+    id = db.Column(db.Integer, primary_key=True)
+    rate = db.Column(db.Numeric(5, 2), nullable=False, unique=True)  # z. B. 0, 10, 13, 20
+    label = db.Column(db.String(100), nullable=True)  # optionale Bezeichnung
+
+    def __repr__(self):
+        return f"<TaxRate {self.rate}%>"
+
+
+# ---------------------------------------------------------------------------
 # Buchhaltung
 # ---------------------------------------------------------------------------
 
@@ -342,6 +357,7 @@ class RealAccount(db.Model):
     opening_balance = db.Column(db.Numeric(10, 2), default=0, nullable=False)
     active = db.Column(db.Boolean, default=True)
     icon = db.Column(db.String(50), nullable=True, default="fa-university")
+    is_default = db.Column(db.Boolean, default=False, nullable=False)
 
     bookings = db.relationship("Booking", backref="real_account", lazy="dynamic")
 
@@ -352,12 +368,8 @@ class RealAccount(db.Model):
 class Account(db.Model):
     __tablename__ = "accounts"
 
-    TYPE_INCOME = "Einnahme"
-    TYPE_EXPENSE = "Ausgabe"
-
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(200), nullable=False)
-    type = db.Column(db.String(20), nullable=False)   # Einnahme / Ausgabe
     description = db.Column(db.Text)
     active = db.Column(db.Boolean, default=True)
 
@@ -406,6 +418,56 @@ class Booking(db.Model):
 # ---------------------------------------------------------------------------
 # Offene Posten (manuell angelegt)
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Buchungsjahre
+# ---------------------------------------------------------------------------
+
+class FiscalYear(db.Model):
+    __tablename__ = "fiscal_years"
+
+    year = db.Column(db.Integer, primary_key=True)
+    start_date = db.Column(db.Date, nullable=False)
+    end_date = db.Column(db.Date, nullable=False)
+    closed = db.Column(db.Boolean, default=False, nullable=False)
+    closed_at = db.Column(db.DateTime, nullable=True)
+    closed_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+
+    closed_by = db.relationship("User", foreign_keys=[closed_by_id])
+    reopen_logs = db.relationship(
+        "FiscalYearReopenLog", backref="fiscal_year_obj",
+        lazy="dynamic", order_by="FiscalYearReopenLog.reopened_at.desc()",
+    )
+
+    def __repr__(self):
+        return f"<FiscalYear {self.year} {'geschlossen' if self.closed else 'offen'}>"
+
+
+class FiscalYearReopenLog(db.Model):
+    __tablename__ = "fiscal_year_reopen_logs"
+
+    id = db.Column(db.Integer, primary_key=True)
+    fiscal_year_id = db.Column(db.Integer, db.ForeignKey("fiscal_years.year"), nullable=False)
+    reopened_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    reopened_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    reason = db.Column(db.String(1000), nullable=False)
+
+    reopened_by = db.relationship("User", foreign_keys=[reopened_by_id])
+
+    def __repr__(self):
+        return f"<FiscalYearReopenLog {self.fiscal_year_id} by {self.reopened_by_id}>"
+
+
+class InvoiceCounter(db.Model):
+    """Laufender Rechnungsnummer-Zähler pro Jahr."""
+    __tablename__ = "invoice_counters"
+
+    year = db.Column(db.Integer, primary_key=True)
+    next_seq = db.Column(db.Integer, nullable=False, default=1)
+
+    def __repr__(self):
+        return f"<InvoiceCounter {self.year} next={self.next_seq}>"
+
 
 class OpenItem(db.Model):
     __tablename__ = "open_items"

@@ -1,6 +1,9 @@
 <table class="table table-hover table-striped mb-0">
   <thead class="thead-light">
     <tr>
+      <th style="width:36px">
+        <input type="checkbox" id="select-all" title="Alle auswählen">
+      </th>
       <th>Rechnungsnr.</th>
       <th>Kunde</th>
       <th>Objekt</th>
@@ -16,6 +19,9 @@
   <tbody>
     {% for inv in invoices %}
     <tr>
+      <td>
+        <input type="checkbox" name="invoice_ids" value="{{ inv.id }}" class="invoice-cb">
+      </td>
       <td><code>{{ inv.invoice_number }}</code></td>
       <td>
         <a href="{{ url_for('customers.detail', customer_id=inv.customer_id) }}">
@@ -51,7 +57,7 @@
     </tr>
     {% else %}
     <tr>
-      <td colspan="10" class="text-center text-muted py-3">Keine Rechnungen gefunden.</td>
+      <td colspan="11" class="text-center text-muted py-3">Keine Rechnungen gefunden.</td>
     </tr>
     {% endfor %}
   </tbody>

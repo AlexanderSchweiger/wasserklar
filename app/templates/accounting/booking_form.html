@@ -3,6 +3,7 @@
 {% block page_title %}
   <i class="fas fa-book mr-2"></i> {{ 'Buchung bearbeiten' if booking else 'Neue Buchung' }}
 {% endblock %}
+{% set locked = is_verbucht is defined and is_verbucht %}
 {% block content %}
 <div class="row">
   <div class="col-md-6">
@@ -10,6 +11,11 @@
       <div class="card-header">
         <h3 class="card-title">Buchungsdetails</h3>
       </div>
+      {% if locked %}
+      <div class="card-header bg-warning text-dark py-2">
+        <i class="fas fa-lock mr-1"></i> Verbuchte Buchung — Datum, Betrag, Belegnummer und Steuersatz können nicht mehr geändert werden.
+      </div>
+      {% endif %}
       <form method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="card-body">
@@ -18,7 +24,8 @@
               <div class="form-group">
                 <label>Datum <span class="text-danger">*</span></label>
                 <input type="date" name="date" class="form-control"
-                  value="{{ booking.date.isoformat() if booking else '' }}" required>
+                  value="{{ booking.date.isoformat() if booking else '' }}"
+                  {{ 'readonly' if locked }} required>
               </div>
             </div>
             <div class="col-md-6">
@@ -26,43 +33,43 @@
                 <label>Betrag (€) <span class="text-danger">*</span></label>
                 <div class="input-group">
                   <input type="number" name="amount" id="amount" step="0.01" class="form-control"
-                    value="{{ booking.amount|abs if booking else '' }}" required>
+                    value="{{ booking.amount if booking else '' }}"
+                    {{ 'readonly' if locked }} required>
                   <div class="input-group-append">
                     <span class="input-group-text">€</span>
                   </div>
                 </div>
-                <small class="text-muted">Bei Ausgaben wird der Betrag automatisch negiert.</small>
+                <div class="mt-1">
+                  <span id="buchungstyp_badge" class="badge badge-secondary">—</span>
+                  <small class="text-muted ml-1">Positiv = Einnahme &nbsp;|&nbsp; Negativ = Ausgabe</small>
+                </div>
               </div>
             </div>
           </div>
           <div class="form-group">
             <label>Konto <span class="text-danger">*</span></label>
             <select name="account_id" class="form-control" required>
-              <optgroup label="Einnahmen">
-                {% for a in accounts if a.type == 'Einnahme' %}
-                <option value="{{ a.id }}" {{ 'selected' if booking and booking.account_id == a.id }}>
-                  {{ a.name }}
-                </option>
-                {% endfor %}
-              </optgroup>
-              <optgroup label="Ausgaben">
-                {% for a in accounts if a.type == 'Ausgabe' %}
-                <option value="{{ a.id }}" {{ 'selected' if booking and booking.account_id == a.id }}>
-                  {{ a.name }}
-                </option>
-                {% endfor %}
-              </optgroup>
+              {% for a in accounts %}
+              <option value="{{ a.id }}" {{ 'selected' if booking and booking.account_id == a.id }}>
+                {{ a.name }}
+              </option>
+              {% endfor %}
             </select>
           </div>
           <div class="row">
             <div class="col-md-6">
               <div class="form-group">
                 <label>Steuersatz (MwSt)</label>
-                <select name="tax_rate" id="tax_rate" class="form-control">
-                  <option value="0" {{ 'selected' if not booking or not booking.tax_rate }}>0 % – keine MwSt</option>
-                  <option value="10" {{ 'selected' if booking and booking.tax_rate and booking.tax_rate == 10 }}>10 %</option>
-                  <option value="20" {{ 'selected' if booking and booking.tax_rate and booking.tax_rate == 20 }}>20 %</option>
+                <select name="tax_rate" id="tax_rate" class="form-control" {{ 'disabled' if locked }}>
+                  {% for tr in tax_rates %}
+                  <option value="{{ tr.rate }}"
+                    {{ 'selected' if (not booking or not booking.tax_rate) and tr.rate == 0
+                       else 'selected' if booking and booking.tax_rate and booking.tax_rate == tr.rate }}>
+                    {{ tr.label or (tr.rate | int ~ ' %') }}
+                  </option>
+                  {% endfor %}
                 </select>
+                {% if locked %}<input type="hidden" name="tax_rate" value="{{ booking.tax_rate or 0 }}">{% endif %}
               </div>
             </div>
             <div class="col-md-6">
@@ -86,7 +93,7 @@
           <div class="form-group">
             <label>Belegnummer</label>
             <input type="text" name="reference" class="form-control"
-              value="{{ booking.reference if booking else '' }}">
+              value="{{ booking.reference if booking else '' }}" {{ 'readonly' if locked }}>
           </div>
           <div class="form-group">
             <label>Reales Bankkonto</label>
@@ -143,13 +150,32 @@
   var displayDiv = document.getElementById('tax_display');
   var taxAmountEl = document.getElementById('tax_amount_display');
   var netAmountEl = document.getElementById('net_amount_display');
+  var badgeEl = document.getElementById('buchungstyp_badge');
 
-  function updateTax() {
-    var amount = parseFloat(amountEl.value) || 0;
+  function updateUI() {
+    var amount = parseFloat(amountEl.value);
     var rate = parseFloat(rateEl.value) || 0;
-    if (rate > 0 && amount > 0) {
-      var tax = amount * rate / (100 + rate);
-      var net = amount - tax;
+
+    // Buchungstyp-Badge aktualisieren
+    if (isNaN(amount) || amountEl.value.trim() === '') {
+      badgeEl.textContent = '—';
+      badgeEl.className = 'badge badge-secondary';
+    } else if (amount > 0) {
+      badgeEl.textContent = 'Einnahme';
+      badgeEl.className = 'badge badge-success';
+    } else if (amount < 0) {
+      badgeEl.textContent = 'Ausgabe';
+      badgeEl.className = 'badge badge-danger';
+    } else {
+      badgeEl.textContent = 'Betrag = 0';
+      badgeEl.className = 'badge badge-warning';
+    }
+
+    // Steuer-Anzeige
+    var absAmount = Math.abs(amount || 0);
+    if (rate > 0 && absAmount > 0) {
+      var tax = absAmount * rate / (100 + rate);
+      var net = absAmount - tax;
       taxAmountEl.value = tax.toFixed(2).replace('.', ',');
       netAmountEl.textContent = net.toFixed(2).replace('.', ',');
       displayDiv.style.display = '';
@@ -158,9 +184,9 @@
     }
   }
 
-  amountEl.addEventListener('input', updateTax);
-  rateEl.addEventListener('change', updateTax);
-  updateTax();
+  amountEl.addEventListener('input', updateUI);
+  rateEl.addEventListener('change', updateUI);
+  updateUI();
 })();
 </script>
 {% endblock %}

@@ -15,7 +15,7 @@ from sqlalchemy import extract, func, case
 
 from app.accounting import bp
 from app.extensions import db
-from app.models import Account, Booking, Invoice, OpenItem, WaterTariff, Customer, InvoiceItem, Project, RealAccount
+from app.models import Account, Booking, Invoice, OpenItem, WaterTariff, Customer, InvoiceItem, Project, RealAccount, FiscalYear, FiscalYearReopenLog, TaxRate
 from app.utils import next_invoice_number
 
 
@@ -23,7 +23,7 @@ from app.utils import next_invoice_number
 @login_required
 def index():
     year = request.args.get("year", date.today().year, type=int)
-    accounts = Account.query.filter_by(active=True).order_by(Account.type, Account.name).all()
+    accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
     return render_template("accounting/index.html", accounts=accounts, year=year)
 
 
@@ -34,7 +34,7 @@ def index():
 @bp.route("/accounts")
 @login_required
 def accounts():
-    all_accounts = Account.query.order_by(Account.type, Account.name).all()
+    all_accounts = Account.query.order_by(Account.name).all()
     return render_template("accounting/accounts.html", accounts=all_accounts)
 
 
@@ -44,7 +44,6 @@ def account_new():
     if request.method == "POST":
         a = Account(
             name=request.form["name"].strip(),
-            type=request.form["type"],
             description=request.form.get("description", ""),
         )
         db.session.add(a)
@@ -60,7 +59,6 @@ def account_edit(account_id):
     a = db.get_or_404(Account, account_id)
     if request.method == "POST":
         a.name = request.form["name"].strip()
-        a.type = request.form["type"]
         a.description = request.form.get("description", "")
         a.active = "active" in request.form
         db.session.commit()
@@ -81,6 +79,15 @@ def _auto_post_bookings():
         Booking.date < today,
     ).update({"status": Booking.STATUS_VERBUCHT}, synchronize_session=False)
     db.session.commit()
+
+
+def _locked_fiscal_year(booking_date):
+    """Gibt das abgeschlossene Buchungsjahr zurück, wenn booking_date darin liegt."""
+    return FiscalYear.query.filter(
+        FiscalYear.closed == True,
+        FiscalYear.start_date <= booking_date,
+        FiscalYear.end_date >= booking_date,
+    ).first()
 
 
 @bp.route("/bookings")
@@ -113,6 +120,14 @@ def bookings():
     projects = Project.query.order_by(Project.name).all()
     real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
 
+    closed_fys = FiscalYear.query.filter_by(closed=True).all()
+    locked_booking_ids = set()
+    for b in bkgs:
+        for fy in closed_fys:
+            if fy.start_date <= b.date <= fy.end_date:
+                locked_booking_ids.add(b.id)
+                break
+
     active_bkgs = [b for b in bkgs if b.status != Booking.STATUS_STORNIERT]
     total_amount = sum((b.amount for b in active_bkgs), Decimal("0"))
 
@@ -123,10 +138,10 @@ def bookings():
         return (abs(b.amount) * rate / (100 + rate)).quantize(Decimal("0.01"))
 
     total_vorsteuer = sum(
-        _tax(b) for b in active_bkgs if b.account.type == Account.TYPE_EXPENSE
+        _tax(b) for b in active_bkgs if b.amount < 0
     )
     total_ust = sum(
-        _tax(b) for b in active_bkgs if b.account.type == Account.TYPE_INCOME
+        _tax(b) for b in active_bkgs if b.amount > 0
     )
 
     table_ctx = dict(
@@ -134,6 +149,7 @@ def bookings():
         total_amount=total_amount,
         total_vorsteuer=total_vorsteuer,
         total_ust=total_ust,
+        locked_booking_ids=locked_booking_ids,
     )
 
     if request.headers.get("HX-Request"):
@@ -150,17 +166,20 @@ def bookings():
 @bp.route("/bookings/new", methods=["GET", "POST"])
 @login_required
 def booking_new():
-    accounts = Account.query.filter_by(active=True).order_by(Account.type, Account.name).all()
+    accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
     active_projects = Project.query.filter_by(closed=False).order_by(Project.name).all()
     real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
     customers = Customer.query.filter_by(active=True).order_by(Customer.name).all()
+    tax_rates = TaxRate.query.order_by(TaxRate.rate).all()
     if request.method == "POST":
+        booking_date = date.fromisoformat(request.form["date"])
+        fy_locked = _locked_fiscal_year(booking_date)
+        if fy_locked:
+            flash(f"Das Buchungsjahr {fy_locked.year} ist abgeschlossen. Buchung wurde nicht gespeichert.", "danger")
+            return redirect(url_for("accounting.booking_new"))
         amount_raw = request.form.get("amount", "0").replace(",", ".")
         amount = Decimal(amount_raw)
         acc = db.get_or_404(Account, int(request.form["account_id"]))
-        # Ausgaben → negativer Betrag
-        if acc.type == Account.TYPE_EXPENSE and amount > 0:
-            amount = -amount
         project_id_raw = request.form.get("project_id") or None
         real_account_id_raw = request.form.get("real_account_id") or None
         customer_id_raw = request.form.get("customer_id") or None
@@ -170,7 +189,7 @@ def booking_new():
         except Exception:
             tax_rate = Decimal("0")
         b = Booking(
-            date=date.fromisoformat(request.form["date"]),
+            date=booking_date,
             account_id=acc.id,
             amount=amount,
             description=request.form.get("description", "").strip(),
@@ -188,6 +207,7 @@ def booking_new():
     return render_template(
         "accounting/booking_form.html", booking=None, accounts=accounts,
         projects=active_projects, real_accounts=real_accounts, customers=customers,
+        tax_rates=tax_rates,
     )
 
 
@@ -195,42 +215,47 @@ def booking_new():
 @login_required
 def booking_edit(booking_id):
     b = db.get_or_404(Booking, booking_id)
-    if b.status != Booking.STATUS_OFFEN:
-        flash("Nur offene Buchungen können bearbeitet werden.", "warning")
+    if b.status == Booking.STATUS_STORNIERT:
+        flash("Stornierte Buchungen können nicht bearbeitet werden.", "warning")
         return redirect(url_for("accounting.bookings"))
-    accounts = Account.query.filter_by(active=True).order_by(Account.type, Account.name).all()
+    fy_locked = _locked_fiscal_year(b.date)
+    if fy_locked:
+        flash(f"Das Buchungsjahr {fy_locked.year} ist abgeschlossen. Diese Buchung kann nicht bearbeitet werden.", "danger")
+        return redirect(url_for("accounting.bookings"))
+    is_verbucht = b.status == Booking.STATUS_VERBUCHT
+    accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
     active_projects = Project.query.filter_by(closed=False).order_by(Project.name).all()
     real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
     customers = Customer.query.filter_by(active=True).order_by(Customer.name).all()
+    tax_rates = TaxRate.query.order_by(TaxRate.rate).all()
     if request.method == "POST":
-        amount_raw = request.form.get("amount", "0").replace(",", ".")
-        amount = Decimal(amount_raw)
         acc = db.get_or_404(Account, int(request.form["account_id"]))
-        if acc.type == Account.TYPE_EXPENSE and amount > 0:
-            amount = -amount
         project_id_raw = request.form.get("project_id") or None
         real_account_id_raw = request.form.get("real_account_id") or None
         customer_id_raw = request.form.get("customer_id") or None
-        tax_rate_raw = request.form.get("tax_rate", "0") or "0"
-        try:
-            tax_rate = Decimal(tax_rate_raw)
-        except Exception:
-            tax_rate = Decimal("0")
-        b.date = date.fromisoformat(request.form["date"])
         b.account_id = acc.id
-        b.amount = amount
         b.description = request.form.get("description", "").strip()
-        b.reference = request.form.get("reference", "").strip()
         b.project_id = int(project_id_raw) if project_id_raw else None
         b.real_account_id = int(real_account_id_raw) if real_account_id_raw else None
         b.customer_id = int(customer_id_raw) if customer_id_raw else None
-        b.tax_rate = tax_rate if tax_rate > 0 else None
+        if not is_verbucht:
+            amount_raw = request.form.get("amount", "0").replace(",", ".")
+            b.amount = Decimal(amount_raw)
+            b.date = date.fromisoformat(request.form["date"])
+            b.reference = request.form.get("reference", "").strip()
+            tax_rate_raw = request.form.get("tax_rate", "0") or "0"
+            try:
+                tax_rate = Decimal(tax_rate_raw)
+            except Exception:
+                tax_rate = Decimal("0")
+            b.tax_rate = tax_rate if tax_rate > 0 else None
         db.session.commit()
         flash("Buchung aktualisiert.", "success")
         return redirect(url_for("accounting.bookings"))
     return render_template(
         "accounting/booking_form.html", booking=b, accounts=accounts,
         projects=active_projects, real_accounts=real_accounts, customers=customers,
+        is_verbucht=is_verbucht, tax_rates=tax_rates,
     )
 
 
@@ -240,6 +265,10 @@ def booking_delete(booking_id):
     b = db.get_or_404(Booking, booking_id)
     if b.status != Booking.STATUS_OFFEN:
         flash("Nur offene Buchungen können gelöscht werden.", "warning")
+        return redirect(url_for("accounting.bookings"))
+    fy_locked = _locked_fiscal_year(b.date)
+    if fy_locked:
+        flash(f"Das Buchungsjahr {fy_locked.year} ist abgeschlossen. Diese Buchung kann nicht gelöscht werden.", "danger")
         return redirect(url_for("accounting.bookings"))
     db.session.delete(b)
     db.session.commit()
@@ -257,6 +286,10 @@ def booking_stornieren(booking_id):
         return redirect(url_for("accounting.bookings"))
     if b.storno_of_id is not None:
         flash("Eine Storno-Buchung kann nicht erneut storniert werden.", "warning")
+        return redirect(url_for("accounting.bookings"))
+    fy_locked = _locked_fiscal_year(b.date)
+    if fy_locked:
+        flash(f"Das Buchungsjahr {fy_locked.year} ist abgeschlossen. Diese Buchung kann nicht storniert werden.", "danger")
         return redirect(url_for("accounting.bookings"))
     if b.date.year != date.today().year:
         flash("Buchungen aus Vorjahren können nicht storniert werden.", "warning")
@@ -411,9 +444,9 @@ def open_item_pay(item_id):
         flash("Betrag muss positiv sein.", "danger")
         return redirect(url_for("accounting.open_items"))
 
-    acc = Account.query.filter_by(type=Account.TYPE_INCOME, active=True).first()
+    acc = Account.query.filter_by(active=True).first()
     if not acc:
-        flash("Kein aktives Einnahmenkonto gefunden.", "danger")
+        flash("Kein aktives Konto gefunden.", "danger")
         return redirect(url_for("accounting.open_items"))
 
     real_account_id_raw = request.form.get("real_account_id") or None
@@ -479,7 +512,7 @@ def open_item_invoice(item_id):
         notes = request.form.get("notes", "").strip()
 
         inv = Invoice(
-            invoice_number=next_invoice_number(),
+            invoice_number=next_invoice_number(inv_date.year),
             customer_id=item.customer_id,
             date=inv_date,
             due_date=due_date,
@@ -591,18 +624,17 @@ def report():
     rows = (
         db.session.query(
             Account.name,
-            Account.type,
             func.sum(Booking.amount).label("total"),
         )
         .join(Booking, Booking.account_id == Account.id)
         .filter(extract("year", Booking.date) == year)
         .group_by(Account.id)
-        .order_by(Account.type, Account.name)
+        .order_by(Account.name)
         .all()
     )
 
-    income_rows = [(r.name, r.total) for r in rows if r.type == Account.TYPE_INCOME]
-    expense_rows = [(r.name, abs(r.total)) for r in rows if r.type == Account.TYPE_EXPENSE]
+    income_rows = [(r.name, r.total) for r in rows if r.total is not None and r.total > 0]
+    expense_rows = [(r.name, abs(r.total)) for r in rows if r.total is not None and r.total < 0]
     total_income = sum(r[1] for r in income_rows)
     total_expense = sum(r[1] for r in expense_rows)
     balance = total_income - total_expense
@@ -613,18 +645,16 @@ def report():
             Project.id.label("project_id"),
             Project.name.label("project_name"),
             Account.name.label("account_name"),
-            Account.type.label("account_type"),
             func.sum(Booking.amount).label("total"),
         )
         .select_from(Booking)
         .outerjoin(Project, Booking.project_id == Project.id)
         .join(Account, Booking.account_id == Account.id)
         .filter(extract("year", Booking.date) == year)
-        .group_by(Project.id, Project.name, Account.id, Account.name, Account.type)
+        .group_by(Project.id, Project.name, Account.id, Account.name)
         .order_by(
             case((Project.id == None, 1), else_=0),
             Project.name,
-            Account.type,
             Account.name,
         )
         .all()
@@ -640,13 +670,14 @@ def report():
                 "income": Decimal("0"),
                 "expense": Decimal("0"),
             }
+        row_total = row.total or Decimal("0")
         project_summary[key]["accounts"].append(
-            (row.account_name, row.account_type, row.total)
+            (row.account_name, row_total)
         )
-        if row.account_type == Account.TYPE_INCOME:
-            project_summary[key]["income"] += row.total or Decimal("0")
+        if row_total >= 0:
+            project_summary[key]["income"] += row_total
         else:
-            project_summary[key]["expense"] += abs(row.total or Decimal("0"))
+            project_summary[key]["expense"] += abs(row_total)
 
     project_summary_list = [
         v for k, v in sorted(
@@ -864,16 +895,14 @@ def import_bookings():
                     results["skip"] += 1
                     continue
 
-                expected_type = Account.TYPE_EXPENSE if amount < 0 else Account.TYPE_INCOME
-                cache_key = (kst_name, expected_type)
-                if cache_key not in account_cache:
-                    acc = Account.query.filter_by(name=kst_name, type=expected_type).first()
+                if kst_name not in account_cache:
+                    acc = Account.query.filter_by(name=kst_name).first()
                     if not acc:
-                        acc = Account(name=kst_name, type=expected_type)
+                        acc = Account(name=kst_name)
                         db.session.add(acc)
                         db.session.flush()
-                    account_cache[cache_key] = acc
-                acc = account_cache[cache_key]
+                    account_cache[kst_name] = acc
+                acc = account_cache[kst_name]
 
                 # Reales Bankkonto ermitteln / anlegen
                 real_account_id = None
@@ -986,7 +1015,7 @@ def export_csv():
                 b.date.strftime("%d.%m.%Y"),
                 b.real_account.name if b.real_account else "",
                 b.account.name,
-                b.account.type,
+                "Einnahme" if b.amount >= 0 else "Ausgabe",
                 b.description,
                 b.reference or "",
                 b.project.name if b.project else "",
@@ -1041,7 +1070,7 @@ def _ust_berechnen(year, quartal):
         tax = _tax(b)
         brutto = abs(b.amount)
         netto = brutto - tax
-        target = ust_rows if b.account.type == Account.TYPE_INCOME else vst_rows
+        target = ust_rows if b.amount > 0 else vst_rows
         rate_key = int(b.tax_rate)
         if rate_key not in target:
             target[rate_key] = {"brutto": Decimal("0"), "steuer": Decimal("0"), "netto": Decimal("0")}
@@ -1152,12 +1181,16 @@ def real_accounts():
 def real_account_new():
     if request.method == "POST":
         opening_raw = request.form.get("opening_balance", "0").replace(",", ".")
+        set_default = "is_default" in request.form
+        if set_default:
+            RealAccount.query.filter_by(is_default=True).update({"is_default": False})
         ra = RealAccount(
             name=request.form["name"].strip(),
             description=request.form.get("description", "").strip(),
             iban=request.form.get("iban", "").strip(),
             opening_balance=Decimal(opening_raw),
             icon=request.form.get("icon", "fa-university").strip() or "fa-university",
+            is_default=set_default,
         )
         db.session.add(ra)
         db.session.commit()
@@ -1172,13 +1205,99 @@ def real_account_edit(ra_id):
     ra = db.get_or_404(RealAccount, ra_id)
     if request.method == "POST":
         opening_raw = request.form.get("opening_balance", "0").replace(",", ".")
+        set_default = "is_default" in request.form
+        if set_default:
+            RealAccount.query.filter(RealAccount.id != ra.id, RealAccount.is_default == True).update({"is_default": False})
         ra.name = request.form["name"].strip()
         ra.description = request.form.get("description", "").strip()
         ra.iban = request.form.get("iban", "").strip()
         ra.opening_balance = Decimal(opening_raw)
         ra.active = "active" in request.form
         ra.icon = request.form.get("icon", "fa-university").strip() or "fa-university"
+        ra.is_default = set_default
         db.session.commit()
         flash("Bankkonto aktualisiert.", "success")
         return redirect(url_for("accounting.real_accounts"))
     return render_template("accounting/real_account_form.html", real_account=ra)
+
+
+# ---------------------------------------------------------------------------
+# Buchungsjahre
+# ---------------------------------------------------------------------------
+
+@bp.route("/fiscal-years")
+@login_required
+def fiscal_years():
+    years = FiscalYear.query.order_by(FiscalYear.year.desc()).all()
+    return render_template("accounting/fiscal_years.html", fiscal_years=years)
+
+
+@bp.route("/fiscal-years/new", methods=["GET", "POST"])
+@login_required
+def fiscal_year_new():
+    if request.method == "POST":
+        year = int(request.form["year"])
+        if FiscalYear.query.get(year):
+            flash(f"Buchungsjahr {year} existiert bereits.", "warning")
+            return redirect(url_for("accounting.fiscal_year_new"))
+        fy = FiscalYear(
+            year=year,
+            start_date=date.fromisoformat(request.form["start_date"]),
+            end_date=date.fromisoformat(request.form["end_date"]),
+        )
+        db.session.add(fy)
+        db.session.commit()
+        flash(f"Buchungsjahr {year} angelegt.", "success")
+        return redirect(url_for("accounting.fiscal_years"))
+    today = date.today()
+    default_year = today.year
+    default_start = date(default_year, 1, 1).isoformat()
+    default_end = date(default_year, 12, 31).isoformat()
+    return render_template(
+        "accounting/fiscal_year_form.html",
+        default_year=default_year,
+        default_start=default_start,
+        default_end=default_end,
+    )
+
+
+@bp.route("/fiscal-years/<int:year>/close", methods=["POST"])
+@login_required
+def fiscal_year_close(year):
+    fy = db.get_or_404(FiscalYear, year)
+    if fy.closed:
+        flash(f"Buchungsjahr {year} ist bereits abgeschlossen.", "warning")
+        return redirect(url_for("accounting.fiscal_years"))
+    fy.closed = True
+    fy.closed_at = __import__("datetime").datetime.utcnow()
+    fy.closed_by_id = current_user.id
+    db.session.commit()
+    flash(f"Buchungsjahr {year} wurde abgeschlossen.", "success")
+    return redirect(url_for("accounting.fiscal_years"))
+
+
+@bp.route("/fiscal-years/<int:year>/reopen", methods=["GET", "POST"])
+@login_required
+def fiscal_year_reopen(year):
+    fy = db.get_or_404(FiscalYear, year)
+    if not fy.closed:
+        flash(f"Buchungsjahr {year} ist nicht abgeschlossen.", "warning")
+        return redirect(url_for("accounting.fiscal_years"))
+    if request.method == "POST":
+        reason = request.form.get("reason", "").strip()
+        if not reason:
+            flash("Bitte einen Grund für die Wiederöffnung angeben.", "danger")
+            return render_template("accounting/fiscal_year_reopen_form.html", fiscal_year=fy)
+        log = FiscalYearReopenLog(
+            fiscal_year_id=fy.year,
+            reopened_by_id=current_user.id,
+            reason=reason,
+        )
+        db.session.add(log)
+        fy.closed = False
+        fy.closed_at = None
+        fy.closed_by_id = None
+        db.session.commit()
+        flash(f"Buchungsjahr {year} wurde wieder geöffnet.", "success")
+        return redirect(url_for("accounting.fiscal_years"))
+    return render_template("accounting/fiscal_year_reopen_form.html", fiscal_year=fy)
