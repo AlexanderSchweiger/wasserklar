@@ -70,11 +70,11 @@
     {% for item in invoice.items %}
     <tr>
       <td>{{ item.description }}</td>
-      <td class="text-right">{{ "%.3f"|format(item.quantity) }}</td>
+      <td class="text-right">{{ item.quantity|de_number(2) }}</td>
       <td>{{ item.unit }}</td>
-      <td class="text-right">{{ "%.4f"|format(item.unit_price) }} €</td>
+      <td class="text-right">{{ item.unit_price|de_number(2) }} €</td>
       {% if has_tax %}<td class="text-right">{{ "%.0f"|format(item.tax_rate) if item.tax_rate else '—' }} %</td>{% endif %}
-      <td class="text-right">{{ "%.2f"|format(item.amount) }} €</td>
+      <td class="text-right">{{ item.amount|de_number(2) }} €</td>
     </tr>
     {% endfor %}
   </tbody>
@@ -89,26 +89,26 @@
     {% if tax_total %}
     <tr>
       <td colspan="{{ 5 if has_tax else 4 }}">Nettobetrag</td>
-      <td class="text-right">{{ "%.2f"|format(invoice.total_amount) }} €</td>
+      <td class="text-right">{{ invoice.total_amount|de_number(2) }} €</td>
     </tr>
     <tr>
       <td colspan="{{ 5 if has_tax else 4 }}">MwSt</td>
-      <td class="text-right">{{ "%.2f"|format(tax_total | sum) }} €</td>
+      <td class="text-right">{{ (tax_total | sum)|de_number(2) }} €</td>
     </tr>
     <tr class="total-row">
       <td colspan="{{ 5 if has_tax else 4 }}">Gesamtbetrag inkl. MwSt</td>
-      <td class="text-right">{{ "%.2f"|format(invoice.total_amount + (tax_total | sum)) }} €</td>
+      <td class="text-right">{{ (invoice.total_amount + (tax_total | sum))|de_number(2) }} €</td>
     </tr>
     {% else %}
     <tr class="total-row">
       <td colspan="{{ 5 if has_tax else 4 }}">Gesamtbetrag</td>
-      <td class="text-right">{{ "%.2f"|format(invoice.total_amount) }} €</td>
+      <td class="text-right">{{ invoice.total_amount|de_number(2) }} €</td>
     </tr>
     {% endif %}
     {% else %}
     <tr class="total-row">
       <td colspan="4">Gesamtbetrag</td>
-      <td class="text-right">{{ "%.2f"|format(invoice.total_amount) }} €</td>
+      <td class="text-right">{{ invoice.total_amount|de_number(2) }} €</td>
     </tr>
     {% endif %}
   </tfoot>
@@ -122,7 +122,7 @@
 
 <div class="payment-info">
   <strong>Zahlungsinformationen</strong><br>
-  Bitte überweisen Sie den Betrag von <strong>{{ "%.2f"|format(invoice.total_amount) }} €</strong>
+  Bitte überweisen Sie den Betrag von <strong>{{ invoice.total_amount|de_number(2) }} €</strong>
   bis zum {{ invoice.due_date.strftime('%d.%m.%Y') if invoice.due_date else '—' }}<br>
   {% if wg.iban %}IBAN: <strong>{{ wg.iban }}</strong><br>{% endif %}
   Empfänger: {{ wg.name }}<br>

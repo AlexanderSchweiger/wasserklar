@@ -19,10 +19,16 @@ def register_commands(app):
         # Fehlende Spalten ergänzen (SQLite unterstützt kein ALTER COLUMN,
         # aber ADD COLUMN ist möglich – sicher für Re-Runs).
         import sqlalchemy as sa
+        import re as _re
         with db.engine.connect() as conn:
+            _dialect = db.engine.dialect.name
+
             def _add_col_if_missing(table, col_def, col_name):
                 cols = [c["name"] for c in sa.inspect(db.engine).get_columns(table)]
                 if col_name not in cols:
+                    # MariaDB/MySQL unterstützt kein inline REFERENCES in ALTER TABLE ADD COLUMN
+                    if _dialect in ('mysql', 'mariadb'):
+                        col_def = _re.sub(r'\s+REFERENCES\s+\S+', '', col_def, flags=_re.IGNORECASE)
                     conn.execute(sa.text(f"ALTER TABLE {table} ADD COLUMN {col_def}"))
 
             _add_col_if_missing("water_meters", "installed_from DATE", "installed_from")
@@ -73,10 +79,16 @@ def register_commands(app):
         """Fehlende Spalten in bestehender Datenbank ergänzen (für Updates)."""
         db.create_all()
         import sqlalchemy as sa
+        import re as _re
         with db.engine.connect() as conn:
+            _dialect = db.engine.dialect.name
+
             def _add_col_if_missing(table, col_def, col_name):
                 cols = [c["name"] for c in sa.inspect(db.engine).get_columns(table)]
                 if col_name not in cols:
+                    # MariaDB/MySQL unterstützt kein inline REFERENCES in ALTER TABLE ADD COLUMN
+                    if _dialect in ('mysql', 'mariadb'):
+                        col_def = _re.sub(r'\s+REFERENCES\s+\S+', '', col_def, flags=_re.IGNORECASE)
                     conn.execute(sa.text(f"ALTER TABLE {table} ADD COLUMN {col_def}"))
                     print(f"  + {table}.{col_name} hinzugefügt.")
                 else:

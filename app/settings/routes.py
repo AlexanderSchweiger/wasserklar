@@ -4,7 +4,7 @@ from flask_login import login_required, current_user
 from app.settings import bp
 from app.extensions import db
 from app.models import AppSetting
-from app.settings_service import _WG_MAP, _MAIL_MAP, send_mail
+from app.settings_service import _WG_MAP, _MAIL_MAP, send_mail, encrypt_password, apply_mail_settings
 
 
 @bp.route('/', methods=['GET', 'POST'])
@@ -27,12 +27,17 @@ def index():
                 # Leerstring = unverändert lassen
                 val = request.form.get('mail_password', '').strip()
                 if val:
-                    AppSetting.set('mail.password', val)
+                    AppSetting.set('mail.password', encrypt_password(val))
+            elif attr == 'use_tls':
+                # Checkbox: nicht vorhanden = false (muss explizit gespeichert werden)
+                val = 'true' if request.form.get('mail_use_tls') else 'false'
+                AppSetting.set(db_key, val)
             else:
                 val = request.form.get(f'mail_{attr}', '').strip()
                 AppSetting.set(db_key, val if val else None)
 
         db.session.commit()
+        apply_mail_settings()
         flash('Einstellungen gespeichert.', 'success')
         return redirect(url_for('settings.index'))
 

@@ -1,7 +1,13 @@
 """
 Einstellungs-Service: liefert WG-Kontaktdaten und Mail-Konfiguration,
 wobei Datenbankwerte (AppSetting) Vorrang vor .env-Variablen haben.
+
+Mail-Passwort wird verschlüsselt in der DB gespeichert (Fernet/AES128,
+Key wird aus SECRET_KEY abgeleitet). Wer nur die DB hat, kann es nicht lesen.
 """
+import base64
+import hashlib
+
 from flask import current_app
 
 
@@ -26,6 +32,28 @@ _MAIL_MAP = [
 ]
 
 
+def _fernet():
+    """Gibt eine Fernet-Instanz zurück, deren Key aus SECRET_KEY abgeleitet wird."""
+    from cryptography.fernet import Fernet
+    secret = current_app.config['SECRET_KEY']
+    # SHA-256 → 32 Bytes → URL-safe Base64 → gültiger Fernet-Key
+    key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest())
+    return Fernet(key)
+
+
+def encrypt_password(plaintext: str) -> str:
+    """Verschlüsselt ein Passwort für die DB-Ablage."""
+    return _fernet().encrypt(plaintext.encode()).decode()
+
+
+def decrypt_password(ciphertext: str) -> str:
+    """Entschlüsselt ein DB-Passwort. Gibt Leerstring zurück bei Fehler."""
+    try:
+        return _fernet().decrypt(ciphertext.encode()).decode()
+    except Exception:
+        return ''
+
+
 def wg_settings():
     """Gibt alle WG-Kontakteinstellungen als Dict zurück (DB > .env)."""
     from app.models import AppSetting
@@ -45,23 +73,40 @@ def get_wg(key):
     return current_app.config.get(_WG_MAP.get(key, ''), '')
 
 
-def send_mail(msg):
-    """Sendet eine flask_mail.Message mit DB-überschriebenen Mail-Einstellungen."""
-    from app.extensions import mail
+def apply_mail_settings():
+    """Liest Mail-Einstellungen aus der DB und schreibt sie in den Flask-Mail-State.
+
+    Beim App-Start und nach jeder Änderung der Mail-Einstellungen aufrufen.
+    """
     from app.models import AppSetting
 
     state = current_app.extensions['mail']
-    originals = {}
     for attr, db_key, cast in _MAIL_MAP:
         val = AppSetting.get(db_key)
         if val is not None and val != '':
+            if attr == 'password':
+                val = decrypt_password(val)
+                if not val:
+                    continue
             try:
-                originals[attr] = getattr(state, attr)
                 setattr(state, attr, cast(val))
             except (ValueError, TypeError):
-                originals.pop(attr, None)
-    try:
-        mail.send(msg)
-    finally:
-        for attr, orig_val in originals.items():
-            setattr(state, attr, orig_val)
+                pass
+
+
+def send_mail(msg):
+    """Sendet eine flask_mail.Message. Mail-Einstellungen wurden bereits beim
+    App-Start bzw. nach Einstellungsänderungen via apply_mail_settings() gesetzt."""
+    from app.extensions import mail
+    from app.models import AppSetting
+
+    ##Mail Sender wird immer aus Einstellungen gesetzt
+    msg.sender = (
+        AppSetting.get('mail.default_sender')
+        or current_app.config.get('MAIL_DEFAULT_SENDER')
+        or AppSetting.get('mail.username')
+        or current_app.config.get('MAIL_USERNAME')
+        or ''
+    )
+
+    mail.send(msg)

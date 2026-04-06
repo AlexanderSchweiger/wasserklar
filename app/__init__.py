@@ -53,6 +53,18 @@ def create_app(config_name=None):
     from app.settings import bp as settings_bp
     app.register_blueprint(settings_bp)
 
+    # Jinja2-Filter für deutsche Zahlenformatierung
+    def de_number(value, decimals=2):
+        """Formatiert eine Zahl im deutschen Format (Komma als Dezimaltrennzeichen, Punkt als Tausendertrennzeichen)."""
+        try:
+            formatted = f"{float(value):,.{decimals}f}"
+            # Python verwendet Komma als Tausender und Punkt als Dezimal → tauschen
+            return formatted.replace(",", "X").replace(".", ",").replace("X", ".")
+        except (TypeError, ValueError):
+            return value
+
+    app.jinja_env.filters["de_number"] = de_number
+
     # Context Processor: WG-Einstellungen in alle Templates injizieren
     @app.context_processor
     def inject_wg_settings():
@@ -61,6 +73,14 @@ def create_app(config_name=None):
             return dict(wg=wg_settings())
         except Exception:
             return dict(wg={})
+
+    # Mail-Einstellungen aus DB laden (überschreibt .env-Werte)
+    with app.app_context():
+        try:
+            from app.settings_service import apply_mail_settings
+            apply_mail_settings()
+        except Exception:
+            pass  # DB noch nicht initialisiert (Erststart)
 
     # CLI-Befehle
     from cli import register_commands
