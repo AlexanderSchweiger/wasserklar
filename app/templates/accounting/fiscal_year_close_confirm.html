@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Jahresabschluss {{ fiscal_year.year }}{% endblock %}
+{% block page_title %}<i class="fas fa-lock mr-2"></i> Jahresabschluss {{ fiscal_year.year }}{% endblock %}
+{% block content %}
+
+<div class="callout callout-warning">
+  <h5><i class="fas fa-exclamation-triangle mr-1"></i> Achtung</h5>
+  Nach dem Abschluss können im Buchungsjahr <strong>{{ fiscal_year.year }}</strong>
+  ({{ fiscal_year.start_date.strftime('%d.%m.%Y') }} – {{ fiscal_year.end_date.strftime('%d.%m.%Y') }})
+  keine Buchungen mehr angelegt, geändert oder storniert werden.
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h3 class="card-title">Kontostände Buchungsjahr {{ fiscal_year.year }}</h3>
+  </div>
+  <div class="card-body p-0">
+    <table class="table table-hover mb-0">
+      <thead>
+        <tr>
+          <th>Bankkonto</th>
+          <th class="text-right">Stand 01.01.{{ fiscal_year.year }}</th>
+          <th class="text-right">Einnahmen</th>
+          <th class="text-right">Ausgaben</th>
+          <th class="text-right">Transfers netto</th>
+          <th class="text-right">Stand 31.12.{{ fiscal_year.year }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in summary %}
+        <tr>
+          <td>
+            <i class="fas {{ row.ra.icon or 'fa-university' }} mr-1 text-muted"></i>
+            <strong>{{ row.ra.name }}</strong>
+            {% if row.ra.iban %}<br><small class="text-muted"><code>{{ row.ra.iban }}</code></small>{% endif %}
+          </td>
+          <td class="text-right {{ 'text-success' if row.jan1 >= 0 else 'text-danger' }}">
+            {{ "%.2f"|format(row.jan1) }} €
+          </td>
+          <td class="text-right text-success">
+            {{ "%.2f"|format(row.einnahmen) }} €
+          </td>
+          <td class="text-right text-danger">
+            {{ "%.2f"|format(row.ausgaben) }} €
+          </td>
+          <td class="text-right {{ 'text-success' if row.transfers_netto >= 0 else 'text-danger' }}">
+            {{ "%+.2f"|format(row.transfers_netto) }} €
+          </td>
+          <td class="text-right font-weight-bold {{ 'text-success' if row.dec31 >= 0 else 'text-danger' }}">
+            {{ "%.2f"|format(row.dec31) }} €
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="6" class="text-muted text-center py-3">Keine Bankkonten vorhanden.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<form method="post" action="{{ url_for('accounting.fiscal_year_close', year=fiscal_year.year) }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="mt-3">
+    <button type="submit" class="btn btn-warning">
+      <i class="fas fa-lock mr-1"></i> Jahresabschluss {{ fiscal_year.year }} bestätigen
+    </button>
+    <a href="{{ url_for('accounting.fiscal_years') }}" class="btn btn-secondary ml-2">
+      <i class="fas fa-times mr-1"></i> Abbrechen
+    </a>
+  </div>
+</form>
+
+{% endblock %}

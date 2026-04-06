@@ -389,6 +389,23 @@ class Transfer(db.Model):
         return f"<Transfer {self.date} {self.amount}>"
 
 
+class RealAccountYearBalance(db.Model):
+    """Gespeicherter Jahresabschluss-Kontostand eines Bankkontos."""
+    __tablename__ = "real_account_year_balances"
+
+    id = db.Column(db.Integer, primary_key=True)
+    real_account_id = db.Column(db.Integer, db.ForeignKey("real_accounts.id"), nullable=False)
+    year = db.Column(db.Integer, nullable=False)
+    closing_balance = db.Column(db.Numeric(10, 2), nullable=False)
+
+    real_account = db.relationship("RealAccount", backref=db.backref("year_balances", lazy="dynamic"))
+
+    __table_args__ = (db.UniqueConstraint("real_account_id", "year", name="uq_real_account_year"),)
+
+    def __repr__(self):
+        return f"<RealAccountYearBalance {self.real_account_id} year={self.year} bal={self.closing_balance}>"
+
+
 class Account(db.Model):
     __tablename__ = "accounts"
 

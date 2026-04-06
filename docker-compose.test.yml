@@ -1,14 +1,16 @@
+name: wg-test
+
 services:
   wg:
     build: .
     ports:
-      - "5000:5000"
+      - "5001:5000"
     volumes:
       - ./instance:/app/instance    # generierte PDFs
     env_file:
-      - .env
-    # DATABASE_URL muss in .env gesetzt sein, z.B.:
-    # mysql+pymysql://wg:passwort@192.168.1.x:3306/wgbuchhaltung?charset=utf8mb4
+      - .env.test
+    # DATABASE_URL muss in .env.test gesetzt sein, z.B.:
+    # mysql+pymysql://wg:passwort@192.168.0.12:3307/wgbuchhaltung_test?charset=utf8mb4
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/auth/login"]

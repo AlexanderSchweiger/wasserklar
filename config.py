@@ -1,7 +1,7 @@
 import os
 from dotenv import load_dotenv
 
-load_dotenv(override=True)
+load_dotenv()
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
@@ -9,8 +9,8 @@ BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 class Config:
     SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-change-in-production")
     SQLALCHEMY_DATABASE_URI = os.environ.get(
-        "DATABASE_URL",
-        "sqlite:///" + os.path.join(BASE_DIR, "instance", "wg.db"),
+        "DATABASE_URL"
+        ##"sqlite:///" + os.path.join(BASE_DIR, "instance", "wg.db"),
     )
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
@@ -37,12 +37,17 @@ class DevelopmentConfig(Config):
     DEBUG = True
 
 
+class TestingConfig(Config):
+    DEBUG = False
+
+
 class ProductionConfig(Config):
     DEBUG = False
 
 
 config = {
     "development": DevelopmentConfig,
-    "production": ProductionConfig,
-    "default": DevelopmentConfig,
+    "testing":     TestingConfig,
+    "production":  ProductionConfig,
+    "default":     DevelopmentConfig,
 }

@@ -1,13 +1,25 @@
 # Wassergenossenschaft Verwaltung
 
-Flask + HTMX + SQLite Verwaltungssystem für Wassergenossenschaften.
+Flask + HTMX Verwaltungssystem für Wassergenossenschaften.
 Design: **AdminLTE 3** (Bootstrap 4 + Font Awesome)
 
 **Funktionen:** Kundenverwaltung · Zählerablesungen (+ CSV/Excel-Import) · Rechnungsgenerierung (PDF, E-Mail) · Buchhaltung (EÜR, Offene Posten, Jahresbericht)
 
 ---
 
-## Ersteinrichtung (lokal / Windows)
+## Environments
+
+| Environment | FLASK_ENV     | Datenbank              | Deployment              |
+|-------------|---------------|------------------------|-------------------------|
+| dev         | `development` | `wgbuchhaltung_dev`    | lokal (Flask dev-server)|
+| test        | `testing`     | `wgbuchhaltung_test`   | Docker                  |
+| prod        | `production`  | `wgbuchhaltung_prod`   | Docker                  |
+
+Jedes Environment hat eine eigene Konfigurationsdatei: `.env`, `.env.test`, `.env.prod`.
+
+---
+
+## Lokale Entwicklung (dev)
 
 ```bash
 # 1. Virtuelle Umgebung erstellen
@@ -18,7 +30,8 @@ python -m venv .venv
 
 # 3. Konfiguration anlegen
 cp .env.example .env
-#    → .env anpassen: WG_NAME, IBAN, E-Mail-Server, SECRET_KEY
+#    → .env anpassen: DATABASE_URL (wgbuchhaltung_dev), WG_NAME, IBAN, SECRET_KEY
+#    → FLASK_ENV=development bleibt gesetzt
 
 # 4. Datenbank + Standard-Konten erstellen
 .venv/Scripts/flask --app run init-db
@@ -33,25 +46,55 @@ cp .env.example .env
 
 ---
 
-## Deployment auf Synology NAS (Docker)
+## Test-Deployment (Docker)
+
+Verbindet sich mit `wgbuchhaltung_test`. Läuft als produktionsähnliche Umgebung (DEBUG=False).
 
 ```bash
 # 1. Konfiguration anlegen
-cp .env.example .env
-#    → .env anpassen (FLASK_ENV=production, SECRET_KEY, Mail-Daten)
+cp .env.example .env.test
+#    → FLASK_ENV=testing
+#    → DATABASE_URL auf wgbuchhaltung_test setzen
+#    → SECRET_KEY, Mail-Daten anpassen
 
 # 2. Container bauen und starten
-docker compose up -d --build
+docker compose -f docker-compose.test.yml up -d --build
 
 # 3. Datenbank initialisieren (einmalig)
-docker compose exec wg flask --app run init-db
+docker compose -f docker-compose.test.yml exec wg flask --app run init-db
 
 # 4. Admin-Benutzer anlegen (einmalig)
-docker compose exec wg flask --app run create-admin
+docker compose -f docker-compose.test.yml exec wg flask --app run create-admin
 #    → http://NAS-IP:5000
 ```
 
-Die SQLite-Datenbank und generierte PDFs liegen in `instance/` und werden als Docker-Volume gemountet – sie überleben Container-Neustarts und Updates.
+---
+
+## Produktions-Deployment (Docker)
+
+Verbindet sich mit `wgbuchhaltung_prod`. Vollständige Produktionskonfiguration (DEBUG=False).
+
+```bash
+# 1. Konfiguration anlegen
+cp .env.example .env.prod
+#    → FLASK_ENV=production
+#    → DATABASE_URL auf wgbuchhaltung_prod setzen
+#    → SECRET_KEY (langer, zufälliger Wert!), Mail-Daten anpassen
+
+# 2. Container bauen und starten
+docker compose -f docker-compose.prod.yml up -d --build
+
+# 3. Datenbank initialisieren (einmalig bei Erstinstallation)
+docker compose -f docker-compose.prod.yml exec wg flask --app run init-db
+
+# 4. Admin-Benutzer anlegen (einmalig bei Erstinstallation)
+docker compose -f docker-compose.prod.yml exec wg flask --app run create-admin
+#    → http://NAS-IP:5000
+
+# Update (ohne Datenverlust):
+docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml exec wg flask --app run upgrade-db
+```
 
 ---
 
@@ -60,6 +103,7 @@ Die SQLite-Datenbank und generierte PDFs liegen in `instance/` und werden als Do
 | Befehl | Beschreibung |
 |--------|-------------|
 | `flask --app run init-db` | Tabellen erstellen + Standard-Konten anlegen |
+| `flask --app run upgrade-db` | Neue Spalten hinzufügen (idempotent, für Updates) |
 | `flask --app run create-admin` | Admin-Benutzer interaktiv anlegen |
 | `flask --app run run` | Entwicklungsserver starten |
 
@@ -68,5 +112,7 @@ Die SQLite-Datenbank und generierte PDFs liegen in `instance/` und werden als Do
 ## Hinweise
 
 - **PDF-Export** benötigt WeasyPrint mit GTK3. Lokal unter Windows entfällt diese Funktion (Fehlermeldung statt Absturz). Im Docker-Container ist WeasyPrint vollständig enthalten.
-- **E-Mail-Versand** erfordert einen konfigurierten SMTP-Server in `.env`.
-- **SECRET_KEY** in `.env` muss für die Produktion durch einen langen, zufälligen Wert ersetzt werden.
+- **E-Mail-Versand** erfordert einen konfigurierten SMTP-Server in der jeweiligen `.env`-Datei.
+- **SECRET_KEY** muss in `.env.test` und `.env.prod` durch einen langen, zufälligen Wert ersetzt werden.
+- Generierte PDFs und Datenbankdaten liegen in `instance/` (als Docker-Volume gemountet — überleben Container-Neustarts).
+- **Test und Prod gleichzeitig** können auf demselben Host betrieben werden: Test läuft auf Port **5001**, Prod auf Port **5000**. Die Docker-Projektnamen (`wg-test` / `wg-prod`) verhindern Container-Namenskonflikte.

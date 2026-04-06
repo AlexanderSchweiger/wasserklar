@@ -67,7 +67,31 @@ def index():
     mail_cfg['password_set'] = bool(AppSetting.get('mail.password')
                                     or current_app.config.get('MAIL_PASSWORD'))
 
-    return render_template('settings/index.html', wg=wg, mail=mail_cfg)
+    # Datenbankverbindungsinfo (kein Passwort)
+    from sqlalchemy.engine import make_url
+    raw_url = current_app.config.get('SQLALCHEMY_DATABASE_URI', '')
+    try:
+        u = make_url(raw_url)
+        db_info = {
+            'engine':   u.get_backend_name(),
+            'driver':   u.drivername,
+            'host':     u.host or '–',
+            'port':     u.port or '–',
+            'database': u.database or '–',
+            'username': u.username or '–',
+            'url_masked': (
+                f"{u.drivername}://"
+                + (f"{u.username}:***@" if u.username else '')
+                + (f"{u.host}" if u.host else '')
+                + (f":{u.port}" if u.port else '')
+                + (f"/{u.database}" if u.database else u.database or '')
+            ),
+        }
+    except Exception:
+        db_info = {'engine': '–', 'driver': '–', 'host': '–', 'port': '–',
+                   'database': raw_url or '–', 'username': '–', 'url_masked': raw_url}
+
+    return render_template('settings/index.html', wg=wg, mail=mail_cfg, db_info=db_info)
 
 
 @bp.route('/test-mail', methods=['POST'])

@@ -123,6 +123,22 @@
         </div>
       </div>
 
+      <h6 class="mb-3 mt-3">Umbuchungen</h6>
+      <div class="row">
+        <div class="col-md-6">
+          <div class="form-group">
+            <label>Umbuchungs-Konto (KST)</label>
+            <input type="text" name="umbuchungs_kst" class="form-control"
+                   placeholder="z. B. Umbuchung (leer lassen wenn nicht benötigt)">
+            <small class="text-muted">
+              Zeilen mit genau diesem KST-Wert werden als Umbuchung zwischen Bankkonten behandelt —
+              aber nur, wenn im selben Import eine passende Gegenbuchung (gleicher Betrag, anderes Bankkonto)
+              gefunden wird. Datum darf abweichen. Ohne Eintrag wird nichts als Umbuchung erkannt.
+            </small>
+          </div>
+        </div>
+      </div>
+
       <div class="callout callout-info mt-2 mb-0">
         <small>
           <i class="fas fa-info-circle mr-1"></i>

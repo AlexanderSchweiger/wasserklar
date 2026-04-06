@@ -506,6 +506,20 @@ def register_commands(app):
         db.session.commit()
         print(f"{updated} Buchung(en) als 'Verbucht' markiert.")
 
+    @app.cli.command("reset-db")
+    def reset_db():
+        """ALLE Daten löschen und Datenbank neu initialisieren (mit Bestätigung)."""
+        print("WARNUNG: Alle Daten werden unwiderruflich gelöscht!")
+        antwort = input("Zur Bestätigung bitte 'RESET' eingeben: ").strip()
+        if antwort != "RESET":
+            print("Abgebrochen.")
+            return
+        db.drop_all()
+        print("Alle Tabellen gelöscht.")
+        from click import get_current_context
+        ctx = get_current_context()
+        ctx.invoke(init_db)
+
     @app.cli.command("create-admin")
     def create_admin():
         """Admin-Benutzer interaktiv anlegen."""

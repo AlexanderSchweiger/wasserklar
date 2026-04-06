@@ -140,6 +140,49 @@
       </div>
     </div>
 
+    {# ── Datenbankverbindung ─────────────────────────────────────────── #}
+    <div class="col-md-6">
+      <div class="card card-secondary card-outline">
+        <div class="card-header">
+          <h3 class="card-title"><i class="fas fa-database mr-1"></i> Datenbankverbindung</h3>
+        </div>
+        <div class="card-body p-0">
+          <table class="table table-sm table-borderless mb-0">
+            <tbody>
+              <tr>
+                <th class="pl-3" style="width:140px">Engine</th>
+                <td><code>{{ db_info.engine }}</code></td>
+              </tr>
+              <tr>
+                <th class="pl-3">Treiber</th>
+                <td><code>{{ db_info.driver }}</code></td>
+              </tr>
+              <tr>
+                <th class="pl-3">Host</th>
+                <td>{{ db_info.host }}</td>
+              </tr>
+              <tr>
+                <th class="pl-3">Port</th>
+                <td>{{ db_info.port }}</td>
+              </tr>
+              <tr>
+                <th class="pl-3">Datenbank</th>
+                <td><code>{{ db_info.database }}</code></td>
+              </tr>
+              <tr>
+                <th class="pl-3">Benutzer</th>
+                <td>{{ db_info.username }}</td>
+              </tr>
+              <tr>
+                <th class="pl-3">URL</th>
+                <td class="text-break"><code class="small">{{ db_info.url_masked }}</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
   </div>
 </form>
 

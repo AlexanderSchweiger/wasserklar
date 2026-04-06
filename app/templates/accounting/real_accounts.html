@@ -53,9 +53,9 @@
             </tr>
             {% endif %}
             <tr>
-              <td class="text-muted">Anfangssaldo</td>
-              <td class="font-weight-bold {{ 'text-success' if ra.opening_balance >= 0 else 'text-danger' }}">
-                {{ "%.2f"|format(ra.opening_balance) }} €
+              <td class="text-muted">Stand 01.01.{{ year }}</td>
+              <td class="{{ 'text-success' if s.jan1 >= 0 else 'text-danger' }}">
+                {{ "%.2f"|format(s.jan1) }} €
               </td>
             </tr>
             <tr>
@@ -65,7 +65,7 @@
               </td>
             </tr>
             <tr class="table-active">
-              <td class="font-weight-bold">Saldo gesamt</td>
+              <td class="font-weight-bold">Stand 31.12.{{ year }}</td>
               <td class="font-weight-bold {{ 'text-success' if s.balance >= 0 else 'text-danger' }}">
                 {{ "%.2f"|format(s.balance) }} €
               </td>

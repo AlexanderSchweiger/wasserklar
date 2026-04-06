@@ -15,7 +15,7 @@ from sqlalchemy import extract, func, case
 
 from app.accounting import bp
 from app.extensions import db
-from app.models import Account, Booking, Invoice, OpenItem, WaterTariff, Customer, InvoiceItem, Project, RealAccount, FiscalYear, FiscalYearReopenLog, TaxRate, Transfer
+from app.models import Account, Booking, Invoice, OpenItem, WaterTariff, Customer, InvoiceItem, Project, RealAccount, RealAccountYearBalance, FiscalYear, FiscalYearReopenLog, TaxRate, Transfer
 from app.utils import next_invoice_number
 
 
@@ -90,6 +90,102 @@ def _locked_fiscal_year(booking_date):
     ).first()
 
 
+def _jan1_balance(ra, year):
+    """Kontostand am 1.1. von Jahr `year` (Jahresanfangsstand).
+
+    Sucht den zuletzt gespeicherten RealAccountYearBalance vor `year` als Basis.
+    Wenn keiner vorhanden, wird ra.opening_balance als Basis verwendet.
+    Lücken-Jahre (zwischen gespeichertem Jahr+1 und year-1) werden aufaddiert.
+    """
+    prev = (RealAccountYearBalance.query
+            .filter_by(real_account_id=ra.id)
+            .filter(RealAccountYearBalance.year < year)
+            .order_by(RealAccountYearBalance.year.desc())
+            .first())
+
+    if prev:
+        base = Decimal(str(prev.closing_balance))
+        start_year = prev.year + 1
+    else:
+        base = Decimal(str(ra.opening_balance))
+        start_year = 1
+
+    if start_year < year:
+        add = db.session.query(func.sum(Booking.amount)).filter(
+            Booking.real_account_id == ra.id,
+            extract("year", Booking.date) >= start_year,
+            extract("year", Booking.date) < year,
+        ).scalar() or Decimal("0")
+        inc = db.session.query(func.sum(Transfer.amount)).filter(
+            Transfer.to_real_account_id == ra.id,
+            extract("year", Transfer.date) >= start_year,
+            extract("year", Transfer.date) < year,
+        ).scalar() or Decimal("0")
+        out = db.session.query(func.sum(Transfer.amount)).filter(
+            Transfer.from_real_account_id == ra.id,
+            extract("year", Transfer.date) >= start_year,
+            extract("year", Transfer.date) < year,
+        ).scalar() or Decimal("0")
+        base += Decimal(str(add)) + Decimal(str(inc)) - Decimal(str(out))
+
+    return base
+
+
+def _year_end_balance(ra, year):
+    """Kontostand am 31.12. von Jahr `year` (Jahresabschlussstand)."""
+    jan1 = _jan1_balance(ra, year)
+    bkgs = db.session.query(func.sum(Booking.amount)).filter(
+        Booking.real_account_id == ra.id,
+        extract("year", Booking.date) == year,
+    ).scalar() or Decimal("0")
+    inc = db.session.query(func.sum(Transfer.amount)).filter(
+        Transfer.to_real_account_id == ra.id,
+        extract("year", Transfer.date) == year,
+    ).scalar() or Decimal("0")
+    out = db.session.query(func.sum(Transfer.amount)).filter(
+        Transfer.from_real_account_id == ra.id,
+        extract("year", Transfer.date) == year,
+    ).scalar() or Decimal("0")
+    return jan1 + Decimal(str(bkgs)) + Decimal(str(inc)) - Decimal(str(out))
+
+
+def _current_balance(ra):
+    """Aktueller Kontostand = letzter gespeicherter Jahresabschluss + alle Buchungen danach."""
+    last = (RealAccountYearBalance.query
+            .filter_by(real_account_id=ra.id)
+            .order_by(RealAccountYearBalance.year.desc())
+            .first())
+
+    if last:
+        base = Decimal(str(last.closing_balance))
+        from_date = date(last.year + 1, 1, 1)
+        bkgs = db.session.query(func.sum(Booking.amount)).filter(
+            Booking.real_account_id == ra.id,
+            Booking.date >= from_date,
+        ).scalar() or Decimal("0")
+        inc = db.session.query(func.sum(Transfer.amount)).filter(
+            Transfer.to_real_account_id == ra.id,
+            Transfer.date >= from_date,
+        ).scalar() or Decimal("0")
+        out = db.session.query(func.sum(Transfer.amount)).filter(
+            Transfer.from_real_account_id == ra.id,
+            Transfer.date >= from_date,
+        ).scalar() or Decimal("0")
+    else:
+        base = Decimal(str(ra.opening_balance))
+        bkgs = db.session.query(func.sum(Booking.amount)).filter(
+            Booking.real_account_id == ra.id,
+        ).scalar() or Decimal("0")
+        inc = db.session.query(func.sum(Transfer.amount)).filter(
+            Transfer.to_real_account_id == ra.id,
+        ).scalar() or Decimal("0")
+        out = db.session.query(func.sum(Transfer.amount)).filter(
+            Transfer.from_real_account_id == ra.id,
+        ).scalar() or Decimal("0")
+
+    return base + Decimal(str(bkgs)) + Decimal(str(inc)) - Decimal(str(out))
+
+
 @bp.route("/bookings")
 @login_required
 def bookings():
@@ -154,11 +250,16 @@ def bookings():
 
     if request.headers.get("HX-Request"):
         return render_template("accounting/_bookings_table.html", **table_ctx)
+
+    # Aktueller Kontostand aller aktiven Bankkonten für den Header-Banner
+    real_account_saldi = {ra.id: _current_balance(ra) for ra in real_accounts}
+
     return render_template(
         "accounting/bookings.html",
         accounts=accounts, projects=projects,
         account_id=account_id, project_id=project_id,
         real_accounts=real_accounts, real_account_id=real_account_id,
+        real_account_saldi=real_account_saldi,
         **table_ctx,
     )
 
@@ -716,6 +817,17 @@ def _parse_at_number(raw):
         return None
 
 
+def _ensure_umbuchungs_account(account_cache, kst_name):
+    """Stellt sicher, dass ein Account für den Umbuchungs-KST im Cache vorhanden ist."""
+    if kst_name not in account_cache:
+        acc = Account.query.filter_by(name=kst_name).first()
+        if not acc:
+            acc = Account(name=kst_name)
+            db.session.add(acc)
+            db.session.flush()
+        account_cache[kst_name] = acc
+
+
 def _find_customer(name, customers, customer_name_map):
     """Exakte Suche nach Kunde anhand des Namens (Vor- und Nachname müssen übereinstimmen)."""
     if not name or not name.strip():
@@ -833,6 +945,7 @@ def import_bookings():
             col_name = request.form.get("col_name", "")
             col_beschreibung = request.form.get("col_beschreibung", "")
             col_steuer = request.form.get("col_steuer", "")
+            umbuchungs_kst = request.form.get("umbuchungs_kst", "").strip()
 
             if not col_datum or not col_kst:
                 flash("Pflichtfelder Datum und KST (Konto) müssen zugeordnet sein.", "danger")
@@ -847,7 +960,10 @@ def import_bookings():
             project_cache = {}      # name → Project
             real_account_cache = {} # name → RealAccount
 
-            results = {"ok": 0, "skip": 0, "matched": 0}
+            results = {"ok": 0, "skip": 0, "matched": 0, "transfers": 0, "transfer_warnings": []}
+
+            # Umbuchungs-Kandidaten: Liste von dicts mit geparsten Feldern
+            transfer_candidates = []  # {"amount": Decimal, "date": date, "real_account_id": int|None, "description": str}
 
             for _, row in df.iterrows():
                 def _col(c):
@@ -889,20 +1005,11 @@ def import_bookings():
                     results["skip"] += 1
                     continue
 
-                # Konto (KST) → Account ermitteln / anlegen
+                # Konto (KST) ermitteln
                 kst_name = _col(col_kst)
                 if not kst_name:
                     results["skip"] += 1
                     continue
-
-                if kst_name not in account_cache:
-                    acc = Account.query.filter_by(name=kst_name).first()
-                    if not acc:
-                        acc = Account(name=kst_name)
-                        db.session.add(acc)
-                        db.session.flush()
-                    account_cache[kst_name] = acc
-                acc = account_cache[kst_name]
 
                 # Reales Bankkonto ermitteln / anlegen
                 real_account_id = None
@@ -916,6 +1023,29 @@ def import_bookings():
                             db.session.flush()
                         real_account_cache[konto_name] = ra
                     real_account_id = real_account_cache[konto_name].id
+
+                # Umbuchungs-Kandidat: in separate Liste stellen
+                if umbuchungs_kst and kst_name == umbuchungs_kst:
+                    beschreibung = _col(col_beschreibung)
+                    import_name = _col(col_name)
+                    parts = [p for p in [import_name, beschreibung] if p]
+                    description = " – ".join(parts) if parts else "Umbuchung"
+                    transfer_candidates.append({
+                        "amount": amount,
+                        "date": booking_date,
+                        "real_account_id": real_account_id,
+                        "description": description[:500],
+                    })
+                    continue
+
+                if kst_name not in account_cache:
+                    acc = Account.query.filter_by(name=kst_name).first()
+                    if not acc:
+                        acc = Account(name=kst_name)
+                        db.session.add(acc)
+                        db.session.flush()
+                    account_cache[kst_name] = acc
+                acc = account_cache[kst_name]
 
                 # Projekt ermitteln / anlegen
                 project_id = None
@@ -970,15 +1100,105 @@ def import_bookings():
                 db.session.add(b)
                 results["ok"] += 1
 
+            # ------------------------------------------------------------------
+            # Umbuchungs-Kandidaten paarweise matchen
+            # Regel: Ausgabe (amount < 0) von Konto A + Einnahme (amount > 0) auf Konto B
+            # mit gleichem abs(amount) → Transfer
+            # ------------------------------------------------------------------
+            if transfer_candidates:
+                from collections import defaultdict
+                # Gruppieren nach abs(amount)
+                by_amount = defaultdict(lambda: {"ausgaben": [], "einnahmen": []})
+                for tc in transfer_candidates:
+                    key = abs(tc["amount"])
+                    if tc["amount"] < 0:
+                        by_amount[key]["ausgaben"].append(tc)
+                    else:
+                        by_amount[key]["einnahmen"].append(tc)
+
+                for abs_amt, group in by_amount.items():
+                    ausgaben = group["ausgaben"]
+                    einnahmen = group["einnahmen"]
+
+                    while ausgaben and einnahmen:
+                        aus = ausgaben.pop(0)
+                        ein = einnahmen.pop(0)
+
+                        from_ra_id = aus["real_account_id"]
+                        to_ra_id = ein["real_account_id"]
+
+                        if from_ra_id is None or to_ra_id is None:
+                            results["transfer_warnings"].append(
+                                f"Umbuchung {abs_amt:.2f}: Bankkonto fehlt — als normale Buchung importiert."
+                            )
+                            # Fallback: als normale Buchungen anlegen
+                            for tc_fb in [aus, ein]:
+                                _ensure_umbuchungs_account(account_cache, umbuchungs_kst)
+                                acc_fb = account_cache[umbuchungs_kst]
+                                b_fb = Booking(
+                                    date=tc_fb["date"],
+                                    account_id=acc_fb.id,
+                                    amount=tc_fb["amount"],
+                                    description=tc_fb["description"],
+                                    real_account_id=tc_fb["real_account_id"],
+                                    created_by_id=current_user.id,
+                                    status=Booking.STATUS_OFFEN,
+                                )
+                                db.session.add(b_fb)
+                                results["ok"] += 1
+                            continue
+
+                        if from_ra_id == to_ra_id:
+                            results["transfer_warnings"].append(
+                                f"Umbuchung {abs_amt:.2f}: Ausgangs- und Zielkonto identisch — übersprungen."
+                            )
+                            results["skip"] += 2
+                            continue
+
+                        t = Transfer(
+                            date=aus["date"],
+                            amount=abs_amt,
+                            description=aus["description"] or ein["description"],
+                            from_real_account_id=from_ra_id,
+                            to_real_account_id=to_ra_id,
+                            created_by_id=current_user.id,
+                        )
+                        db.session.add(t)
+                        results["transfers"] += 1
+
+                    # Nicht gematchte Kandidaten → Warnung + normale Buchung
+                    for tc_unmatched in ausgaben + einnahmen:
+                        results["transfer_warnings"].append(
+                            f"Umbuchung {abs_amt:.2f} ({tc_unmatched['date']}): "
+                            f"Keine Gegenbuchung gefunden — als normale Buchung importiert."
+                        )
+                        _ensure_umbuchungs_account(account_cache, umbuchungs_kst)
+                        acc_um = account_cache[umbuchungs_kst]
+                        b_um = Booking(
+                            date=tc_unmatched["date"],
+                            account_id=acc_um.id,
+                            amount=tc_unmatched["amount"],
+                            description=tc_unmatched["description"],
+                            real_account_id=tc_unmatched["real_account_id"],
+                            created_by_id=current_user.id,
+                            status=Booking.STATUS_OFFEN,
+                        )
+                        db.session.add(b_um)
+                        results["ok"] += 1
+
             db.session.commit()
             msg = (
-                f"Import abgeschlossen: {results['ok']} importiert, "
+                f"Import abgeschlossen: {results['ok']} Buchungen importiert, "
                 f"{results['skip']} übersprungen"
             )
+            if results["transfers"]:
+                msg += f", {results['transfers']} Umbuchungen erstellt"
             if results["matched"]:
                 msg += f", {results['matched']} Kunden automatisch zugeordnet"
             msg += "."
-            flash(msg, "success" if results["ok"] else "warning")
+            flash(msg, "success" if (results["ok"] or results["transfers"]) else "warning")
+            for w in results["transfer_warnings"]:
+                flash(w, "warning")
             return redirect(url_for("accounting.bookings"))
 
     return render_template("accounting/import_bookings.html")
@@ -1158,9 +1378,10 @@ def real_accounts():
     year = request.args.get("year", date.today().year, type=int)
     accounts = RealAccount.query.order_by(RealAccount.name).all()
 
-    # Saldo pro Konto = Anfangssaldo + Summe aller Buchungen + Umbuchungen (gefiltert nach Jahr)
+    # Saldo pro Konto basierend auf gespeichertem Jahresanfangsstand
     saldi = {}
     for ra in accounts:
+        jan1 = _jan1_balance(ra, year)
         total = db.session.query(func.sum(Booking.amount)).filter(
             Booking.real_account_id == ra.id,
             extract("year", Booking.date) == year,
@@ -1173,10 +1394,11 @@ def real_accounts():
             Transfer.from_real_account_id == ra.id,
             extract("year", Transfer.date) == year,
         ).scalar() or Decimal("0")
-        year_total = total + incoming - outgoing
+        year_total = Decimal(str(total)) + Decimal(str(incoming)) - Decimal(str(outgoing))
         saldi[ra.id] = {
+            "jan1": jan1,
             "year_total": year_total,
-            "balance": Decimal(str(ra.opening_balance)) + year_total,
+            "balance": jan1 + year_total,
         }
 
     return render_template(
@@ -1354,19 +1576,76 @@ def fiscal_year_new():
     )
 
 
-@bp.route("/fiscal-years/<int:year>/close", methods=["POST"])
+@bp.route("/fiscal-years/<int:year>/close", methods=["GET", "POST"])
 @login_required
 def fiscal_year_close(year):
+    from datetime import datetime as _dt
     fy = db.get_or_404(FiscalYear, year)
     if fy.closed:
         flash(f"Buchungsjahr {year} ist bereits abgeschlossen.", "warning")
         return redirect(url_for("accounting.fiscal_years"))
-    fy.closed = True
-    fy.closed_at = __import__("datetime").datetime.utcnow()
-    fy.closed_by_id = current_user.id
-    db.session.commit()
-    flash(f"Buchungsjahr {year} wurde abgeschlossen.", "success")
-    return redirect(url_for("accounting.fiscal_years"))
+
+    real_accs = RealAccount.query.order_by(RealAccount.name).all()
+
+    if request.method == "POST":
+        # Jahresabschlussstand pro Bankkonto speichern
+        for ra in real_accs:
+            dec31 = _year_end_balance(ra, year)
+            existing = RealAccountYearBalance.query.filter_by(
+                real_account_id=ra.id, year=year
+            ).first()
+            if existing:
+                existing.closing_balance = dec31
+            else:
+                db.session.add(RealAccountYearBalance(
+                    real_account_id=ra.id,
+                    year=year,
+                    closing_balance=dec31,
+                ))
+        fy.closed = True
+        fy.closed_at = _dt.utcnow()
+        fy.closed_by_id = current_user.id
+        db.session.commit()
+        flash(f"Buchungsjahr {year} wurde abgeschlossen.", "success")
+        return redirect(url_for("accounting.fiscal_years"))
+
+    # GET – Zusammenfassung berechnen
+    summary = []
+    for ra in real_accs:
+        jan1 = _jan1_balance(ra, year)
+        einnahmen = db.session.query(func.sum(Booking.amount)).filter(
+            Booking.real_account_id == ra.id,
+            extract("year", Booking.date) == year,
+            Booking.amount > 0,
+        ).scalar() or Decimal("0")
+        ausgaben = db.session.query(func.sum(Booking.amount)).filter(
+            Booking.real_account_id == ra.id,
+            extract("year", Booking.date) == year,
+            Booking.amount < 0,
+        ).scalar() or Decimal("0")
+        transfers_in = db.session.query(func.sum(Transfer.amount)).filter(
+            Transfer.to_real_account_id == ra.id,
+            extract("year", Transfer.date) == year,
+        ).scalar() or Decimal("0")
+        transfers_out = db.session.query(func.sum(Transfer.amount)).filter(
+            Transfer.from_real_account_id == ra.id,
+            extract("year", Transfer.date) == year,
+        ).scalar() or Decimal("0")
+        dec31 = jan1 + Decimal(str(einnahmen)) + Decimal(str(ausgaben)) + Decimal(str(transfers_in)) - Decimal(str(transfers_out))
+        summary.append({
+            "ra": ra,
+            "jan1": jan1,
+            "einnahmen": Decimal(str(einnahmen)),
+            "ausgaben": Decimal(str(ausgaben)),
+            "transfers_netto": Decimal(str(transfers_in)) - Decimal(str(transfers_out)),
+            "dec31": dec31,
+        })
+
+    return render_template(
+        "accounting/fiscal_year_close_confirm.html",
+        fiscal_year=fy,
+        summary=summary,
+    )
 
 
 @bp.route("/fiscal-years/<int:year>/reopen", methods=["GET", "POST"])

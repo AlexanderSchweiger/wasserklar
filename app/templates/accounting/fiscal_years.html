@@ -46,14 +46,10 @@
           </td>
           <td class="text-right">
             {% if not fy.closed %}
-            <form method="post" action="{{ url_for('accounting.fiscal_year_close', year=fy.year) }}"
-                  style="display:inline"
-                  onsubmit="return confirm('Buchungsjahr {{ fy.year }} wirklich abschließen? Danach können keine Buchungen mehr geändert werden.')">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <button type="submit" class="btn btn-warning btn-sm">
-                <i class="fas fa-lock mr-1"></i> Abschließen
-              </button>
-            </form>
+            <a href="{{ url_for('accounting.fiscal_year_close', year=fy.year) }}"
+               class="btn btn-warning btn-sm">
+              <i class="fas fa-lock mr-1"></i> Abschließen
+            </a>
             {% else %}
             <a href="{{ url_for('accounting.fiscal_year_reopen', year=fy.year) }}"
                class="btn btn-outline-secondary btn-sm">

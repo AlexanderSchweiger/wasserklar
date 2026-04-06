@@ -2,6 +2,27 @@
 {% block title %}Buchungen {{ year }}{% endblock %}
 {% block page_title %}<i class="fas fa-book mr-2"></i> Buchungen {% endblock %}
 {% block content %}
+
+{% if real_accounts %}
+<div class="card card-outline card-primary mb-3">
+  <div class="card-body py-2 px-3">
+    <div class="d-flex flex-wrap align-items-center" style="gap:1rem;">
+      <span class="text-muted mr-2"><i class="fas fa-university mr-1"></i><strong>Aktuelle Kontostände</strong></span>
+      {% for ra in real_accounts %}
+      {% set bal = real_account_saldi[ra.id] %}
+      <span class="mr-3">
+        <i class="fas {{ ra.icon or 'fa-university' }} mr-1 text-muted"></i>
+        <strong>{{ ra.name }}:</strong>
+        <span class="font-weight-bold {{ 'text-success' if bal >= 0 else 'text-danger' }}">
+          {{ "%.2f"|format(bal) }} €
+        </span>
+      </span>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <div class="card">
   <div class="card-header">
     <div class="filter-bar">
