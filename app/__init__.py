@@ -50,6 +50,18 @@ def create_app(config_name=None):
     from app.import_csv import bp as import_csv_bp
     app.register_blueprint(import_csv_bp)
 
+    from app.settings import bp as settings_bp
+    app.register_blueprint(settings_bp)
+
+    # Context Processor: WG-Einstellungen in alle Templates injizieren
+    @app.context_processor
+    def inject_wg_settings():
+        from app.settings_service import wg_settings
+        try:
+            return dict(wg=wg_settings())
+        except Exception:
+            return dict(wg={})
+
     # CLI-Befehle
     from cli import register_commands
     register_commands(app)

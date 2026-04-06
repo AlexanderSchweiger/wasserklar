@@ -9,9 +9,10 @@ from flask import (
 from flask_login import login_required, current_user
 
 from app.invoices import bp
-from app.extensions import db, mail
-from app.models import Invoice, InvoiceItem, Customer, WaterMeter, MeterReading, WaterTariff, Booking, Account, Property, OpenItem, Project, RealAccount, InvoiceCounter
+from app.extensions import db
+from app.models import Invoice, InvoiceItem, Customer, WaterMeter, MeterReading, WaterTariff, Booking, Account, Property, OpenItem, Project, RealAccount, InvoiceCounter, AppSetting
 from app.utils import next_invoice_number as _next_invoice_number
+from app.settings_service import get_wg, send_mail
 
 
 def _create_or_update_open_item(invoice):
@@ -35,6 +36,29 @@ def _create_or_update_open_item(invoice):
         oi.period_year = invoice.period_year
 
 
+def _invoice_is_locked(invoice):
+    """Gesperrt wenn Status nicht mehr Entwurf ist."""
+    return invoice.status != Invoice.STATUS_DRAFT
+
+
+def _render_email_body(invoice):
+    """Rendert den E-Mail-Text: DB-Vorlage wenn vorhanden, sonst statisches Template."""
+    from jinja2 import Environment
+    custom = AppSetting.get("email_body_template")
+    if custom:
+        return Environment().from_string(custom).render(
+            name=invoice.customer.name,
+            rechnungsnummer=invoice.invoice_number,
+            buchungsjahr=invoice.period_year or "",
+            betrag=f"{invoice.total_amount:.2f}",
+            faelligkeitsdatum=(
+                invoice.due_date.strftime("%d.%m.%Y") if invoice.due_date else "—"
+            ),
+            iban=get_wg('iban'),
+        )
+    return render_template("invoices/email_body.txt", invoice=invoice)
+
+
 @bp.route("/")
 @login_required
 def index():
@@ -44,6 +68,7 @@ def index():
     date_to = request.args.get("date_to", "").strip()
     q = request.args.get("q", "").strip()
     project_id_filter = request.args.get("project_id", "", type=str)
+    nur_email = request.args.get("nur_email", "") == "1"
 
     query = (
         Invoice.query
@@ -75,6 +100,8 @@ def index():
                 (Booking.project_id == int(project_id_filter))
             )
         )
+    if nur_email:
+        query = query.filter(Customer.rechnung_per_email == True)
 
     invoices = query.all()
     projects_for_filter = Project.query.order_by(Project.name).all()
@@ -90,6 +117,7 @@ def index():
         date_to=date_to,
         projects_for_filter=projects_for_filter,
         project_id_filter=project_id_filter,
+        nur_email=nur_email,
     )
 
 
@@ -255,6 +283,9 @@ def detail(invoice_id):
 @login_required
 def edit(invoice_id):
     invoice = db.get_or_404(Invoice, invoice_id)
+    if _invoice_is_locked(invoice):
+        flash("Diese Rechnung kann nicht mehr bearbeitet werden (nur Stornierung möglich).", "warning")
+        return redirect(url_for("invoices.detail", invoice_id=invoice.id))
     customers = Customer.query.filter_by(active=True).order_by(Customer.name).all()
     if request.method == "POST":
         invoice.date = date.fromisoformat(request.form["date"])
@@ -308,6 +339,76 @@ def bulk_action():
         flash("Ungültige Aktion.", "danger")
 
     return redirect(url_for("invoices.index"))
+
+
+@bp.route("/bulk-pdf-merged", methods=["POST"])
+@login_required
+def bulk_pdf_merged():
+    """Alle markierten Rechnungen als zusammengeführtes PDF zum Download."""
+    invoice_ids = request.form.getlist("invoice_ids", type=int)
+    if not invoice_ids:
+        flash("Keine Rechnungen ausgewählt.", "warning")
+        return redirect(url_for("invoices.index"))
+    try:
+        from weasyprint import HTML
+    except ImportError:
+        flash("WeasyPrint ist nicht installiert. PDF-Export nur im Docker-Container verfügbar.", "danger")
+        return redirect(url_for("invoices.index"))
+    invoices = Invoice.query.filter(Invoice.id.in_(invoice_ids)).order_by(Invoice.invoice_number).all()
+    pdf_dir = current_app.config["PDF_DIR"]
+    os.makedirs(pdf_dir, exist_ok=True)
+    rendered_docs = []
+    for invoice in invoices:
+        html_content = render_template("invoices/pdf_template.html", invoice=invoice)
+        rendered_docs.append(HTML(string=html_content).render())
+        # Cache für gesperrte Rechnungen aktualisieren
+        if _invoice_is_locked(invoice):
+            pdf_path = os.path.join(pdf_dir, f"{invoice.invoice_number}.pdf")
+            if not invoice.pdf_path or not os.path.exists(invoice.pdf_path):
+                rendered_docs[-1].write_pdf(pdf_path)
+                invoice.pdf_path = pdf_path
+    db.session.commit()
+    all_pages = [page for doc in rendered_docs for page in doc.pages]
+    merged_path = os.path.join(pdf_dir, "_bulk_merged.pdf")
+    rendered_docs[0].copy(all_pages).write_pdf(merged_path)
+    return send_file(merged_path, as_attachment=True, download_name="Rechnungen_gesamt.pdf")
+
+
+@bp.route("/bulk-pdf-zip", methods=["POST"])
+@login_required
+def bulk_pdf_zip():
+    """Alle markierten Rechnungen als einzelne PDFs in einer ZIP-Datei."""
+    import zipfile
+    import io
+    invoice_ids = request.form.getlist("invoice_ids", type=int)
+    if not invoice_ids:
+        flash("Keine Rechnungen ausgewählt.", "warning")
+        return redirect(url_for("invoices.index"))
+    try:
+        from weasyprint import HTML
+    except ImportError:
+        flash("WeasyPrint ist nicht installiert. PDF-Export nur im Docker-Container verfügbar.", "danger")
+        return redirect(url_for("invoices.index"))
+    invoices = Invoice.query.filter(Invoice.id.in_(invoice_ids)).order_by(Invoice.invoice_number).all()
+    pdf_dir = current_app.config["PDF_DIR"]
+    os.makedirs(pdf_dir, exist_ok=True)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for invoice in invoices:
+            pdf_path = os.path.join(pdf_dir, f"{invoice.invoice_number}.pdf")
+            # Cache nutzen wenn vorhanden und nicht Entwurf
+            if _invoice_is_locked(invoice) and invoice.pdf_path and os.path.exists(invoice.pdf_path):
+                zf.write(invoice.pdf_path, f"{invoice.invoice_number}.pdf")
+            else:
+                html_content = render_template("invoices/pdf_template.html", invoice=invoice)
+                HTML(string=html_content).write_pdf(pdf_path)
+                if _invoice_is_locked(invoice):
+                    invoice.pdf_path = pdf_path
+                zf.write(pdf_path, f"{invoice.invoice_number}.pdf")
+    db.session.commit()
+    buf.seek(0)
+    return send_file(buf, as_attachment=True, download_name="Rechnungen.zip",
+                     mimetype="application/zip")
 
 
 @bp.route("/<int:invoice_id>/status", methods=["POST"])
@@ -430,19 +531,24 @@ def pay(invoice_id):
 @login_required
 def pdf(invoice_id):
     invoice = db.get_or_404(Invoice, invoice_id)
+    # Gesperrte Rechnungen: gecachte PDF ausliefern wenn vorhanden
+    if _invoice_is_locked(invoice) and invoice.pdf_path and os.path.exists(invoice.pdf_path):
+        return send_file(invoice.pdf_path, as_attachment=False,
+                         download_name=f"{invoice.invoice_number}.pdf")
     try:
         from weasyprint import HTML
     except ImportError:
         flash("WeasyPrint ist nicht installiert. PDF-Export nur im Docker-Container verfügbar.", "danger")
         return redirect(url_for("invoices.detail", invoice_id=invoice.id))
-    html_content = render_template("invoices/pdf_template.html", invoice=invoice,
-                                   config=current_app.config)
+    html_content = render_template("invoices/pdf_template.html", invoice=invoice)
     pdf_dir = current_app.config["PDF_DIR"]
     os.makedirs(pdf_dir, exist_ok=True)
     pdf_path = os.path.join(pdf_dir, f"{invoice.invoice_number}.pdf")
     HTML(string=html_content).write_pdf(pdf_path)
-    invoice.pdf_path = pdf_path
-    db.session.commit()
+    # Nur für Nicht-Entwürfe persistieren
+    if _invoice_is_locked(invoice):
+        invoice.pdf_path = pdf_path
+        db.session.commit()
     return send_file(pdf_path, as_attachment=False,
                      download_name=f"{invoice.invoice_number}.pdf")
 
@@ -463,7 +569,7 @@ def send_email(invoice_id):
         return redirect(url_for("invoices.detail", invoice_id=invoice.id))
 
     html_content = render_template("invoices/pdf_template.html", invoice=invoice,
-                                   config=current_app.config)
+)
     pdf_dir = current_app.config["PDF_DIR"]
     os.makedirs(pdf_dir, exist_ok=True)
     pdf_path = os.path.join(pdf_dir, f"{invoice.invoice_number}.pdf")
@@ -472,19 +578,96 @@ def send_email(invoice_id):
     msg = Message(
         subject=f"Rechnung {invoice.invoice_number}",
         recipients=[invoice.customer.email],
-        body=render_template("invoices/email_body.txt", invoice=invoice,
-                             config=current_app.config),
+        body=_render_email_body(invoice),
     )
     with open(pdf_path, "rb") as fp:
         msg.attach(f"{invoice.invoice_number}.pdf", "application/pdf", fp.read())
 
-    mail.send(msg)
+    send_mail(msg)
     invoice.status = Invoice.STATUS_SENT
     invoice.pdf_path = pdf_path
     _create_or_update_open_item(invoice)
     db.session.commit()
     flash(f"Rechnung an {invoice.customer.email} versendet.", "success")
     return redirect(url_for("invoices.detail", invoice_id=invoice.id))
+
+
+@bp.route("/<int:invoice_id>/send-email-ajax", methods=["POST"])
+@login_required
+def send_email_ajax(invoice_id):
+    """JSON-Variante für den Massenmail-Versand per JavaScript."""
+    from flask import jsonify
+    from flask_mail import Message
+    try:
+        import weasyprint
+    except ImportError:
+        return jsonify({"ok": False, "error": "WeasyPrint nicht verfügbar"}), 503
+
+    test_mode = request.form.get("test_mode") == "1"
+
+    invoice = db.get_or_404(Invoice, invoice_id)
+    if not invoice.customer.email:
+        return jsonify({"ok": False, "error": "Keine E-Mail-Adresse hinterlegt"}), 400
+    if not invoice.customer.rechnung_per_email:
+        return jsonify({"ok": False, "error": "E-Mail-Versand nicht aktiviert"}), 400
+
+    if test_mode:
+        recipient = current_user.email
+        if not recipient:
+            return jsonify({"ok": False, "error": "Kein Admin-E-Mail für Testmodus hinterlegt"}), 400
+    else:
+        recipient = invoice.customer.email
+
+    try:
+        html_content = render_template("invoices/pdf_template.html", invoice=invoice)
+        pdf_dir = current_app.config["PDF_DIR"]
+        os.makedirs(pdf_dir, exist_ok=True)
+        pdf_path = os.path.join(pdf_dir, f"{invoice.invoice_number}.pdf")
+        weasyprint.HTML(string=html_content).write_pdf(pdf_path)
+
+        subject = f"Rechnung {invoice.invoice_number}"
+        if test_mode:
+            subject = f"[TEST – an: {invoice.customer.email}] {subject}"
+
+        body = _render_email_body(invoice)
+        if test_mode:
+            body = f"[TESTMODUS – eigentlicher Empfänger: {invoice.customer.email}]\n\n{body}"
+
+        msg = Message(subject=subject, recipients=[recipient], body=body)
+        with open(pdf_path, "rb") as fp:
+            msg.attach(f"{invoice.invoice_number}.pdf", "application/pdf", fp.read())
+
+        send_mail(msg)
+        if not test_mode:
+            invoice.status = Invoice.STATUS_SENT
+            invoice.pdf_path = pdf_path
+            _create_or_update_open_item(invoice)
+            db.session.commit()
+        return jsonify({"ok": True, "invoice_number": invoice.invoice_number,
+                        "email": recipient, "test_mode": test_mode})
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@bp.route("/email-einstellungen", methods=["GET", "POST"])
+@login_required
+def email_settings():
+    """E-Mail-Vorlage für den Rechnungsversand konfigurieren (nur Admin)."""
+    if not current_user.is_admin:
+        flash("Kein Zugriff.", "danger")
+        return redirect(url_for("invoices.index"))
+    import pathlib
+    if request.method == "POST":
+        AppSetting.set("email_body_template", request.form.get("email_body_template", "").strip())
+        db.session.commit()
+        flash("E-Mail-Vorlage gespeichert.", "success")
+        return redirect(url_for("invoices.email_settings"))
+    current_body = AppSetting.get("email_body_template")
+    if not current_body:
+        tpl_path = pathlib.Path(current_app.root_path) / "templates" / "invoices" / "email_body.txt"
+        current_body = tpl_path.read_text(encoding="utf-8") if tpl_path.exists() else ""
+    return render_template("invoices/email_settings.html", current_body=current_body)
 
 
 # ---------------------------------------------------------------------------

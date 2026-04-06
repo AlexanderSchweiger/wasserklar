@@ -87,18 +87,31 @@
             </div>
           </div>
           <div class="row">
-            <div class="col-md-6">
+            <div class="col-md-5">
               <div class="form-group">
                 <label>E-Mail</label>
                 <input type="email" name="email" class="form-control"
                   value="{{ customer.email if customer else '' }}">
               </div>
             </div>
-            <div class="col-md-6">
+            <div class="col-md-4">
               <div class="form-group">
                 <label>Mitglied seit</label>
                 <input type="date" name="member_since" class="form-control"
                   value="{{ customer.member_since.isoformat() if customer and customer.member_since else '' }}">
+              </div>
+            </div>
+            <div class="col-md-3">
+              <div class="form-group">
+                <label>&nbsp;</label>
+                <div class="custom-control custom-checkbox mt-2">
+                  <input type="checkbox" class="custom-control-input"
+                         id="rechnung_per_email" name="rechnung_per_email" value="1"
+                         {{ 'checked' if customer and customer.rechnung_per_email }}>
+                  <label class="custom-control-label" for="rechnung_per_email">
+                    Rechnung per E-Mail
+                  </label>
+                </div>
               </div>
             </div>
           </div>

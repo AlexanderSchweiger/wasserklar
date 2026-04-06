@@ -55,6 +55,7 @@ class Customer(db.Model):
     ort = db.Column(db.String(100))
     land = db.Column(db.String(100), default="Österreich")
     email = db.Column(db.String(120))
+    rechnung_per_email = db.Column(db.Boolean, default=False, nullable=False)
     phone = db.Column(db.String(50))
     member_since = db.Column(db.Date)
     notes = db.Column(db.Text)
@@ -365,6 +366,29 @@ class RealAccount(db.Model):
         return f"<RealAccount {self.name}>"
 
 
+class Transfer(db.Model):
+    """Umbuchung zwischen zwei Bankkonten (keine Einnahme/Ausgabe)."""
+    __tablename__ = "transfers"
+
+    id = db.Column(db.Integer, primary_key=True)
+    date = db.Column(db.Date, default=date.today, nullable=False)
+    amount = db.Column(db.Numeric(10, 2), nullable=False)
+    description = db.Column(db.String(500), nullable=False)
+    from_real_account_id = db.Column(db.Integer, db.ForeignKey("real_accounts.id"), nullable=False)
+    to_real_account_id = db.Column(db.Integer, db.ForeignKey("real_accounts.id"), nullable=False)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    from_account = db.relationship("RealAccount", foreign_keys=[from_real_account_id],
+                                   backref=db.backref("outgoing_transfers", lazy="dynamic"))
+    to_account = db.relationship("RealAccount", foreign_keys=[to_real_account_id],
+                                 backref=db.backref("incoming_transfers", lazy="dynamic"))
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+
+    def __repr__(self):
+        return f"<Transfer {self.date} {self.amount}>"
+
+
 class Account(db.Model):
     __tablename__ = "accounts"
 
@@ -513,3 +537,30 @@ class OpenItem(db.Model):
 
     def __repr__(self):
         return f"<OpenItem {self.description} {self.amount}>"
+
+
+# ---------------------------------------------------------------------------
+# Anwendungseinstellungen (Key-Value-Speicher)
+# ---------------------------------------------------------------------------
+
+class AppSetting(db.Model):
+    __tablename__ = "app_settings"
+
+    key   = db.Column(db.String(100), primary_key=True)
+    value = db.Column(db.Text, nullable=True)
+
+    @classmethod
+    def get(cls, key, default=None):
+        row = cls.query.filter_by(key=key).first()
+        return row.value if row else default
+
+    @classmethod
+    def set(cls, key, value):
+        row = cls.query.filter_by(key=key).first()
+        if row is None:
+            db.session.add(cls(key=key, value=value))
+        else:
+            row.value = value
+
+    def __repr__(self):
+        return f"<AppSetting {self.key}>"

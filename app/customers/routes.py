@@ -101,6 +101,7 @@ def _customer_from_form(customer):
     customer.ort = request.form.get("ort", "").strip()
     customer.land = request.form.get("land", "Österreich").strip()
     customer.email = request.form.get("email", "").strip()
+    customer.rechnung_per_email = request.form.get("rechnung_per_email") == "1"
     customer.phone = request.form.get("phone", "").strip()
     customer.notes = request.form.get("notes", "").strip()
     ms = request.form.get("member_since", "")

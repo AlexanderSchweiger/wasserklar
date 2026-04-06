@@ -54,7 +54,7 @@
     <a href="{{ url_for('main.dashboard') }}" class="brand-link">
       <i class="fas fa-tint brand-image ml-3" style="font-size:1.4rem;opacity:.8"></i>
       <span class="brand-text font-weight-light">
-        {{ config.WG_NAME | truncate(22, true, '…') }}
+        {{ wg.name | truncate(22, true, '…') }}
       </span>
     </a>
     <div class="sidebar">
@@ -114,6 +114,14 @@
                   <i class="far fa-circle nav-icon"></i><p>Rechnungslauf</p>
                 </a>
               </li>
+              {% if current_user.is_admin %}
+              <li class="nav-item">
+                <a href="{{ url_for('invoices.email_settings') }}"
+                   class="nav-link {% if request.endpoint == 'invoices.email_settings' %}active{% endif %}">
+                  <i class="far fa-circle nav-icon"></i><p>E-Mail-Einstellungen</p>
+                </a>
+              </li>
+              {% endif %}
             </ul>
           </li>
 
@@ -126,6 +134,11 @@
               <li class="nav-item">
                 <a href="{{ url_for('accounting.bookings') }}" class="nav-link {% if request.endpoint in ('accounting.bookings','accounting.booking_new','accounting.booking_edit') %}active{% endif %}">
                   <i class="far fa-circle nav-icon"></i><p>Buchungen</p>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a href="{{ url_for('accounting.transfers') }}" class="nav-link {% if request.endpoint in ('accounting.transfers','accounting.transfer_new') %}active{% endif %}">
+                  <i class="far fa-circle nav-icon"></i><p>Umbuchungen</p>
                 </a>
               </li>
               <li class="nav-item">
@@ -205,6 +218,12 @@
               <p>Benutzer</p>
             </a>
           </li>
+          <li class="nav-item">
+            <a href="{{ url_for('settings.index') }}" class="nav-link {% if request.blueprint == 'settings' %}active{% endif %}">
+              <i class="nav-icon fas fa-cog"></i>
+              <p>Einstellungen</p>
+            </a>
+          </li>
           {% endif %}
 
         </ul>
@@ -246,7 +265,7 @@
   <!-- ===== Footer ===== -->
   {% if current_user.is_authenticated %}
   <footer class="main-footer">
-    <strong>{{ config.WG_NAME }}</strong>
+    <strong>{{ wg.name }}</strong>
     <div class="float-right d-none d-sm-inline-block">
       <small>Wassergenossenschaft Verwaltung</small>
     </div>

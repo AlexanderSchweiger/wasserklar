@@ -11,7 +11,7 @@
           hx-get="{{ url_for('invoices.index') }}"
           hx-trigger="change"
           hx-target="#invoices-table"
-          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id']">
+          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id'],[name='nur_email']">
           <option value="">Alle Status</option>
           {% for s in statuses %}
           <option value="{{ s }}" {{ 'selected' if status_filter == s }}>{{ s }}</option>
@@ -25,7 +25,7 @@
           hx-get="{{ url_for('invoices.index') }}"
           hx-trigger="change"
           hx-target="#invoices-table"
-          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id']">
+          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id'],[name='nur_email']">
       </div>
       <div class="form-group">
         <label class="mb-0 mr-1">Datum von</label>
@@ -34,7 +34,7 @@
           hx-get="{{ url_for('invoices.index') }}"
           hx-trigger="change"
           hx-target="#invoices-table"
-          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id']">
+          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id'],[name='nur_email']">
       </div>
       <div class="form-group">
         <label class="mb-0 mr-1">bis</label>
@@ -43,7 +43,7 @@
           hx-get="{{ url_for('invoices.index') }}"
           hx-trigger="change"
           hx-target="#invoices-table"
-          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id']">
+          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id'],[name='nur_email']">
       </div>
       <div class="form-group">
         <label class="mb-0 mr-1">Projekt</label>
@@ -51,7 +51,7 @@
           hx-get="{{ url_for('invoices.index') }}"
           hx-trigger="change"
           hx-target="#invoices-table"
-          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id']">
+          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id'],[name='nur_email']">
           <option value="">Alle Projekte</option>
           {% for p in projects_for_filter %}
           <option value="{{ p.id }}" {{ 'selected' if project_id_filter|string == p.id|string }}>
@@ -65,9 +65,20 @@
           hx-get="{{ url_for('invoices.index') }}"
           hx-trigger="input changed delay:300ms"
           hx-target="#invoices-table"
-          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id']">
+          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id'],[name='nur_email']">
         <div class="input-group-append">
           <span class="input-group-text"><i class="fas fa-search"></i></span>
+        </div>
+      </div>
+      <div class="form-group ml-2 mb-0 d-flex align-items-center">
+        <div class="custom-control custom-checkbox">
+          <input type="checkbox" class="custom-control-input" id="nur_email"
+                 name="nur_email" value="1" {{ 'checked' if nur_email }}
+                 hx-get="{{ url_for('invoices.index') }}"
+                 hx-trigger="change"
+                 hx-target="#invoices-table"
+                 hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id'],[name='nur_email']">
+          <label class="custom-control-label" for="nur_email">Nur E-Mail-Rechnungen</label>
         </div>
       </div>
     </div>
@@ -99,10 +110,15 @@
             {% endfor %}
           </optgroup>
           <option value="delete" class="text-danger">Löschen (nur Entwürfe)</option>
+          <option value="massenmail">Massenmail senden</option>
+          <optgroup label="PDF-Export">
+            <option value="bulk-pdf-merged">PDF zusammenführen (Drucken)</option>
+            <option value="bulk-pdf-zip">PDFs als ZIP herunterladen</option>
+          </optgroup>
         </select>
         <div class="input-group-append">
-          <button type="submit" class="btn btn-sm btn-warning" id="bulk-submit"
-                  onclick="return confirmBulkAction()">
+          <button type="button" class="btn btn-sm btn-warning" id="bulk-submit"
+                  onclick="handleBulkAction()">
             <i class="fas fa-check mr-1"></i> Ausführen
           </button>
         </div>
@@ -113,6 +129,53 @@
       {% include "invoices/_table.html" %}
     </div>
   </form>
+</div>
+
+<!-- Massenmail Modal -->
+<div class="modal fade" id="massenmailModal" tabindex="-1" role="dialog">
+  <div class="modal-dialog modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header bg-primary">
+        <h5 class="modal-title text-white">
+          <i class="fas fa-envelope mr-2"></i> Massenmail senden
+        </h5>
+        <button type="button" class="close text-white" data-dismiss="modal">
+          <span>&times;</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted mb-2">
+          Kunden ohne E-Mail-Adresse oder ohne aktivierten E-Mail-Versand werden übersprungen.
+        </p>
+        <table class="table table-sm mb-0">
+          <thead>
+            <tr>
+              <th>Rechnungsnr.</th>
+              <th>Kunde</th>
+              <th>E-Mail</th>
+              <th style="width:80px">Status</th>
+            </tr>
+          </thead>
+          <tbody id="massenmail-rows"></tbody>
+        </table>
+      </div>
+      <div class="modal-footer justify-content-between">
+        <div class="custom-control custom-checkbox">
+          <input type="checkbox" class="custom-control-input" id="massenmail-testmode">
+          <label class="custom-control-label text-warning" for="massenmail-testmode">
+            <i class="fas fa-flask mr-1"></i> Testmodus (Mails an Admin-Adresse)
+          </label>
+        </div>
+        <div>
+          <button type="button" class="btn btn-secondary" data-dismiss="modal">Abbrechen</button>
+          <button type="button" class="btn btn-primary ml-2" id="massenmail-start-btn"
+                  onclick="startMassenmail()">
+            <i class="fas fa-paper-plane mr-1"></i> Senden starten
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -165,17 +228,116 @@
   });
 })();
 
-function confirmBulkAction() {
+function handleBulkAction() {
   const action = document.getElementById('bulk-action-select').value;
   const count = document.querySelectorAll('.invoice-cb:checked').length;
   if (!action) {
     alert('Bitte eine Aktion auswählen.');
-    return false;
+    return;
+  }
+  if (count === 0) {
+    alert('Keine Rechnungen ausgewählt.');
+    return;
+  }
+  if (action === 'massenmail') {
+    openMassenmailModal();
+    return;
+  }
+  if (action === 'bulk-pdf-merged' || action === 'bulk-pdf-zip') {
+    const form = document.getElementById('bulk-form');
+    form.action = action === 'bulk-pdf-merged'
+      ? '{{ url_for("invoices.bulk_pdf_merged") }}'
+      : '{{ url_for("invoices.bulk_pdf_zip") }}';
+    form.submit();
+    form.action = '{{ url_for("invoices.bulk_action") }}';
+    return;
   }
   if (action === 'delete') {
-    return confirm(count + ' Rechnung(en) löschen? Nur Entwürfe werden gelöscht. Nicht rückgängig machbar.');
+    if (!confirm(count + ' Rechnung(en) löschen? Nur Entwürfe werden gelöscht. Nicht rückgängig machbar.')) return;
+  } else {
+    if (!confirm(count + ' Rechnung(en) auf "' + action + '" setzen?')) return;
   }
-  return confirm(count + ' Rechnung(en) auf "' + action.replace('Status: ', '') + '" setzen?');
+  document.getElementById('bulk-form').submit();
+}
+
+function openMassenmailModal() {
+  const tbody = document.getElementById('massenmail-rows');
+  tbody.innerHTML = '';
+  let hasEligible = false;
+  document.querySelectorAll('.invoice-cb:checked').forEach(cb => {
+    const row = cb.closest('tr');
+    const inv = {
+      id: cb.value,
+      number: row.dataset.invoiceNumber,
+      name: row.dataset.customerName,
+      email: row.dataset.customerEmail,
+      enabled: row.dataset.emailEnabled === 'true',
+    };
+    const eligible = inv.enabled && inv.email;
+    if (eligible) hasEligible = true;
+    const emailCell = eligible
+      ? inv.email
+      : '<span class="text-muted">' + (inv.email ? 'E-Mail-Versand inaktiv' : 'Keine E-Mail') + '</span>';
+    const statusCell = eligible
+      ? '<i class="fas fa-clock text-muted" id="mm-icon-' + inv.id + '"></i>'
+      : '<i class="fas fa-minus text-muted"></i>';
+    const tr = document.createElement('tr');
+    tr.id = 'mm-row-' + inv.id;
+    tr.innerHTML = '<td><code>' + inv.number + '</code></td>'
+      + '<td>' + inv.name + '</td>'
+      + '<td>' + emailCell + '</td>'
+      + '<td>' + statusCell + '</td>';
+    tbody.appendChild(tr);
+  });
+  document.getElementById('massenmail-start-btn').disabled = !hasEligible;
+  $('#massenmailModal').modal('show');
+}
+
+async function startMassenmail() {
+  document.getElementById('massenmail-start-btn').disabled = true;
+  const csrfToken = document.querySelector('#bulk-form input[name="csrf_token"]').value;
+  const testMode = document.getElementById('massenmail-testmode').checked;
+  const eligible = [];
+  document.querySelectorAll('#massenmail-rows tr[id^="mm-row-"]').forEach(tr => {
+    const id = tr.id.replace('mm-row-', '');
+    const icon = document.getElementById('mm-icon-' + id);
+    if (icon) eligible.push({ id, icon });
+  });
+  for (let i = 0; i < eligible.length; i++) {
+    const { id, icon } = eligible[i];
+    icon.className = 'fas fa-spinner fa-spin text-primary';
+    try {
+      let body = 'csrf_token=' + encodeURIComponent(csrfToken);
+      if (testMode) body += '&test_mode=1';
+      const resp = await fetch('/invoices/' + id + '/send-email-ajax', {
+        method: 'POST',
+        headers: {
+          'X-CSRFToken': csrfToken,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body,
+      });
+      const json = await resp.json();
+      if (json.ok) {
+        icon.className = json.test_mode
+          ? 'fas fa-check-circle text-warning'
+          : 'fas fa-check-circle text-success';
+        if (json.test_mode) icon.title = 'Testmail gesendet an ' + json.email;
+      } else {
+        const td = icon.closest('td');
+        if (td) {
+          td.innerHTML = '<i class="fas fa-times-circle text-danger mr-1"></i>'
+            + '<small class="text-danger">' + (json.error || 'Fehler') + '</small>';
+        }
+      }
+    } catch (err) {
+      icon.className = 'fas fa-times-circle text-danger';
+      icon.title = 'Netzwerkfehler';
+    }
+    if (i < eligible.length - 1) {
+      await new Promise(r => setTimeout(r, 500));
+    }
+  }
 }
 </script>
 {% endblock %}

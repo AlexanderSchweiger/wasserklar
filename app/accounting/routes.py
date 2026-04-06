@@ -15,7 +15,7 @@ from sqlalchemy import extract, func, case
 
 from app.accounting import bp
 from app.extensions import db
-from app.models import Account, Booking, Invoice, OpenItem, WaterTariff, Customer, InvoiceItem, Project, RealAccount, FiscalYear, FiscalYearReopenLog, TaxRate
+from app.models import Account, Booking, Invoice, OpenItem, WaterTariff, Customer, InvoiceItem, Project, RealAccount, FiscalYear, FiscalYearReopenLog, TaxRate, Transfer
 from app.utils import next_invoice_number
 
 
@@ -1158,16 +1158,25 @@ def real_accounts():
     year = request.args.get("year", date.today().year, type=int)
     accounts = RealAccount.query.order_by(RealAccount.name).all()
 
-    # Saldo pro Konto = Anfangssaldo + Summe aller Buchungen (gefiltert nach Jahr optional)
+    # Saldo pro Konto = Anfangssaldo + Summe aller Buchungen + Umbuchungen (gefiltert nach Jahr)
     saldi = {}
     for ra in accounts:
         total = db.session.query(func.sum(Booking.amount)).filter(
             Booking.real_account_id == ra.id,
             extract("year", Booking.date) == year,
         ).scalar() or Decimal("0")
+        incoming = db.session.query(func.sum(Transfer.amount)).filter(
+            Transfer.to_real_account_id == ra.id,
+            extract("year", Transfer.date) == year,
+        ).scalar() or Decimal("0")
+        outgoing = db.session.query(func.sum(Transfer.amount)).filter(
+            Transfer.from_real_account_id == ra.id,
+            extract("year", Transfer.date) == year,
+        ).scalar() or Decimal("0")
+        year_total = total + incoming - outgoing
         saldi[ra.id] = {
-            "year_total": total,
-            "balance": Decimal(str(ra.opening_balance)) + total,
+            "year_total": year_total,
+            "balance": Decimal(str(ra.opening_balance)) + year_total,
         }
 
     return render_template(
@@ -1219,6 +1228,90 @@ def real_account_edit(ra_id):
         flash("Bankkonto aktualisiert.", "success")
         return redirect(url_for("accounting.real_accounts"))
     return render_template("accounting/real_account_form.html", real_account=ra)
+
+
+# ---------------------------------------------------------------------------
+# Umbuchungen
+# ---------------------------------------------------------------------------
+
+@bp.route("/transfers")
+@login_required
+def transfers():
+    year = request.args.get("year", date.today().year, type=int)
+    transfers_list = (
+        Transfer.query
+        .filter(extract("year", Transfer.date) == year)
+        .order_by(Transfer.date.desc(), Transfer.id.desc())
+        .all()
+    )
+    real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
+    years = db.session.query(extract("year", Transfer.date).label("y")).distinct().order_by("y").all()
+    all_years = sorted({t.y for t in years} | {date.today().year}, reverse=True)
+    return render_template(
+        "accounting/transfers.html",
+        transfers=transfers_list,
+        year=year,
+        all_years=all_years,
+        real_accounts=real_accounts,
+    )
+
+
+@bp.route("/transfers/new", methods=["GET", "POST"])
+@login_required
+def transfer_new():
+    real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
+    if request.method == "POST":
+        transfer_date = date.fromisoformat(request.form["date"])
+        locked = _locked_fiscal_year(transfer_date)
+        if locked:
+            flash(f"Das Buchungsjahr {locked.year} ist abgeschlossen. Umbuchung nicht möglich.", "danger")
+            return render_template("accounting/transfer_form.html", real_accounts=real_accounts, today=date.today().isoformat())
+
+        amount_raw = request.form["amount"].replace(",", ".")
+        try:
+            amount = Decimal(amount_raw)
+        except InvalidOperation:
+            flash("Ungültiger Betrag.", "danger")
+            return render_template("accounting/transfer_form.html", real_accounts=real_accounts, today=date.today().isoformat())
+
+        if amount <= 0:
+            flash("Der Betrag muss größer als 0 sein.", "danger")
+            return render_template("accounting/transfer_form.html", real_accounts=real_accounts, today=date.today().isoformat())
+
+        from_id = int(request.form["from_real_account_id"])
+        to_id = int(request.form["to_real_account_id"])
+        if from_id == to_id:
+            flash("Ausgangs- und Zielkonto dürfen nicht gleich sein.", "danger")
+            return render_template("accounting/transfer_form.html", real_accounts=real_accounts, today=date.today().isoformat())
+
+        t = Transfer(
+            date=transfer_date,
+            amount=amount,
+            description=request.form["description"].strip(),
+            from_real_account_id=from_id,
+            to_real_account_id=to_id,
+            created_by_id=current_user.id,
+        )
+        db.session.add(t)
+        db.session.commit()
+        flash("Umbuchung gespeichert.", "success")
+        return redirect(url_for("accounting.transfers"))
+
+    return render_template("accounting/transfer_form.html", real_accounts=real_accounts, today=date.today().isoformat())
+
+
+@bp.route("/transfers/<int:transfer_id>/delete", methods=["POST"])
+@login_required
+def transfer_delete(transfer_id):
+    t = db.get_or_404(Transfer, transfer_id)
+    locked = _locked_fiscal_year(t.date)
+    if locked:
+        flash(f"Das Buchungsjahr {locked.year} ist abgeschlossen. Löschen nicht möglich.", "danger")
+        return redirect(url_for("accounting.transfers"))
+    db.session.delete(t)
+    db.session.commit()
+    flash("Umbuchung gelöscht.", "success")
+    return redirect(url_for("accounting.transfers"))
 
 
 # ---------------------------------------------------------------------------

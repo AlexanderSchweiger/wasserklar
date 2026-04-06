@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+{% block title %}Einstellungen{% endblock %}
+{% block page_title %}<i class="fas fa-cog mr-2"></i> Einstellungen{% endblock %}
+{% block content %}
+<form method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="row">
+
+    {# ── WG-Kontaktdaten ─────────────────────────────────────────────── #}
+    <div class="col-md-6">
+      <div class="card card-primary">
+        <div class="card-header">
+          <h3 class="card-title"><i class="fas fa-water mr-1"></i> Genossenschaft – Kontaktdaten</h3>
+        </div>
+        <div class="card-body">
+          <p class="text-muted small mb-3">
+            Diese Daten erscheinen auf Rechnungen und im Briefkopf.
+            Leer lassen übernimmt den Wert aus der <code>.env</code>-Datei.
+          </p>
+
+          <div class="form-group">
+            <label>Name der Genossenschaft</label>
+            <input type="text" name="wg_name" class="form-control"
+                   value="{{ wg.name }}" placeholder="Wassergenossenschaft …">
+          </div>
+          <div class="form-group">
+            <label>Adresse <small class="text-muted">(Zeilenumbruch mit \n)</small></label>
+            <textarea name="wg_address" class="form-control" rows="3"
+                      placeholder="Musterstraße 1\n1234 Musterdorf">{{ wg.address }}</textarea>
+          </div>
+          <div class="form-row">
+            <div class="form-group col-md-7">
+              <label>IBAN</label>
+              <input type="text" name="wg_iban" class="form-control"
+                     value="{{ wg.iban }}" placeholder="AT12 3456 …">
+            </div>
+            <div class="form-group col-md-5">
+              <label>BIC</label>
+              <input type="text" name="wg_bic" class="form-control"
+                     value="{{ wg.bic }}" placeholder="XXXXATXX">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>E-Mail</label>
+            <input type="email" name="wg_email" class="form-control"
+                   value="{{ wg.email }}" placeholder="office@wg-example.at">
+          </div>
+          <div class="form-group mb-0">
+            <label>Telefon</label>
+            <input type="text" name="wg_phone" class="form-control"
+                   value="{{ wg.phone }}" placeholder="+43 1234 5678">
+          </div>
+        </div>
+        <div class="card-footer">
+          <button type="submit" class="btn btn-primary">
+            <i class="fas fa-save mr-1"></i> Speichern
+          </button>
+        </div>
+      </div>
+    </div>
+
+    {# ── E-Mail-Server ───────────────────────────────────────────────── #}
+    <div class="col-md-6">
+      <div class="card card-warning">
+        <div class="card-header">
+          <h3 class="card-title"><i class="fas fa-envelope mr-1"></i> E-Mail-Server (SMTP)</h3>
+        </div>
+        <div class="card-body">
+          <p class="text-muted small mb-3">
+            Leer lassen übernimmt den Wert aus der <code>.env</code>-Datei.
+            Das Passwort bleibt bei leerem Feld unverändert.
+          </p>
+
+          <div class="form-row">
+            <div class="form-group col-md-8">
+              <label>SMTP-Server</label>
+              <input type="text" name="mail_server" class="form-control"
+                     value="{{ mail.server }}" placeholder="smtp.example.com">
+            </div>
+            <div class="form-group col-md-4">
+              <label>Port</label>
+              <input type="number" name="mail_port" class="form-control"
+                     value="{{ mail.port }}" placeholder="587">
+            </div>
+          </div>
+          <div class="form-group">
+            <div class="custom-control custom-switch">
+              <input type="checkbox" class="custom-control-input" id="mail_use_tls"
+                     name="mail_use_tls" value="true"
+                     {% if mail.use_tls_bool %}checked{% endif %}>
+              <label class="custom-control-label" for="mail_use_tls">TLS verwenden (STARTTLS)</label>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Benutzername (SMTP)</label>
+            <input type="text" name="mail_username" class="form-control"
+                   value="{{ mail.username }}" placeholder="office@example.com"
+                   autocomplete="username">
+          </div>
+          <div class="form-group">
+            <label>
+              Passwort
+              {% if mail.password_set %}
+                <small class="text-success ml-1"><i class="fas fa-lock"></i> gesetzt</small>
+              {% endif %}
+            </label>
+            <input type="password" name="mail_password" class="form-control"
+                   placeholder="{% if mail.password_set %}Leer lassen = unverändert{% else %}Passwort eingeben{% endif %}"
+                   autocomplete="new-password">
+          </div>
+          <div class="form-group mb-0">
+            <label>Standard-Absender</label>
+            <input type="email" name="mail_default_sender" class="form-control"
+                   value="{{ mail.default_sender }}" placeholder="office@example.com">
+          </div>
+        </div>
+        <div class="card-footer d-flex align-items-center">
+          <button type="submit" class="btn btn-warning mr-2">
+            <i class="fas fa-save mr-1"></i> Speichern
+          </button>
+          <button type="button" id="btnTestMail" class="btn btn-outline-secondary">
+            <i class="fas fa-paper-plane mr-1"></i> Test-Mail senden
+          </button>
+          <span id="testMailResult" class="ml-3 small"></span>
+        </div>
+      </div>
+
+      {# ── Hinweise ─────────────────────────────────────────────────── #}
+      <div class="card card-info card-outline">
+        <div class="card-header"><h3 class="card-title">Hinweise</h3></div>
+        <div class="card-body small">
+          <ul class="pl-3 mb-0">
+            <li>Gespeicherte Werte überschreiben die <code>.env</code>-Variablen.</li>
+            <li>Leere Felder greifen wieder auf <code>.env</code> zurück.</li>
+            <li>Die Test-Mail wird an Ihre Admin-Adresse (<strong>{{ current_user.email }}</strong>) gesendet.</li>
+            <li>Test-Mail verwendet die aktuell <em>gespeicherten</em> Einstellungen – zuerst speichern, dann testen.</li>
+            <li>WeasyPrint muss für den Rechnungsversand installiert sein (Docker-Container).</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</form>
+
+<script>
+document.getElementById('btnTestMail').addEventListener('click', function () {
+  const btn = this;
+  const result = document.getElementById('testMailResult');
+  btn.disabled = true;
+  result.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Wird gesendet …';
+  result.className = 'ml-3 small text-muted';
+
+  fetch('{{ url_for("settings.send_test_mail") }}', {
+    method: 'POST',
+    headers: {
+      'X-CSRFToken': document.querySelector('[name=csrf_token]').value,
+      'Content-Type': 'application/json',
+    },
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.ok) {
+      result.innerHTML = '<i class="fas fa-check-circle"></i> Gesendet an ' + data.recipient;
+      result.className = 'ml-3 small text-success';
+    } else {
+      result.innerHTML = '<i class="fas fa-exclamation-circle"></i> Fehler: ' + data.error;
+      result.className = 'ml-3 small text-danger';
+    }
+  })
+  .catch(err => {
+    result.innerHTML = '<i class="fas fa-exclamation-circle"></i> Netzwerkfehler';
+    result.className = 'ml-3 small text-danger';
+  })
+  .finally(() => { btn.disabled = false; });
+});
+</script>
+{% endblock %}

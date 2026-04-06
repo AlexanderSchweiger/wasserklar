@@ -23,12 +23,12 @@
 
 <div class="header">
   <div>
-    <strong>{{ config.WG_NAME }}</strong><br>
-    <span class="sender-info">{{ config.WG_ADDRESS | replace('\n', '<br>') | safe }}</span>
+    <strong>{{ wg.name }}</strong><br>
+    <span class="sender-info">{{ wg.address | replace('\n', '<br>') | replace('\\n', '<br>') | safe }}</span>
   </div>
   <div>
-    {% if config.WG_EMAIL %}<div>{{ config.WG_EMAIL }}</div>{% endif %}
-    {% if config.WG_PHONE %}<div>{{ config.WG_PHONE }}</div>{% endif %}
+    {% if wg.email %}<div>{{ wg.email }}</div>{% endif %}
+    {% if wg.phone %}<div>{{ wg.phone }}</div>{% endif %}
   </div>
 </div>
 
@@ -124,15 +124,15 @@
   <strong>Zahlungsinformationen</strong><br>
   Bitte überweisen Sie den Betrag von <strong>{{ "%.2f"|format(invoice.total_amount) }} €</strong>
   bis zum {{ invoice.due_date.strftime('%d.%m.%Y') if invoice.due_date else '—' }}<br>
-  {% if config.WG_IBAN %}IBAN: <strong>{{ config.WG_IBAN }}</strong><br>{% endif %}
-  Empfänger: {{ config.WG_NAME }}<br>
+  {% if wg.iban %}IBAN: <strong>{{ wg.iban }}</strong><br>{% endif %}
+  Empfänger: {{ wg.name }}<br>
   Verwendungszweck: <strong>{{ invoice.invoice_number }}</strong>
 </div>
 
 <div class="footer">
-  {{ config.WG_NAME }}
-  {% if config.WG_ADDRESS %} &mdash; {{ config.WG_ADDRESS | replace('\n', ' | ') | replace('\\n', ' | ') }}{% endif %}
-  {% if config.WG_EMAIL %} &mdash; {{ config.WG_EMAIL }}{% endif %}
+  {{ wg.name }}
+  {% if wg.address %} &mdash; {{ wg.address | replace('\n', ' | ') | replace('\\n', ' | ') }}{% endif %}
+  {% if wg.email %} &mdash; {{ wg.email }}{% endif %}
 </div>
 
 </body>

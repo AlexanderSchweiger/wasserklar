@@ -44,12 +44,19 @@
         {% endif %}
       </div>
       <div class="card-footer">
+        {% if invoice.status != 'Entwurf' %}
+        <div class="alert alert-warning py-1 px-2 mb-2 small">
+          <i class="fas fa-lock mr-1"></i> Rechnung gesperrt – nur Stornierung möglich.
+        </div>
+        {% endif %}
+        {% if invoice.status == 'Entwurf' %}
         <a href="{{ url_for('invoices.edit', invoice_id=invoice.id) }}"
            class="btn btn-sm btn-secondary">
           <i class="fas fa-edit mr-1"></i> Bearbeiten
         </a>
+        {% endif %}
         <a href="{{ url_for('invoices.pdf', invoice_id=invoice.id) }}"
-           class="btn btn-sm btn-outline-danger ml-1" target="_blank">
+           class="btn btn-sm btn-outline-danger {% if invoice.status == 'Entwurf' %}ml-1{% endif %}" target="_blank">
           <i class="fas fa-file-pdf mr-1"></i> PDF
         </a>
         <form method="post" action="{{ url_for('invoices.send_email', invoice_id=invoice.id) }}"

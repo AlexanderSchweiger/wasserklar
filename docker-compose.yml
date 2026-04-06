@@ -1,15 +1,40 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: wgbuchhaltung
+      POSTGRES_USER: wg
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wg -d wgbuchhaltung"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+    - "5432:5432"
+
   wg:
     build: .
     ports:
       - "5000:5000"
     volumes:
-      - ./instance:/app/instance    # SQLite DB + generierte PDFs
+      - ./instance:/app/instance    # generierte PDFs
     env_file:
       - .env
+    environment:
+      DATABASE_URL: postgresql://wg:${POSTGRES_PASSWORD}@postgres:5432/wgbuchhaltung
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/auth/login"]
       interval: 30s
       timeout: 10s
       retries: 3
+
+volumes:
+  postgres_data:

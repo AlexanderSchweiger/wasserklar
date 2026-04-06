@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Umbuchungen{% endblock %}
+{% block page_title %}<i class="fas fa-exchange-alt mr-2"></i> Umbuchungen{% endblock %}
+{% block content %}
+
+<div class="row mb-3">
+  <div class="col">
+    <form class="form-inline" method="get">
+      <label class="mr-2">Jahr:</label>
+      <select name="year" class="form-control form-control-sm mr-3">
+        {% for y in all_years %}
+        <option value="{{ y }}" {{ 'selected' if y == year }}>{{ y }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="btn btn-sm btn-secondary">Anzeigen</button>
+    </form>
+  </div>
+  <div class="col text-right">
+    <a href="{{ url_for('accounting.transfer_new') }}" class="btn btn-primary btn-sm">
+      <i class="fas fa-plus mr-1"></i> Neue Umbuchung
+    </a>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h3 class="card-title">Umbuchungen {{ year }}</h3>
+    <div class="card-tools">
+      <small class="text-muted">Umbuchungen erscheinen nicht im Jahresbericht.</small>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <table class="table table-sm table-hover mb-0">
+      <thead>
+        <tr>
+          <th>Datum</th>
+          <th>Von</th>
+          <th></th>
+          <th>Nach</th>
+          <th>Beschreibung</th>
+          <th class="text-right">Betrag</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in transfers %}
+        <tr>
+          <td class="text-nowrap">{{ t.date.strftime('%d.%m.%Y') }}</td>
+          <td>
+            <i class="fas {{ t.from_account.icon or 'fa-university' }} mr-1 text-muted"></i>
+            {{ t.from_account.name }}
+          </td>
+          <td class="text-muted"><i class="fas fa-arrow-right"></i></td>
+          <td>
+            <i class="fas {{ t.to_account.icon or 'fa-university' }} mr-1 text-muted"></i>
+            {{ t.to_account.name }}
+          </td>
+          <td>{{ t.description }}</td>
+          <td class="text-right text-nowrap font-weight-bold">{{ "%.2f"|format(t.amount) }} €</td>
+          <td class="text-right">
+            <form method="post" action="{{ url_for('accounting.transfer_delete', transfer_id=t.id) }}"
+                  onsubmit="return confirm('Umbuchung wirklich löschen?')">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-sm btn-outline-danger" title="Löschen">
+                <i class="fas fa-trash"></i>
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="7" class="text-center text-muted py-3">
+            Keine Umbuchungen für {{ year }}.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      {% if transfers %}
+      <tfoot>
+        <tr class="table-active font-weight-bold">
+          <td colspan="5">Summe</td>
+          <td class="text-right text-nowrap">
+            {{ "%.2f"|format(transfers | sum(attribute='amount')) }} €
+          </td>
+          <td></td>
+        </tr>
+      </tfoot>
+      {% endif %}
+    </table>
+  </div>
+</div>
+{% endblock %}

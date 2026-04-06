@@ -18,7 +18,10 @@
   </thead>
   <tbody>
     {% for inv in invoices %}
-    <tr>
+    <tr data-invoice-number="{{ inv.invoice_number }}"
+        data-customer-name="{{ inv.customer.name | e }}"
+        data-customer-email="{{ inv.customer.email or '' }}"
+        data-email-enabled="{{ 'true' if inv.customer.rechnung_per_email else 'false' }}">
       <td>
         <input type="checkbox" name="invoice_ids" value="{{ inv.id }}" class="invoice-cb">
       </td>
@@ -27,6 +30,11 @@
         <a href="{{ url_for('customers.detail', customer_id=inv.customer_id) }}">
           {{ inv.customer.name }}
         </a>
+        {% if inv.customer.rechnung_per_email and inv.customer.email %}
+        <br><small class="text-muted">
+          <i class="fas fa-envelope fa-xs mr-1"></i>{{ inv.customer.email }}
+        </small>
+        {% endif %}
       </td>
       <td>
         {% if inv.property %}

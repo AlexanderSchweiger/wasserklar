@@ -222,6 +222,7 @@ def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str) -> 
                 ort=_get_cell(row, col_ort),
                 land=_get_cell(row, col_land) or "Österreich",
                 email=_get_cell(row, col_email),
+                rechnung_per_email=bool(_get_cell(row, col_email)),
                 phone=_get_cell(row, col_phone),
                 notes=_get_cell(row, col_notes),
                 active=True,
