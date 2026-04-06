@@ -14,7 +14,7 @@
 
           <div class="form-group">
             <label>Kunde <span class="text-danger">*</span></label>
-            <select name="customer_id" class="form-control" required>
+            <select name="customer_id" class="form-control tom-select" required>
               <option value="">— Kunde auswählen —</option>
               {% for c in customers %}
               <option value="{{ c.id }}" {{ 'selected' if item and item.customer_id == c.id }}>

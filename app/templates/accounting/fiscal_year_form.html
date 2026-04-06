@@ -35,4 +35,18 @@
     </div>
   </div>
 </div>
+<script>
+(function () {
+  var yearEl = document.querySelector('input[name="year"]');
+  var startEl = document.querySelector('input[name="start_date"]');
+  var endEl = document.querySelector('input[name="end_date"]');
+  yearEl.addEventListener('change', function () {
+    var y = parseInt(yearEl.value);
+    if (!isNaN(y) && y >= 2000 && y <= 2100) {
+      startEl.value = y + '-01-01';
+      endEl.value = y + '-12-31';
+    }
+  });
+})();
+</script>
 {% endblock %}

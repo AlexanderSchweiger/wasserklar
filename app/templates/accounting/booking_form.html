@@ -24,7 +24,7 @@
               <div class="form-group">
                 <label>Datum <span class="text-danger">*</span></label>
                 <input type="date" name="date" class="form-control"
-                  value="{{ booking.date.isoformat() if booking else '' }}"
+                  value="{{ booking.date.isoformat() if booking else (form_data.get('date', '') if form_data is defined else '') }}"
                   {{ 'readonly' if locked }} required>
               </div>
             </div>
@@ -33,7 +33,7 @@
                 <label>Betrag (€) <span class="text-danger">*</span></label>
                 <div class="input-group">
                   <input type="number" name="amount" id="amount" step="0.01" class="form-control"
-                    value="{{ booking.amount if booking else '' }}"
+                    value="{{ booking.amount if booking else (form_data.get('amount', '') if form_data is defined else '') }}"
                     {{ 'readonly' if locked }} required>
                   <div class="input-group-append">
                     <span class="input-group-text">€</span>
@@ -48,9 +48,9 @@
           </div>
           <div class="form-group">
             <label>Konto <span class="text-danger">*</span></label>
-            <select name="account_id" class="form-control" required>
+            <select name="account_id" class="form-control tom-select" required>
               {% for a in accounts %}
-              <option value="{{ a.id }}" {{ 'selected' if booking and booking.account_id == a.id }}>
+              <option value="{{ a.id }}" {{ 'selected' if (booking and booking.account_id == a.id) or (not booking and form_data is defined and form_data.get('account_id') == a.id|string) }}>
                 {{ a.name }}
               </option>
               {% endfor %}
@@ -60,11 +60,13 @@
             <div class="col-md-6">
               <div class="form-group">
                 <label>Steuersatz (MwSt)</label>
-                <select name="tax_rate" id="tax_rate" class="form-control" {{ 'disabled' if locked }}>
+                <select name="tax_rate" id="tax_rate" class="form-control tom-select" {{ 'disabled' if locked }}>
                   {% for tr in tax_rates %}
                   <option value="{{ tr.rate }}"
-                    {{ 'selected' if (not booking or not booking.tax_rate) and tr.rate == 0
-                       else 'selected' if booking and booking.tax_rate and booking.tax_rate == tr.rate }}>
+                    {{ 'selected' if (not booking and (form_data is not defined or not form_data.get('tax_rate')) and tr.rate == 0)
+                       or (not booking and form_data is defined and form_data.get('tax_rate') and form_data.get('tax_rate') == tr.rate|string)
+                       or (booking and not booking.tax_rate and tr.rate == 0)
+                       or (booking and booking.tax_rate and booking.tax_rate == tr.rate) }}>
                     {{ tr.label or (tr.rate | int ~ ' %') }}
                   </option>
                   {% endfor %}
@@ -88,20 +90,20 @@
           <div class="form-group">
             <label>Beschreibung <span class="text-danger">*</span></label>
             <input type="text" name="description" class="form-control"
-              value="{{ booking.description if booking else '' }}" required>
+              value="{{ booking.description if booking else (form_data.get('description', '') if form_data is defined else '') }}" required>
           </div>
           <div class="form-group">
             <label>Belegnummer</label>
             <input type="text" name="reference" class="form-control"
-              value="{{ booking.reference if booking else '' }}" {{ 'readonly' if locked }}>
+              value="{{ booking.reference if booking else (form_data.get('reference', '') if form_data is defined else '') }}" {{ 'readonly' if locked }}>
           </div>
           <div class="form-group">
             <label>Reales Bankkonto</label>
-            <select name="real_account_id" class="form-control">
+            <select name="real_account_id" class="form-control tom-select">
               <option value="">– kein Bankkonto –</option>
               {% for ra in real_accounts %}
               <option value="{{ ra.id }}"
-                {{ 'selected' if booking and booking.real_account_id == ra.id }}>
+                {{ 'selected' if (booking and booking.real_account_id == ra.id) or (not booking and form_data is defined and form_data.get('real_account_id') == ra.id|string) }}>
                 {{ ra.name }}{% if ra.iban %} ({{ ra.iban }}){% endif %}
               </option>
               {% endfor %}
@@ -110,11 +112,11 @@
           </div>
           <div class="form-group">
             <label>Projekt</label>
-            <select name="project_id" class="form-control">
+            <select name="project_id" class="form-control tom-select">
               <option value="">– kein Projekt –</option>
               {% for p in projects %}
               <option value="{{ p.id }}"
-                {{ 'selected' if booking and booking.project_id == p.id }}>
+                {{ 'selected' if (booking and booking.project_id == p.id) or (not booking and form_data is defined and form_data.get('project_id') == p.id|string) }}>
                 {{ p.name }}
               </option>
               {% endfor %}
@@ -122,11 +124,11 @@
           </div>
           <div class="form-group">
             <label>Kunde</label>
-            <select name="customer_id" class="form-control">
+            <select name="customer_id" class="form-control tom-select">
               <option value="">– kein Kunde –</option>
               {% for c in customers %}
               <option value="{{ c.id }}"
-                {{ 'selected' if booking and booking.customer_id == c.id }}>
+                {{ 'selected' if (booking and booking.customer_id == c.id) or (not booking and form_data is defined and form_data.get('customer_id') == c.id|string) }}>
                 {{ c.name }}
               </option>
               {% endfor %}

@@ -15,7 +15,7 @@
         <div class="card-body">
           <div class="form-group">
             <label>Objekt <span class="text-danger">*</span></label>
-            <select name="property_id" class="form-control" required>
+            <select name="property_id" class="form-control tom-select" required>
               {% for p in properties %}
               <option value="{{ p.id }}"
                 {{ 'selected' if (meter and meter.property_id == p.id) or (not meter and selected_property_id == p.id) }}>

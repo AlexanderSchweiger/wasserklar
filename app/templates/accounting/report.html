@@ -2,19 +2,35 @@
 {% block title %}Jahresbericht {{ year }}{% endblock %}
 {% block page_title %}<i class="fas fa-chart-bar mr-2"></i> Jahresbericht{% endblock %}
 {% block content %}
-<!-- Jahrauswahl -->
-<div class="row mb-3">
-  <div class="col-md-3">
-    <form method="get" class="form-inline">
-      <label class="mr-2">Jahr</label>
+
+<!-- Filter-Leiste -->
+<div class="card card-outline card-secondary mb-3">
+  <div class="card-body py-2">
+    <form method="get" class="form-inline flex-wrap">
+      <input type="hidden" name="year" value="{{ year }}">
+
+      <label class="mr-2 font-weight-bold">Jahr</label>
       <input type="number" name="year" value="{{ year }}" min="2000" max="2100"
-        class="form-control form-control-sm mr-2" style="width:90px">
-      <button type="submit" class="btn btn-sm btn-secondary">
+        class="form-control form-control-sm mr-3" style="width:90px">
+
+      <label class="mr-2 font-weight-bold">Bankkonto</label>
+      <select name="real_account_id" class="form-control form-control-sm tom-select mr-3" style="min-width:180px">
+        <option value="0" {% if real_account_id == 0 %}selected{% endif %}>Alle Konten</option>
+        {% for ra in all_real_accounts %}
+        <option value="{{ ra.id }}" {% if real_account_id == ra.id %}selected{% endif %}>{{ ra.name }}</option>
+        {% endfor %}
+      </select>
+
+      <button type="submit" class="btn btn-sm btn-secondary mr-2">
         <i class="fas fa-sync mr-1"></i> Anzeigen
       </button>
       <a href="{{ url_for('accounting.export_csv', year=year) }}"
-         class="btn btn-sm btn-outline-secondary ml-2">
+         class="btn btn-sm btn-outline-secondary mr-2">
         <i class="fas fa-file-csv mr-1"></i> CSV
+      </a>
+      <a href="{{ url_for('accounting.report_export_excel', year=year) }}"
+         class="btn btn-sm btn-success">
+        <i class="fas fa-file-excel mr-1"></i> Excel
       </a>
     </form>
   </div>
@@ -51,7 +67,63 @@
   </div>
 </div>
 
-<!-- Detailtabellen -->
+<!-- Kontenentwicklung Bankkonten -->
+{% if konten_list %}
+<div class="row mb-3">
+  <div class="col-12">
+    <div class="card card-outline card-primary">
+      <div class="card-header">
+        <h3 class="card-title"><i class="fas fa-university mr-1"></i> Entwicklung Bankkonten {{ year }}</h3>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-hover table-sm mb-0">
+          <thead class="thead-light">
+            <tr>
+              <th>Bankkonto</th>
+              <th>IBAN</th>
+              <th class="text-right">Stand 1.1.{{ year }}</th>
+              <th class="text-right">Bewegung {{ year }}</th>
+              <th class="text-right">Stand 31.12.{{ year }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% set ns = namespace(sum_jan1=0, sum_dec31=0) %}
+            {% for k in konten_list %}
+            {% set ns.sum_jan1 = ns.sum_jan1 + k.jan1 %}
+            {% set ns.sum_dec31 = ns.sum_dec31 + k.dec31 %}
+            <tr>
+              <td><strong>{{ k.name }}</strong></td>
+              <td class="text-muted" style="font-size:.85em">{{ k.iban }}</td>
+              <td class="text-right">{{ "%.2f"|format(k.jan1) }} €</td>
+              <td class="text-right {{ 'text-success' if k.bewegung >= 0 else 'text-danger' }}">
+                {{ "%.2f"|format(k.bewegung) }} €
+              </td>
+              <td class="text-right font-weight-bold {{ 'text-success' if k.dec31 >= 0 else 'text-danger' }}">
+                {{ "%.2f"|format(k.dec31) }} €
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot class="thead-light">
+            <tr>
+              <th colspan="2">Gesamt</th>
+              <th class="text-right">{{ "%.2f"|format(ns.sum_jan1) }} €</th>
+              <th class="text-right {{ 'text-success' if (ns.sum_dec31 - ns.sum_jan1) >= 0 else 'text-danger' }}">
+                {{ "%.2f"|format(ns.sum_dec31 - ns.sum_jan1) }} €
+              </th>
+              <th class="text-right font-weight-bold {{ 'text-success' if ns.sum_dec31 >= 0 else 'text-danger' }}">
+                {{ "%.2f"|format(ns.sum_dec31) }} €
+              </th>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- Detailtabellen Einnahmen/Ausgaben -->
 <div class="row">
   <div class="col-md-6">
     <div class="card card-success card-outline">

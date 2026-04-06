@@ -82,12 +82,18 @@ def _auto_post_bookings():
 
 
 def _locked_fiscal_year(booking_date):
-    """Gibt das abgeschlossene Buchungsjahr zurück, wenn booking_date darin liegt."""
-    return FiscalYear.query.filter(
+    """Gibt das abgeschlossene Buchungsjahr zurück, wenn booking_date darin liegt.
+    Es wird sowohl der Datumsbereich als auch das Kalenderjahr geprüft, damit
+    irrtümlich falsch konfigurierte FY-Daten (z. B. end_date im Folgejahr) keinen
+    falschen Sperrblock auslösen."""
+    fy = FiscalYear.query.filter(
         FiscalYear.closed == True,
         FiscalYear.start_date <= booking_date,
         FiscalYear.end_date >= booking_date,
     ).first()
+    if fy is not None and fy.year != booking_date.year:
+        return None
+    return fy
 
 
 def _jan1_balance(ra, year):
@@ -277,7 +283,13 @@ def booking_new():
         fy_locked = _locked_fiscal_year(booking_date)
         if fy_locked:
             flash(f"Das Buchungsjahr {fy_locked.year} ist abgeschlossen. Buchung wurde nicht gespeichert.", "danger")
-            return redirect(url_for("accounting.booking_new"))
+            return render_template(
+                "accounting/booking_form.html",
+                booking=None, accounts=accounts,
+                projects=active_projects, real_accounts=real_accounts,
+                customers=customers, tax_rates=tax_rates,
+                form_data=request.form,
+            )
         amount_raw = request.form.get("amount", "0").replace(",", ".")
         amount = Decimal(amount_raw)
         acc = db.get_or_404(Account, int(request.form["account_id"]))
@@ -721,18 +733,26 @@ def open_item_invoice(item_id):
 @login_required
 def report():
     year = request.args.get("year", date.today().year, type=int)
+    real_account_id = request.args.get("real_account_id", 0, type=int)  # 0 = alle
 
-    rows = (
+    all_real_accounts = RealAccount.query.order_by(RealAccount.name).all()
+
+    def _base_filter(q):
+        q = q.filter(
+            extract("year", Booking.date) == year,
+            Booking.status != Booking.STATUS_STORNIERT,
+        )
+        if real_account_id:
+            q = q.filter(Booking.real_account_id == real_account_id)
+        return q
+
+    rows = _base_filter(
         db.session.query(
             Account.name,
             func.sum(Booking.amount).label("total"),
         )
         .join(Booking, Booking.account_id == Account.id)
-        .filter(extract("year", Booking.date) == year)
-        .group_by(Account.id)
-        .order_by(Account.name)
-        .all()
-    )
+    ).group_by(Account.id).order_by(Account.name).all()
 
     income_rows = [(r.name, r.total) for r in rows if r.total is not None and r.total > 0]
     expense_rows = [(r.name, abs(r.total)) for r in rows if r.total is not None and r.total < 0]
@@ -741,7 +761,7 @@ def report():
     balance = total_income - total_expense
 
     # Projektübersicht
-    project_rows = (
+    project_rows = _base_filter(
         db.session.query(
             Project.id.label("project_id"),
             Project.name.label("project_name"),
@@ -751,15 +771,11 @@ def report():
         .select_from(Booking)
         .outerjoin(Project, Booking.project_id == Project.id)
         .join(Account, Booking.account_id == Account.id)
-        .filter(extract("year", Booking.date) == year)
-        .group_by(Project.id, Project.name, Account.id, Account.name)
-        .order_by(
-            case((Project.id == None, 1), else_=0),
-            Project.name,
-            Account.name,
-        )
-        .all()
-    )
+    ).group_by(Project.id, Project.name, Account.id, Account.name).order_by(
+        case((Project.id == None, 1), else_=0),
+        Project.name,
+        Account.name,
+    ).all()
 
     project_summary = {}
     for row in project_rows:
@@ -787,15 +803,354 @@ def report():
         )
     ]
 
+    # Kontenentwicklung Bankkonten
+    konten_list = []
+    for ra in all_real_accounts:
+        jan1 = _jan1_balance(ra, year)
+        dec31 = _year_end_balance(ra, year)
+        bkgs = db.session.query(func.sum(Booking.amount)).filter(
+            Booking.real_account_id == ra.id,
+            extract("year", Booking.date) == year,
+            Booking.status != Booking.STATUS_STORNIERT,
+        ).scalar() or Decimal("0")
+        konten_list.append({
+            "name": ra.name,
+            "iban": ra.iban or "",
+            "jan1": jan1,
+            "bewegung": Decimal(str(bkgs)),
+            "dec31": dec31,
+        })
+
     return render_template(
         "accounting/report.html",
         year=year,
+        real_account_id=real_account_id,
+        all_real_accounts=all_real_accounts,
         income_rows=income_rows,
         expense_rows=expense_rows,
         total_income=total_income,
         total_expense=total_expense,
         balance=balance,
         project_summary_list=project_summary_list,
+        konten_list=konten_list,
+    )
+
+
+@bp.route("/report/export/excel")
+@login_required
+def report_export_excel():
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    import io as _io
+
+    year = request.args.get("year", date.today().year, type=int)
+
+    # ---- Hilfsfunktionen ----
+    HDR_FILL = PatternFill("solid", fgColor="2F5496")
+    HDR_FONT = Font(bold=True, color="FFFFFF")
+    SUBHDR_FILL = PatternFill("solid", fgColor="BDD7EE")
+    SUBHDR_FONT = Font(bold=True)
+    TOTAL_FONT = Font(bold=True)
+    EUR_FMT = '#,##0.00 "€"'
+    DATE_FMT = "DD.MM.YYYY"
+    thin = Side(style="thin")
+    BORDER = Border(bottom=thin)
+
+    def _hdr(ws, row, cols):
+        for c, val in enumerate(cols, 1):
+            cell = ws.cell(row=row, column=c, value=val)
+            cell.font = HDR_FONT
+            cell.fill = HDR_FILL
+            cell.alignment = Alignment(horizontal="center")
+
+    def _subhdr(ws, row, cols):
+        for c, val in enumerate(cols, 1):
+            cell = ws.cell(row=row, column=c, value=val)
+            cell.font = SUBHDR_FONT
+            cell.fill = SUBHDR_FILL
+
+    def _autowidth(ws, min_w=10, max_w=50):
+        for col in ws.columns:
+            length = max(len(str(c.value or "")) for c in col)
+            ws.column_dimensions[get_column_letter(col[0].column)].width = min(max_w, max(min_w, length + 2))
+
+    def _eur(ws, row, col, val):
+        cell = ws.cell(row=row, column=col, value=float(val))
+        cell.number_format = EUR_FMT
+        return cell
+
+    def _total_row(ws, row, label, val, ncols):
+        ws.cell(row=row, column=1, value=label).font = TOTAL_FONT
+        c = _eur(ws, row, ncols, val)
+        c.font = TOTAL_FONT
+        c.border = BORDER
+
+    # ---- Daten ermitteln ----
+    all_real_accounts = RealAccount.query.order_by(RealAccount.name).all()
+
+    def _bookings_q():
+        return (
+            Booking.query
+            .filter(extract("year", Booking.date) == year)
+            .filter(Booking.status != Booking.STATUS_STORNIERT)
+            .order_by(Booking.date)
+            .all()
+        )
+
+    bookings_year = _bookings_q()
+
+    # Einnahmen/Ausgaben nach Konto
+    rows_q = (
+        db.session.query(Account.name, func.sum(Booking.amount).label("total"))
+        .join(Booking, Booking.account_id == Account.id)
+        .filter(extract("year", Booking.date) == year)
+        .filter(Booking.status != Booking.STATUS_STORNIERT)
+        .group_by(Account.id).order_by(Account.name).all()
+    )
+    income_rows = [(r.name, Decimal(str(r.total))) for r in rows_q if r.total is not None and r.total > 0]
+    expense_rows = [(r.name, abs(Decimal(str(r.total)))) for r in rows_q if r.total is not None and r.total < 0]
+    total_income = sum(r[1] for r in income_rows)
+    total_expense = sum(r[1] for r in expense_rows)
+    balance = total_income - total_expense
+
+    # Kontenentwicklung
+    konten_list = []
+    for ra in all_real_accounts:
+        jan1 = _jan1_balance(ra, year)
+        dec31 = _year_end_balance(ra, year)
+        bkgs = db.session.query(func.sum(Booking.amount)).filter(
+            Booking.real_account_id == ra.id,
+            extract("year", Booking.date) == year,
+            Booking.status != Booking.STATUS_STORNIERT,
+        ).scalar() or Decimal("0")
+        konten_list.append({
+            "name": ra.name, "iban": ra.iban or "",
+            "jan1": jan1, "bewegung": Decimal(str(bkgs)), "dec31": dec31,
+        })
+
+    # Projektübersicht
+    project_rows_q = (
+        db.session.query(
+            Project.id.label("project_id"),
+            Project.name.label("project_name"),
+            Account.name.label("account_name"),
+            func.sum(Booking.amount).label("total"),
+        )
+        .select_from(Booking)
+        .outerjoin(Project, Booking.project_id == Project.id)
+        .join(Account, Booking.account_id == Account.id)
+        .filter(extract("year", Booking.date) == year)
+        .filter(Booking.status != Booking.STATUS_STORNIERT)
+        .group_by(Project.id, Project.name, Account.id, Account.name)
+        .order_by(case((Project.id == None, 1), else_=0), Project.name, Account.name)
+        .all()
+    )
+    project_summary = {}
+    for row in project_rows_q:
+        key = row.project_id
+        if key not in project_summary:
+            project_summary[key] = {"name": row.project_name or "Ohne Projekt", "accounts": [], "income": Decimal("0"), "expense": Decimal("0")}
+        rt = row.total or Decimal("0")
+        project_summary[key]["accounts"].append((row.account_name, rt))
+        if rt >= 0:
+            project_summary[key]["income"] += rt
+        else:
+            project_summary[key]["expense"] += abs(rt)
+    project_list = [v for k, v in sorted(project_summary.items(), key=lambda x: (x[0] is None, x[1]["name"]))]
+
+    # ---- Workbook aufbauen ----
+    wb = openpyxl.Workbook()
+
+    # ================================================================
+    # BLATT 1: Übersicht
+    # ================================================================
+    ws = wb.active
+    ws.title = "Übersicht"
+    r = 1
+    ws.merge_cells(f"A{r}:D{r}")
+    cell = ws.cell(row=r, column=1, value=f"Jahresbericht {year}")
+    cell.font = Font(bold=True, size=14, color="FFFFFF")
+    cell.fill = HDR_FILL
+    cell.alignment = Alignment(horizontal="center")
+    r += 2
+
+    _subhdr(ws, r, ["Kennzahl", "", "Betrag"])
+    r += 1
+    _eur(ws, r, 3, total_income); ws.cell(row=r, column=1, value="Gesamteinnahmen"); r += 1
+    _eur(ws, r, 3, total_expense); ws.cell(row=r, column=1, value="Gesamtausgaben"); r += 1
+    c = _eur(ws, r, 3, balance)
+    c.font = Font(bold=True, color="375623" if balance >= 0 else "9C0006")
+    ws.cell(row=r, column=1, value="Saldo").font = TOTAL_FONT
+    r += 2
+
+    _subhdr(ws, r, ["Bankkonto", "IBAN", "Stand 1.1.", "Stand 31.12."])
+    r += 1
+    total_jan1 = Decimal("0"); total_dec31 = Decimal("0")
+    for k in konten_list:
+        ws.cell(row=r, column=1, value=k["name"])
+        ws.cell(row=r, column=2, value=k["iban"])
+        _eur(ws, r, 3, k["jan1"]); _eur(ws, r, 4, k["dec31"])
+        total_jan1 += k["jan1"]; total_dec31 += k["dec31"]
+        r += 1
+    ws.cell(row=r, column=1, value="Gesamt").font = TOTAL_FONT
+    c3 = _eur(ws, r, 3, total_jan1); c3.font = TOTAL_FONT; c3.border = BORDER
+    c4 = _eur(ws, r, 4, total_dec31); c4.font = TOTAL_FONT; c4.border = BORDER
+    r += 2
+
+    # USt-Zahllast Jahresübersicht
+    ust_rows_y, vst_rows_y = _ust_berechnen(year, 0)
+    zahllast_y = sum(v["steuer"] for _, v in ust_rows_y) - sum(v["steuer"] for _, v in vst_rows_y)
+    _subhdr(ws, r, ["USt/VSt", "", "Betrag"])
+    r += 1
+    _eur(ws, r, 3, sum(v["steuer"] for _, v in ust_rows_y)); ws.cell(row=r, column=1, value="Umsatzsteuer gesamt"); r += 1
+    _eur(ws, r, 3, sum(v["steuer"] for _, v in vst_rows_y)); ws.cell(row=r, column=1, value="Vorsteuer gesamt"); r += 1
+    c = _eur(ws, r, 3, zahllast_y); c.font = TOTAL_FONT
+    ws.cell(row=r, column=1, value="Zahllast").font = TOTAL_FONT
+    _autowidth(ws)
+
+    # ================================================================
+    # BLATT 2: Einnahmen & Ausgaben
+    # ================================================================
+    ws2 = wb.create_sheet("Einnahmen & Ausgaben")
+    _hdr(ws2, 1, ["Konto", "Typ", "Betrag"])
+    r2 = 2
+    for name, amt in income_rows:
+        ws2.cell(row=r2, column=1, value=name)
+        ws2.cell(row=r2, column=2, value="Einnahme")
+        _eur(ws2, r2, 3, amt); r2 += 1
+    _total_row(ws2, r2, "Einnahmen gesamt", total_income, 3); r2 += 2
+    for name, amt in expense_rows:
+        ws2.cell(row=r2, column=1, value=name)
+        ws2.cell(row=r2, column=2, value="Ausgabe")
+        _eur(ws2, r2, 3, amt); r2 += 1
+    _total_row(ws2, r2, "Ausgaben gesamt", total_expense, 3); r2 += 2
+    ws2.cell(row=r2, column=1, value="Saldo").font = TOTAL_FONT
+    c = _eur(ws2, r2, 3, balance); c.font = TOTAL_FONT; c.border = BORDER
+    _autowidth(ws2)
+
+    # ================================================================
+    # BLATT 3: Buchungen
+    # ================================================================
+    ws3 = wb.create_sheet("Buchungen")
+    _hdr(ws3, 1, ["Datum", "Bankkonto", "Konto", "Typ", "Beschreibung", "Belegnummer", "Projekt", "Kunde", "MwSt %", "MwSt Betrag", "Betrag", "Status"])
+    r3 = 2
+    for b in bookings_year:
+        tax_amt = ""
+        if b.tax_rate and b.tax_rate > 0:
+            tax_amt = float((abs(b.amount) * Decimal(str(b.tax_rate)) / (100 + Decimal(str(b.tax_rate)))).quantize(Decimal("0.01")))
+        ws3.cell(row=r3, column=1, value=b.date).number_format = DATE_FMT
+        ws3.cell(row=r3, column=2, value=b.real_account.name if b.real_account else "")
+        ws3.cell(row=r3, column=3, value=b.account.name)
+        ws3.cell(row=r3, column=4, value="Einnahme" if b.amount >= 0 else "Ausgabe")
+        ws3.cell(row=r3, column=5, value=b.description)
+        ws3.cell(row=r3, column=6, value=b.reference or "")
+        ws3.cell(row=r3, column=7, value=b.project.name if b.project else "")
+        ws3.cell(row=r3, column=8, value=b.customer.name if b.customer else "")
+        ws3.cell(row=r3, column=9, value=int(b.tax_rate) if b.tax_rate else "")
+        if tax_amt != "":
+            _eur(ws3, r3, 10, tax_amt)
+        _eur(ws3, r3, 11, float(b.amount))
+        ws3.cell(row=r3, column=12, value=b.status or "")
+        r3 += 1
+    _autowidth(ws3)
+
+    # ================================================================
+    # BLATT 4: Bankkonten-Entwicklung
+    # ================================================================
+    ws4 = wb.create_sheet("Bankkonten")
+    _hdr(ws4, 1, ["Bankkonto", "IBAN", f"Stand 1.1.{year}", f"Bewegung {year}", f"Stand 31.12.{year}"])
+    r4 = 2
+    sum_jan1 = Decimal("0"); sum_dec31 = Decimal("0")
+    for k in konten_list:
+        ws4.cell(row=r4, column=1, value=k["name"])
+        ws4.cell(row=r4, column=2, value=k["iban"])
+        _eur(ws4, r4, 3, k["jan1"])
+        _eur(ws4, r4, 4, k["bewegung"])
+        _eur(ws4, r4, 5, k["dec31"])
+        sum_jan1 += k["jan1"]; sum_dec31 += k["dec31"]
+        r4 += 1
+    ws4.cell(row=r4, column=1, value="Gesamt").font = TOTAL_FONT
+    for col, val in [(3, sum_jan1), (4, sum_dec31 - sum_jan1), (5, sum_dec31)]:
+        c = _eur(ws4, r4, col, val); c.font = TOTAL_FONT; c.border = BORDER
+    _autowidth(ws4)
+
+    # ================================================================
+    # BLATT 5: Projekte
+    # ================================================================
+    ws5 = wb.create_sheet("Projekte")
+    _hdr(ws5, 1, ["Projekt", "Konto", "Einnahmen", "Ausgaben", "Saldo"])
+    r5 = 2
+    for ps in project_list:
+        start_r = r5
+        for acc_name, amt in ps["accounts"]:
+            ws5.cell(row=r5, column=1, value=ps["name"])
+            ws5.cell(row=r5, column=2, value=acc_name)
+            if amt >= 0:
+                _eur(ws5, r5, 3, amt)
+            else:
+                _eur(ws5, r5, 4, abs(amt))
+            r5 += 1
+        # Projektsumme
+        ws5.cell(row=r5, column=1, value=ps["name"]).font = TOTAL_FONT
+        ws5.cell(row=r5, column=2, value="Gesamt").font = TOTAL_FONT
+        c3 = _eur(ws5, r5, 3, ps["income"]); c3.font = TOTAL_FONT; c3.border = BORDER
+        c4 = _eur(ws5, r5, 4, ps["expense"]); c4.font = TOTAL_FONT; c4.border = BORDER
+        c5 = _eur(ws5, r5, 5, ps["income"] - ps["expense"]); c5.font = TOTAL_FONT; c5.border = BORDER
+        r5 += 2
+    _autowidth(ws5)
+
+    # ================================================================
+    # BLÄTTER 6-10: USt-Voranmeldungen Q1–Q4 + Gesamtjahr
+    # ================================================================
+    def _ust_sheet(ws_ust, label, date_from, date_to, ust_r, vst_r):
+        ws_ust.cell(row=1, column=1, value="Zeitraum").font = SUBHDR_FONT
+        ws_ust.cell(row=1, column=2, value=label)
+        ws_ust.cell(row=2, column=1, value="Von").font = SUBHDR_FONT
+        ws_ust.cell(row=2, column=2, value=date_from).number_format = DATE_FMT
+        ws_ust.cell(row=3, column=1, value="Bis").font = SUBHDR_FONT
+        ws_ust.cell(row=3, column=2, value=date_to).number_format = DATE_FMT
+
+        _hdr(ws_ust, 5, ["Abschnitt", "Steuersatz %", "Bruttobetrag", "Nettobetrag", "Steuerbetrag"])
+        ru = 6
+        for rate, v in ust_r:
+            ws_ust.cell(row=ru, column=1, value="Umsatzsteuer")
+            ws_ust.cell(row=ru, column=2, value=rate)
+            _eur(ws_ust, ru, 3, v["brutto"]); _eur(ws_ust, ru, 4, v["netto"]); _eur(ws_ust, ru, 5, v["steuer"])
+            ru += 1
+        for rate, v in vst_r:
+            ws_ust.cell(row=ru, column=1, value="Vorsteuer")
+            ws_ust.cell(row=ru, column=2, value=rate)
+            _eur(ws_ust, ru, 3, v["brutto"]); _eur(ws_ust, ru, 4, v["netto"]); _eur(ws_ust, ru, 5, v["steuer"])
+            ru += 1
+        ru += 1
+        total_u = sum(v["steuer"] for _, v in ust_r)
+        total_v = sum(v["steuer"] for _, v in vst_r)
+        zahllast = total_u - total_v
+        for lbl, val in [("Umsatzsteuer gesamt", total_u), ("Vorsteuer gesamt", total_v), ("Zahllast", zahllast)]:
+            ws_ust.cell(row=ru, column=1, value=lbl).font = TOTAL_FONT
+            c = _eur(ws_ust, ru, 5, val); c.font = TOTAL_FONT; c.border = BORDER
+            ru += 1
+        _autowidth(ws_ust)
+
+    for q in range(1, 5):
+        df, dt = _ust_period(year, q)
+        ur, vr = _ust_berechnen(year, q)
+        ws_q = wb.create_sheet(f"USt Q{q}")
+        _ust_sheet(ws_q, f"Q{q}/{year}", df, dt, ur, vr)
+
+    df_y, dt_y = _ust_period(year, 0)
+    ws_y = wb.create_sheet("USt Gesamtjahr")
+    _ust_sheet(ws_y, str(year), df_y, dt_y, ust_rows_y, vst_rows_y)
+
+    # ---- Ausgabe ----
+    buf = _io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return Response(
+        buf.read(),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=jahresbericht_{year}.xlsx"},
     )
 
 
