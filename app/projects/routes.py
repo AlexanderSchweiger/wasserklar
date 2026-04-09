@@ -1,3 +1,5 @@
+import re
+
 from flask import render_template, redirect, url_for, flash, request, abort
 from flask_login import login_required
 from sqlalchemy import exists
@@ -5,6 +7,21 @@ from sqlalchemy import exists
 from app.projects import bp
 from app.extensions import db
 from app.models import Project, Booking, OpenItem
+
+
+def _validate_code(code_raw, exclude_id=None):
+    """Validiert ein 3-stelliges Kürzel (A-Z, 0-9). Gibt (code, fehlermeldung) zurück."""
+    code = code_raw.strip().upper() or None
+    if code:
+        if not re.match(r'^[A-Z0-9]{3}$', code):
+            return None, "Kürzel muss genau 3 Zeichen bestehen (Großbuchstaben A–Z oder Ziffern 0–9)."
+        q = Project.query.filter(Project.code == code)
+        if exclude_id is not None:
+            q = q.filter(Project.id != exclude_id)
+        existing = q.first()
+        if existing:
+            return None, f"Kürzel '{code}' wird bereits von Projekt '{existing.name}' verwendet."
+    return code, None
 
 
 @bp.route("/")
@@ -34,8 +51,12 @@ def new():
         if Project.query.filter_by(name=name).first():
             flash("Ein Projekt mit diesem Namen existiert bereits.", "danger")
             return render_template("projects/form.html", project=None)
+        code, err = _validate_code(request.form.get("code", ""))
+        if err:
+            flash(err, "danger")
+            return render_template("projects/form.html", project=None)
         color = request.form.get("color", "#3498db").strip() or "#3498db"
-        project = Project(name=name, description=description, color=color)
+        project = Project(name=name, description=description, color=color, code=code)
         db.session.add(project)
         db.session.commit()
         flash(f'Projekt "{project.name}" wurde angelegt.', "success")
@@ -57,9 +78,14 @@ def edit(project_id):
         if existing and existing.id != project.id:
             flash("Ein Projekt mit diesem Namen existiert bereits.", "danger")
             return render_template("projects/form.html", project=project)
+        code, err = _validate_code(request.form.get("code", ""), exclude_id=project.id)
+        if err:
+            flash(err, "danger")
+            return render_template("projects/form.html", project=project)
         project.name = name
         project.description = description
         project.color = request.form.get("color", "#3498db").strip() or "#3498db"
+        project.code = code
         db.session.commit()
         flash(f'Projekt "{project.name}" wurde gespeichert.', "success")
         return redirect(url_for("projects.detail", project_id=project.id))

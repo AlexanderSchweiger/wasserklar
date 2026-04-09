@@ -16,11 +16,18 @@
       <div class="card-body p-0">
         <table class="table table-hover mb-0">
           <thead class="thead-light">
-            <tr><th>Name</th><th>Beschreibung</th><th>Aktiv</th><th></th></tr>
+            <tr><th>Kürzel</th><th>Name</th><th>Beschreibung</th><th>Aktiv</th><th></th></tr>
           </thead>
           <tbody>
             {% for a in accounts %}
             <tr>
+              <td>
+                {% if a.code %}
+                <code class="font-weight-bold">{{ a.code }}</code>
+                {% else %}
+                <span class="text-muted">—</span>
+                {% endif %}
+              </td>
               <td><strong>{{ a.name }}</strong></td>
               <td>{{ a.description or '—' }}</td>
               <td>
@@ -36,7 +43,7 @@
               </td>
             </tr>
             {% else %}
-            <tr><td colspan="4" class="text-muted py-2">Keine Konten vorhanden.</td></tr>
+            <tr><td colspan="5" class="text-muted py-2">Keine Konten vorhanden.</td></tr>
             {% endfor %}
           </tbody>
         </table>

@@ -38,11 +38,32 @@ def accounts():
     return render_template("accounting/accounts.html", accounts=all_accounts)
 
 
+def _validate_code(code_raw, model_cls, exclude_id=None):
+    """Validiert ein 3-stelliges Kürzel (A-Z, 0-9). Gibt (code, fehlermeldung) zurück."""
+    import re
+    code = code_raw.strip().upper() or None
+    if code:
+        if not re.match(r'^[A-Z0-9]{3}$', code):
+            return None, "Kürzel muss genau 3 Zeichen bestehen (Großbuchstaben A–Z oder Ziffern 0–9)."
+        q = model_cls.query.filter(model_cls.code == code)
+        if exclude_id is not None:
+            q = q.filter(model_cls.id != exclude_id)
+        existing = q.first()
+        if existing:
+            return None, f"Kürzel '{code}' wird bereits von '{existing.name}' verwendet."
+    return code, None
+
+
 @bp.route("/accounts/new", methods=["GET", "POST"])
 @login_required
 def account_new():
     if request.method == "POST":
+        code, err = _validate_code(request.form.get("code", ""), Account)
+        if err:
+            flash(err, "danger")
+            return render_template("accounting/account_form.html", account=None)
         a = Account(
+            code=code,
             name=request.form["name"].strip(),
             description=request.form.get("description", ""),
         )
@@ -58,6 +79,11 @@ def account_new():
 def account_edit(account_id):
     a = db.get_or_404(Account, account_id)
     if request.method == "POST":
+        code, err = _validate_code(request.form.get("code", ""), Account, exclude_id=a.id)
+        if err:
+            flash(err, "danger")
+            return render_template("accounting/account_form.html", account=a)
+        a.code = code
         a.name = request.form["name"].strip()
         a.description = request.form.get("description", "")
         a.active = "active" in request.form
@@ -278,18 +304,30 @@ def booking_new():
     real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
     customers = Customer.query.filter_by(active=True).order_by(Customer.name).all()
     tax_rates = TaxRate.query.order_by(TaxRate.rate).all()
+    default_real_account = RealAccount.query.filter_by(is_default=True, active=True).first()
+    today = date.today()
+
+    def _render_new(keep_date="", **extra):
+        return render_template(
+            "accounting/booking_form.html",
+            booking=None, accounts=accounts,
+            projects=active_projects, real_accounts=real_accounts,
+            customers=customers, tax_rates=tax_rates,
+            default_real_account=default_real_account,
+            today=today,
+            keep_date=keep_date,
+            **extra,
+        )
+
     if request.method == "POST":
         booking_date = date.fromisoformat(request.form["date"])
+        if booking_date > today:
+            flash("Das Buchungsdatum darf nicht in der Zukunft liegen.", "danger")
+            return _render_new(form_data=request.form, keep_date=request.form.get("date", ""))
         fy_locked = _locked_fiscal_year(booking_date)
         if fy_locked:
             flash(f"Das Buchungsjahr {fy_locked.year} ist abgeschlossen. Buchung wurde nicht gespeichert.", "danger")
-            return render_template(
-                "accounting/booking_form.html",
-                booking=None, accounts=accounts,
-                projects=active_projects, real_accounts=real_accounts,
-                customers=customers, tax_rates=tax_rates,
-                form_data=request.form,
-            )
+            return _render_new(form_data=request.form, keep_date=request.form.get("date", ""))
         amount_raw = request.form.get("amount", "0").replace(",", ".")
         amount = Decimal(amount_raw)
         acc = db.get_or_404(Account, int(request.form["account_id"]))
@@ -316,12 +354,11 @@ def booking_new():
         db.session.add(b)
         db.session.commit()
         flash("Buchung gespeichert.", "success")
+        if request.form.get("action") == "weiteres":
+            return redirect(url_for("accounting.booking_new", date=booking_date.isoformat()))
         return redirect(url_for("accounting.bookings"))
-    return render_template(
-        "accounting/booking_form.html", booking=None, accounts=accounts,
-        projects=active_projects, real_accounts=real_accounts, customers=customers,
-        tax_rates=tax_rates,
-    )
+    keep_date = request.args.get("date", "")
+    return _render_new(keep_date=keep_date)
 
 
 @bp.route("/bookings/<int:booking_id>/edit", methods=["GET", "POST"])

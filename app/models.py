@@ -317,6 +317,7 @@ class Project(db.Model):
     __tablename__ = "projects"
 
     id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(3), unique=True, nullable=True)  # 3-stelliges Kürzel (A-Z, 0-9)
     name = db.Column(db.String(100), nullable=False, unique=True)
     description = db.Column(db.Text, nullable=True)
     closed = db.Column(db.Boolean, default=False, nullable=False)
@@ -410,6 +411,7 @@ class Account(db.Model):
     __tablename__ = "accounts"
 
     id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(3), unique=True, nullable=True)  # 3-stelliges Kürzel (A-Z, 0-9)
     name = db.Column(db.String(200), nullable=False)
     description = db.Column(db.Text)
     active = db.Column(db.Boolean, default=True)

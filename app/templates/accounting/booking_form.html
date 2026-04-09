@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ 'Buchung bearbeiten' if booking else 'Neue Buchung' }}{% endblock %}
 {% block page_title %}
-  <i class="fas fa-book mr-2"></i> {{ 'Buchung bearbeiten' if booking else 'Neue Buchung' }}
+<i class="fas fa-book mr-2"></i> {{ 'Buchung bearbeiten' if booking else 'Neue Buchung' }}
 {% endblock %}
 {% set locked = is_verbucht is defined and is_verbucht %}
 {% block content %}
@@ -13,10 +13,11 @@
       </div>
       {% if locked %}
       <div class="card-header bg-warning text-dark py-2">
-        <i class="fas fa-lock mr-1"></i> Verbuchte Buchung — Datum, Betrag, Belegnummer und Steuersatz können nicht mehr geändert werden.
+        <i class="fas fa-lock mr-1"></i> Verbuchte Buchung — Datum, Betrag, Belegnummer und Steuersatz können nicht mehr
+        geändert werden.
       </div>
       {% endif %}
-      <form method="post">
+      <form method="post" id="booking-form" data-new="{{ 'true' if not booking else 'false' }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="card-body">
           <div class="row">
@@ -24,8 +25,9 @@
               <div class="form-group">
                 <label>Datum <span class="text-danger">*</span></label>
                 <input type="date" name="date" class="form-control"
-                  value="{{ booking.date.isoformat() if booking else (form_data.get('date', '') if form_data is defined else '') }}"
-                  {{ 'readonly' if locked }} required>
+                  value="{{ booking.date.isoformat() if booking else (form_data.get('date', '') if form_data is defined else (keep_date if keep_date is defined and keep_date else (today.isoformat() if today is defined else ''))) }}"
+                  {% if not locked and today is defined %}max="{{ today.isoformat() }}" {% endif %} {{ 'readonly' if
+                  locked }} required>
               </div>
             </div>
             <div class="col-md-6">
@@ -34,7 +36,7 @@
                 <div class="input-group">
                   <input type="number" name="amount" id="amount" step="0.01" class="form-control"
                     value="{{ booking.amount if booking else (form_data.get('amount', '') if form_data is defined else '') }}"
-                    {{ 'readonly' if locked }} required>
+                    {{ 'readonly' if locked }} {% if not booking %}autofocus{% endif %} required>
                   <div class="input-group-append">
                     <span class="input-group-text">€</span>
                   </div>
@@ -46,27 +48,17 @@
               </div>
             </div>
           </div>
-          <div class="form-group">
-            <label>Konto <span class="text-danger">*</span></label>
-            <select name="account_id" class="form-control tom-select" required>
-              {% for a in accounts %}
-              <option value="{{ a.id }}" {{ 'selected' if (booking and booking.account_id == a.id) or (not booking and form_data is defined and form_data.get('account_id') == a.id|string) }}>
-                {{ a.name }}
-              </option>
-              {% endfor %}
-            </select>
-          </div>
-          <div class="row">
+    <div class="row">
             <div class="col-md-6">
               <div class="form-group">
-                <label>Steuersatz (MwSt)</label>
-                <select name="tax_rate" id="tax_rate" class="form-control tom-select" {{ 'disabled' if locked }}>
+                <label>Steuersatz (MwSt) <span class="text-danger">*</span></label>
+                <select name="tax_rate" id="tax_rate" class="form-control tom-select" {{ 'disabled' if locked }}
+                  {{ 'required' if not locked }}>
+                  {% if not booking %}<option value="">– bitte wählen –</option>{% endif %}
                   {% for tr in tax_rates %}
-                  <option value="{{ tr.rate }}"
-                    {{ 'selected' if (not booking and (form_data is not defined or not form_data.get('tax_rate')) and tr.rate == 0)
-                       or (not booking and form_data is defined and form_data.get('tax_rate') and form_data.get('tax_rate') == tr.rate|string)
-                       or (booking and not booking.tax_rate and tr.rate == 0)
-                       or (booking and booking.tax_rate and booking.tax_rate == tr.rate) }}>
+                  <option value="{{ tr.rate }}" {{ 'selected' if (not booking and form_data is defined and
+                    form_data.get('tax_rate') and form_data.get('tax_rate')==tr.rate|string) or (booking and not
+                    booking.tax_rate and tr.rate==0) or (booking and booking.tax_rate and booking.tax_rate==tr.rate) }}>
                     {{ tr.label or (tr.rate | int ~ ' %') }}
                   </option>
                   {% endfor %}
@@ -86,109 +78,190 @@
                 <small class="text-muted">Netto: <span id="net_amount_display">–</span> €</small>
               </div>
             </div>
+          </div>          
+          <div class="row">
+            <div class="col-md-8">
+              <div class="form-group">
+                <label>Konto <span class="text-danger">*</span></label>
+                <select name="account_id" class="form-control tom-select" required>
+                  {% if not booking %}<option value="">– bitte wählen –</option>{% endif %}
+                  {% for a in accounts %}
+                  <option value="{{ a.id }}" {{ 'selected' if (booking and booking.account_id==a.id) or (not booking and
+                    form_data is defined and form_data.get('account_id')==a.id|string) }}>
+                    {% if a.code %}{{ a.code }} – {% endif %}{{ a.name }}
+                  </option>
+                  {% endfor %}
+                </select>
+              </div>
+            </div>
+            <div class="col-md-4">
+              <div class="form-group">
+                <label>Projekt</label>
+                <select name="project_id" class="form-control tom-select">
+                  <option value="">– kein Projekt –</option>
+                  {% for p in projects %}
+                  <option value="{{ p.id }}" {{ 'selected' if (booking and booking.project_id==p.id) or (not booking and
+                    form_data is defined and form_data.get('project_id')==p.id|string) }}>
+                    {% if p.code %}{{ p.code }} – {% endif %}{{ p.name }}
+                  </option>
+                  {% endfor %}
+                </select>
+              </div>
+            </div>
           </div>
-          <div class="form-group">
-            <label>Beschreibung <span class="text-danger">*</span></label>
-            <input type="text" name="description" class="form-control"
-              value="{{ booking.description if booking else (form_data.get('description', '') if form_data is defined else '') }}" required>
+      
+          <div class="row">
+            <div class="col-md-2">
+              <div class="form-group">
+                <label>Belegnummer</label>
+                <input type="text" name="reference" class="form-control"
+                  value="{{ booking.reference if booking else (form_data.get('reference', '') if form_data is defined else '') }}"
+                  {{ 'readonly' if locked }}>
+              </div>
+            </div>
+            <div class="col-md-10">
+              <div class="form-group">
+                <label>Beschreibung <span class="text-danger">*</span></label>
+                <input type="text" name="description" class="form-control"
+                  value="{{ booking.description if booking else (form_data.get('description', '') if form_data is defined else '') }}"
+                  required>
+              </div>
+            </div>
           </div>
-          <div class="form-group">
-            <label>Belegnummer</label>
-            <input type="text" name="reference" class="form-control"
-              value="{{ booking.reference if booking else (form_data.get('reference', '') if form_data is defined else '') }}" {{ 'readonly' if locked }}>
+          <div class="row">
+            <div class="col-md-6">
+              <div class="form-group">
+                <label>Kunde</label>
+                <select name="customer_id" class="form-control tom-select">
+                  <option value="">– kein Kunde –</option>
+                  {% for c in customers %}
+                  <option value="{{ c.id }}" {{ 'selected' if (booking and booking.customer_id==c.id) or (not booking and
+                    form_data is defined and form_data.get('customer_id')==c.id|string) }}>
+                    {{ c.name }}
+                  </option>
+                  {% endfor %}
+                </select>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="form-group">
+                <label>Reales Bankkonto</label>
+                <select name="real_account_id" class="form-control tom-select">
+                  <option value="">– kein Bankkonto –</option>
+                  {% for ra in real_accounts %}
+                  <option value="{{ ra.id }}" {{ 'selected' if (booking and booking.real_account_id==ra.id) or (not booking
+                    and form_data is defined and form_data.get('real_account_id')==ra.id|string) or (not booking and
+                    (form_data is not defined or not form_data.get('real_account_id')) and default_real_account and
+                    default_real_account.id==ra.id) }}>
+                    {{ ra.name }}{% if ra.iban %} ({{ ra.iban }}){% endif %}
+                  </option>
+                  {% endfor %}
+                </select>
+              </div>
+            </div>
           </div>
-          <div class="form-group">
-            <label>Reales Bankkonto</label>
-            <select name="real_account_id" class="form-control tom-select">
-              <option value="">– kein Bankkonto –</option>
-              {% for ra in real_accounts %}
-              <option value="{{ ra.id }}"
-                {{ 'selected' if (booking and booking.real_account_id == ra.id) or (not booking and form_data is defined and form_data.get('real_account_id') == ra.id|string) }}>
-                {{ ra.name }}{% if ra.iban %} ({{ ra.iban }}){% endif %}
-              </option>
-              {% endfor %}
-            </select>
-            <small class="text-muted">Welches Bankkonto wurde belastet bzw. hat die Zahlung erhalten?</small>
-          </div>
-          <div class="form-group">
-            <label>Projekt</label>
-            <select name="project_id" class="form-control tom-select">
-              <option value="">– kein Projekt –</option>
-              {% for p in projects %}
-              <option value="{{ p.id }}"
-                {{ 'selected' if (booking and booking.project_id == p.id) or (not booking and form_data is defined and form_data.get('project_id') == p.id|string) }}>
-                {{ p.name }}
-              </option>
-              {% endfor %}
-            </select>
-          </div>
-          <div class="form-group">
-            <label>Kunde</label>
-            <select name="customer_id" class="form-control tom-select">
-              <option value="">– kein Kunde –</option>
-              {% for c in customers %}
-              <option value="{{ c.id }}"
-                {{ 'selected' if (booking and booking.customer_id == c.id) or (not booking and form_data is defined and form_data.get('customer_id') == c.id|string) }}>
-                {{ c.name }}
-              </option>
-              {% endfor %}
-            </select>
-          </div>
+
         </div>
+        <input type="hidden" name="action" id="form_action" value="">
         <div class="card-footer">
+          {% if not booking %}
+          <button type="submit" class="btn btn-primary" id="btn_weiteres" onclick="document.getElementById('form_action').value='weiteres'">
+            <i class="fas fa-plus mr-1"></i> Speichern und weitere Buchung
+          </button>
+          <button type="submit" class="btn btn-outline-primary ml-2" onclick="document.getElementById('form_action').value=''">
+            <i class="fas fa-save mr-1"></i> Speichern
+          </button>
+          {% else %}
           <button type="submit" class="btn btn-primary">
             <i class="fas fa-save mr-1"></i> Speichern
           </button>
-          <a href="{{ url_for('accounting.bookings') }}" class="btn btn-secondary ml-2">Abbrechen</a>
+          {% endif %}
+          <a href="{{ url_for('accounting.bookings') }}" id="btn-abbrechen" class="btn btn-secondary ml-2">Abbrechen</a>
         </div>
       </form>
     </div>
   </div>
 </div>
 <script>
-(function () {
-  var amountEl = document.getElementById('amount');
-  var rateEl = document.getElementById('tax_rate');
-  var displayDiv = document.getElementById('tax_display');
-  var taxAmountEl = document.getElementById('tax_amount_display');
-  var netAmountEl = document.getElementById('net_amount_display');
-  var badgeEl = document.getElementById('buchungstyp_badge');
+  (function () {
+    var amountEl = document.getElementById('amount');
+    var rateEl = document.getElementById('tax_rate');
+    var displayDiv = document.getElementById('tax_display');
+    var taxAmountEl = document.getElementById('tax_amount_display');
+    var netAmountEl = document.getElementById('net_amount_display');
+    var badgeEl = document.getElementById('buchungstyp_badge');
 
-  function updateUI() {
-    var amount = parseFloat(amountEl.value);
-    var rate = parseFloat(rateEl.value) || 0;
+    function updateUI() {
+      var amount = parseFloat(amountEl.value);
+      var rate = parseFloat(rateEl.value) || 0;
 
-    // Buchungstyp-Badge aktualisieren
-    if (isNaN(amount) || amountEl.value.trim() === '') {
-      badgeEl.textContent = '—';
-      badgeEl.className = 'badge badge-secondary';
-    } else if (amount > 0) {
-      badgeEl.textContent = 'Einnahme';
-      badgeEl.className = 'badge badge-success';
-    } else if (amount < 0) {
-      badgeEl.textContent = 'Ausgabe';
-      badgeEl.className = 'badge badge-danger';
-    } else {
-      badgeEl.textContent = 'Betrag = 0';
-      badgeEl.className = 'badge badge-warning';
+      // Buchungstyp-Badge aktualisieren
+      if (isNaN(amount) || amountEl.value.trim() === '') {
+        badgeEl.textContent = '—';
+        badgeEl.className = 'badge badge-secondary';
+      } else if (amount > 0) {
+        badgeEl.textContent = 'Einnahme';
+        badgeEl.className = 'badge badge-success';
+      } else if (amount < 0) {
+        badgeEl.textContent = 'Ausgabe';
+        badgeEl.className = 'badge badge-danger';
+      } else {
+        badgeEl.textContent = 'Betrag = 0';
+        badgeEl.className = 'badge badge-warning';
+      }
+
+      // Steuer-Anzeige
+      var absAmount = Math.abs(amount || 0);
+      if (rate > 0 && absAmount > 0) {
+        var tax = absAmount * rate / (100 + rate);
+        var net = absAmount - tax;
+        taxAmountEl.value = tax.toFixed(2).replace('.', ',');
+        netAmountEl.textContent = net.toFixed(2).replace('.', ',');
+        displayDiv.style.display = '';
+      } else {
+        displayDiv.style.display = 'none';
+      }
     }
 
-    // Steuer-Anzeige
-    var absAmount = Math.abs(amount || 0);
-    if (rate > 0 && absAmount > 0) {
-      var tax = absAmount * rate / (100 + rate);
-      var net = absAmount - tax;
-      taxAmountEl.value = tax.toFixed(2).replace('.', ',');
-      netAmountEl.textContent = net.toFixed(2).replace('.', ',');
-      displayDiv.style.display = '';
-    } else {
-      displayDiv.style.display = 'none';
-    }
-  }
+    amountEl.addEventListener('input', updateUI);
+    rateEl.addEventListener('change', updateUI);
+    updateUI();
 
-  amountEl.addEventListener('input', updateUI);
-  rateEl.addEventListener('change', updateUI);
-  updateUI();
-})();
+    var form = document.getElementById('booking-form');
+    if (form.dataset.new === 'true') {
+      var focusable = 'input:not([type=hidden]):not([readonly]), select, textarea, button';
+      var abbrechenHref = document.getElementById('btn-abbrechen').href;
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') {
+          window.location.href = abbrechenHref;
+        }
+      });
+      form.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && e.ctrlKey) {
+          e.preventDefault();
+          document.getElementById('form_action').value = 'weiteres';
+          form.submit();
+        } else if (e.key === 'Enter' && !e.ctrlKey) {
+          if (e.target.tagName === 'TEXTAREA') return;
+          if (e.target.tagName === 'BUTTON') {
+            e.target.click();
+            return;
+          }
+          e.preventDefault();
+          var fields = Array.from(form.querySelectorAll(focusable)).filter(function (el) {
+            return !el.disabled && el.offsetParent !== null;
+          });
+          var idx = fields.indexOf(e.target);
+          if (idx >= 0 && idx < fields.length - 1) {
+            var next = fields[idx + 1];
+            next.focus();
+            if (next.tagName === 'SELECT' && next.tomselect) {
+              next.tomselect.open();
+            }
+          }
+        }
+      });
+    }
+  })();
 </script>
 {% endblock %}

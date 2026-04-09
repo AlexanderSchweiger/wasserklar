@@ -55,7 +55,7 @@
           <option value="">Alle Projekte</option>
           {% for p in projects_for_filter %}
           <option value="{{ p.id }}" {{ 'selected' if project_id_filter|string == p.id|string }}>
-            {{ p.name }}{% if p.closed %} (abgeschlossen){% endif %}
+            {% if p.code %}{{ p.code }} – {% endif %}{{ p.name }}{% if p.closed %} (abgeschlossen){% endif %}
           </option>
           {% endfor %}
         </select>

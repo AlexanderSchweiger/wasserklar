@@ -59,6 +59,8 @@ def register_commands(app):
             _add_col_if_missing("real_accounts", "icon VARCHAR(50) DEFAULT 'fa-university'", "icon")
             _add_col_if_missing("real_accounts", "is_default INTEGER NOT NULL DEFAULT 0", "is_default")
             _add_col_if_missing("customers", "rechnung_per_email INTEGER NOT NULL DEFAULT 0", "rechnung_per_email")
+            _add_col_if_missing("accounts", "code VARCHAR(3)", "code")
+            _add_col_if_missing("projects", "code VARCHAR(3)", "code")
             conn.commit()
 
         # Standard-Steuersätze anlegen
@@ -122,6 +124,8 @@ def register_commands(app):
             _add_col_if_missing("real_accounts", "icon VARCHAR(50) DEFAULT 'fa-university'", "icon")
             _add_col_if_missing("real_accounts", "is_default INTEGER NOT NULL DEFAULT 0", "is_default")
             _add_col_if_missing("customers", "rechnung_per_email INTEGER NOT NULL DEFAULT 0", "rechnung_per_email")
+            _add_col_if_missing("accounts", "code VARCHAR(3)", "code")
+            _add_col_if_missing("projects", "code VARCHAR(3)", "code")
             conn.commit()
 
         # Standard-Steuersätze anlegen
