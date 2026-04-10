@@ -1,4 +1,4 @@
-/* WG Verwaltung – AdminLTE Custom Styles */
+/* WG Verwaltung – Custom Styles */
 
 /* Status-Badges */
 .badge-entwurf    { background-color: #6c757d; }
@@ -35,6 +35,6 @@ tr.overdue { background-color: #fff3cd !important; }
   flex-wrap: wrap;
   margin-bottom: 1rem;
 }
-.filter-bar .form-group { margin-bottom: 0; }
+.filter-bar .mb-3 { margin-bottom: 0 !important; }
 .filter-bar select,
 .filter-bar input { margin-bottom: 0; }

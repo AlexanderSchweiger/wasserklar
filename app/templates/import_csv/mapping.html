@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Spalten zuordnen{% endblock %}
-{% block page_title %}<i class="fas fa-sliders-h mr-2"></i> Spalten zuordnen{% endblock %}
+{% block page_title %}<i class="fas fa-sliders-h me-2"></i> Spalten zuordnen{% endblock %}
 {% block content %}
 <form method="post">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -11,16 +11,16 @@
       {# ------------------------------------------------------------------ #}
       {# Pflicht- und optionale Felder                                       #}
       {# ------------------------------------------------------------------ #}
-      <div class="card card-warning">
+      <div class="card">
         <div class="card-header">
           <h3 class="card-title">Felder zuordnen</h3>
-          <div class="card-tools">
+          <div class="card-options">
             <small class="text-muted">* Pflichtfeld</small>
           </div>
         </div>
         <div class="card-body p-0">
           <table class="table table-sm table-bordered mb-0">
-            <thead class="thead-light">
+            <thead>
               <tr>
                 <th style="width:35%">Programmfeld</th>
                 <th>CSV-Spalte</th>
@@ -88,8 +88,8 @@
       {# Auto-erkannte Stand-Spalten                                         #}
       {# ------------------------------------------------------------------ #}
       {% if stand_columns %}
-      <div class="callout callout-success">
-        <h6><i class="fas fa-check-circle mr-1"></i> Automatisch erkannte Ablesungen</h6>
+      <div class="alert alert-success">
+        <h6 class="alert-title"><i class="fas fa-check-circle me-1"></i> Automatisch erkannte Ablesungen</h6>
         <p class="mb-1">Folgende Spalten werden automatisch als Zählerstände importiert:</p>
         <ul class="mb-0">
           {% for col, year in stand_columns %}
@@ -98,8 +98,8 @@
         </ul>
       </div>
       {% else %}
-      <div class="callout callout-warning">
-        <i class="fas fa-exclamation-triangle mr-1"></i>
+      <div class="alert alert-warning">
+        <i class="fas fa-exclamation-triangle me-1"></i>
         Keine <code>Stand YYYY</code>-Spalten gefunden. Zählerstände werden nicht importiert.
       </div>
       {% endif %}
@@ -107,12 +107,12 @@
       {# ------------------------------------------------------------------ #}
       {# Duplikate-Behandlung                                                #}
       {# ------------------------------------------------------------------ #}
-      <div class="card card-outline card-secondary">
+      <div class="card">
         <div class="card-header">
-          <h3 class="card-title"><i class="fas fa-copy mr-1"></i> Duplikate-Behandlung</h3>
+          <h3 class="card-title"><i class="fas fa-copy me-1"></i> Duplikate-Behandlung</h3>
         </div>
         <div class="card-body">
-          <div class="form-group mb-0">
+          <div class="mb-0">
             <div class="form-check mb-2">
               <input class="form-check-input" type="radio" name="duplicate_mode"
                      id="mode_skip" value="skip" checked>
@@ -140,13 +140,13 @@
       {# ------------------------------------------------------------------ #}
       {# Daten-Vorschau                                                       #}
       {# ------------------------------------------------------------------ #}
-      <div class="card card-outline card-info">
+      <div class="card">
         <div class="card-header">
           <h3 class="card-title">Datenvorschau (erste 5 Zeilen)</h3>
         </div>
         <div class="card-body p-0" style="overflow-x:auto;">
           <table class="table table-bordered table-sm mb-0" style="font-size:.75rem;min-width:600px">
-            <thead class="thead-light">
+            <thead>
               <tr>
                 {% for col in columns %}
                 <th>{{ col }}</th>
@@ -174,10 +174,10 @@
   <div class="row">
     <div class="col-12">
       <button type="submit" class="btn btn-warning">
-        <i class="fas fa-play mr-1"></i> Import starten
+        <i class="fas fa-play me-1"></i> Import starten
       </button>
-      <a href="{{ url_for('import_csv.upload') }}" class="btn btn-secondary ml-2">
-        <i class="fas fa-arrow-left mr-1"></i> Zurück
+      <a href="{{ url_for('import_csv.upload') }}" class="btn btn-secondary ms-2">
+        <i class="fas fa-arrow-left me-1"></i> Zurück
       </a>
     </div>
   </div>

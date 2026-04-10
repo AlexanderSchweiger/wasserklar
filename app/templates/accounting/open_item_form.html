@@ -1,10 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Offener Posten anlegen{% endblock %}
-{% block page_title %}<i class="fas fa-plus-circle mr-2"></i> Offener Posten anlegen{% endblock %}
+{% block page_title %}<i class="fas fa-plus-circle me-2"></i> Offener Posten anlegen{% endblock %}
 {% block content %}
 <div class="row">
   <div class="col-md-7">
-    <div class="card card-primary card-outline">
+    <div class="card">
       <div class="card-header">
         <h3 class="card-title">Neuen offenen Posten anlegen</h3>
       </div>
@@ -12,8 +12,8 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="card-body">
 
-          <div class="form-group">
-            <label>Kunde <span class="text-danger">*</span></label>
+          <div class="mb-3">
+            <label class="form-label">Kunde <span class="text-danger">*</span></label>
             <select name="customer_id" class="form-control tom-select" required>
               <option value="">— Kunde auswählen —</option>
               {% for c in customers %}
@@ -24,17 +24,17 @@
             </select>
           </div>
 
-          <div class="form-group">
-            <label>Beschreibung / Verwendungszweck <span class="text-danger">*</span></label>
+          <div class="mb-3">
+            <label class="form-label">Beschreibung / Verwendungszweck <span class="text-danger">*</span></label>
             <input type="text" name="description" class="form-control" required
                    value="{{ item.description if item else '' }}"
                    placeholder="z.B. Nachzahlung 2024">
           </div>
 
-          <div class="row">
+          <div class="row g-2">
             <div class="col-md-6">
-              <div class="form-group">
-                <label>Betrag (€) <span class="text-danger">*</span></label>
+              <div class="mb-3">
+                <label class="form-label">Betrag (€) <span class="text-danger">*</span></label>
                 <input type="number" name="amount" class="form-control" step="0.01" min="0.01" required
                        value="{{ '%.2f'|format(item.amount) if item else '' }}"
                        placeholder="0.00">
@@ -42,25 +42,25 @@
             </div>
           </div>
 
-          <div class="row">
+          <div class="row g-2">
             <div class="col-md-6">
-              <div class="form-group">
-                <label>Datum <span class="text-danger">*</span></label>
+              <div class="mb-3">
+                <label class="form-label">Datum <span class="text-danger">*</span></label>
                 <input type="date" name="date" class="form-control" required
                        value="{{ item.date.isoformat() if item else today.isoformat() }}">
               </div>
             </div>
             <div class="col-md-6">
-              <div class="form-group">
-                <label>Fällig bis</label>
+              <div class="mb-3">
+                <label class="form-label">Fällig bis</label>
                 <input type="date" name="due_date" class="form-control"
                        value="{{ item.due_date.isoformat() if item and item.due_date else '' }}">
               </div>
             </div>
           </div>
 
-          <div class="form-group">
-            <label>Notizen</label>
+          <div class="mb-3">
+            <label class="form-label">Notizen</label>
             <textarea name="notes" class="form-control" rows="3"
                       placeholder="Interne Notizen (nicht auf Rechnung)">{{ item.notes if item else '' }}</textarea>
           </div>
@@ -68,9 +68,9 @@
         </div>
         <div class="card-footer">
           <button type="submit" class="btn btn-primary">
-            <i class="fas fa-save mr-1"></i> Speichern
+            <i class="fas fa-save me-1"></i> Speichern
           </button>
-          <a href="{{ url_for('accounting.open_items') }}" class="btn btn-secondary ml-2">Abbrechen</a>
+          <a href="{{ url_for('accounting.open_items') }}" class="btn btn-secondary ms-2">Abbrechen</a>
         </div>
       </form>
     </div>

@@ -1,42 +1,40 @@
 {% extends "base.html" %}
 {% block title %}Neue Umbuchung{% endblock %}
 {% block page_title %}
-  <i class="fas fa-exchange-alt mr-2"></i> Neue Umbuchung
+  <i class="fas fa-exchange-alt me-2"></i> Neue Umbuchung
 {% endblock %}
 {% block content %}
 <div class="row">
   <div class="col-md-6">
-    <div class="card card-primary">
+    <div class="card">
       <div class="card-header">
         <h3 class="card-title">Umbuchung zwischen Bankkonten</h3>
       </div>
       <form method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="card-body">
-          <div class="row">
+          <div class="row g-2">
             <div class="col-md-6">
-              <div class="form-group">
-                <label>Datum <span class="text-danger">*</span></label>
+              <div class="mb-3">
+                <label class="form-label">Datum <span class="text-danger">*</span></label>
                 <input type="date" name="date" class="form-control"
                   value="{{ today }}" required>
               </div>
             </div>
             <div class="col-md-6">
-              <div class="form-group">
-                <label>Betrag (€) <span class="text-danger">*</span></label>
+              <div class="mb-3">
+                <label class="form-label">Betrag (€) <span class="text-danger">*</span></label>
                 <div class="input-group">
                   <input type="number" name="amount" step="0.01" min="0.01"
                     class="form-control" required>
-                  <div class="input-group-append">
-                    <span class="input-group-text">€</span>
-                  </div>
+                  <span class="input-group-text">€</span>
                 </div>
               </div>
             </div>
           </div>
 
-          <div class="form-group">
-            <label>Ausgangskonto <span class="text-danger">*</span></label>
+          <div class="mb-3">
+            <label class="form-label">Ausgangskonto <span class="text-danger">*</span></label>
             <select name="from_real_account_id" id="from_account" class="form-control" required>
               <option value="">– Konto wählen –</option>
               {% for ra in real_accounts %}
@@ -45,11 +43,11 @@
               </option>
               {% endfor %}
             </select>
-            <small class="text-muted">Von diesem Konto wird der Betrag abgebucht.</small>
+            <small class="form-hint">Von diesem Konto wird der Betrag abgebucht.</small>
           </div>
 
-          <div class="form-group">
-            <label>Zielkonto <span class="text-danger">*</span></label>
+          <div class="mb-3">
+            <label class="form-label">Zielkonto <span class="text-danger">*</span></label>
             <select name="to_real_account_id" id="to_account" class="form-control" required>
               <option value="">– Konto wählen –</option>
               {% for ra in real_accounts %}
@@ -58,25 +56,25 @@
               </option>
               {% endfor %}
             </select>
-            <small class="text-muted">Auf dieses Konto wird der Betrag gutgeschrieben.</small>
+            <small class="form-hint">Auf dieses Konto wird der Betrag gutgeschrieben.</small>
           </div>
 
-          <div class="form-group">
-            <label>Beschreibung <span class="text-danger">*</span></label>
+          <div class="mb-3">
+            <label class="form-label">Beschreibung <span class="text-danger">*</span></label>
             <input type="text" name="description" class="form-control"
               placeholder="z. B. Monatliche Überweisung auf Sparkonto" required>
           </div>
 
           <div id="same-account-warning" class="alert alert-warning d-none">
-            <i class="fas fa-exclamation-triangle mr-1"></i>
+            <i class="fas fa-exclamation-triangle me-1"></i>
             Ausgangs- und Zielkonto dürfen nicht gleich sein.
           </div>
         </div>
         <div class="card-footer">
           <button type="submit" class="btn btn-primary" id="submit-btn">
-            <i class="fas fa-save mr-1"></i> Speichern
+            <i class="fas fa-save me-1"></i> Speichern
           </button>
-          <a href="{{ url_for('accounting.transfers') }}" class="btn btn-secondary ml-2">Abbrechen</a>
+          <a href="{{ url_for('accounting.transfers') }}" class="btn btn-secondary ms-2">Abbrechen</a>
         </div>
       </form>
     </div>

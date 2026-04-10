@@ -1,39 +1,39 @@
 {% extends "base.html" %}
 {% block title %}Rechnungslauf{% endblock %}
-{% block page_title %}<i class="fas fa-play mr-2"></i> Rechnungslauf{% endblock %}
+{% block page_title %}<i class="fas fa-play me-2"></i> Rechnungslauf{% endblock %}
 {% block content %}
 <div class="row">
   <div class="col-md-6">
-    <div class="card card-success card-outline">
+    <div class="card">
       <div class="card-header">
         <h3 class="card-title">Rechnungen für ein Jahr erstellen</h3>
       </div>
       <form method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="card-body">
-          <div class="callout callout-info">
+          <div class="alert alert-info">
             Erstellt Rechnungen für alle Objekte mit aktivem Besitzer und einer Zählerablesung im gewählten Jahr.
             Bereits vorhandene Rechnungen (je Objekt und Jahr) werden übersprungen.
             Objekte ohne aktuellen Besitzer werden ebenfalls übersprungen.
           </div>
-          <div class="row">
+          <div class="row g-2">
             <div class="col-md-6">
-              <div class="form-group">
-                <label>Abrechnungsjahr <span class="text-danger">*</span></label>
+              <div class="mb-3">
+                <label class="form-label">Abrechnungsjahr <span class="text-danger">*</span></label>
                 <input type="number" name="year" class="form-control"
                   value="{{ year }}" min="2000" max="2100" required>
               </div>
             </div>
             <div class="col-md-6">
-              <div class="form-group">
-                <label>Zahlungsziel (Tage)</label>
+              <div class="mb-3">
+                <label class="form-label">Zahlungsziel (Tage)</label>
                 <input type="number" name="due_days" class="form-control"
                   value="30" min="1" max="365">
               </div>
             </div>
           </div>
-          <div class="form-group">
-            <label>Tarif <span class="text-danger">*</span></label>
+          <div class="mb-3">
+            <label class="form-label">Tarif <span class="text-danger">*</span></label>
             <select name="tariff_id" class="form-control" required {% if not tariffs %}disabled{% endif %}>
               {% for t in tariffs %}
               <option value="{{ t.id }}">
@@ -48,16 +48,16 @@
             </select>
           </div>
           {% if not tariffs %}
-          <div class="callout callout-warning">
+          <div class="alert alert-warning">
             <a href="{{ url_for('invoices.tariff_new') }}">Zuerst einen Tarif anlegen →</a>
           </div>
           {% endif %}
         </div>
         <div class="card-footer">
           <button type="submit" class="btn btn-success" {% if not tariffs %}disabled{% endif %}>
-            <i class="fas fa-play mr-1"></i> Rechnungen erstellen
+            <i class="fas fa-play me-1"></i> Rechnungen erstellen
           </button>
-          <a href="{{ url_for('invoices.index') }}" class="btn btn-secondary ml-2">Abbrechen</a>
+          <a href="{{ url_for('invoices.index') }}" class="btn btn-secondary ms-2">Abbrechen</a>
         </div>
       </form>
     </div>

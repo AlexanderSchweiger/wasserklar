@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Spalten zuordnen{% endblock %}
-{% block page_title %}<i class="fas fa-columns mr-2"></i> Spalten zuordnen{% endblock %}
+{% block page_title %}<i class="fas fa-columns me-2"></i> Spalten zuordnen{% endblock %}
 {% block content %}
-<div class="card card-warning">
+<div class="card">
   <div class="card-header">
     <h3 class="card-title">Felder der Importdatei zuordnen</h3>
   </div>
@@ -10,26 +10,26 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="confirm" value="1">
     <div class="card-body">
-      <div class="row">
+      <div class="row g-2">
         <div class="col-md-3">
-          <div class="form-group">
-            <label>Spalte: Zählernummer <span class="text-danger">*</span></label>
+          <div class="mb-3">
+            <label class="form-label">Spalte: Zählernummer <span class="text-danger">*</span></label>
             <select name="col_meter" class="form-control" required>
               {% for col in columns %}<option value="{{ col }}">{{ col }}</option>{% endfor %}
             </select>
           </div>
         </div>
         <div class="col-md-3">
-          <div class="form-group">
-            <label>Spalte: Zählerstand <span class="text-danger">*</span></label>
+          <div class="mb-3">
+            <label class="form-label">Spalte: Zählerstand <span class="text-danger">*</span></label>
             <select name="col_value" class="form-control" required>
               {% for col in columns %}<option value="{{ col }}">{{ col }}</option>{% endfor %}
             </select>
           </div>
         </div>
         <div class="col-md-3">
-          <div class="form-group">
-            <label>Spalte: Jahr <small class="text-muted">(optional)</small></label>
+          <div class="mb-3">
+            <label class="form-label">Spalte: Jahr <small class="text-muted">(optional)</small></label>
             <select name="col_year" class="form-control">
               <option value="">— Standard-Jahr —</option>
               {% for col in columns %}<option value="{{ col }}">{{ col }}</option>{% endfor %}
@@ -37,17 +37,17 @@
           </div>
         </div>
         <div class="col-md-3">
-          <div class="form-group">
-            <label>Standard-Jahr</label>
+          <div class="mb-3">
+            <label class="form-label">Standard-Jahr</label>
             <input type="number" name="default_year" class="form-control"
               value="{{ year }}" min="2000" max="2100">
           </div>
         </div>
       </div>
-      <div class="row">
+      <div class="row g-2">
         <div class="col-md-3">
-          <div class="form-group">
-            <label>Spalte: Datum <small class="text-muted">(optional)</small></label>
+          <div class="mb-3">
+            <label class="form-label">Spalte: Datum <small class="text-muted">(optional)</small></label>
             <select name="col_date" class="form-control">
               <option value="">— kein Datum —</option>
               {% for col in columns %}<option value="{{ col }}">{{ col }}</option>{% endfor %}
@@ -59,7 +59,7 @@
       <h5 class="mt-3">Vorschau <small class="text-muted">(erste 5 Zeilen)</small></h5>
       <div class="table-responsive">
         <table class="table table-bordered table-sm">
-          <thead class="thead-light">
+          <thead>
             <tr>{% for col in columns %}<th>{{ col }}</th>{% endfor %}</tr>
           </thead>
           <tbody>
@@ -71,11 +71,11 @@
       </div>
     </div>
     <div class="card-footer">
-      <button type="submit" class="btn btn-warning">
-        <i class="fas fa-file-import mr-1"></i> Import starten
+      <button type="submit" class="btn btn-primary">
+        <i class="fas fa-file-import me-1"></i> Import starten
       </button>
-      <a href="{{ url_for('meters.import_readings') }}" class="btn btn-secondary ml-2">
-        <i class="fas fa-arrow-left mr-1"></i> Zurück
+      <a href="{{ url_for('meters.import_readings') }}" class="btn btn-secondary ms-2">
+        <i class="fas fa-arrow-left me-1"></i> Zurück
       </a>
     </div>
   </form>

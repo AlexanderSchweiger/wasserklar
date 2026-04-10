@@ -1,64 +1,77 @@
 {% extends "base.html" %}
 {% block title %}Dashboard{% endblock %}
-{% block page_title %}<i class="fas fa-tachometer-alt mr-2"></i> Dashboard {{ current_year }}{% endblock %}
+{% block page_title %}<i class="fas fa-tachometer-alt me-2"></i> Dashboard {{ current_year }}{% endblock %}
 {% block content %}
-<!-- Info-Kacheln -->
-<div class="row">
-  <div class="col-lg-4 col-md-6 col-sm-12">
-    <a href="{{ url_for('accounting.open_items') }}">
-      <div class="small-box {{ 'bg-danger' if total_open > 0 else 'bg-success' }}">
-        <div class="inner">
-          <h3>{{ "%.2f"|format(total_open) }} €</h3>
-          <p>Offene Posten ({{ open_invoices }} Rechnungen)</p>
+<!-- Stat-Kacheln -->
+<div class="row row-deck row-cards mb-3">
+  <div class="col-lg-4 col-md-6">
+    <a href="{{ url_for('accounting.open_items') }}" class="text-decoration-none">
+      <div class="card {{ 'bg-danger text-white' if total_open > 0 else 'bg-success text-white' }}">
+        <div class="card-body">
+          <div class="d-flex align-items-center">
+            <div class="subheader">Offene Posten ({{ open_invoices }} Rechnungen)</div>
+          </div>
+          <div class="d-flex align-items-baseline mt-2">
+            <div class="h1 mb-0 me-2">{{ "%.2f"|format(total_open) }} €</div>
+          </div>
+          <div class="mt-2"><i class="fas fa-file-invoice-dollar me-1"></i><small>Details &rarr;</small></div>
         </div>
-        <div class="icon"><i class="fas fa-file-invoice-dollar"></i></div>
-        <span class="small-box-footer">Details <i class="fas fa-arrow-circle-right"></i></span>
       </div>
     </a>
   </div>
-  <div class="col-lg-4 col-md-6 col-sm-12">
-    <a href="{{ url_for('meters.index', year=current_year) }}">
-      <div class="small-box {{ 'bg-warning' if missing_readings > 0 else 'bg-success' }}">
-        <div class="inner">
-          <h3>{{ missing_readings }}</h3>
-          <p>Fehlende Ablesungen {{ current_year }}</p>
+  <div class="col-lg-4 col-md-6">
+    <a href="{{ url_for('meters.index', year=current_year) }}" class="text-decoration-none">
+      <div class="card {{ 'bg-warning text-white' if missing_readings > 0 else 'bg-success text-white' }}">
+        <div class="card-body">
+          <div class="subheader">Fehlende Ablesungen {{ current_year }}</div>
+          <div class="d-flex align-items-baseline mt-2">
+            <div class="h1 mb-0 me-2">{{ missing_readings }}</div>
+          </div>
+          <div class="mt-2"><i class="fas fa-tachometer-alt me-1"></i><small>Zur Übersicht &rarr;</small></div>
         </div>
-        <div class="icon"><i class="fas fa-tachometer-alt"></i></div>
-        <span class="small-box-footer">Zur Übersicht <i class="fas fa-arrow-circle-right"></i></span>
       </div>
     </a>
   </div>
-  <div class="col-lg-4 col-md-6 col-sm-12">
-    <a href="{{ url_for('accounting.report', year=current_year) }}">
-      <div class="small-box {{ 'bg-success' if year_balance >= 0 else 'bg-danger' }}">
-        <div class="inner">
-          <h3>{{ "%.2f"|format(year_balance) }} €</h3>
-          <p>Saldo {{ current_year }}</p>
+  <div class="col-lg-4 col-md-6">
+    <a href="{{ url_for('accounting.report', year=current_year) }}" class="text-decoration-none">
+      <div class="card {{ 'bg-success text-white' if year_balance >= 0 else 'bg-danger text-white' }}">
+        <div class="card-body">
+          <div class="subheader">Saldo {{ current_year }}</div>
+          <div class="d-flex align-items-baseline mt-2">
+            <div class="h1 mb-0 me-2">{{ "%.2f"|format(year_balance) }} €</div>
+          </div>
+          <div class="mt-2"><i class="fas fa-balance-scale me-1"></i><small>Jahresbericht &rarr;</small></div>
         </div>
-        <div class="icon"><i class="fas fa-balance-scale"></i></div>
-        <span class="small-box-footer">Jahresbericht <i class="fas fa-arrow-circle-right"></i></span>
       </div>
     </a>
   </div>
 </div>
 
-<!-- Einnahmen/Ausgaben Zeile -->
-<div class="row">
+<!-- Einnahmen/Ausgaben -->
+<div class="row row-cards mb-3">
   <div class="col-md-6">
-    <div class="info-box">
-      <span class="info-box-icon bg-success elevation-1"><i class="fas fa-arrow-up"></i></span>
-      <div class="info-box-content">
-        <span class="info-box-text">Einnahmen {{ current_year }}</span>
-        <span class="info-box-number">{{ "%.2f"|format(year_income) }} €</span>
+    <div class="card">
+      <div class="card-body">
+        <div class="d-flex align-items-center">
+          <span class="bg-success text-white avatar me-3"><i class="fas fa-arrow-up"></i></span>
+          <div>
+            <div class="text-muted">Einnahmen {{ current_year }}</div>
+            <div class="h3 mb-0 text-success">{{ "%.2f"|format(year_income) }} €</div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
   <div class="col-md-6">
-    <div class="info-box">
-      <span class="info-box-icon bg-danger elevation-1"><i class="fas fa-arrow-down"></i></span>
-      <div class="info-box-content">
-        <span class="info-box-text">Ausgaben {{ current_year }}</span>
-        <span class="info-box-number">{{ "%.2f"|format(year_expense|abs) }} €</span>
+    <div class="card">
+      <div class="card-body">
+        <div class="d-flex align-items-center">
+          <span class="bg-danger text-white avatar me-3"><i class="fas fa-arrow-down"></i></span>
+          <div>
+            <div class="text-muted">Ausgaben {{ current_year }}</div>
+            <div class="h3 mb-0 text-danger">{{ "%.2f"|format(year_expense|abs) }} €</div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -67,17 +80,17 @@
 <!-- Letzte Buchungen -->
 <div class="card">
   <div class="card-header">
-    <h3 class="card-title"><i class="fas fa-clock mr-1"></i> Letzte Buchungen</h3>
-    <div class="card-tools">
+    <h3 class="card-title"><i class="fas fa-clock me-1"></i> Letzte Buchungen</h3>
+    <div class="card-options">
       <a href="{{ url_for('accounting.bookings') }}" class="btn btn-sm btn-outline-secondary">
         Alle anzeigen
       </a>
     </div>
   </div>
   <div class="card-body p-0">
-    <table class="table table-hover mb-0">
-      <thead class="thead-light">
-        <tr><th>Datum</th><th>Konto</th><th>Beschreibung</th><th class="text-right">Betrag</th></tr>
+    <table class="table table-hover table-vcenter mb-0">
+      <thead>
+        <tr><th>Datum</th><th>Konto</th><th>Beschreibung</th><th class="text-end">Betrag</th></tr>
       </thead>
       <tbody>
         {% for b in recent_bookings %}
@@ -85,7 +98,7 @@
           <td>{{ b.date.strftime('%d.%m.%Y') }}</td>
           <td>{{ b.account.name }}</td>
           <td>{{ b.description }}</td>
-          <td class="text-right font-weight-bold {{ 'text-success' if b.amount > 0 else 'text-danger' }}">
+          <td class="text-end fw-bold {{ 'text-success' if b.amount > 0 else 'text-danger' }}">
             {{ "%.2f"|format(b.amount) }} €
           </td>
         </tr>

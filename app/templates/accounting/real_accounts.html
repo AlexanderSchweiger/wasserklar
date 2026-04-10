@@ -1,19 +1,19 @@
 {% extends "base.html" %}
 {% block title %}Bankkonten{% endblock %}
-{% block page_title %}<i class="fas fa-university mr-2"></i> Reale Bankkonten{% endblock %}
+{% block page_title %}<i class="fas fa-university me-2"></i> Reale Bankkonten{% endblock %}
 {% block content %}
 
 <div class="row mb-3">
   <div class="col">
-    <form class="form-inline" method="get">
-      <label class="mr-2">Jahr:</label>
-      <input type="number" name="year" value="{{ year }}" class="form-control form-control-sm mr-3" style="width:90px">
+    <form class="d-flex align-items-center gap-2" method="get">
+      <label class="mb-0">Jahr:</label>
+      <input type="number" name="year" value="{{ year }}" class="form-control form-control-sm" style="width:90px">
       <button type="submit" class="btn btn-sm btn-secondary">Anzeigen</button>
     </form>
   </div>
-  <div class="col text-right">
+  <div class="col text-end">
     <a href="{{ url_for('accounting.real_account_new') }}" class="btn btn-primary btn-sm">
-      <i class="fas fa-plus mr-1"></i> Neues Bankkonto
+      <i class="fas fa-plus me-1"></i> Neues Bankkonto
     </a>
   </div>
 </div>
@@ -22,17 +22,17 @@
   {% for ra in real_accounts %}
   {% set s = saldi[ra.id] %}
   <div class="col-md-6 col-lg-4">
-    <div class="card {{ 'card-outline card-secondary' if not ra.active else 'card-primary card-outline' }}">
+    <div class="card">
       <div class="card-header">
         <h3 class="card-title">
-          <i class="fas fa-university mr-1"></i>
+          <i class="fas fa-university me-1"></i>
           {{ ra.name }}
-          {% if ra.is_default %}<span class="badge badge-success ml-1">Standard</span>{% endif %}
-          {% if not ra.active %}<span class="badge badge-secondary ml-1">Inaktiv</span>{% endif %}
+          {% if ra.is_default %}<span class="badge bg-success ms-1">Standard</span>{% endif %}
+          {% if not ra.active %}<span class="badge bg-secondary ms-1">Inaktiv</span>{% endif %}
         </h3>
-        <div class="card-tools">
+        <div class="card-options">
           <a href="{{ url_for('accounting.real_account_edit', ra_id=ra.id) }}"
-             class="btn btn-sm btn-tool" title="Bearbeiten">
+             class="btn btn-sm btn-ghost-secondary" title="Bearbeiten">
             <i class="fas fa-edit"></i>
           </a>
         </div>
@@ -65,25 +65,25 @@
               </td>
             </tr>
             <tr class="table-active">
-              <td class="font-weight-bold">Stand 31.12.{{ year }}</td>
-              <td class="font-weight-bold {{ 'text-success' if s.balance >= 0 else 'text-danger' }}">
+              <td class="fw-bold">Stand 31.12.{{ year }}</td>
+              <td class="fw-bold {{ 'text-success' if s.balance >= 0 else 'text-danger' }}">
                 {{ "%.2f"|format(s.balance) }} €
               </td>
             </tr>
           </tbody>
         </table>
       </div>
-      <div class="card-footer text-right py-2">
+      <div class="card-footer text-end py-2">
         <a href="{{ url_for('accounting.bookings') }}?real_account_id={{ ra.id }}&year={{ year }}"
            class="btn btn-sm btn-outline-secondary">
-          <i class="fas fa-list mr-1"></i> Buchungen anzeigen
+          <i class="fas fa-list me-1"></i> Buchungen anzeigen
         </a>
       </div>
     </div>
   </div>
   {% else %}
   <div class="col">
-    <div class="callout callout-info">
+    <div class="alert alert-info">
       Noch keine Bankkonten angelegt.
       <a href="{{ url_for('accounting.real_account_new') }}">Erstes Bankkonto anlegen</a>
     </div>

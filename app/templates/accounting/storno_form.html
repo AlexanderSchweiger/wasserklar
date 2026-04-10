@@ -1,47 +1,47 @@
 {% extends "base.html" %}
 {% block title %}Buchung stornieren{% endblock %}
 {% block page_title %}
-  <i class="fas fa-ban mr-2"></i> Buchung stornieren
+  <i class="fas fa-ban me-2"></i> Buchung stornieren
 {% endblock %}
 {% block content %}
 <div class="row">
   <div class="col-md-7">
 
     {# Ursprungsbuchung – read-only #}
-    <div class="card card-outline card-secondary mb-3">
+    <div class="card mb-3">
       <div class="card-header">
         <h3 class="card-title">Ursprungsbuchung</h3>
       </div>
       <div class="card-body pb-0">
-        <div class="row">
+        <div class="row g-2">
           <div class="col-sm-4">
-            <div class="form-group">
-              <label class="text-muted small">Datum</label>
-              <p class="font-weight-bold">{{ booking.date.strftime('%d.%m.%Y') }}</p>
+            <div class="mb-3">
+              <label class="text-muted small form-label">Datum</label>
+              <p class="fw-bold">{{ booking.date.strftime('%d.%m.%Y') }}</p>
             </div>
           </div>
           <div class="col-sm-4">
-            <div class="form-group">
-              <label class="text-muted small">Betrag</label>
-              <p class="font-weight-bold {{ 'text-success' if booking.amount > 0 else 'text-danger' }}">
+            <div class="mb-3">
+              <label class="text-muted small form-label">Betrag</label>
+              <p class="fw-bold {{ 'text-success' if booking.amount > 0 else 'text-danger' }}">
                 {{ "%.2f"|format(booking.amount) }} €
               </p>
             </div>
           </div>
           <div class="col-sm-4">
-            <div class="form-group">
-              <label class="text-muted small">Konto</label>
+            <div class="mb-3">
+              <label class="text-muted small form-label">Konto</label>
               <p>{{ booking.account.name }}</p>
             </div>
           </div>
         </div>
-        <div class="form-group">
-          <label class="text-muted small">Beschreibung</label>
+        <div class="mb-3">
+          <label class="text-muted small form-label">Beschreibung</label>
           <p>{{ booking.description }}</p>
         </div>
         {% if booking.reference %}
-        <div class="form-group">
-          <label class="text-muted small">Belegnummer</label>
+        <div class="mb-3">
+          <label class="text-muted small form-label">Belegnummer</label>
           <p>{{ booking.reference }}</p>
         </div>
         {% endif %}
@@ -50,7 +50,7 @@
 
     {# Storno-Gegenbuchung – Info #}
     <div class="alert alert-warning">
-      <i class="fas fa-info-circle mr-1"></i>
+      <i class="fas fa-info-circle me-1"></i>
       Es wird eine Gegenbuchung über
       <strong>{{ "%.2f"|format(booking.amount * -1) }} €</strong>
       auf dem Konto <strong>{{ booking.account.name }}</strong> erstellt.
@@ -60,7 +60,7 @@
     {# Warnung: Rechnung wird storniert #}
     {% if booking.invoice_id %}
     <div class="alert alert-danger">
-      <i class="fas fa-exclamation-triangle mr-1"></i>
+      <i class="fas fa-exclamation-triangle me-1"></i>
       Diese Buchung ist mit einer Rechnung verknüpft.
       <strong>Die Rechnung wird ebenfalls auf "Storniert" gesetzt</strong>
       und ist danach ungültig. Bitte anschließend eine neue Rechnung ausstellen.
@@ -70,7 +70,7 @@
     {# Offener Posten #}
     {% if booking.open_item %}
     <div class="alert alert-info">
-      <i class="fas fa-exclamation-circle mr-1"></i>
+      <i class="fas fa-exclamation-circle me-1"></i>
       Zu dieser Buchung existiert ein offener Posten:
       <strong>{{ booking.open_item.description }}</strong>
       ({{ "%.2f"|format(booking.open_item.amount) }} €,
@@ -79,25 +79,25 @@
     {% endif %}
 
     {# Storno-Formular #}
-    <div class="card card-danger">
+    <div class="card border-danger">
       <div class="card-header">
         <h3 class="card-title">Storno durchführen</h3>
       </div>
       <form method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="card-body">
-          <div class="form-group">
-            <label>Storno-Grund <span class="text-danger">*</span></label>
+          <div class="mb-3">
+            <label class="form-label">Storno-Grund <span class="text-danger">*</span></label>
             <textarea name="storno_reason" class="form-control" rows="3"
                       placeholder="Bitte Grund für die Stornierung angeben …"
                       required minlength="5">{{ request.form.get('storno_reason', '') }}</textarea>
           </div>
           {% if booking.open_item and booking.open_item.status != 'Offen' %}
-          <div class="form-group">
-            <div class="custom-control custom-checkbox">
-              <input type="checkbox" class="custom-control-input" id="close_open_item"
+          <div class="mb-3">
+            <div class="form-check">
+              <input type="checkbox" class="form-check-input" id="close_open_item"
                      name="close_open_item" value="1">
-              <label class="custom-control-label" for="close_open_item">
+              <label class="form-check-label" for="close_open_item">
                 Offenen Posten auf "Offen" zurücksetzen
                 <small class="text-muted d-block">
                   (Hebt die bisherige Zahlung am offenen Posten auf)
@@ -109,9 +109,9 @@
         </div>
         <div class="card-footer">
           <button type="submit" class="btn btn-danger">
-            <i class="fas fa-ban mr-1"></i> Storno durchführen
+            <i class="fas fa-ban me-1"></i> Storno durchführen
           </button>
-          <a href="{{ url_for('accounting.bookings') }}" class="btn btn-default ml-2">
+          <a href="{{ url_for('accounting.bookings') }}" class="btn btn-outline-secondary ms-2">
             Abbrechen
           </a>
         </div>

@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 {% block title %}Rechnung aus offenem Posten{% endblock %}
-{% block page_title %}<i class="fas fa-file-invoice mr-2"></i> Rechnung generieren{% endblock %}
+{% block page_title %}<i class="fas fa-file-invoice me-2"></i> Rechnung generieren{% endblock %}
 {% block content %}
 <div class="row">
   <div class="col-md-10">
-    <div class="card card-success card-outline">
+    <div class="card">
       <div class="card-header">
         <h3 class="card-title">
           Rechnung für: <strong>{{ item.customer.name }}</strong>
-          <small class="text-muted ml-2">– {{ item.description }}</small>
+          <small class="text-muted ms-2">– {{ item.description }}</small>
         </h3>
       </div>
       <form method="post" id="invoiceForm">
@@ -16,22 +16,22 @@
         <div class="card-body">
 
           {# ---- Rechnungskopf ---- #}
-          <div class="row">
+          <div class="row g-2">
             <div class="col-md-4">
-              <div class="form-group">
-                <label>Rechnungsdatum <span class="text-danger">*</span></label>
+              <div class="mb-3">
+                <label class="form-label">Rechnungsdatum <span class="text-danger">*</span></label>
                 <input type="date" name="date" class="form-control" required value="{{ today.isoformat() }}">
               </div>
             </div>
             <div class="col-md-4">
-              <div class="form-group">
-                <label>Fällig bis</label>
+              <div class="mb-3">
+                <label class="form-label">Fällig bis</label>
                 <input type="date" name="due_date" class="form-control">
               </div>
             </div>
           </div>
-          <div class="form-group">
-            <label>Notizen / Freitext (erscheint auf der Rechnung)</label>
+          <div class="mb-3">
+            <label class="form-label">Notizen / Freitext (erscheint auf der Rechnung)</label>
             <textarea name="notes" class="form-control" rows="2"
                       placeholder="z.B. Nachzahlung gemäß Abrechnung …">{{ item.notes or '' }}</textarea>
           </div>
@@ -52,14 +52,14 @@
           <div class="btn-group mt-2" role="group">
             {% if tariffs %}
             <button type="button" class="btn btn-outline-info btn-sm" onclick="addTariffRow()">
-              <i class="fas fa-plus mr-1"></i> Tarif-Paket
+              <i class="fas fa-plus me-1"></i> Tarif-Paket
             </button>
             {% endif %}
             <button type="button" class="btn btn-outline-secondary btn-sm" onclick="addWaterRow()">
-              <i class="fas fa-plus mr-1"></i> Wasser m³
+              <i class="fas fa-plus me-1"></i> Wasser m³
             </button>
             <button type="button" class="btn btn-outline-primary btn-sm" onclick="addFreeRow()">
-              <i class="fas fa-plus mr-1"></i> Freie Position
+              <i class="fas fa-plus me-1"></i> Freie Position
             </button>
           </div>
 
@@ -190,9 +190,9 @@
         </div>
         <div class="card-footer">
           <button type="submit" class="btn btn-success" id="submitBtn" disabled>
-            <i class="fas fa-file-invoice mr-1"></i> Rechnung erstellen (Entwurf)
+            <i class="fas fa-file-invoice me-1"></i> Rechnung erstellen (Entwurf)
           </button>
-          <a href="{{ url_for('accounting.open_items') }}" class="btn btn-secondary ml-2">Abbrechen</a>
+          <a href="{{ url_for('accounting.open_items') }}" class="btn btn-secondary ms-2">Abbrechen</a>
         </div>
       </form>
     </div>
@@ -237,7 +237,6 @@ function updateTariffPrice(select) {
   const opt = select.options[select.selectedIndex];
   const price = opt.dataset.price || '';
   row.querySelector('.price-display').value = price ? parseFloat(price).toFixed(4) : '';
-  // recalc if consumption filled
   calcTariffAmount(row.querySelector('.consumption-input'));
 }
 

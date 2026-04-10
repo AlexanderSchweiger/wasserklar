@@ -1,26 +1,26 @@
 {% extends "base.html" %}
 {% block title %}Rechnungsnummer-Zähler{% endblock %}
-{% block page_title %}<i class="fas fa-sort-numeric-up mr-2"></i> Rechnungsnummer-Zähler{% endblock %}
+{% block page_title %}<i class="fas fa-sort-numeric-up me-2"></i> Rechnungsnummer-Zähler{% endblock %}
 {% block content %}
 <div class="row">
   <div class="col-md-8">
     <div class="card">
       <div class="card-header">
         <h3 class="card-title">Zähler pro Jahr</h3>
-        <div class="card-tools">
+        <div class="card-options">
           <a href="{{ url_for('invoices.index') }}" class="btn btn-sm btn-secondary">
-            <i class="fas fa-arrow-left mr-1"></i> Zurück
+            <i class="fas fa-arrow-left me-1"></i> Zurück
           </a>
         </div>
       </div>
       <div class="card-body p-0">
         <table class="table table-hover mb-0">
-          <thead class="thead-light">
+          <thead>
             <tr>
               <th>Jahr</th>
-              <th class="text-right">Rechnungen</th>
+              <th class="text-end">Rechnungen</th>
               <th>Höchste Nr.</th>
-              <th class="text-right">Nächste Nr.</th>
+              <th class="text-end">Nächste Nr.</th>
               <th style="width:340px">Zurücksetzen</th>
             </tr>
           </thead>
@@ -28,9 +28,9 @@
             {% for row in rows %}
             <tr>
               <td><strong>{{ row.year }}</strong></td>
-              <td class="text-right">{{ row.count }}</td>
+              <td class="text-end">{{ row.count }}</td>
               <td><code>{{ row.max_nr }}</code></td>
-              <td class="text-right">
+              <td class="text-end">
                 {% if row.next_seq != '–' %}
                 <code>{{ row.year }}-{{ '%05d' % row.next_seq }}</code>
                 {% else %}
@@ -39,17 +39,15 @@
               </td>
               <td>
                 <div class="d-flex" style="gap:6px; flex-wrap:wrap">
-                  <!-- Auto-Reset -->
                   <form method="post"
                         action="{{ url_for('invoices.counter_reset', year=row.year) }}"
                         onsubmit="return confirm('Zähler für {{ row.year }} automatisch zurücksetzen?')">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="mode" value="auto">
                     <button type="submit" class="btn btn-sm btn-outline-secondary" title="Auf höchste vorhandene + 1 setzen">
-                      <i class="fas fa-sync-alt mr-1"></i> Auto
+                      <i class="fas fa-sync-alt me-1"></i> Auto
                     </button>
                   </form>
-                  <!-- Manuell -->
                   <form method="post"
                         action="{{ url_for('invoices.counter_reset', year=row.year) }}"
                         class="d-flex" style="gap:4px"
@@ -61,7 +59,7 @@
                            placeholder="Nr."
                            value="{{ row.next_seq if row.next_seq != '–' else 1 }}">
                     <button type="submit" class="btn btn-sm btn-warning">
-                      <i class="fas fa-pencil-alt mr-1"></i> Setzen
+                      <i class="fas fa-pencil-alt me-1"></i> Setzen
                     </button>
                   </form>
                 </div>
@@ -77,8 +75,8 @@
       </div>
     </div>
 
-    <div class="callout callout-info">
-      <h5>Hinweis</h5>
+    <div class="alert alert-info">
+      <h4 class="alert-title">Hinweis</h4>
       <p class="mb-0">
         <strong>Auto</strong> setzt den Zähler auf die höchste vorhandene Nummer + 1 (sinnvoll nach dem Löschen von Entwürfen).<br>
         <strong>Setzen</strong> setzt den Zähler auf einen beliebigen Wert. Die nächste erstellte Rechnung erhält diese Nummer.

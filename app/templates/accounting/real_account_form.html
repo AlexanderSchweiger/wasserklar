@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% block title %}{{ 'Bankkonto bearbeiten' if real_account else 'Neues Bankkonto' }}{% endblock %}
 {% block page_title %}
-  <i class="fas fa-university mr-2"></i>
+  <i class="fas fa-university me-2"></i>
   {{ 'Bankkonto bearbeiten' if real_account else 'Neues Bankkonto' }}
 {% endblock %}
 {% block content %}
 <div class="row">
   <div class="col-md-6">
-    <div class="card card-primary">
+    <div class="card">
       <div class="card-header">
         <h3 class="card-title">Kontodaten</h3>
       </div>
@@ -16,39 +16,37 @@
         <input type="hidden" name="icon" id="icon-input"
                value="{{ real_account.icon if real_account and real_account.icon else 'fa-university' }}">
         <div class="card-body">
-          <div class="form-group">
-            <label>Name <span class="text-danger">*</span></label>
+          <div class="mb-3">
+            <label class="form-label">Name <span class="text-danger">*</span></label>
             <input type="text" name="name" class="form-control" required
               value="{{ real_account.name if real_account else '' }}"
               placeholder="z. B. Girokonto Raiffeisenbank">
           </div>
-          <div class="form-group">
-            <label>IBAN</label>
+          <div class="mb-3">
+            <label class="form-label">IBAN</label>
             <input type="text" name="iban" class="form-control"
               value="{{ real_account.iban if real_account else '' }}"
               placeholder="AT12 3456 7890 1234 5678">
           </div>
-          <div class="form-group">
-            <label>Beschreibung</label>
+          <div class="mb-3">
+            <label class="form-label">Beschreibung</label>
             <input type="text" name="description" class="form-control"
               value="{{ real_account.description if real_account else '' }}">
           </div>
-          <div class="form-group">
-            <label>Anfangssaldo (€)</label>
+          <div class="mb-3">
+            <label class="form-label">Anfangssaldo (€)</label>
             <div class="input-group">
               <input type="number" name="opening_balance" step="0.01" class="form-control"
                 value="{{ real_account.opening_balance if real_account else '0.00' }}">
-              <div class="input-group-append">
-                <span class="input-group-text">€</span>
-              </div>
+              <span class="input-group-text">€</span>
             </div>
-            <small class="text-muted">
+            <small class="form-hint">
               Kontostand vor der ersten im Programm erfassten Buchung (z. B. Stand per 1.1.{{ '' }}).
               Wird zum Berechnen des aktuellen Saldos addiert.
             </small>
           </div>
-          <div class="form-group">
-            <label>Icon</label>
+          <div class="mb-3">
+            <label class="form-label">Icon</label>
             <div class="d-flex flex-wrap" style="gap:8px">
               {% set icons = [
                 ('fa-university',         'Bank'),
@@ -87,34 +85,34 @@
               </div>
               {% endfor %}
             </div>
-            <small class="text-muted mt-1 d-block">
-              Gewählt: <i id="icon-preview" class="fas {{ real_account.icon if real_account and real_account.icon else 'fa-university' }} mr-1"></i>
+            <small class="form-hint mt-1 d-block">
+              Gewählt: <i id="icon-preview" class="fas {{ real_account.icon if real_account and real_account.icon else 'fa-university' }} me-1"></i>
               <span id="icon-label">{{ real_account.icon if real_account and real_account.icon else 'fa-university' }}</span>
             </small>
           </div>
-          <div class="form-group">
-            <div class="custom-control custom-switch">
-              <input type="checkbox" class="custom-control-input" id="is_default" name="is_default"
+          <div class="mb-3">
+            <div class="form-check form-switch">
+              <input type="checkbox" class="form-check-input" id="is_default" name="is_default"
                 {{ 'checked' if real_account and real_account.is_default }}>
-              <label class="custom-control-label" for="is_default">Standardkonto</label>
+              <label class="form-check-label" for="is_default">Standardkonto</label>
             </div>
-            <small class="text-muted">Wird bei neuen Buchungen automatisch vorausgewählt.</small>
+            <small class="form-hint">Wird bei neuen Buchungen automatisch vorausgewählt.</small>
           </div>
           {% if real_account %}
-          <div class="form-group">
-            <div class="custom-control custom-switch">
-              <input type="checkbox" class="custom-control-input" id="active" name="active"
+          <div class="mb-3">
+            <div class="form-check form-switch">
+              <input type="checkbox" class="form-check-input" id="active" name="active"
                 {{ 'checked' if real_account.active }}>
-              <label class="custom-control-label" for="active">Konto aktiv</label>
+              <label class="form-check-label" for="active">Konto aktiv</label>
             </div>
           </div>
           {% endif %}
         </div>
         <div class="card-footer">
           <button type="submit" class="btn btn-primary">
-            <i class="fas fa-save mr-1"></i> Speichern
+            <i class="fas fa-save me-1"></i> Speichern
           </button>
-          <a href="{{ url_for('accounting.real_accounts') }}" class="btn btn-secondary ml-2">Abbrechen</a>
+          <a href="{{ url_for('accounting.real_accounts') }}" class="btn btn-secondary ms-2">Abbrechen</a>
         </div>
       </form>
     </div>
@@ -130,11 +128,11 @@
 
   function selectIcon(fa) {
     input.value = fa;
-    preview.className = 'fas ' + fa + ' mr-1';
+    preview.className = 'fas ' + fa + ' me-1';
     label.textContent = fa;
     swatches.forEach(s => {
       if (s.dataset.icon === fa) {
-        s.style.borderColor = '#007bff';
+        s.style.borderColor = '#0054a6';
         s.style.background = '#e8f0fe';
       } else {
         s.style.borderColor = '#dee2e6';

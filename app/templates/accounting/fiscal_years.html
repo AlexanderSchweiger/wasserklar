@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Buchungsjahre{% endblock %}
-{% block page_title %}<i class="fas fa-calendar-alt mr-2"></i> Buchungsjahre{% endblock %}
+{% block page_title %}<i class="fas fa-calendar-alt me-2"></i> Buchungsjahre{% endblock %}
 {% block content %}
 <div class="card">
   <div class="card-header">
     <h3 class="card-title">Buchungsjahre verwalten</h3>
-    <div class="card-tools">
+    <div class="card-options">
       <a href="{{ url_for('accounting.fiscal_year_new') }}" class="btn btn-primary btn-sm">
-        <i class="fas fa-plus mr-1"></i> Neues Buchungsjahr
+        <i class="fas fa-plus me-1"></i> Neues Buchungsjahr
       </a>
     </div>
   </div>
@@ -33,9 +33,9 @@
           <td>{{ fy.start_date.strftime('%d.%m.%Y') }} – {{ fy.end_date.strftime('%d.%m.%Y') }}</td>
           <td>
             {% if fy.closed %}
-            <span class="badge badge-danger"><i class="fas fa-lock mr-1"></i>Abgeschlossen</span>
+            <span class="badge bg-danger"><i class="fas fa-lock me-1"></i>Abgeschlossen</span>
             {% else %}
-            <span class="badge badge-success"><i class="fas fa-lock-open mr-1"></i>Offen</span>
+            <span class="badge bg-success"><i class="fas fa-lock-open me-1"></i>Offen</span>
             {% endif %}
           </td>
           <td>
@@ -44,23 +44,23 @@
           <td>
             {% if fy.closed_by %}{{ fy.closed_by.username }}{% else %}–{% endif %}
           </td>
-          <td class="text-right">
+          <td class="text-end">
             {% if not fy.closed %}
             <a href="{{ url_for('accounting.fiscal_year_close', year=fy.year) }}"
                class="btn btn-warning btn-sm">
-              <i class="fas fa-lock mr-1"></i> Abschließen
+              <i class="fas fa-lock me-1"></i> Abschließen
             </a>
             {% else %}
             <a href="{{ url_for('accounting.fiscal_year_reopen', year=fy.year) }}"
                class="btn btn-outline-secondary btn-sm">
-              <i class="fas fa-lock-open mr-1"></i> Wieder öffnen
+              <i class="fas fa-lock-open me-1"></i> Wieder öffnen
             </a>
             {% endif %}
           </td>
         </tr>
         {% if fy.reopen_logs.count() > 0 %}
         <tr class="bg-light">
-          <td colspan="6" class="pl-4 pt-1 pb-1">
+          <td colspan="6" class="ps-4 pt-1 pb-1">
             <small class="text-muted"><strong>Wiederöffnungsprotokoll:</strong></small>
             <ul class="mb-0 mt-1" style="font-size:0.85em;">
               {% for log in fy.reopen_logs %}

@@ -3,20 +3,20 @@
   <input type="hidden" name="year" value="{{ year }}">
   <div class="px-3 py-2 border-bottom">
     <button type="submit" class="btn btn-success btn-sm">
-      <i class="fas fa-save mr-1"></i> Alle speichern
+      <i class="fas fa-save me-1"></i> Alle speichern
     </button>
-    <small class="text-muted ml-2">Nur befüllte Felder werden gespeichert.</small>
+    <small class="text-muted ms-2">Nur befüllte Felder werden gespeichert.</small>
   </div>
   <table class="table table-hover table-striped mb-0">
-    <thead class="thead-light">
+    <thead>
       <tr>
         <th>Besitzer</th>
         <th>Objekt</th>
         <th>Zählernummer</th>
         <th>Standort</th>
-        <th class="text-right">Stand {{ year - 1 }}</th>
-        <th class="text-right">Neuer Stand (m³)</th>
-        <th class="text-right">Verbrauch</th>
+        <th class="text-end">Stand {{ year - 1 }}</th>
+        <th class="text-end">Neuer Stand (m³)</th>
+        <th class="text-end">Verbrauch</th>
       </tr>
     </thead>
     <tbody>
@@ -38,17 +38,17 @@
         <td>{{ meter.property.label() }}</td>
         <td><code>{{ meter.meter_number }}</code></td>
         <td>{{ meter.location or '—' }}</td>
-        <td class="text-right text-muted">
+        <td class="text-end text-muted">
           {% if repl %}
             {% if meter.initial_value is not none %}
               {{ "%d"|format(meter.initial_value) }} m³
             {% else %}—{% endif %}
-            <span class="badge badge-warning ml-1" title="Zähler wurde in {{ year }} gewechselt">Tausch</span>
+            <span class="badge bg-warning ms-1" title="Zähler wurde in {{ year }} gewechselt">Tausch</span>
           {% elif prev_reading %}
             {{ "%d"|format(prev_reading.value) }} m³
           {% else %}—{% endif %}
         </td>
-        <td class="text-right">
+        <td class="text-end">
           <input type="number"
                  name="value_{{ meter.id }}"
                  class="form-control form-control-sm d-inline-block quick-input"
@@ -60,7 +60,7 @@
                  step="1" min="0"
                  placeholder="Stand eingeben">
         </td>
-        <td class="text-right consumption-display" id="cons-{{ meter.id }}">
+        <td class="text-end consumption-display" id="cons-{{ meter.id }}">
           {% if reading and reading.consumption is not none %}
             {{ "%d"|format(reading.consumption) }} m³
           {% else %}—{% endif %}
@@ -83,13 +83,10 @@ function calcConsumption(input) {
     cell.textContent = '—';
   }
 }
-// Vorhandene Stände beim Laden einmalig berechnen
 const quickInputs = Array.from(document.querySelectorAll('.quick-input'));
 quickInputs.forEach(function(inp) {
   if (inp.value !== '') calcConsumption(inp);
 });
-
-// Enter springt zur nächsten Eingabe statt Formular abzusenden
 quickInputs.forEach(function(inp, i) {
   inp.addEventListener('keydown', function(e) {
     if (e.key === 'Enter') {

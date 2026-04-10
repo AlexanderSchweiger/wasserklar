@@ -1,37 +1,43 @@
 {% extends "base.html" %}
 {% block title %}USt-Voranmeldung {{ year }}{% endblock %}
-{% block page_title %}<i class="fas fa-percentage mr-2"></i> Umsatzsteuervoranmeldung{% endblock %}
+{% block page_title %}<i class="fas fa-percentage me-2"></i> Umsatzsteuervoranmeldung{% endblock %}
 {% block content %}
 
 {# --- Filterleiste --- #}
 <div class="row mb-3">
-  <div class="col-md-6">
-    <form method="get" class="form-inline">
-      <label class="mr-2">Jahr</label>
-      <input type="number" name="year" value="{{ year }}" min="2000" max="2100"
-             class="form-control form-control-sm mr-3" style="width:90px">
-      <label class="mr-2">Zeitraum</label>
-      <select name="quartal" class="form-control form-control-sm mr-3">
-        <option value="0" {% if quartal == 0 %}selected{% endif %}>Gesamtjahr</option>
-        <option value="1" {% if quartal == 1 %}selected{% endif %}>Q1 (Jän–Mär)</option>
-        <option value="2" {% if quartal == 2 %}selected{% endif %}>Q2 (Apr–Jun)</option>
-        <option value="3" {% if quartal == 3 %}selected{% endif %}>Q3 (Jul–Sep)</option>
-        <option value="4" {% if quartal == 4 %}selected{% endif %}>Q4 (Okt–Dez)</option>
-      </select>
-      <button type="submit" class="btn btn-sm btn-secondary mr-2">
-        <i class="fas fa-sync mr-1"></i> Anzeigen
-      </button>
-      <a href="{{ url_for('accounting.export_ust_csv', year=year, quartal=quartal) }}"
-         class="btn btn-sm btn-outline-secondary">
-        <i class="fas fa-file-csv mr-1"></i> CSV Export
-      </a>
+  <div class="col-md-8">
+    <form method="get" class="d-flex flex-wrap align-items-end gap-3">
+      <div>
+        <label class="form-label mb-1">Jahr</label>
+        <input type="number" name="year" value="{{ year }}" min="2000" max="2100"
+               class="form-control form-control-sm" style="width:90px">
+      </div>
+      <div>
+        <label class="form-label mb-1">Zeitraum</label>
+        <select name="quartal" class="form-control form-control-sm">
+          <option value="0" {% if quartal == 0 %}selected{% endif %}>Gesamtjahr</option>
+          <option value="1" {% if quartal == 1 %}selected{% endif %}>Q1 (Jän–Mär)</option>
+          <option value="2" {% if quartal == 2 %}selected{% endif %}>Q2 (Apr–Jun)</option>
+          <option value="3" {% if quartal == 3 %}selected{% endif %}>Q3 (Jul–Sep)</option>
+          <option value="4" {% if quartal == 4 %}selected{% endif %}>Q4 (Okt–Dez)</option>
+        </select>
+      </div>
+      <div class="d-flex gap-2 align-items-end">
+        <button type="submit" class="btn btn-sm btn-secondary">
+          <i class="fas fa-sync me-1"></i> Anzeigen
+        </button>
+        <a href="{{ url_for('accounting.export_ust_csv', year=year, quartal=quartal) }}"
+           class="btn btn-sm btn-outline-secondary">
+          <i class="fas fa-file-csv me-1"></i> CSV Export
+        </a>
+      </div>
     </form>
   </div>
 </div>
 
 {# --- Zeitraum-Info --- #}
 <p class="text-muted mb-3">
-  <i class="fas fa-calendar-alt mr-1"></i>
+  <i class="fas fa-calendar-alt me-1"></i>
   Zeitraum: <strong>{{ date_from.strftime("%d.%m.%Y") }}</strong> bis
   <strong>{{ date_to.strftime("%d.%m.%Y") }}</strong>
   &mdash; nur Buchungen mit Steuersatz, ohne stornierte Buchungen
@@ -40,30 +46,36 @@
 {# --- Zusammenfassung oben --- #}
 <div class="row mb-4">
   <div class="col-md-4">
-    <div class="small-box bg-success">
-      <div class="inner">
-        <h3>{{ "%.2f"|format(total_ust) }} €</h3>
-        <p>Umsatzsteuer (Zahllast)</p>
+    <div class="card bg-success text-white mb-3">
+      <div class="card-body">
+        <div class="subheader">Umsatzsteuer (Zahllast)</div>
+        <div class="h1 mb-0">{{ "%.2f"|format(total_ust) }} €</div>
       </div>
-      <div class="icon"><i class="fas fa-arrow-up"></i></div>
+      <div class="card-footer bg-success-lt text-success border-0 py-2">
+        <i class="fas fa-arrow-up"></i>
+      </div>
     </div>
   </div>
   <div class="col-md-4">
-    <div class="small-box bg-warning">
-      <div class="inner">
-        <h3>{{ "%.2f"|format(total_vst) }} €</h3>
-        <p>Vorsteuer (Guthaben)</p>
+    <div class="card bg-warning text-white mb-3">
+      <div class="card-body">
+        <div class="subheader">Vorsteuer (Guthaben)</div>
+        <div class="h1 mb-0">{{ "%.2f"|format(total_vst) }} €</div>
       </div>
-      <div class="icon"><i class="fas fa-arrow-down"></i></div>
+      <div class="card-footer bg-warning-lt text-warning border-0 py-2">
+        <i class="fas fa-arrow-down"></i>
+      </div>
     </div>
   </div>
   <div class="col-md-4">
-    <div class="small-box {{ 'bg-danger' if zahllast > 0 else 'bg-success' }}">
-      <div class="inner">
-        <h3>{{ "%.2f"|format(zahllast) }} €</h3>
-        <p>Zahllast (USt − Vorsteuer)</p>
+    <div class="card {{ 'bg-danger' if zahllast > 0 else 'bg-success' }} text-white mb-3">
+      <div class="card-body">
+        <div class="subheader">Zahllast (USt − Vorsteuer)</div>
+        <div class="h1 mb-0">{{ "%.2f"|format(zahllast) }} €</div>
       </div>
-      <div class="icon"><i class="fas fa-balance-scale"></i></div>
+      <div class="card-footer {{ 'bg-danger-lt text-danger' if zahllast > 0 else 'bg-success-lt text-success' }} border-0 py-2">
+        <i class="fas fa-balance-scale"></i>
+      </div>
     </div>
   </div>
 </div>
@@ -71,30 +83,30 @@
 <div class="row">
   {# --- Umsatzsteuer --- #}
   <div class="col-md-6">
-    <div class="card card-success card-outline">
+    <div class="card">
       <div class="card-header">
-        <h3 class="card-title"><i class="fas fa-arrow-up mr-1"></i> Umsatzsteuer (Einnahmen)</h3>
-        <div class="card-tools">
+        <h3 class="card-title"><i class="fas fa-arrow-up me-1"></i> Umsatzsteuer (Einnahmen)</h3>
+        <div class="card-options">
           <strong class="text-success">{{ "%.2f"|format(total_ust) }} €</strong>
         </div>
       </div>
       <div class="card-body p-0">
         <table class="table table-hover mb-0">
-          <thead class="thead-light">
+          <thead>
             <tr>
               <th>Steuersatz</th>
-              <th class="text-right">Brutto</th>
-              <th class="text-right">Netto</th>
-              <th class="text-right">USt-Betrag</th>
+              <th class="text-end">Brutto</th>
+              <th class="text-end">Netto</th>
+              <th class="text-end">USt-Betrag</th>
             </tr>
           </thead>
           <tbody>
             {% for rate, v in ust_rows %}
             <tr>
-              <td><span class="badge badge-success">{{ rate }} %</span></td>
-              <td class="text-right">{{ "%.2f"|format(v.brutto) }} €</td>
-              <td class="text-right text-muted">{{ "%.2f"|format(v.netto) }} €</td>
-              <td class="text-right font-weight-bold text-success">{{ "%.2f"|format(v.steuer) }} €</td>
+              <td><span class="badge bg-success">{{ rate }} %</span></td>
+              <td class="text-end">{{ "%.2f"|format(v.brutto) }} €</td>
+              <td class="text-end text-muted">{{ "%.2f"|format(v.netto) }} €</td>
+              <td class="text-end fw-bold text-success">{{ "%.2f"|format(v.steuer) }} €</td>
             </tr>
             {% else %}
             <tr>
@@ -105,12 +117,12 @@
             {% endfor %}
           </tbody>
           {% if ust_rows %}
-          <tfoot class="thead-light">
+          <tfoot class="table-light">
             <tr>
               <th>Gesamt</th>
-              <th class="text-right">{{ "%.2f"|format(ust_brutto) }} €</th>
-              <th class="text-right">{{ "%.2f"|format(ust_netto) }} €</th>
-              <th class="text-right text-success">{{ "%.2f"|format(total_ust) }} €</th>
+              <th class="text-end">{{ "%.2f"|format(ust_brutto) }} €</th>
+              <th class="text-end">{{ "%.2f"|format(ust_netto) }} €</th>
+              <th class="text-end text-success">{{ "%.2f"|format(total_ust) }} €</th>
             </tr>
           </tfoot>
           {% endif %}
@@ -121,30 +133,30 @@
 
   {# --- Vorsteuer --- #}
   <div class="col-md-6">
-    <div class="card card-warning card-outline">
+    <div class="card">
       <div class="card-header">
-        <h3 class="card-title"><i class="fas fa-arrow-down mr-1"></i> Vorsteuer (Ausgaben)</h3>
-        <div class="card-tools">
+        <h3 class="card-title"><i class="fas fa-arrow-down me-1"></i> Vorsteuer (Ausgaben)</h3>
+        <div class="card-options">
           <strong class="text-warning">{{ "%.2f"|format(total_vst) }} €</strong>
         </div>
       </div>
       <div class="card-body p-0">
         <table class="table table-hover mb-0">
-          <thead class="thead-light">
+          <thead>
             <tr>
               <th>Steuersatz</th>
-              <th class="text-right">Brutto</th>
-              <th class="text-right">Netto</th>
-              <th class="text-right">VSt-Betrag</th>
+              <th class="text-end">Brutto</th>
+              <th class="text-end">Netto</th>
+              <th class="text-end">VSt-Betrag</th>
             </tr>
           </thead>
           <tbody>
             {% for rate, v in vst_rows %}
             <tr>
-              <td><span class="badge badge-warning">{{ rate }} %</span></td>
-              <td class="text-right">{{ "%.2f"|format(v.brutto) }} €</td>
-              <td class="text-right text-muted">{{ "%.2f"|format(v.netto) }} €</td>
-              <td class="text-right font-weight-bold text-warning">{{ "%.2f"|format(v.steuer) }} €</td>
+              <td><span class="badge bg-warning text-dark">{{ rate }} %</span></td>
+              <td class="text-end">{{ "%.2f"|format(v.brutto) }} €</td>
+              <td class="text-end text-muted">{{ "%.2f"|format(v.netto) }} €</td>
+              <td class="text-end fw-bold text-warning">{{ "%.2f"|format(v.steuer) }} €</td>
             </tr>
             {% else %}
             <tr>
@@ -155,12 +167,12 @@
             {% endfor %}
           </tbody>
           {% if vst_rows %}
-          <tfoot class="thead-light">
+          <tfoot class="table-light">
             <tr>
               <th>Gesamt</th>
-              <th class="text-right">{{ "%.2f"|format(vst_brutto) }} €</th>
-              <th class="text-right">{{ "%.2f"|format(vst_netto) }} €</th>
-              <th class="text-right text-warning">{{ "%.2f"|format(total_vst) }} €</th>
+              <th class="text-end">{{ "%.2f"|format(vst_brutto) }} €</th>
+              <th class="text-end">{{ "%.2f"|format(vst_netto) }} €</th>
+              <th class="text-end text-warning">{{ "%.2f"|format(total_vst) }} €</th>
             </tr>
           </tfoot>
           {% endif %}
@@ -173,26 +185,26 @@
 {# --- Zahllast-Zusammenfassung --- #}
 <div class="row">
   <div class="col-md-6 offset-md-6">
-    <div class="card card-outline {{ 'card-danger' if zahllast > 0 else 'card-success' }}">
+    <div class="card">
       <div class="card-header">
-        <h3 class="card-title"><i class="fas fa-calculator mr-1"></i> Zahllast / Gutschrift</h3>
+        <h3 class="card-title"><i class="fas fa-calculator me-1"></i> Zahllast / Gutschrift</h3>
       </div>
       <div class="card-body p-0">
         <table class="table mb-0">
           <tbody>
             <tr>
               <td>Umsatzsteuer gesamt</td>
-              <td class="text-right text-success font-weight-bold">{{ "%.2f"|format(total_ust) }} €</td>
+              <td class="text-end text-success fw-bold">{{ "%.2f"|format(total_ust) }} €</td>
             </tr>
             <tr>
               <td>Vorsteuer gesamt</td>
-              <td class="text-right text-warning font-weight-bold">– {{ "%.2f"|format(total_vst) }} €</td>
+              <td class="text-end text-warning fw-bold">– {{ "%.2f"|format(total_vst) }} €</td>
             </tr>
           </tbody>
-          <tfoot class="thead-light">
+          <tfoot class="table-light">
             <tr>
               <th>{{ 'Zahllast' if zahllast > 0 else 'Gutschrift' }}</th>
-              <th class="text-right {{ 'text-danger' if zahllast > 0 else 'text-success' }}">
+              <th class="text-end {{ 'text-danger' if zahllast > 0 else 'text-success' }}">
                 {{ "%.2f"|format(zahllast|abs) }} €
               </th>
             </tr>

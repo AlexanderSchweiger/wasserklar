@@ -1,35 +1,35 @@
 {% extends "base.html" %}
 {% block title %}{{ 'Benutzer bearbeiten' if user else 'Neuer Benutzer' }}{% endblock %}
 {% block page_title %}
-  <i class="fas fa-user-cog mr-2"></i> {{ 'Benutzer bearbeiten' if user else 'Neuer Benutzer' }}
+  <i class="fas fa-user-cog me-2"></i> {{ 'Benutzer bearbeiten' if user else 'Neuer Benutzer' }}
 {% endblock %}
 {% block content %}
 <div class="row">
   <div class="col-md-6">
-    <div class="card card-primary">
+    <div class="card">
       <div class="card-header">
         <h3 class="card-title">{{ 'Bearbeiten: ' + user.username if user else 'Neuer Benutzer' }}</h3>
       </div>
       <form method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="card-body">
-          <div class="form-group">
-            <label>Benutzername</label>
+          <div class="mb-3">
+            <label class="form-label">Benutzername</label>
             <input type="text" name="username" class="form-control"
               value="{{ user.username if user else '' }}" required>
           </div>
-          <div class="form-group">
-            <label>E-Mail</label>
+          <div class="mb-3">
+            <label class="form-label">E-Mail</label>
             <input type="email" name="email" class="form-control"
               value="{{ user.email if user else '' }}" required>
           </div>
-          <div class="form-group">
-            <label>Passwort {% if user %}<small class="text-muted">(leer = unverändert)</small>{% endif %}</label>
+          <div class="mb-3">
+            <label class="form-label">Passwort {% if user %}<small class="text-muted">(leer = unverändert)</small>{% endif %}</label>
             <input type="password" name="password" class="form-control"
               {% if not user %}required{% endif %}>
           </div>
-          <div class="form-group">
-            <label>Rolle</label>
+          <div class="mb-3">
+            <label class="form-label">Rolle</label>
             <select name="role" class="form-control">
               <option value="user" {{ 'selected' if user and user.role == 'user' }}>Benutzer</option>
               <option value="admin" {{ 'selected' if user and user.role == 'admin' }}>Administrator</option>
@@ -45,9 +45,9 @@
         </div>
         <div class="card-footer">
           <button type="submit" class="btn btn-primary">
-            <i class="fas fa-save mr-1"></i> Speichern
+            <i class="fas fa-save me-1"></i> Speichern
           </button>
-          <a href="{{ url_for('auth.users') }}" class="btn btn-secondary ml-2">Abbrechen</a>
+          <a href="{{ url_for('auth.users') }}" class="btn btn-secondary ms-2">Abbrechen</a>
         </div>
       </form>
     </div>

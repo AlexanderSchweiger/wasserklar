@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Zählerablesungen{% endblock %}
-{% block page_title %}<i class="fas fa-tachometer-alt mr-2"></i> Zählerablesungen{% endblock %}
+{% block page_title %}<i class="fas fa-tachometer-alt me-2"></i> Zählerablesungen{% endblock %}
 {% block content %}
 <input type="hidden" name="mode" id="mode-input" value="{{ mode }}">
 <div class="card">
   <div class="card-header">
     <div class="filter-bar">
-      <div class="form-group">
-        <label class="mb-0 mr-1">Jahr</label>
+      <div class="mb-3">
+        <label class="form-label mb-0 me-1">Jahr</label>
         <input type="number" id="year-select" name="year" value="{{ year }}"
           min="2000" max="2100" class="form-control form-control-sm" style="width:90px"
           hx-get="{{ url_for('meters.index') }}"
@@ -22,29 +22,27 @@
           hx-trigger="input changed delay:300ms"
           hx-target="#meters-table"
           hx-include="[name='q'],[id='year-select'],[name='mode']">
-        <div class="input-group-append">
-          <span class="input-group-text"><i class="fas fa-search"></i></span>
-        </div>
+        <span class="input-group-text"><i class="fas fa-search"></i></span>
       </div>
     </div>
-    <div class="card-tools">
+    <div class="card-options">
       <button type="button" id="btn-toggle-mode"
-          class="btn btn-sm {{ 'btn-secondary' if mode == 'quick' else 'btn-info' }} mr-1"
+          class="btn btn-sm {{ 'btn-secondary' if mode == 'quick' else 'btn-info' }} me-1"
           hx-get="{{ url_for('meters.index') }}"
           hx-target="#meters-table"
           hx-include="[name='q'],[id='year-select'],[name='mode']"
           onclick="toggleQuickMode(this)">
         {% if mode == 'quick' %}
-          <i class="fas fa-list mr-1"></i> Normale Ansicht
+          <i class="fas fa-list me-1"></i> Normale Ansicht
         {% else %}
-          <i class="fas fa-bolt mr-1"></i> Schnelleingabe
+          <i class="fas fa-bolt me-1"></i> Schnelleingabe
         {% endif %}
       </button>
       <a href="{{ url_for('meters.meter_new') }}" class="btn btn-secondary btn-sm">
-        <i class="fas fa-plus mr-1"></i> Zähler
+        <i class="fas fa-plus me-1"></i> Zähler
       </a>
-      <a href="{{ url_for('meters.import_readings') }}" class="btn btn-outline-secondary btn-sm ml-1">
-        <i class="fas fa-file-import mr-1"></i> Import
+      <a href="{{ url_for('meters.import_readings') }}" class="btn btn-outline-secondary btn-sm ms-1">
+        <i class="fas fa-file-import me-1"></i> Import
       </a>
     </div>
   </div>
@@ -61,11 +59,11 @@ function toggleQuickMode(btn) {
   const inp = document.getElementById('mode-input');
   if (inp.value === 'normal') {
     inp.value = 'quick';
-    btn.innerHTML = '<i class="fas fa-list mr-1"></i> Normale Ansicht';
+    btn.innerHTML = '<i class="fas fa-list me-1"></i> Normale Ansicht';
     btn.classList.replace('btn-info', 'btn-secondary');
   } else {
     inp.value = 'normal';
-    btn.innerHTML = '<i class="fas fa-bolt mr-1"></i> Schnelleingabe';
+    btn.innerHTML = '<i class="fas fa-bolt me-1"></i> Schnelleingabe';
     btn.classList.replace('btn-secondary', 'btn-info');
   }
 }

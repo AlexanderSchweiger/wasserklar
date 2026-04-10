@@ -1,63 +1,58 @@
 {% extends "base.html" %}
 {% block title %}Offene Posten{% endblock %}
-{% block page_title %}<i class="fas fa-exclamation-circle mr-2"></i> Offene Posten{% endblock %}
+{% block page_title %}<i class="fas fa-exclamation-circle me-2"></i> Offene Posten{% endblock %}
 {% block content %}
 
 {# ------------------------------------------------------------------ #}
 {# Filter                                                              #}
 {# ------------------------------------------------------------------ #}
-<div class="card card-outline card-secondary mb-3">
+<div class="card mb-3">
   <div class="card-header">
-    <h3 class="card-title"><i class="fas fa-filter mr-1"></i> Filter</h3>
-    <div class="card-tools">
-      <button type="button" class="btn btn-tool" data-card-widget="collapse">
-        <i class="fas fa-minus"></i>
-      </button>
-    </div>
+    <h3 class="card-title"><i class="fas fa-filter me-1"></i> Filter</h3>
   </div>
   <div class="card-body pb-1">
     <form method="get" action="{{ url_for('accounting.open_items') }}">
-      <div class="form-row">
-        <div class="form-group col-md-3">
-          <label>Kunde</label>
+      <div class="row g-2">
+        <div class="col-md-3">
+          <label class="form-label">Kunde</label>
           <input type="text" name="customer" class="form-control form-control-sm"
                  value="{{ f_customer }}" placeholder="Kundenname …">
         </div>
-        <div class="form-group col-md-3">
-          <label>Rechnungsnr. / Beschreibung</label>
+        <div class="col-md-3">
+          <label class="form-label">Rechnungsnr. / Beschreibung</label>
           <input type="text" name="ref" class="form-control form-control-sm"
                  value="{{ f_ref }}" placeholder="RE-2024-… oder Beschreibung">
         </div>
-        <div class="form-group col-md-2">
-          <label>Rechn.Lauf Jahr</label>
+        <div class="col-md-2">
+          <label class="form-label">Rechn.Lauf Jahr</label>
           <input type="number" name="year" class="form-control form-control-sm"
                  value="{{ f_year }}" placeholder="{{ today.year }}">
         </div>
-        <div class="form-group col-md-2">
-          <label>Betrag ≥ (€)</label>
+        <div class="col-md-2">
+          <label class="form-label">Betrag ≥ (€)</label>
           <input type="number" name="amount_min" class="form-control form-control-sm"
                  step="0.01" min="0" value="{{ f_amount_min }}" placeholder="0.00">
         </div>
-        <div class="form-group col-md-2">
-          <label>Betrag ≤ (€)</label>
+        <div class="col-md-2">
+          <label class="form-label">Betrag ≤ (€)</label>
           <input type="number" name="amount_max" class="form-control form-control-sm"
                  step="0.01" min="0" value="{{ f_amount_max }}" placeholder="9999.00">
         </div>
       </div>
-      <div class="form-row align-items-center mb-2">
+      <div class="row align-items-center mb-2 mt-2">
         <div class="col-auto">
-          <div class="custom-control custom-switch">
-            <input type="checkbox" class="custom-control-input" id="show_closed"
+          <div class="form-check">
+            <input type="checkbox" class="form-check-input" id="show_closed"
                    name="show_closed" value="1" {{ 'checked' if show_closed }}>
-            <label class="custom-control-label" for="show_closed">Geschlossene anzeigen</label>
+            <label class="form-check-label" for="show_closed">Geschlossene anzeigen</label>
           </div>
         </div>
-        <div class="col-auto ml-3">
-          <button type="submit" class="btn btn-sm btn-primary mr-2">
-            <i class="fas fa-search mr-1"></i> Filtern
+        <div class="col-auto ms-2">
+          <button type="submit" class="btn btn-sm btn-primary me-2">
+            <i class="fas fa-search me-1"></i> Filtern
           </button>
           <a href="{{ url_for('accounting.open_items') }}" class="btn btn-sm btn-outline-secondary">
-            <i class="fas fa-times mr-1"></i> Zurücksetzen
+            <i class="fas fa-times me-1"></i> Zurücksetzen
           </a>
         </div>
       </div>
@@ -70,19 +65,19 @@
 {# ------------------------------------------------------------------ #}
 <div class="card">
   <div class="card-header">
-    <h3 class="card-title"><i class="fas fa-exclamation-circle mr-1"></i> Offene Posten</h3>
-    <div class="card-tools d-flex align-items-center">
-      <span class="badge badge-warning badge-lg mr-2" style="font-size:1rem;padding:.4rem .7rem">
+    <h3 class="card-title"><i class="fas fa-exclamation-circle me-1"></i> Offene Posten</h3>
+    <div class="card-options d-flex align-items-center">
+      <span class="badge bg-warning text-dark me-2" style="font-size:1rem;padding:.4rem .7rem">
         Gesamt offen: <strong>{{ "%.2f"|format(total_open) }} €</strong>
       </span>
       <a href="{{ url_for('accounting.open_item_new') }}" class="btn btn-sm btn-primary">
-        <i class="fas fa-plus mr-1"></i> Neuer offener Posten
+        <i class="fas fa-plus me-1"></i> Neuer offener Posten
       </a>
     </div>
   </div>
   <div class="card-body p-0">
     <table class="table table-hover mb-0">
-      <thead class="thead-light">
+      <thead>
         <tr>
           <th>Rechnungsnr. / Beschreibung</th>
           <th>Kunde</th>
@@ -90,8 +85,8 @@
           <th>Datum</th>
           <th>Fällig</th>
           <th>Status</th>
-          <th class="text-right">Gesamt</th>
-          <th class="text-right">Offen</th>
+          <th class="text-end">Gesamt</th>
+          <th class="text-end">Offen</th>
           <th></th>
         </tr>
       </thead>
@@ -109,7 +104,7 @@
               {{ item.description }}
               {% if item.invoice %}
               <a href="{{ url_for('invoices.detail', invoice_id=item.invoice_id) }}"
-                 class="badge badge-info ml-1" title="Verknüpfte Rechnung">
+                 class="badge bg-info ms-1" title="Verknüpfte Rechnung">
                 <i class="fas fa-file-invoice"></i> RE
               </a>
               {% endif %}
@@ -133,39 +128,39 @@
           <td>
             {{ item.due_date.strftime('%d.%m.%Y') if item.due_date else '—' }}
             {% if item.due_date and item.due_date < today and not is_closed %}
-            <span class="badge badge-danger ml-1">überfällig</span>
+            <span class="badge bg-danger ms-1">überfällig</span>
             {% endif %}
           </td>
 
           {# Status #}
           <td>
-            {% if item.status == 'Offen' %}<span class="badge badge-warning">Offen</span>
-            {% elif item.status == 'Teilbezahlt' %}<span class="badge badge-info">Teilbezahlt</span>
-            {% elif item.status == 'Bezahlt' %}<span class="badge badge-success">Bezahlt</span>
-            {% elif item.status == 'Gutschrift' %}<span class="badge badge-secondary">Gutschrift</span>
+            {% if item.status == 'Offen' %}<span class="badge bg-warning text-dark">Offen</span>
+            {% elif item.status == 'Teilbezahlt' %}<span class="badge bg-info">Teilbezahlt</span>
+            {% elif item.status == 'Bezahlt' %}<span class="badge bg-success">Bezahlt</span>
+            {% elif item.status == 'Gutschrift' %}<span class="badge bg-secondary">Gutschrift</span>
             {% endif %}
           </td>
 
           {# Gesamt #}
-          <td class="text-right">{{ "%.2f"|format(item.amount) }} €</td>
+          <td class="text-end">{{ "%.2f"|format(item.amount) }} €</td>
 
           {# Offen #}
-          <td class="text-right">
+          <td class="text-end">
             <strong class="{{ 'text-danger' if bal < 0 }}">{{ "%.2f"|format(bal) }} €</strong>
           </td>
 
           {# Aktionen #}
-          <td class="text-right" style="white-space:nowrap">
+          <td class="text-end" style="white-space:nowrap">
             {% if not is_closed %}
             <form method="post" action="{{ url_for('accounting.open_item_pay', item_id=item.id) }}"
-                  class="form-inline d-inline-flex align-items-center">
+                  class="d-inline-flex align-items-center">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input type="number" name="amount" step="0.01" min="0.01"
                      value="{{ '%.2f'|format(bal) }}"
-                     class="form-control form-control-sm mr-1" style="width:90px"
+                     class="form-control form-control-sm me-1" style="width:90px"
                      title="Zahlungsbetrag">
               {% if real_accounts %}
-              <select name="real_account_id" class="form-control form-control-sm tom-select mr-1"
+              <select name="real_account_id" class="form-control form-control-sm tom-select me-1"
                       title="Bankkonto" style="max-width:140px">
                 <option value="">Bankkonto …</option>
                 {% for ra in real_accounts %}
@@ -173,13 +168,13 @@
                 {% endfor %}
               </select>
               {% endif %}
-              <button type="submit" class="btn btn-sm btn-success mr-1" title="Zahlung buchen">
+              <button type="submit" class="btn btn-sm btn-success me-1" title="Zahlung buchen">
                 <i class="fas fa-check"></i> Bezahlen
               </button>
             </form>
             {% if not item.invoice_id %}
             <a href="{{ url_for('accounting.open_item_invoice', item_id=item.id) }}"
-               class="btn btn-sm btn-outline-primary mr-1" title="Rechnung erstellen">
+               class="btn btn-sm btn-outline-primary me-1" title="Rechnung erstellen">
               <i class="fas fa-file-invoice"></i>
             </a>
             {% endif %}
@@ -195,7 +190,7 @@
         {% else %}
         <tr>
           <td colspan="9" class="text-center text-muted py-3">
-            <i class="fas fa-check-circle text-success mr-2"></i>Keine offenen Posten.
+            <i class="fas fa-check-circle text-success me-2"></i>Keine offenen Posten.
           </td>
         </tr>
         {% endfor %}

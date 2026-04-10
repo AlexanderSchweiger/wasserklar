@@ -1,18 +1,18 @@
 {% extends "base.html" %}
 {% block title %}Ablesungen importieren{% endblock %}
-{% block page_title %}<i class="fas fa-file-import mr-2"></i> Ablesungen importieren{% endblock %}
+{% block page_title %}<i class="fas fa-file-import me-2"></i> Ablesungen importieren{% endblock %}
 {% block content %}
 <div class="row">
   <div class="col-md-6">
-    <div class="card card-info">
+    <div class="card">
       <div class="card-header">
         <h3 class="card-title">CSV / Excel hochladen</h3>
       </div>
       <form method="post" enctype="multipart/form-data">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="card-body">
-          <div class="callout callout-info">
-            <h6><i class="fas fa-info-circle mr-1"></i> Erwartetes Format</h6>
+          <div class="alert alert-info">
+            <h4 class="alert-title"><i class="fas fa-info-circle me-1"></i> Erwartetes Format</h4>
             <ul class="mb-2">
               <li><strong>CSV:</strong> beliebiges Trennzeichen (Komma, Semikolon, Tab), Zeichensatz UTF-8</li>
               <li><strong>Excel:</strong> <code>.xlsx</code> oder <code>.xls</code></li>
@@ -24,34 +24,22 @@
 Z-00123;1.412,00;2024;2024-12-31
 Z-00124;612,50;2024;2024-12-31
 Z-00125;987;2024;</pre>
-            <small class="text-muted">Spalten <em>Jahr</em> und <em>Datum</em> sind optional — fehlen sie, wird das im nächsten Schritt eingegebene Standard-Jahr bzw. das heutige Datum verwendet.</small>
+            <small class="text-muted">Spalten <em>Jahr</em> und <em>Datum</em> sind optional.</small>
           </div>
-          <div class="form-group">
-            <label>Datei auswählen</label>
-            <div class="custom-file">
-              <input type="file" name="file" class="custom-file-input"
-                id="importFile" accept=".csv,.xlsx,.xls" required>
-              <label class="custom-file-label" for="importFile">Datei wählen…</label>
-            </div>
+          <div class="mb-3">
+            <label class="form-label">Datei auswählen</label>
+            <input type="file" name="file" class="form-control"
+              id="importFile" accept=".csv,.xlsx,.xls" required>
           </div>
         </div>
         <div class="card-footer">
-          <button type="submit" class="btn btn-info">
-            <i class="fas fa-arrow-right mr-1"></i> Weiter
+          <button type="submit" class="btn btn-primary">
+            <i class="fas fa-arrow-right me-1"></i> Weiter
           </button>
-          <a href="{{ url_for('meters.index') }}" class="btn btn-secondary ml-2">Abbrechen</a>
+          <a href="{{ url_for('meters.index') }}" class="btn btn-secondary ms-2">Abbrechen</a>
         </div>
       </form>
     </div>
   </div>
 </div>
-{% endblock %}
-{% block scripts %}
-<script>
-  // Dateiname im Label anzeigen
-  document.getElementById('importFile').addEventListener('change', function() {
-    var name = this.files[0] ? this.files[0].name : 'Datei wählen…';
-    this.nextElementSibling.textContent = name;
-  });
-</script>
 {% endblock %}

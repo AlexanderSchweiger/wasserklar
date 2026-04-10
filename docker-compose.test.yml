@@ -4,7 +4,7 @@ services:
   wg:
     build: .
     ports:
-      - "5001:5001"
+      - "5001:5000"
     volumes:
       - ./instance:/app/instance    # generierte PDFs
     env_file:

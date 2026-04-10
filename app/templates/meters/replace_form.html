@@ -1,17 +1,17 @@
 {% extends "base.html" %}
 {% block title %}Zählerwechsel – {{ meter.meter_number }}{% endblock %}
 {% block page_title %}
-  <i class="fas fa-exchange-alt mr-2"></i> Zählerwechsel
+  <i class="fas fa-exchange-alt me-2"></i> Zählerwechsel
 {% endblock %}
 {% block content %}
 <div class="row">
   <div class="col-md-7">
-    <div class="card card-danger card-outline">
+    <div class="card">
       <div class="card-header">
         <h3 class="card-title">
           Zähler <code>{{ meter.meter_number }}</code> austauschen
           {% if meter.location %}
-          <small class="text-muted ml-2">{{ meter.location }}</small>
+          <small class="text-muted ms-2">{{ meter.location }}</small>
           {% endif %}
         </h3>
       </div>
@@ -19,31 +19,29 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="card-body">
 
-          <div class="callout callout-warning">
+          <div class="alert alert-warning">
             Der alte Zähler wird als <strong>ausgebaut</strong> markiert. Der neue Zähler
             wird dem gleichen Objekt zugeordnet und ab dem Wechseldatum aktiv.
           </div>
 
-          <h5 class="mt-3 mb-2"><i class="fas fa-minus-circle text-danger mr-1"></i> Alter Zähler: {{ meter.meter_number }}</h5>
-          <div class="row">
+          <h5 class="mt-3 mb-2"><i class="fas fa-minus-circle text-danger me-1"></i> Alter Zähler: {{ meter.meter_number }}</h5>
+          <div class="row g-2">
             <div class="col-md-6">
-              <div class="form-group">
-                <label>Ausbaudatum <span class="text-danger">*</span></label>
+              <div class="mb-3">
+                <label class="form-label">Ausbaudatum <span class="text-danger">*</span></label>
                 <input type="date" name="replacement_date" class="form-control" required
                   value="{{ today.isoformat() }}">
               </div>
             </div>
             <div class="col-md-6">
-              <div class="form-group">
-                <label>Ausbauzählerstand (m³) <span class="text-danger">*</span></label>
+              <div class="mb-3">
+                <label class="form-label">Ausbauzählerstand (m³) <span class="text-danger">*</span></label>
                 <div class="input-group">
                   <input type="number" name="final_value" step="1" class="form-control" required
                     {% set last = meter.readings.first() %}
                     value="{{ last.value|int if last else '' }}"
                     placeholder="Stand bei Ausbau">
-                  <div class="input-group-append">
-                    <span class="input-group-text">m³</span>
-                  </div>
+                  <span class="input-group-text">m³</span>
                 </div>
               </div>
             </div>
@@ -51,31 +49,29 @@
 
           <hr>
 
-          <h5 class="mt-2 mb-2"><i class="fas fa-plus-circle text-success mr-1"></i> Neuer Zähler</h5>
-          <div class="row">
+          <h5 class="mt-2 mb-2"><i class="fas fa-plus-circle text-success me-1"></i> Neuer Zähler</h5>
+          <div class="row g-2">
             <div class="col-md-6">
-              <div class="form-group">
-                <label>Zählernummer <span class="text-danger">*</span></label>
+              <div class="mb-3">
+                <label class="form-label">Zählernummer <span class="text-danger">*</span></label>
                 <input type="text" name="new_meter_number" class="form-control" required
                   placeholder="Seriennummer des neuen Zählers">
               </div>
             </div>
             <div class="col-md-6">
-              <div class="form-group">
-                <label>Anfangsstand (m³)</label>
+              <div class="mb-3">
+                <label class="form-label">Anfangsstand (m³)</label>
                 <div class="input-group">
                   <input type="number" name="new_initial_value" step="1" class="form-control"
                     value="0" placeholder="0">
-                  <div class="input-group-append">
-                    <span class="input-group-text">m³</span>
-                  </div>
+                  <span class="input-group-text">m³</span>
                 </div>
-                <small class="text-muted">Stand des neuen Zählers beim Einbau (meist 0)</small>
+                <small class="form-hint">Stand des neuen Zählers beim Einbau (meist 0)</small>
               </div>
             </div>
             <div class="col-md-6">
-              <div class="form-group">
-                <label>Eichjahr</label>
+              <div class="mb-3">
+                <label class="form-label">Eichjahr</label>
                 <input type="number" name="new_eichjahr" class="form-control" min="1900" max="2100"
                   placeholder="z. B. 2024">
               </div>
@@ -86,10 +82,10 @@
         <div class="card-footer">
           <button type="submit" class="btn btn-danger"
             onclick="return confirm('Zählerwechsel durchführen? Dieser Vorgang kann nicht rückgängig gemacht werden.')">
-            <i class="fas fa-exchange-alt mr-1"></i> Zählerwechsel durchführen
+            <i class="fas fa-exchange-alt me-1"></i> Zählerwechsel durchführen
           </button>
           <a href="{{ url_for('properties.detail', property_id=meter.property_id) }}"
-             class="btn btn-secondary ml-2">Abbrechen</a>
+             class="btn btn-secondary ms-2">Abbrechen</a>
         </div>
       </form>
     </div>

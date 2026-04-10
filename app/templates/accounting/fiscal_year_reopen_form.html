@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 {% block title %}Buchungsjahr wieder öffnen{% endblock %}
-{% block page_title %}<i class="fas fa-lock-open mr-2"></i> Buchungsjahr {{ fiscal_year.year }} wieder öffnen{% endblock %}
+{% block page_title %}<i class="fas fa-lock-open me-2"></i> Buchungsjahr {{ fiscal_year.year }} wieder öffnen{% endblock %}
 {% block content %}
 <div class="row">
   <div class="col-md-6">
-    <div class="card card-warning">
+    <div class="card">
       <div class="card-header"><h3 class="card-title">Wiederöffnung begründen</h3></div>
       <div class="card-body">
         <div class="alert alert-warning">
-          <i class="fas fa-exclamation-triangle mr-1"></i>
+          <i class="fas fa-exclamation-triangle me-1"></i>
           Das Buchungsjahr <strong>{{ fiscal_year.year }}</strong>
           ({{ fiscal_year.start_date.strftime('%d.%m.%Y') }} – {{ fiscal_year.end_date.strftime('%d.%m.%Y') }})
           ist derzeit abgeschlossen. Nach der Wiederöffnung können Buchungen wieder geändert werden.
@@ -16,15 +16,15 @@
         </div>
         <form method="post">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <div class="form-group">
-            <label>Grund für die Wiederöffnung <span class="text-danger">*</span></label>
+          <div class="mb-3">
+            <label class="form-label">Grund für die Wiederöffnung <span class="text-danger">*</span></label>
             <textarea name="reason" class="form-control" rows="3"
               placeholder="z. B. Nachbuchung Lieferantenrechnung vom …" required></textarea>
           </div>
           <button type="submit" class="btn btn-warning">
-            <i class="fas fa-lock-open mr-1"></i> Buchungsjahr wieder öffnen
+            <i class="fas fa-lock-open me-1"></i> Buchungsjahr wieder öffnen
           </button>
-          <a href="{{ url_for('accounting.fiscal_years') }}" class="btn btn-secondary ml-2">Abbrechen</a>
+          <a href="{{ url_for('accounting.fiscal_years') }}" class="btn btn-secondary ms-2">Abbrechen</a>
         </form>
       </div>
     </div>

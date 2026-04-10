@@ -1,15 +1,15 @@
 {% extends "base.html" %}
 {% block title %}Ablesen: {{ meter.property.label() }}{% endblock %}
 {% block page_title %}
-  <i class="fas fa-tachometer-alt mr-2"></i> Ablesen: {{ meter.property.label() }}
+  <i class="fas fa-tachometer-alt me-2"></i> Ablesen: {{ meter.property.label() }}
 {% endblock %}
 {% block content %}
 <div class="row">
   <div class="col-md-5">
-    <div class="card card-warning card-outline">
+    <div class="card">
       <div class="card-header">
         <h3 class="card-title">Zähler <code>{{ meter.meter_number }}</code>
-          {% if meter.location %}<small class="text-muted ml-2">{{ meter.location }}</small>{% endif %}
+          {% if meter.location %}<small class="text-muted ms-2">{{ meter.location }}</small>{% endif %}
         </h3>
       </div>
       <form method="post">
@@ -17,71 +17,69 @@
         <div class="card-body">
           {% set prev = meter.readings.filter_by(year=year-1).first() %}
           {% if prev %}
-          <div class="callout callout-info">
-            <h6>Vorjahreswert ({{ year - 1 }})</h6>
+          <div class="alert alert-info">
+            <h6 class="alert-title">Vorjahreswert ({{ year - 1 }})</h6>
             <p class="mb-0"><strong>{{ "%d"|format(prev.value) }} m³</strong></p>
           </div>
           {% elif meter.initial_value is not none %}
-          <div class="callout callout-warning">
-            <h6>Anfangsstand (neuer Zähler)</h6>
+          <div class="alert alert-warning">
+            <h6 class="alert-title">Anfangsstand (neuer Zähler)</h6>
             <p class="mb-0"><strong>{{ meter.initial_value|int }} m³</strong>
             {% if meter.installed_from %}
-            <small class="text-muted ml-2">eingebaut {{ meter.installed_from.strftime('%d.%m.%Y') }}</small>
+            <small class="text-muted ms-2">eingebaut {{ meter.installed_from.strftime('%d.%m.%Y') }}</small>
             {% endif %}
             </p>
           </div>
           {% endif %}
-          <div class="row">
+          <div class="row g-2">
             <div class="col-md-6">
-              <div class="form-group">
-                <label>Jahr <span class="text-danger">*</span></label>
+              <div class="mb-3">
+                <label class="form-label">Jahr <span class="text-danger">*</span></label>
                 <input type="number" name="year" class="form-control"
                   value="{{ year }}" min="2000" max="2100" required>
               </div>
             </div>
             <div class="col-md-6">
-              <div class="form-group">
-                <label>Ablesedatum</label>
+              <div class="mb-3">
+                <label class="form-label">Ablesedatum</label>
                 <input type="date" name="reading_date" class="form-control"
                   value="{{ existing.reading_date.isoformat() if existing else '' }}">
               </div>
             </div>
           </div>
-          <div class="form-group">
-            <label>Zählerstand (m³) <span class="text-danger">*</span></label>
+          <div class="mb-3">
+            <label class="form-label">Zählerstand (m³) <span class="text-danger">*</span></label>
             <div class="input-group">
               <input type="number" name="value" id="valueInput" step="1" class="form-control form-control-lg"
                 value="{{ existing.value|int if existing else '' }}" required autofocus>
-              <div class="input-group-append">
-                <span class="input-group-text">m³</span>
-              </div>
+              <span class="input-group-text">m³</span>
             </div>
           </div>
 
           <!-- Live-Verbrauchsanzeige -->
           <div id="consumptionBox" class="d-none">
-            <div class="callout callout-success" id="consumptionOk">
-              <h6>Verbrauch {{ year }}</h6>
+            <div class="alert alert-success" id="consumptionOk">
+              <h6 class="alert-title">Verbrauch {{ year }}</h6>
               <p class="mb-0"><strong><span id="consumptionValue">—</span> m³</strong></p>
               {% if avg_consumption is not none %}
               <small class="text-muted">Ø letzte {{ avg_years }} Jahr{{ 'e' if avg_years != 1 }}: {{ avg_consumption }} m³</small>
               {% endif %}
             </div>
-            <div class="callout callout-danger d-none" id="consumptionNegative">
-              <h6><i class="fas fa-exclamation-triangle mr-1"></i> Negativer Verbrauch</h6>
+            <div class="alert alert-danger d-none" id="consumptionNegative">
+              <h6 class="alert-title"><i class="fas fa-exclamation-triangle me-1"></i> Negativer Verbrauch</h6>
               <p class="mb-0">Der eingegebene Zählerstand ist kleiner als der Vorjahreswert. Bitte prüfen.</p>
             </div>
-            <div class="callout callout-warning d-none" id="consumptionWarning">
-              <h6><i class="fas fa-exclamation-triangle mr-1"></i> Ungewöhnlicher Verbrauch</h6>
+            <div class="alert alert-warning d-none" id="consumptionWarning">
+              <h6 class="alert-title"><i class="fas fa-exclamation-triangle me-1"></i> Ungewöhnlicher Verbrauch</h6>
               <p class="mb-0" id="consumptionWarningText"></p>
             </div>
           </div>
         </div>
         <div class="card-footer">
-          <button type="submit" class="btn btn-warning">
-            <i class="fas fa-save mr-1"></i> Speichern
+          <button type="submit" class="btn btn-primary">
+            <i class="fas fa-save me-1"></i> Speichern
           </button>
-          <a href="{{ url_for('meters.index', year=year) }}" class="btn btn-secondary ml-2">Abbrechen</a>
+          <a href="{{ url_for('meters.index', year=year) }}" class="btn btn-secondary ms-2">Abbrechen</a>
         </div>
       </form>
     </div>
@@ -112,7 +110,6 @@
     var consumption = val - prevValue;
     consumptionSpan.textContent = consumption;
 
-    // Negativer Verbrauch
     if (consumption < 0) {
       okBox.classList.add('d-none');
       negBox.classList.remove('d-none');
@@ -122,7 +119,6 @@
     negBox.classList.add('d-none');
     okBox.classList.remove('d-none');
 
-    // Abweichung vom Durchschnitt prüfen (±50 %)
     if (avgConsumption !== null && avgConsumption > 0) {
       var deviation = Math.abs(consumption - avgConsumption) / avgConsumption;
       if (deviation > 0.5) {
@@ -141,7 +137,6 @@
   }
 
   input.addEventListener('input', update);
-  // Beim Laden sofort auslösen falls ein Wert vorausgefüllt ist
   if (input.value) update();
 })();
 </script>

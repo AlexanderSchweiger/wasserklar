@@ -1,10 +1,10 @@
 {% extends "base.html" %}
 {% block title %}E-Mail-Einstellungen{% endblock %}
-{% block page_title %}<i class="fas fa-envelope-open-text mr-2"></i> E-Mail-Vorlage{% endblock %}
+{% block page_title %}<i class="fas fa-envelope-open-text me-2"></i> E-Mail-Vorlage{% endblock %}
 {% block content %}
 <div class="row">
   <div class="col-md-8">
-    <div class="card card-primary">
+    <div class="card">
       <div class="card-header">
         <h3 class="card-title">E-Mail-Vorlage für Rechnungsversand</h3>
       </div>
@@ -20,7 +20,7 @@
             <code>{% raw %}{{ faelligkeitsdatum }}{% endraw %}</code>,
             <code>{% raw %}{{ iban }}{% endraw %}</code>
           </p>
-          <div class="form-group mb-0">
+          <div class="mb-0">
             <textarea name="email_body_template" id="email_body_template"
                       class="form-control" rows="18"
                       style="font-family: monospace; font-size: 0.9rem;">{{ current_body }}</textarea>
@@ -28,9 +28,9 @@
         </div>
         <div class="card-footer">
           <button type="submit" class="btn btn-primary">
-            <i class="fas fa-save mr-1"></i> Speichern
+            <i class="fas fa-save me-1"></i> Speichern
           </button>
-          <a href="{{ url_for('invoices.index') }}" class="btn btn-secondary ml-2">
+          <a href="{{ url_for('invoices.index') }}" class="btn btn-secondary ms-2">
             Abbrechen
           </a>
         </div>
@@ -38,10 +38,10 @@
     </div>
   </div>
   <div class="col-md-4">
-    <div class="card card-info card-outline">
+    <div class="card">
       <div class="card-header"><h3 class="card-title">Hinweise</h3></div>
       <div class="card-body">
-        <ul class="pl-3 mb-0">
+        <ul class="ps-3 mb-0">
           <li>Platzhalter mit doppelten geschwungenen Klammern angeben, z.B. <code>{% raw %}{{ name }}{% endraw %}</code></li>
           <li>Ist keine Vorlage gespeichert, wird der Standardtext verwendet.</li>
           <li>Der Text wird als Plain-Text gesendet (keine HTML-Formatierung).</li>

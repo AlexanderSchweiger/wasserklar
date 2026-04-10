@@ -1,25 +1,25 @@
 {% extends "base.html" %}
 {% block title %}Tarife{% endblock %}
-{% block page_title %}<i class="fas fa-sliders-h mr-2"></i> Wassertarife{% endblock %}
+{% block page_title %}<i class="fas fa-sliders-h me-2"></i> Wassertarife{% endblock %}
 {% block content %}
 <div class="card">
   <div class="card-header">
     <h3 class="card-title">Tarife</h3>
-    <div class="card-tools">
+    <div class="card-options">
       <a href="{{ url_for('invoices.tariff_new') }}" class="btn btn-primary btn-sm">
-        <i class="fas fa-plus mr-1"></i> Neuer Tarif
+        <i class="fas fa-plus me-1"></i> Neuer Tarif
       </a>
     </div>
   </div>
   <div class="card-body p-0">
     <table class="table table-hover table-striped mb-0">
-      <thead class="thead-light">
+      <thead>
         <tr>
           <th>Name</th>
           <th>Gültig von</th>
           <th>Gültig bis</th>
-          <th class="text-right">Grundgebühr</th>
-          <th class="text-right">Preis/m³</th>
+          <th class="text-end">Grundgebühr</th>
+          <th class="text-end">Preis/m³</th>
           <th></th>
         </tr>
       </thead>
@@ -28,10 +28,10 @@
         <tr>
           <td><strong>{{ t.name }}</strong></td>
           <td>{{ t.valid_from }}</td>
-          <td>{{ t.valid_to or '<span class="badge badge-success">aktuell</span>' | safe }}</td>
-          <td class="text-right">{{ "%.2f"|format(t.base_fee) }} €</td>
-          <td class="text-right">{{ "%.4f"|format(t.price_per_m3) }} €</td>
-          <td class="text-right">
+          <td>{{ t.valid_to or '<span class="badge bg-success">aktuell</span>' | safe }}</td>
+          <td class="text-end">{{ "%.2f"|format(t.base_fee) }} €</td>
+          <td class="text-end">{{ "%.4f"|format(t.price_per_m3) }} €</td>
+          <td class="text-end">
             <a href="{{ url_for('invoices.tariff_edit', tariff_id=t.id) }}"
                class="btn btn-sm btn-outline-secondary">
               <i class="fas fa-edit"></i>

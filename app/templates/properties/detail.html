@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 {% block title %}{{ property.label() }}{% endblock %}
-{% block page_title %}<i class="fas fa-home mr-2"></i> {{ property.label() }}{% endblock %}
+{% block page_title %}<i class="fas fa-home me-2"></i> {{ property.label() }}{% endblock %}
 {% block content %}
 <div class="row">
   <!-- Objektdaten -->
   <div class="col-md-4">
-    <div class="card card-primary card-outline">
+    <div class="card">
       <div class="card-header">
         <h3 class="card-title">Objektdaten</h3>
-        <div class="card-tools">
+        <div class="card-options">
           <a href="{{ url_for('properties.edit', property_id=property.id) }}"
              class="btn btn-sm btn-outline-primary">
             <i class="fas fa-edit"></i> Bearbeiten
@@ -40,7 +40,7 @@
         {% endif %}
         {% if property.base_fee_override is not none or property.additional_fee_override is not none %}
         <hr>
-        <small class="text-muted d-block mb-1"><i class="fas fa-sliders-h mr-1"></i> Individuelle Gebühren</small>
+        <small class="text-muted d-block mb-1"><i class="fas fa-sliders-h me-1"></i> Individuelle Gebühren</small>
         {% if property.base_fee_override is not none %}
         <small class="d-block">Grundgebühr: <strong>{{ "%.2f"|format(property.base_fee_override) }} €</strong></small>
         {% endif %}
@@ -52,18 +52,18 @@
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button type="submit" class="btn btn-sm btn-outline-danger"
             onclick="return confirm('Objekt wirklich archivieren?')">
-            <i class="fas fa-archive mr-1"></i> Archivieren
+            <i class="fas fa-archive me-1"></i> Archivieren
           </button>
         </form>
       </div>
     </div>
 
     <!-- Wasserzähler -->
-    <div class="card card-info card-outline">
+    <div class="card">
       <div class="card-header">
         <h3 class="card-title">Wasserzähler</h3>
-        <div class="card-tools">
-          <a href="{{ url_for('meters.meter_new', property_id=property.id) }}" class="btn btn-sm btn-outline-info">
+        <div class="card-options">
+          <a href="{{ url_for('meters.meter_new', property_id=property.id) }}" class="btn btn-sm btn-outline-secondary">
             <i class="fas fa-plus"></i>
           </a>
         </div>
@@ -74,12 +74,12 @@
           <li class="list-group-item">
             <div class="d-flex justify-content-between align-items-start">
               <span>
-                <i class="fas fa-tachometer-alt mr-2 text-muted"></i>
+                <i class="fas fa-tachometer-alt me-2 text-muted"></i>
                 <strong>{{ meter.meter_number }}</strong>
                 {% if not meter.active %}
-                <span class="badge badge-secondary ml-1">ausgebaut</span>
+                <span class="badge bg-secondary ms-1">ausgebaut</span>
                 {% else %}
-                <span class="badge badge-success ml-1">aktiv</span>
+                <span class="badge bg-success ms-1">aktiv</span>
                 {% endif %}
                 {% if meter.location %}
                 <br><small class="text-muted">{{ meter.location }}</small>
@@ -118,19 +118,19 @@
 
   <div class="col-md-8">
     <!-- Besitzer-Historie -->
-    <div class="card card-warning card-outline">
+    <div class="card">
       <div class="card-header">
         <h3 class="card-title">Besitzer</h3>
-        <div class="card-tools">
+        <div class="card-options">
           <a href="{{ url_for('properties.ownership_new', property_id=property.id) }}"
-             class="btn btn-sm btn-outline-warning">
-            <i class="fas fa-plus mr-1"></i> Neuer Besitzer
+             class="btn btn-sm btn-outline-secondary">
+            <i class="fas fa-plus me-1"></i> Neuer Besitzer
           </a>
         </div>
       </div>
       <div class="card-body p-0">
         <table class="table table-hover mb-0">
-          <thead class="thead-light">
+          <thead>
             <tr>
               <th>Kunde</th>
               <th>Von</th>
@@ -148,7 +148,7 @@
               </td>
               <td>{{ ow.valid_from.strftime('%d.%m.%Y') }}</td>
               <td>{{ ow.valid_to.strftime('%d.%m.%Y') if ow.valid_to else '<strong>aktiv</strong>' | safe }}</td>
-              <td class="text-right">
+              <td class="text-end">
                 {% if not ow.valid_to %}
                 <form method="post"
                       action="{{ url_for('properties.ownership_end', property_id=property.id, ownership_id=ow.id) }}"
@@ -156,7 +156,7 @@
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                   <button type="submit" class="btn btn-sm btn-outline-secondary"
                     onclick="return confirm('Besitzverhältnis heute beenden?')">
-                    <i class="fas fa-stop-circle mr-1"></i> Beenden
+                    <i class="fas fa-stop-circle me-1"></i> Beenden
                   </button>
                 </form>
                 {% endif %}
@@ -177,13 +177,13 @@
       </div>
       <div class="card-body p-0">
         <table class="table table-hover table-striped mb-0">
-          <thead class="thead-light">
+          <thead>
             <tr>
               <th>Rechnungsnr.</th>
               <th>Kunde</th>
               <th>Jahr</th>
               <th>Datum</th>
-              <th class="text-right">Betrag</th>
+              <th class="text-end">Betrag</th>
               <th>Status</th>
               <th></th>
             </tr>
@@ -199,9 +199,9 @@
               </td>
               <td>{{ inv.period_year or '—' }}</td>
               <td>{{ inv.date.strftime('%d.%m.%Y') }}</td>
-              <td class="text-right"><strong>{{ "%.2f"|format(inv.total_amount) }} €</strong></td>
+              <td class="text-end"><strong>{{ "%.2f"|format(inv.total_amount) }} €</strong></td>
               <td>{% with invoice = inv %}{% include "invoices/_status_badge.html" %}{% endwith %}</td>
-              <td class="text-right">
+              <td class="text-end">
                 <a href="{{ url_for('invoices.detail', invoice_id=inv.id) }}"
                    class="btn btn-sm btn-outline-secondary">
                   <i class="fas fa-eye"></i>

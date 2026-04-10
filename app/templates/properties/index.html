@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Objekte{% endblock %}
-{% block page_title %}<i class="fas fa-home mr-2"></i> Objekte{% endblock %}
+{% block page_title %}<i class="fas fa-home me-2"></i> Objekte{% endblock %}
 {% block content %}
 <div class="card">
   <div class="card-header">
@@ -11,13 +11,11 @@
         hx-trigger="input changed delay:300ms, search"
         hx-target="#property-table"
         hx-include="[name='q']">
-      <div class="input-group-append">
-        <span class="input-group-text"><i class="fas fa-search"></i></span>
-      </div>
+      <span class="input-group-text"><i class="fas fa-search"></i></span>
     </div>
-    <div class="card-tools">
+    <div class="card-options">
       <a href="{{ url_for('properties.new') }}" class="btn btn-primary btn-sm">
-        <i class="fas fa-plus mr-1"></i> Neues Objekt
+        <i class="fas fa-plus me-1"></i> Neues Objekt
       </a>
     </div>
   </div>

@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% block title %}{{ 'Projekt bearbeiten' if project else 'Neues Projekt' }}{% endblock %}
 {% block page_title %}
-  <i class="fas fa-project-diagram mr-2"></i>
+  <i class="fas fa-project-diagram me-2"></i>
   {{ 'Projekt bearbeiten' if project else 'Neues Projekt' }}
 {% endblock %}
 {% block content %}
 <div class="row">
   <div class="col-md-6">
-    <div class="card card-primary">
+    <div class="card">
       <div class="card-header">
         <h3 class="card-title">Projektdetails</h3>
       </div>
@@ -15,27 +15,27 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="color" id="color-input" value="{{ project.color if project and project.color else '#3498db' }}">
         <div class="card-body">
-          <div class="form-group">
-            <label>Kürzel</label>
+          <div class="mb-3">
+            <label class="form-label">Kürzel</label>
             <input type="text" name="code" class="form-control" maxlength="3"
               style="text-transform:uppercase; max-width:100px; font-family:monospace; font-weight:bold;"
               value="{{ project.code if project and project.code else '' }}"
               placeholder="z. B. INV"
               pattern="[A-Za-z0-9]{3}"
               title="Genau 3 Zeichen: Großbuchstaben A–Z oder Ziffern 0–9">
-            <small class="form-text text-muted">3 Zeichen (A–Z, 0–9), eindeutig. Dient zum schnellen Finden in Auswahlfeldern.</small>
+            <small class="form-hint">3 Zeichen (A–Z, 0–9), eindeutig. Dient zum schnellen Finden in Auswahlfeldern.</small>
           </div>
-          <div class="form-group">
-            <label>Name <span class="text-danger">*</span></label>
+          <div class="mb-3">
+            <label class="form-label">Name <span class="text-danger">*</span></label>
             <input type="text" name="name" class="form-control"
               value="{{ project.name if project else '' }}" required maxlength="100">
           </div>
-          <div class="form-group">
-            <label>Beschreibung</label>
+          <div class="mb-3">
+            <label class="form-label">Beschreibung</label>
             <textarea name="description" class="form-control" rows="4">{{ project.description if project else '' }}</textarea>
           </div>
-          <div class="form-group">
-            <label>Farbe</label>
+          <div class="mb-3">
+            <label class="form-label">Farbe</label>
             <div class="d-flex flex-wrap" style="gap:8px">
               {% set colors = [
                 ('#e74c3c', 'Rot'),
@@ -72,7 +72,7 @@
               </div>
               {% endfor %}
             </div>
-            <small class="text-muted mt-1 d-block">
+            <small class="form-hint mt-1 d-block">
               Gewählte Farbe:
               <span id="color-preview"
                     style="display:inline-block; width:14px; height:14px; border-radius:50%;
@@ -84,12 +84,12 @@
         </div>
         <div class="card-footer">
           <button type="submit" class="btn btn-primary">
-            <i class="fas fa-save mr-1"></i> Speichern
+            <i class="fas fa-save me-1"></i> Speichern
           </button>
           {% if project %}
-          <a href="{{ url_for('projects.detail', project_id=project.id) }}" class="btn btn-secondary ml-2">Abbrechen</a>
+          <a href="{{ url_for('projects.detail', project_id=project.id) }}" class="btn btn-secondary ms-2">Abbrechen</a>
           {% else %}
-          <a href="{{ url_for('projects.index') }}" class="btn btn-secondary ml-2">Abbrechen</a>
+          <a href="{{ url_for('projects.index') }}" class="btn btn-secondary ms-2">Abbrechen</a>
           {% endif %}
         </div>
       </form>

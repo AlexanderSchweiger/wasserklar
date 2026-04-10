@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Kunden{% endblock %}
-{% block page_title %}<i class="fas fa-users mr-2"></i> Kunden{% endblock %}
+{% block page_title %}<i class="fas fa-users me-2"></i> Kunden{% endblock %}
 {% block content %}
 <div class="card">
   <div class="card-header d-flex align-items-center flex-wrap" style="gap:.5rem">
@@ -11,26 +11,21 @@
         hx-trigger="input changed delay:300ms, search"
         hx-target="#customer-table"
         hx-include="[name='q'],[name='ohne_objekt']">
-      <div class="input-group-append">
-        <span class="input-group-text"><i class="fas fa-search"></i></span>
-      </div>
+      <span class="input-group-text"><i class="fas fa-search"></i></span>
     </div>
     <input type="hidden" name="ohne_objekt" value="{{ '1' if ohne_objekt else '0' }}">
     {% if ohne_objekt %}
-    <a href="{{ url_for('customers.index', q=q) }}"
-       class="btn btn-sm btn-warning">
-      <i class="fas fa-filter mr-1"></i> Ohne Objekt
-      <i class="fas fa-times ml-1"></i>
+    <a href="{{ url_for('customers.index', q=q) }}" class="btn btn-sm btn-warning">
+      <i class="fas fa-filter me-1"></i> Ohne Objekt <i class="fas fa-times ms-1"></i>
     </a>
     {% else %}
-    <a href="{{ url_for('customers.index', q=q, ohne_objekt=1) }}"
-       class="btn btn-sm btn-outline-secondary">
-      <i class="fas fa-filter mr-1"></i> Ohne Objekt anzeigen
+    <a href="{{ url_for('customers.index', q=q, ohne_objekt=1) }}" class="btn btn-sm btn-outline-secondary">
+      <i class="fas fa-filter me-1"></i> Ohne Objekt anzeigen
     </a>
     {% endif %}
-    <div class="card-tools ml-auto">
+    <div class="ms-auto">
       <a href="{{ url_for('customers.new') }}" class="btn btn-primary btn-sm">
-        <i class="fas fa-plus mr-1"></i> Neuer Kunde
+        <i class="fas fa-plus me-1"></i> Neuer Kunde
       </a>
     </div>
   </div>

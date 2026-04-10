@@ -1,19 +1,19 @@
 {% extends "base.html" %}
 {% block title %}Buchungen {{ year }}{% endblock %}
-{% block page_title %}<i class="fas fa-book mr-2"></i> Buchungen {% endblock %}
+{% block page_title %}<i class="fas fa-book me-2"></i> Buchungen {% endblock %}
 {% block content %}
 
 {% if real_accounts %}
-<div class="card card-outline card-primary mb-3">
+<div class="card mb-3">
   <div class="card-body py-2 px-3">
     <div class="d-flex flex-wrap align-items-center" style="gap:1rem;">
-      <span class="text-muted mr-2"><i class="fas fa-university mr-1"></i><strong>Aktuelle Kontostände</strong></span>
+      <span class="text-muted me-2"><i class="fas fa-university me-1"></i><strong>Aktuelle Kontostände</strong></span>
       {% for ra in real_accounts %}
       {% set bal = real_account_saldi[ra.id] %}
-      <span class="mr-3">
-        <i class="fas {{ ra.icon or 'fa-university' }} mr-1 text-muted"></i>
+      <span class="me-3">
+        <i class="fas {{ ra.icon or 'fa-university' }} me-1 text-muted"></i>
         <strong>{{ ra.name }}:</strong>
-        <span class="font-weight-bold {{ 'text-success' if bal >= 0 else 'text-danger' }}">
+        <span class="fw-bold {{ 'text-success' if bal >= 0 else 'text-danger' }}">
           {{ "%.2f"|format(bal) }} €
         </span>
       </span>
@@ -26,8 +26,8 @@
 <div class="card">
   <div class="card-header">
     <div class="filter-bar">
-      <div class="form-group">
-        <label class="mb-0 mr-1">Jahr</label>
+      <div class="mb-3">
+        <label class="form-label mb-0 me-1">Jahr</label>
         <input type="number" name="year" value="{{ year }}" min="2000" max="2100"
           class="form-control form-control-sm" style="width:90px"
           hx-get="{{ url_for('accounting.bookings') }}"
@@ -35,7 +35,7 @@
           hx-target="#bookings-table"
           hx-include="[name='year'],[name='account_id'],[name='project_id'],[name='real_account_id']">
       </div>
-      <div class="form-group">
+      <div class="mb-3">
         {# Versteckter Select – HTMX hört darauf #}
         <select name="real_account_id" id="ra-select" style="display:none"
           hx-get="{{ url_for('accounting.bookings') }}"
@@ -52,26 +52,26 @@
         {% set sel_ra = real_accounts | selectattr('id', 'equalto', real_account_id | int) | first if real_account_id else None %}
         <div class="dropdown d-inline-block">
           <button type="button" class="btn btn-sm btn-outline-secondary dropdown-toggle"
-                  id="ra-btn" data-toggle="dropdown" style="min-width:160px; text-align:left;">
-            <i class="fas {{ sel_ra.icon if sel_ra and sel_ra.icon else 'fa-university' }} mr-1 text-muted" id="ra-btn-icon"></i>
+                  id="ra-btn" data-bs-toggle="dropdown" style="min-width:160px; text-align:left;">
+            <i class="fas {{ sel_ra.icon if sel_ra and sel_ra.icon else 'fa-university' }} me-1 text-muted" id="ra-btn-icon"></i>
             <span id="ra-btn-label">{{ sel_ra.name if sel_ra else 'Alle Bankkonten' }}</span>
           </button>
           <div class="dropdown-menu">
             <a class="dropdown-item" href="#" data-value="" data-icon="fa-university">
-              <i class="fas fa-university mr-1 text-muted"></i> Alle Bankkonten
+              <i class="fas fa-university me-1 text-muted"></i> Alle Bankkonten
             </a>
             <div class="dropdown-divider"></div>
             {% for ra in real_accounts %}
             <a class="dropdown-item" href="#"
                data-value="{{ ra.id }}" data-icon="{{ ra.icon or 'fa-university' }}">
-              <i class="fas {{ ra.icon or 'fa-university' }} mr-1 text-muted"></i> {{ ra.name }}
+              <i class="fas {{ ra.icon or 'fa-university' }} me-1 text-muted"></i> {{ ra.name }}
             </a>
             {% endfor %}
           </div>
         </div>
       </div>
-       <div class="form-group">
-        <label class="mb-0 mr-1">Konto</label>
+      <div class="mb-3">
+        <label class="form-label mb-0 me-1">Konto</label>
         <select name="account_id" class="form-control form-control-sm tom-select"
           hx-get="{{ url_for('accounting.bookings') }}"
           hx-trigger="change"
@@ -85,8 +85,8 @@
           {% endfor %}
         </select>
       </div>
-      <div class="form-group">
-        <label class="mb-0 mr-1">Projekt</label>
+      <div class="mb-3">
+        <label class="form-label mb-0 me-1">Projekt</label>
         <select name="project_id" class="form-control form-control-sm tom-select"
           hx-get="{{ url_for('accounting.bookings') }}"
           hx-trigger="change"
@@ -101,17 +101,15 @@
         </select>
       </div>
     </div>
-    <div class="card-tools">
+    <div class="card-options">
       <a href="{{ url_for('accounting.booking_new') }}" class="btn btn-primary btn-sm">
-        <i class="fas fa-plus mr-1"></i> Neue Buchung
+        <i class="fas fa-plus me-1"></i> Neue Buchung
       </a>
-      <a href="{{ url_for('accounting.import_bookings') }}"
-         class="btn btn-info btn-sm ml-1">
-        <i class="fas fa-file-import mr-1"></i> Importieren
+      <a href="{{ url_for('accounting.import_bookings') }}" class="btn btn-info btn-sm ms-1">
+        <i class="fas fa-file-import me-1"></i> Importieren
       </a>
-      <a href="{{ url_for('accounting.export_csv', year=year) }}"
-         class="btn btn-secondary btn-sm ml-1">
-        <i class="fas fa-file-csv mr-1"></i> CSV
+      <a href="{{ url_for('accounting.export_csv', year=year) }}" class="btn btn-secondary btn-sm ms-1">
+        <i class="fas fa-file-csv me-1"></i> CSV
       </a>
     </div>
   </div>
@@ -136,7 +134,7 @@
       var label = this.textContent.trim();
 
       sel.value = this.dataset.value;
-      btnIcon.className = 'fas ' + icon + ' mr-1 text-muted';
+      btnIcon.className = 'fas ' + icon + ' me-1 text-muted';
       btnLabel.textContent = label;
 
       sel.dispatchEvent(new Event('change'));

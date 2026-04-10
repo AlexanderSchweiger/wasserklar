@@ -1,47 +1,60 @@
 {% extends "base.html" %}
 {% block title %}Buchhaltung{% endblock %}
-{% block page_title %}<i class="fas fa-calculator mr-2"></i> Buchhaltung {{ year }}{% endblock %}
+{% block page_title %}<i class="fas fa-calculator me-2"></i> Buchhaltung {{ year }}{% endblock %}
 {% block content %}
-<div class="row">
+<div class="row row-cards">
   <div class="col-md-3 col-sm-6">
-    <a href="{{ url_for('accounting.bookings', year=year) }}" class="small-box-link">
-      <div class="small-box bg-info">
-        <div class="inner"><h3>Buchungen</h3><p>Einnahmen &amp; Ausgaben</p></div>
-        <div class="icon"><i class="fas fa-book"></i></div>
+    <a href="{{ url_for('accounting.bookings', year=year) }}" class="card card-link bg-info text-white">
+      <div class="card-body">
+        <div class="subheader">Einnahmen &amp; Ausgaben</div>
+        <div class="h3 mb-0">Buchungen</div>
+      </div>
+      <div class="card-footer bg-info-lt text-info border-0 py-2">
+        <i class="fas fa-book fa-lg"></i>
       </div>
     </a>
   </div>
   <div class="col-md-3 col-sm-6">
-    <a href="{{ url_for('accounting.open_items') }}" class="small-box-link">
-      <div class="small-box bg-warning">
-        <div class="inner"><h3>Offene Posten</h3><p>Unbezahlte Rechnungen</p></div>
-        <div class="icon"><i class="fas fa-exclamation-circle"></i></div>
+    <a href="{{ url_for('accounting.open_items') }}" class="card card-link bg-warning text-white">
+      <div class="card-body">
+        <div class="subheader">Unbezahlte Rechnungen</div>
+        <div class="h3 mb-0">Offene Posten</div>
+      </div>
+      <div class="card-footer bg-warning-lt text-warning border-0 py-2">
+        <i class="fas fa-exclamation-circle fa-lg"></i>
       </div>
     </a>
   </div>
   <div class="col-md-3 col-sm-6">
-    <a href="{{ url_for('accounting.report', year=year) }}" class="small-box-link">
-      <div class="small-box bg-success">
-        <div class="inner"><h3>Jahresbericht</h3><p>EÜR {{ year }}</p></div>
-        <div class="icon"><i class="fas fa-chart-bar"></i></div>
+    <a href="{{ url_for('accounting.report', year=year) }}" class="card card-link bg-success text-white">
+      <div class="card-body">
+        <div class="subheader">EÜR {{ year }}</div>
+        <div class="h3 mb-0">Jahresbericht</div>
+      </div>
+      <div class="card-footer bg-success-lt text-success border-0 py-2">
+        <i class="fas fa-chart-bar fa-lg"></i>
       </div>
     </a>
   </div>
   <div class="col-md-3 col-sm-6">
-    <a href="{{ url_for('accounting.accounts') }}" class="small-box-link">
-      <div class="small-box bg-secondary">
-        <div class="inner"><h3>Kontenplan</h3><p>Konten verwalten</p></div>
-        <div class="icon"><i class="fas fa-list"></i></div>
+    <a href="{{ url_for('accounting.accounts') }}" class="card card-link bg-secondary text-white">
+      <div class="card-body">
+        <div class="subheader">Konten verwalten</div>
+        <div class="h3 mb-0">Kontenplan</div>
+      </div>
+      <div class="card-footer bg-secondary-lt text-secondary border-0 py-2">
+        <i class="fas fa-list fa-lg"></i>
       </div>
     </a>
   </div>
-</div>
-<div class="row">
   <div class="col-md-3 col-sm-6">
-    <a href="{{ url_for('accounting.ust', year=year) }}" class="small-box-link">
-      <div class="small-box bg-purple">
-        <div class="inner"><h3>USt-Voranmeldung</h3><p>Umsatzsteuer {{ year }}</p></div>
-        <div class="icon"><i class="fas fa-percentage"></i></div>
+    <a href="{{ url_for('accounting.ust', year=year) }}" class="card card-link text-white" style="background-color:#6f42c1">
+      <div class="card-body">
+        <div class="subheader">Umsatzsteuer {{ year }}</div>
+        <div class="h3 mb-0">USt-Voranmeldung</div>
+      </div>
+      <div class="card-footer border-0 py-2" style="background-color:rgba(255,255,255,0.15)">
+        <i class="fas fa-percentage fa-lg"></i>
       </div>
     </a>
   </div>

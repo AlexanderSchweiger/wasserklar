@@ -12,15 +12,14 @@
   <td>{{ meter.eichjahr or '—' }}</td>
 
   {# Stand Vorjahr #}
-  <td class="text-right text-muted">
+  <td class="text-end text-muted">
     {% if repl %}
-      {# Zählertausch: Anfangsstand des neuen Zählers anzeigen #}
       {% if meter.initial_value is not none %}
         {{ "%d"|format(meter.initial_value) }} m³
       {% else %}
         —
       {% endif %}
-      <span class="badge badge-warning ml-1" title="Zähler wurde in {{ year }} gewechselt">Tausch</span>
+      <span class="badge bg-warning ms-1" title="Zähler wurde in {{ year }} gewechselt">Tausch</span>
     {% elif prev_reading %}
       {{ "%d"|format(prev_reading.value) }} m³
     {% else %}
@@ -29,18 +28,17 @@
   </td>
 
   {# Stand aktuelles Jahr #}
-  <td class="text-right">
+  <td class="text-end">
     {% if reading %}
       <strong>{{ "%d"|format(reading.value) }}</strong> m³
     {% else %}
-      <span class="text-danger"><i class="fas fa-exclamation-circle mr-1"></i>fehlt</span>
+      <span class="text-danger"><i class="fas fa-exclamation-circle me-1"></i>fehlt</span>
     {% endif %}
   </td>
 
   {# Verbrauch #}
-  <td class="text-right">
+  <td class="text-end">
     {% if repl %}
-      {# Tausch: alter Verbrauch + neuer Verbrauch = Gesamt #}
       {% set old_cons = repl.old_reading.consumption if repl.old_reading and repl.old_reading.consumption is not none else none %}
       {% set new_cons = reading.consumption if reading and reading.consumption is not none else none %}
       {% if old_cons is not none or new_cons is not none %}
@@ -62,10 +60,10 @@
   </td>
 
   <td>{{ reading.reading_date.strftime('%d.%m.%Y') if reading else '—' }}</td>
-  <td class="text-right">
+  <td class="text-end">
     <a href="{{ url_for('meters.add_reading', meter_id=meter.id, year=year) }}"
        class="btn btn-sm {{ 'btn-outline-secondary' if reading else 'btn-warning' }}">
-      <i class="fas fa-{{ 'edit' if reading else 'plus' }} mr-1"></i>
+      <i class="fas fa-{{ 'edit' if reading else 'plus' }} me-1"></i>
       {{ 'Bearbeiten' if reading else 'Ablesen' }}
     </a>
   </td>

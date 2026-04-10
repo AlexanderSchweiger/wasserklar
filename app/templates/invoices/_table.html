@@ -1,5 +1,5 @@
 <table class="table table-hover table-striped mb-0">
-  <thead class="thead-light">
+  <thead>
     <tr>
       <th style="width:36px">
         <input type="checkbox" id="select-all" title="Alle auswählen">
@@ -10,8 +10,8 @@
       <th>Jahr</th>
       <th>Datum</th>
       <th>Fällig</th>
-      <th class="text-right">Verbrauch</th>
-      <th class="text-right">Betrag</th>
+      <th class="text-end">Verbrauch</th>
+      <th class="text-end">Betrag</th>
       <th>Status</th>
       <th></th>
     </tr>
@@ -32,7 +32,7 @@
         </a>
         {% if inv.customer.rechnung_per_email and inv.customer.email %}
         <br><small class="text-muted">
-          <i class="fas fa-envelope fa-xs mr-1"></i>{{ inv.customer.email }}
+          <i class="fas fa-envelope fa-xs me-1"></i>{{ inv.customer.email }}
         </small>
         {% endif %}
       </td>
@@ -45,18 +45,18 @@
       </td>
       <td>
         {% if inv.period_year %}
-        <span class="badge badge-primary">{{ inv.period_year }}</span>
+        <span class="badge bg-primary">{{ inv.period_year }}</span>
         {% else %}—{% endif %}
       </td>
       <td>{{ inv.date.strftime('%d.%m.%Y') }}</td>
       <td>{{ inv.due_date.strftime('%d.%m.%Y') if inv.due_date else '—' }}</td>
-      <td class="text-right text-nowrap">
+      <td class="text-end text-nowrap">
         {% set cons = inv.consumption %}
         {% if cons %}{{ "%.3g"|format(cons|float) }} m³{% else %}—{% endif %}
       </td>
-      <td class="text-right"><strong>{{ "%.2f"|format(inv.total_amount) }} €</strong></td>
+      <td class="text-end"><strong>{{ "%.2f"|format(inv.total_amount) }} €</strong></td>
       <td>{% with invoice = inv %}{% include "invoices/_status_badge.html" %}{% endwith %}</td>
-      <td class="text-right">
+      <td class="text-end">
         <a href="{{ url_for('invoices.detail', invoice_id=inv.id) }}"
            class="btn btn-sm btn-outline-secondary">
           <i class="fas fa-eye"></i>

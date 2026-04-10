@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% block title %}{{ 'Objekt bearbeiten' if property else 'Neues Objekt' }}{% endblock %}
 {% block page_title %}
-  <i class="fas fa-home mr-2"></i> {{ 'Objekt bearbeiten' if property else 'Neues Objekt' }}
+  <i class="fas fa-home me-2"></i> {{ 'Objekt bearbeiten' if property else 'Neues Objekt' }}
 {% endblock %}
 {% block content %}
 <div class="row">
   <div class="col-md-8">
-    <div class="card card-primary">
+    <div class="card">
       <div class="card-header">
         <h3 class="card-title">{{ property.label() if property else 'Neues Objekt' }}</h3>
       </div>
@@ -15,16 +15,16 @@
         <div class="card-body">
           <div class="row">
             <div class="col-md-6">
-              <div class="form-group">
-                <label>Objektnummer</label>
+              <div class="mb-3">
+                <label class="form-label">Objektnummer</label>
                 <input type="text" name="object_number" class="form-control"
                   value="{{ property.object_number if property else '' }}"
                   placeholder="z.B. OBJ-001">
               </div>
             </div>
             <div class="col-md-6">
-              <div class="form-group">
-                <label>Typ <span class="text-danger">*</span></label>
+              <div class="mb-3">
+                <label class="form-label">Typ <span class="text-danger">*</span></label>
                 <select name="object_type" class="form-control" required>
                   {% for t in ['Haus', 'Garten', 'Sonstiges'] %}
                   <option value="{{ t }}"
@@ -36,15 +36,15 @@
           </div>
           <div class="row">
             <div class="col-md-8">
-              <div class="form-group">
-                <label>Straße</label>
+              <div class="mb-3">
+                <label class="form-label">Straße</label>
                 <input type="text" name="strasse" class="form-control"
                   value="{{ property.strasse if property else '' }}">
               </div>
             </div>
             <div class="col-md-4">
-              <div class="form-group">
-                <label>Hausnummer</label>
+              <div class="mb-3">
+                <label class="form-label">Hausnummer</label>
                 <input type="text" name="hausnummer" class="form-control"
                   value="{{ property.hausnummer if property else '' }}">
               </div>
@@ -52,29 +52,29 @@
           </div>
           <div class="row">
             <div class="col-md-3">
-              <div class="form-group">
-                <label>PLZ</label>
+              <div class="mb-3">
+                <label class="form-label">PLZ</label>
                 <input type="text" name="plz" class="form-control"
                   value="{{ property.plz if property else '' }}">
               </div>
             </div>
             <div class="col-md-5">
-              <div class="form-group">
-                <label>Ort / Stadt</label>
+              <div class="mb-3">
+                <label class="form-label">Ort / Stadt</label>
                 <input type="text" name="ort" class="form-control"
                   value="{{ property.ort if property else '' }}">
               </div>
             </div>
             <div class="col-md-4">
-              <div class="form-group">
-                <label>Land</label>
+              <div class="mb-3">
+                <label class="form-label">Land</label>
                 <input type="text" name="land" class="form-control"
                   value="{{ property.land if property else 'Österreich' }}">
               </div>
             </div>
           </div>
-          <div class="form-group">
-            <label>Notizen</label>
+          <div class="mb-3">
+            <label class="form-label">Notizen</label>
             <textarea name="notes" class="form-control" rows="3">{{ property.notes if property else '' }}</textarea>
           </div>
 
@@ -83,28 +83,24 @@
           <p class="text-muted small mb-3">Überschreibt Kunden- und Tarif-Gebühren für dieses Objekt (stärkste Priorität). Leer lassen = Kunden- oder Tarif-Wert verwenden.</p>
           <div class="row">
             <div class="col-md-6">
-              <div class="form-group">
-                <label>Grundgebühr – Objektwert (€/Jahr)</label>
+              <div class="mb-3">
+                <label class="form-label">Grundgebühr – Objektwert (€/Jahr)</label>
                 <div class="input-group">
                   <input type="number" name="base_fee_override" step="0.01" class="form-control"
                     placeholder="Kunden-/Tarif-Standard"
                     value="{{ '%.2f'|format(property.base_fee_override) if property and property.base_fee_override is not none else '' }}">
-                  <div class="input-group-append">
-                    <span class="input-group-text">€</span>
-                  </div>
+                  <span class="input-group-text">€</span>
                 </div>
               </div>
             </div>
             <div class="col-md-6">
-              <div class="form-group">
-                <label>Zusatzgebühr – Objektwert (€/Jahr)</label>
+              <div class="mb-3">
+                <label class="form-label">Zusatzgebühr – Objektwert (€/Jahr)</label>
                 <div class="input-group">
                   <input type="number" name="additional_fee_override" step="0.01" class="form-control"
                     placeholder="Kunden-/Tarif-Standard"
                     value="{{ '%.2f'|format(property.additional_fee_override) if property and property.additional_fee_override is not none else '' }}">
-                  <div class="input-group-append">
-                    <span class="input-group-text">€</span>
-                  </div>
+                  <span class="input-group-text">€</span>
                 </div>
               </div>
             </div>
@@ -112,9 +108,9 @@
         </div>
         <div class="card-footer">
           <button type="submit" class="btn btn-primary">
-            <i class="fas fa-save mr-1"></i> Speichern
+            <i class="fas fa-save me-1"></i> Speichern
           </button>
-          <a href="{{ url_for('properties.index') }}" class="btn btn-secondary ml-2">Abbrechen</a>
+          <a href="{{ url_for('properties.index') }}" class="btn btn-secondary ms-2">Abbrechen</a>
         </div>
       </form>
     </div>

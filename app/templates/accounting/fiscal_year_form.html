@@ -1,35 +1,35 @@
 {% extends "base.html" %}
 {% block title %}Neues Buchungsjahr{% endblock %}
-{% block page_title %}<i class="fas fa-calendar-plus mr-2"></i> Neues Buchungsjahr{% endblock %}
+{% block page_title %}<i class="fas fa-calendar-plus me-2"></i> Neues Buchungsjahr{% endblock %}
 {% block content %}
 <div class="row">
   <div class="col-md-5">
-    <div class="card card-primary">
+    <div class="card">
       <div class="card-header"><h3 class="card-title">Buchungsjahr anlegen</h3></div>
       <form method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="card-body">
-          <div class="form-group">
-            <label>Jahr <span class="text-danger">*</span></label>
+          <div class="mb-3">
+            <label class="form-label">Jahr <span class="text-danger">*</span></label>
             <input type="number" name="year" class="form-control"
               value="{{ default_year }}" min="2000" max="2100" required>
           </div>
-          <div class="form-group">
-            <label>Startdatum <span class="text-danger">*</span></label>
+          <div class="mb-3">
+            <label class="form-label">Startdatum <span class="text-danger">*</span></label>
             <input type="date" name="start_date" class="form-control"
               value="{{ default_start }}" required>
           </div>
-          <div class="form-group">
-            <label>Enddatum <span class="text-danger">*</span></label>
+          <div class="mb-3">
+            <label class="form-label">Enddatum <span class="text-danger">*</span></label>
             <input type="date" name="end_date" class="form-control"
               value="{{ default_end }}" required>
           </div>
         </div>
         <div class="card-footer">
           <button type="submit" class="btn btn-primary">
-            <i class="fas fa-save mr-1"></i> Anlegen
+            <i class="fas fa-save me-1"></i> Anlegen
           </button>
-          <a href="{{ url_for('accounting.fiscal_years') }}" class="btn btn-secondary ml-2">Abbrechen</a>
+          <a href="{{ url_for('accounting.fiscal_years') }}" class="btn btn-secondary ms-2">Abbrechen</a>
         </div>
       </form>
     </div>

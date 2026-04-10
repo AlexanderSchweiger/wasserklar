@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% block title %}{{ 'Kunde bearbeiten' if customer else 'Neuer Kunde' }}{% endblock %}
 {% block page_title %}
-  <i class="fas fa-user mr-2"></i> {{ 'Kunde bearbeiten' if customer else 'Neuer Kunde' }}
+  <i class="fas fa-user me-2"></i> {{ 'Kunde bearbeiten' if customer else 'Neuer Kunde' }}
 {% endblock %}
 {% block content %}
 <div class="row">
   <div class="col-md-8">
-    <div class="card card-primary">
+    <div class="card">
       <div class="card-header">
         <h3 class="card-title">{{ customer.name if customer else 'Neuer Kunde' }}</h3>
       </div>
@@ -15,23 +15,23 @@
         <div class="card-body">
           <div class="row">
             <div class="col-md-2">
-              <div class="form-group">
-                <label>Kundennr.</label>
+              <div class="mb-3">
+                <label class="form-label">Kundennr.</label>
                 <input type="text" class="form-control" readonly
                   value="{{ customer.customer_number if customer and customer.customer_number else 'wird vergeben' }}"
                   style="background:#f8f9fa;">
               </div>
             </div>
             <div class="col-md-6">
-              <div class="form-group">
-                <label>Name <span class="text-danger">*</span></label>
+              <div class="mb-3">
+                <label class="form-label">Name <span class="text-danger">*</span></label>
                 <input type="text" name="name" class="form-control"
                   value="{{ customer.name if customer else '' }}" required>
               </div>
             </div>
             <div class="col-md-4">
-              <div class="form-group">
-                <label>Telefon</label>
+              <div class="mb-3">
+                <label class="form-label">Telefon</label>
                 <input type="tel" name="phone" class="form-control"
                   value="{{ customer.phone if customer else '' }}">
               </div>
@@ -39,8 +39,8 @@
           </div>
           <div class="row">
             <div class="col-md-4">
-              <div class="form-group">
-                <label>Externe Kennung</label>
+              <div class="mb-3">
+                <label class="form-label">Externe Kennung</label>
                 <input type="text" name="externe_kennung" class="form-control"
                   placeholder="optional"
                   value="{{ customer.externe_kennung if customer and customer.externe_kennung else '' }}">
@@ -49,15 +49,15 @@
           </div>
           <div class="row">
             <div class="col-md-8">
-              <div class="form-group">
-                <label>Straße</label>
+              <div class="mb-3">
+                <label class="form-label">Straße</label>
                 <input type="text" name="strasse" class="form-control"
                   value="{{ customer.strasse if customer else '' }}">
               </div>
             </div>
             <div class="col-md-4">
-              <div class="form-group">
-                <label>Hausnummer</label>
+              <div class="mb-3">
+                <label class="form-label">Hausnummer</label>
                 <input type="text" name="hausnummer" class="form-control"
                   value="{{ customer.hausnummer if customer else '' }}">
               </div>
@@ -65,22 +65,22 @@
           </div>
           <div class="row">
             <div class="col-md-3">
-              <div class="form-group">
-                <label>PLZ</label>
+              <div class="mb-3">
+                <label class="form-label">PLZ</label>
                 <input type="text" name="plz" class="form-control"
                   value="{{ customer.plz if customer else '' }}">
               </div>
             </div>
             <div class="col-md-5">
-              <div class="form-group">
-                <label>Ort / Stadt</label>
+              <div class="mb-3">
+                <label class="form-label">Ort / Stadt</label>
                 <input type="text" name="ort" class="form-control"
                   value="{{ customer.ort if customer else '' }}">
               </div>
             </div>
             <div class="col-md-4">
-              <div class="form-group">
-                <label>Land</label>
+              <div class="mb-3">
+                <label class="form-label">Land</label>
                 <input type="text" name="land" class="form-control"
                   value="{{ customer.land if customer else 'Österreich' }}">
               </div>
@@ -88,35 +88,35 @@
           </div>
           <div class="row">
             <div class="col-md-5">
-              <div class="form-group">
-                <label>E-Mail</label>
+              <div class="mb-3">
+                <label class="form-label">E-Mail</label>
                 <input type="email" name="email" class="form-control"
                   value="{{ customer.email if customer else '' }}">
               </div>
             </div>
             <div class="col-md-4">
-              <div class="form-group">
-                <label>Mitglied seit</label>
+              <div class="mb-3">
+                <label class="form-label">Mitglied seit</label>
                 <input type="date" name="member_since" class="form-control"
                   value="{{ customer.member_since.isoformat() if customer and customer.member_since else '' }}">
               </div>
             </div>
             <div class="col-md-3">
-              <div class="form-group">
-                <label>&nbsp;</label>
-                <div class="custom-control custom-checkbox mt-2">
-                  <input type="checkbox" class="custom-control-input"
+              <div class="mb-3">
+                <label class="form-label">&nbsp;</label>
+                <div class="form-check mt-2">
+                  <input type="checkbox" class="form-check-input"
                          id="rechnung_per_email" name="rechnung_per_email" value="1"
                          {{ 'checked' if customer and customer.rechnung_per_email }}>
-                  <label class="custom-control-label" for="rechnung_per_email">
+                  <label class="form-check-label" for="rechnung_per_email">
                     Rechnung per E-Mail
                   </label>
                 </div>
               </div>
             </div>
           </div>
-          <div class="form-group">
-            <label>Notizen</label>
+          <div class="mb-3">
+            <label class="form-label">Notizen</label>
             <textarea name="notes" class="form-control" rows="3">{{ customer.notes if customer else '' }}</textarea>
           </div>
 
@@ -125,28 +125,24 @@
           <p class="text-muted small mb-3">Überschreibt die Tarif-Gebühren für diesen Kunden beim Rechnungslauf. Leer lassen = Tarif-Standardwert verwenden.</p>
           <div class="row">
             <div class="col-md-6">
-              <div class="form-group">
-                <label>Grundgebühr – Kundenwert (€/Jahr)</label>
+              <div class="mb-3">
+                <label class="form-label">Grundgebühr – Kundenwert (€/Jahr)</label>
                 <div class="input-group">
                   <input type="number" name="base_fee_override" step="0.01" class="form-control"
                     placeholder="Tarif-Standard"
                     value="{{ '%.2f'|format(customer.base_fee_override) if customer and customer.base_fee_override is not none else '' }}">
-                  <div class="input-group-append">
-                    <span class="input-group-text">€</span>
-                  </div>
+                  <span class="input-group-text">€</span>
                 </div>
               </div>
             </div>
             <div class="col-md-6">
-              <div class="form-group">
-                <label>Zusatzgebühr – Kundenwert (€/Jahr)</label>
+              <div class="mb-3">
+                <label class="form-label">Zusatzgebühr – Kundenwert (€/Jahr)</label>
                 <div class="input-group">
                   <input type="number" name="additional_fee_override" step="0.01" class="form-control"
                     placeholder="Tarif-Standard"
                     value="{{ '%.2f'|format(customer.additional_fee_override) if customer and customer.additional_fee_override is not none else '' }}">
-                  <div class="input-group-append">
-                    <span class="input-group-text">€</span>
-                  </div>
+                  <span class="input-group-text">€</span>
                 </div>
               </div>
             </div>
@@ -154,9 +150,9 @@
         </div>
         <div class="card-footer">
           <button type="submit" class="btn btn-primary">
-            <i class="fas fa-save mr-1"></i> Speichern
+            <i class="fas fa-save me-1"></i> Speichern
           </button>
-          <a href="{{ url_for('customers.index') }}" class="btn btn-secondary ml-2">Abbrechen</a>
+          <a href="{{ url_for('customers.index') }}" class="btn btn-secondary ms-2">Abbrechen</a>
         </div>
       </form>
     </div>

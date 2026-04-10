@@ -1,43 +1,43 @@
 {% extends "base.html" %}
 {% block title %}Rechnung bearbeiten{% endblock %}
-{% block page_title %}<i class="fas fa-edit mr-2"></i> Rechnung bearbeiten{% endblock %}
+{% block page_title %}<i class="fas fa-edit me-2"></i> Rechnung bearbeiten{% endblock %}
 {% block content %}
 <div class="row">
   <div class="col-md-6">
-    <div class="card card-primary">
+    <div class="card">
       <div class="card-header">
         <h3 class="card-title">{{ invoice.invoice_number }} – {{ invoice.customer.name }}</h3>
       </div>
       <form method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="card-body">
-          <div class="row">
+          <div class="row g-2">
             <div class="col-md-6">
-              <div class="form-group">
-                <label>Rechnungsdatum</label>
+              <div class="mb-3">
+                <label class="form-label">Rechnungsdatum</label>
                 <input type="date" name="date" class="form-control"
                   value="{{ invoice.date.isoformat() }}" required>
               </div>
             </div>
             <div class="col-md-6">
-              <div class="form-group">
-                <label>Fälligkeitsdatum</label>
+              <div class="mb-3">
+                <label class="form-label">Fälligkeitsdatum</label>
                 <input type="date" name="due_date" class="form-control"
                   value="{{ invoice.due_date.isoformat() if invoice.due_date else '' }}">
               </div>
             </div>
           </div>
-          <div class="form-group">
-            <label>Notizen</label>
+          <div class="mb-3">
+            <label class="form-label">Notizen</label>
             <textarea name="notes" class="form-control" rows="3">{{ invoice.notes or '' }}</textarea>
           </div>
         </div>
         <div class="card-footer">
           <button type="submit" class="btn btn-primary">
-            <i class="fas fa-save mr-1"></i> Speichern
+            <i class="fas fa-save me-1"></i> Speichern
           </button>
           <a href="{{ url_for('invoices.detail', invoice_id=invoice.id) }}"
-             class="btn btn-secondary ml-2">Abbrechen</a>
+             class="btn btn-secondary ms-2">Abbrechen</a>
         </div>
       </form>
     </div>

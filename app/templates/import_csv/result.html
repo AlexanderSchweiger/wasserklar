@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Import-Ergebnis{% endblock %}
-{% block page_title %}<i class="fas fa-check-circle mr-2"></i> Import-Ergebnis{% endblock %}
+{% block page_title %}<i class="fas fa-check-circle me-2"></i> Import-Ergebnis{% endblock %}
 {% block content %}
 
 {% set has_issues = results.warnings|length > 0 or results.errors|length > 0 %}
 
 <div class="row">
   <div class="col-md-6">
-    <div class="card {% if results.errors %}card-danger{% elif results.warnings %}card-warning{% else %}card-success{% endif %}">
+    <div class="card {% if results.errors %}border-danger{% elif results.warnings %}border-warning{% else %}border-success{% endif %}">
       <div class="card-header">
         <h3 class="card-title">Import abgeschlossen</h3>
       </div>
@@ -15,34 +15,34 @@
         <table class="table table-sm mb-0">
           <tbody>
             <tr>
-              <td><i class="fas fa-users mr-1 text-primary"></i> Kunden angelegt</td>
-              <td class="text-right"><strong>{{ results.customers_created }}</strong></td>
+              <td><i class="fas fa-users me-1 text-primary"></i> Kunden angelegt</td>
+              <td class="text-end"><strong>{{ results.customers_created }}</strong></td>
             </tr>
             <tr>
-              <td><i class="fas fa-home mr-1 text-info"></i> Objekte angelegt</td>
-              <td class="text-right"><strong>{{ results.properties_created }}</strong></td>
+              <td><i class="fas fa-home me-1 text-info"></i> Objekte angelegt</td>
+              <td class="text-end"><strong>{{ results.properties_created }}</strong></td>
             </tr>
             <tr>
-              <td><i class="fas fa-tachometer-alt mr-1 text-secondary"></i> Zähler angelegt</td>
-              <td class="text-right"><strong>{{ results.meters_created }}</strong></td>
+              <td><i class="fas fa-tachometer-alt me-1 text-secondary"></i> Zähler angelegt</td>
+              <td class="text-end"><strong>{{ results.meters_created }}</strong></td>
             </tr>
             <tr>
-              <td><i class="fas fa-list-ol mr-1 text-success"></i> Ablesungen importiert</td>
-              <td class="text-right"><strong>{{ results.readings_created }}</strong></td>
+              <td><i class="fas fa-list-ol me-1 text-success"></i> Ablesungen importiert</td>
+              <td class="text-end"><strong>{{ results.readings_created }}</strong></td>
             </tr>
             <tr class="table-secondary">
-              <td><i class="fas fa-forward mr-1"></i> Zeilen übersprungen</td>
-              <td class="text-right"><strong>{{ results.rows_skipped }}</strong></td>
+              <td><i class="fas fa-forward me-1"></i> Zeilen übersprungen</td>
+              <td class="text-end"><strong>{{ results.rows_skipped }}</strong></td>
             </tr>
           </tbody>
         </table>
       </div>
       <div class="card-footer">
         <a href="{{ url_for('customers.index') }}" class="btn btn-primary">
-          <i class="fas fa-users mr-1"></i> Kunden ansehen
+          <i class="fas fa-users me-1"></i> Kunden ansehen
         </a>
-        <a href="{{ url_for('import_csv.upload') }}" class="btn btn-secondary ml-2">
-          <i class="fas fa-file-upload mr-1"></i> Neuer Import
+        <a href="{{ url_for('import_csv.upload') }}" class="btn btn-secondary ms-2">
+          <i class="fas fa-file-upload me-1"></i> Neuer Import
         </a>
       </div>
     </div>
@@ -52,8 +52,8 @@
 {% if results.warnings %}
 <div class="row mt-2">
   <div class="col-md-10">
-    <div class="callout callout-warning">
-      <h6><i class="fas fa-exclamation-triangle mr-1"></i>
+    <div class="alert alert-warning">
+      <h6 class="alert-title"><i class="fas fa-exclamation-triangle me-1"></i>
         Warnungen ({{ results.warnings|length }})
       </h6>
       <ul class="mb-0" style="font-size:.875rem">
@@ -72,8 +72,8 @@
 {% if results.errors %}
 <div class="row mt-2">
   <div class="col-md-10">
-    <div class="callout callout-danger">
-      <h6><i class="fas fa-times-circle mr-1"></i>
+    <div class="alert alert-danger">
+      <h6 class="alert-title"><i class="fas fa-times-circle me-1"></i>
         Fehler ({{ results.errors|length }})
       </h6>
       <ul class="mb-0" style="font-size:.875rem">

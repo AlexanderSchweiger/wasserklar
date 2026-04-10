@@ -1,5 +1,5 @@
 <table class="table table-hover mb-0">
-  <thead class="thead-light">
+  <thead>
     <tr>
       <th>Datum</th>
       <th class="text-center"><i class="fas fa-university"></i></th>
@@ -7,8 +7,8 @@
       <th>Beschreibung</th>
       <th>Projekt</th>
       <th>Kunde</th>
-      <th class="text-right">MwSt</th>
-      <th class="text-right">Betrag</th>
+      <th class="text-end">MwSt</th>
+      <th class="text-end">Betrag</th>
       <th></th>
     </tr>
   </thead>
@@ -30,21 +30,21 @@
       <td>{{ b.account.name }}</td>
       <td>
         {% if b.reference %}
-        <span class="badge badge-secondary mr-1">{{ b.reference }}</span>
+        <span class="badge bg-secondary me-1">{{ b.reference }}</span>
         {% endif %}
         {% if b.storno_of_id %}
-        <span class="mr-1" title="Storno zu Buchung #{{ b.storno_of_id }}">&#8629;</span>
+        <span class="me-1" title="Storno zu Buchung #{{ b.storno_of_id }}">&#8629;</span>
         {% endif %}
         <span class="{% if b.status == 'Storniert' %}text-decoration-line-through{% endif %}">
           {{ b.description }}
         </span>
         {% if b.storno_reason %}
-        <small class="ml-1"><em>({{ b.storno_reason }})</em></small>
+        <small class="ms-1"><em>({{ b.storno_reason }})</em></small>
         {% endif %}
         {% if b.invoice_id %}
         <a href="{{ url_for('invoices.detail', invoice_id=b.invoice_id) }}"
-           class="badge badge-light ml-1">
-          <i class="fas fa-file-invoice mr-1"></i>RE
+           class="badge bg-light text-dark ms-1">
+          <i class="fas fa-file-invoice me-1"></i>RE
         </a>
         {% endif %}
       </td>
@@ -61,14 +61,14 @@
       <td>
         {% if b.customer %}
         <a href="{{ url_for('customers.detail', customer_id=b.customer.id) }}"
-           class="badge badge-secondary">{{ b.customer.name }}</a>
+           class="badge bg-secondary">{{ b.customer.name }}</a>
         {% else %}
         <span class="text-muted">—</span>
         {% endif %}
       </td>
-      <td class="text-right text-nowrap">
+      <td class="text-end text-nowrap">
         {% if b.tax_rate and b.tax_rate > 0 and b.status != 'Storniert' %}
-          <span class="badge badge-light border">{{ b.tax_rate | int }} %</span>
+          <span class="badge bg-light text-dark border">{{ b.tax_rate | int }} %</span>
           <small class="text-muted">
             {{ "%.2f"|format(b.amount|abs * b.tax_rate / (100 + b.tax_rate)) }} €
           </small>
@@ -76,10 +76,10 @@
           <span class="text-muted">—</span>
         {% endif %}
       </td>
-      <td class="text-right font-weight-bold {{ 'text-success' if b.amount > 0 else 'text-danger' }}">
+      <td class="text-end fw-bold {{ 'text-success' if b.amount > 0 else 'text-danger' }}">
         {{ "%.2f"|format(b.amount) }} €
       </td>
-      <td class="text-right" style="white-space:nowrap">
+      <td class="text-end" style="white-space:nowrap">
         {% set fy_locked = b.id in locked_booking_ids %}
         {% if fy_locked %}
         <span class="text-muted" title="Buchungsjahr abgeschlossen"><i class="fas fa-lock"></i></span>
@@ -116,10 +116,10 @@
     </tr>
     {% endfor %}
   </tbody>
-  <tfoot class="thead-light">
+  <tfoot class="table-light">
     <tr>
-      <td colspan="6" class="text-right font-weight-bold">Summe (ohne Storno):</td>
-      <td class="text-right text-nowrap">
+      <td colspan="6" class="text-end fw-bold">Summe (ohne Storno):</td>
+      <td class="text-end text-nowrap">
         {% if total_vorsteuer and total_vorsteuer > 0 %}
         <small class="text-muted d-block">VSt: {{ "%.2f"|format(total_vorsteuer) }} €</small>
         {% endif %}
@@ -127,7 +127,7 @@
         <small class="text-muted d-block">USt: {{ "%.2f"|format(total_ust) }} €</small>
         {% endif %}
       </td>
-      <td class="text-right font-weight-bold {{ 'text-success' if total_amount >= 0 else 'text-danger' }}">
+      <td class="text-end fw-bold {{ 'text-success' if total_amount >= 0 else 'text-danger' }}">
         {{ "%.2f"|format(total_amount) }} €
       </td>
       <td></td>
