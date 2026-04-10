@@ -45,7 +45,7 @@
       </td>
       <td>
         {% if inv.period_year %}
-        <span class="badge bg-primary">{{ inv.period_year }}</span>
+        <span class="badge bg-primary text-white">{{ inv.period_year }}</span>
         {% else %}—{% endif %}
       </td>
       <td>{{ inv.date.strftime('%d.%m.%Y') }}</td>
@@ -54,7 +54,7 @@
         {% set cons = inv.consumption %}
         {% if cons %}{{ "%.3g"|format(cons|float) }} m³{% else %}—{% endif %}
       </td>
-      <td class="text-end"><strong>{{ "%.2f"|format(inv.total_amount) }} €</strong></td>
+      <td class="text-end"><strong>{{ inv.total_amount|de_number }} €</strong></td>
       <td>{% with invoice = inv %}{% include "invoices/_status_badge.html" %}{% endwith %}</td>
       <td class="text-end">
         <a href="{{ url_for('invoices.detail', invoice_id=inv.id) }}"

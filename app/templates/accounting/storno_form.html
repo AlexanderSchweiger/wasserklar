@@ -4,8 +4,7 @@
   <i class="fas fa-ban me-2"></i> Buchung stornieren
 {% endblock %}
 {% block content %}
-<div class="row">
-  <div class="col-md-7">
+<div>
 
     {# Ursprungsbuchung – read-only #}
     <div class="card mb-3">
@@ -24,7 +23,7 @@
             <div class="mb-3">
               <label class="text-muted small form-label">Betrag</label>
               <p class="fw-bold {{ 'text-success' if booking.amount > 0 else 'text-danger' }}">
-                {{ "%.2f"|format(booking.amount) }} €
+                {{ booking.amount|de_number }} €
               </p>
             </div>
           </div>
@@ -52,7 +51,7 @@
     <div class="alert alert-warning">
       <i class="fas fa-info-circle me-1"></i>
       Es wird eine Gegenbuchung über
-      <strong>{{ "%.2f"|format(booking.amount * -1) }} €</strong>
+      <strong>{{ (booking.amount * -1)|de_number }} €</strong>
       auf dem Konto <strong>{{ booking.account.name }}</strong> erstellt.
       Die Buchungsnummer und alle Verknüpfungen bleiben erhalten.
     </div>
@@ -73,7 +72,7 @@
       <i class="fas fa-exclamation-circle me-1"></i>
       Zu dieser Buchung existiert ein offener Posten:
       <strong>{{ booking.open_item.description }}</strong>
-      ({{ "%.2f"|format(booking.open_item.amount) }} €,
+      ({{ booking.open_item.amount|de_number }} €,
       Status: {{ booking.open_item.status }}).
     </div>
     {% endif %}
@@ -118,6 +117,5 @@
       </form>
     </div>
 
-  </div>
 </div>
 {% endblock %}

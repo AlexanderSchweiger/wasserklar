@@ -12,7 +12,7 @@ from app.invoices import bp
 from app.extensions import db
 from app.models import Invoice, InvoiceItem, Customer, WaterMeter, MeterReading, WaterTariff, Booking, Account, Property, OpenItem, Project, RealAccount, InvoiceCounter, AppSetting
 from app.utils import next_invoice_number as _next_invoice_number
-from app.settings_service import get_wg, send_mail
+from app.settings_service import get_wg, send_mail, wg_settings
 
 
 def _create_or_update_open_item(invoice):
@@ -39,6 +39,55 @@ def _create_or_update_open_item(invoice):
 def _invoice_is_locked(invoice):
     """Gesperrt wenn Status nicht mehr Entwurf ist."""
     return invoice.status != Invoice.STATUS_DRAFT
+
+
+def _get_document_format(override=None):
+    """Gibt das konfigurierte Dokumentformat zurück ('pdf', 'docx' oder 'both').
+    override kommt aus dem Request-Parameter ?fmt="""
+    fmt = override or AppSetting.get("invoice.document_format", "pdf")
+    return fmt if fmt in ("pdf", "docx", "both") else "pdf"
+
+
+def _get_doc_dir(invoice):
+    """Gibt den jahresspezifischen Unterordner für Rechnungsdokumente zurück und legt ihn an.
+
+    Struktur: <PDF_DIR>/<Jahr>/ z.B. instance/pdfs/2024/
+    """
+    year = invoice.date.year if invoice.date else "misc"
+    doc_dir = os.path.join(current_app.config["PDF_DIR"], str(year))
+    os.makedirs(doc_dir, exist_ok=True)
+    return doc_dir
+
+
+def _versioned_path(doc_dir: str, invoice_number: str, ext: str) -> str:
+    """Gibt einen eindeutigen Dateipfad zurück.
+
+    Existiert bereits eine Datei mit dem Basisnamen, wird _V2, _V3, … angehängt,
+    damit ältere Versionen erhalten bleiben.
+
+    Beispiel: 2025-00042.pdf → 2025-00042_V2.pdf → 2025-00042_V3.pdf
+    """
+    base = os.path.join(doc_dir, f"{invoice_number}.{ext}")
+    if not os.path.exists(base):
+        return base
+    v = 2
+    while True:
+        candidate = os.path.join(doc_dir, f"{invoice_number}_V{v}.{ext}")
+        if not os.path.exists(candidate):
+            return candidate
+        v += 1
+
+
+_DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+def _sync_open_item(invoice):
+    """Passt den Betrag des verknüpften Offenen Postens an den neuen Rechnungsbetrag an.
+    Gibt True zurück wenn ein Offener Posten aktualisiert wurde."""
+    if invoice.open_item:
+        invoice.open_item.amount = invoice.total_amount
+        return True
+    return False
 
 
 def _render_email_body(invoice):
@@ -118,6 +167,7 @@ def index():
         projects_for_filter=projects_for_filter,
         project_id_filter=project_id_filter,
         nur_email=nur_email,
+        doc_format=AppSetting.get("invoice.document_format", "pdf"),
     )
 
 
@@ -275,8 +325,9 @@ def detail(invoice_id):
     invoice = db.get_or_404(Invoice, invoice_id)
     real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
     default_real_account = RealAccount.query.filter_by(is_default=True, active=True).first()
+    doc_format = AppSetting.get("invoice.document_format", "pdf")
     return render_template("invoices/detail.html", invoice=invoice, real_accounts=real_accounts,
-                           default_real_account=default_real_account)
+                           default_real_account=default_real_account, doc_format=doc_format)
 
 
 @bp.route("/<int:invoice_id>/edit", methods=["GET", "POST"])
@@ -295,6 +346,93 @@ def edit(invoice_id):
         flash("Rechnung gespeichert.", "success")
         return redirect(url_for("invoices.detail", invoice_id=invoice.id))
     return render_template("invoices/edit.html", invoice=invoice, customers=customers)
+
+
+@bp.route("/<int:invoice_id>/items/add", methods=["POST"])
+@login_required
+def item_add(invoice_id):
+    invoice = db.get_or_404(Invoice, invoice_id)
+    if _invoice_is_locked(invoice):
+        flash("Rechnung ist gesperrt und kann nicht mehr bearbeitet werden.", "warning")
+        return redirect(url_for("invoices.detail", invoice_id=invoice_id))
+    description = request.form.get("description", "").strip()
+    if not description:
+        flash("Beschreibung darf nicht leer sein.", "danger")
+        return redirect(url_for("invoices.detail", invoice_id=invoice_id))
+    try:
+        quantity = Decimal(request.form.get("quantity", "1").replace(",", "."))
+        unit_price = Decimal(request.form.get("unit_price", "0").replace(",", "."))
+    except Exception:
+        flash("Ungültige Zahlenangabe.", "danger")
+        return redirect(url_for("invoices.detail", invoice_id=invoice_id))
+    unit = request.form.get("unit", "").strip()
+    amount = (quantity * unit_price).quantize(Decimal("0.01"))
+    db.session.add(InvoiceItem(
+        invoice_id=invoice_id,
+        description=description,
+        quantity=quantity,
+        unit=unit,
+        unit_price=unit_price,
+        amount=amount,
+    ))
+    invoice.recalculate_total()
+    if _sync_open_item(invoice):
+        flash("Offener Posten wurde auf den neuen Betrag aktualisiert.", "info")
+    db.session.commit()
+    flash("Position hinzugefügt.", "success")
+    return redirect(url_for("invoices.detail", invoice_id=invoice_id))
+
+
+@bp.route("/<int:invoice_id>/items/<int:item_id>/edit", methods=["POST"])
+@login_required
+def item_edit(invoice_id, item_id):
+    invoice = db.get_or_404(Invoice, invoice_id)
+    if _invoice_is_locked(invoice):
+        flash("Rechnung ist gesperrt und kann nicht mehr bearbeitet werden.", "warning")
+        return redirect(url_for("invoices.detail", invoice_id=invoice_id))
+    item = db.get_or_404(InvoiceItem, item_id)
+    if item.invoice_id != invoice_id:
+        abort(404)
+    description = request.form.get("description", "").strip()
+    if not description:
+        flash("Beschreibung darf nicht leer sein.", "danger")
+        return redirect(url_for("invoices.detail", invoice_id=invoice_id))
+    try:
+        quantity = Decimal(request.form.get("quantity", "1").replace(",", "."))
+        unit_price = Decimal(request.form.get("unit_price", "0").replace(",", "."))
+    except Exception:
+        flash("Ungültige Zahlenangabe.", "danger")
+        return redirect(url_for("invoices.detail", invoice_id=invoice_id))
+    item.description = description
+    item.quantity = quantity
+    item.unit = request.form.get("unit", "").strip()
+    item.unit_price = unit_price
+    item.amount = (quantity * unit_price).quantize(Decimal("0.01"))
+    invoice.recalculate_total()
+    if _sync_open_item(invoice):
+        flash("Offener Posten wurde auf den neuen Betrag aktualisiert.", "info")
+    db.session.commit()
+    flash("Position aktualisiert.", "success")
+    return redirect(url_for("invoices.detail", invoice_id=invoice_id))
+
+
+@bp.route("/<int:invoice_id>/items/<int:item_id>/delete", methods=["POST"])
+@login_required
+def item_delete(invoice_id, item_id):
+    invoice = db.get_or_404(Invoice, invoice_id)
+    if _invoice_is_locked(invoice):
+        flash("Rechnung ist gesperrt und kann nicht mehr bearbeitet werden.", "warning")
+        return redirect(url_for("invoices.detail", invoice_id=invoice_id))
+    item = db.get_or_404(InvoiceItem, item_id)
+    if item.invoice_id != invoice_id:
+        abort(404)
+    db.session.delete(item)
+    invoice.recalculate_total()
+    if _sync_open_item(invoice):
+        flash("Offener Posten wurde auf den neuen Betrag aktualisiert.", "info")
+    db.session.commit()
+    flash("Position gelöscht.", "success")
+    return redirect(url_for("invoices.detail", invoice_id=invoice_id))
 
 
 @bp.route("/bulk-action", methods=["POST"])
@@ -327,6 +465,9 @@ def bulk_action():
         for inv in invoices:
             old_status = inv.status
             inv.status = action
+            if action == Invoice.STATUS_DRAFT:
+                inv.pdf_path = None
+                inv.doc_path = None
             if action == Invoice.STATUS_SENT:
                 _create_or_update_open_item(inv)
             elif action == Invoice.STATUS_CANCELLED and inv.open_item:
@@ -345,6 +486,7 @@ def bulk_action():
 @login_required
 def bulk_pdf_merged():
     """Alle markierten Rechnungen als zusammengeführtes PDF zum Download."""
+    import io as _io
     invoice_ids = request.form.getlist("invoice_ids", type=int)
     if not invoice_ids:
         flash("Keine Rechnungen ausgewählt.", "warning")
@@ -355,21 +497,19 @@ def bulk_pdf_merged():
         flash("WeasyPrint ist nicht installiert. PDF-Export nur im Docker-Container verfügbar.", "danger")
         return redirect(url_for("invoices.index"))
     invoices = Invoice.query.filter(Invoice.id.in_(invoice_ids)).order_by(Invoice.invoice_number).all()
-    pdf_dir = current_app.config["PDF_DIR"]
-    os.makedirs(pdf_dir, exist_ok=True)
     rendered_docs = []
     for invoice in invoices:
         html_content = render_template("invoices/pdf_template.html", invoice=invoice)
         rendered_docs.append(HTML(string=html_content).render())
-        # Cache für gesperrte Rechnungen aktualisieren
         if _invoice_is_locked(invoice):
-            pdf_path = os.path.join(pdf_dir, f"{invoice.invoice_number}.pdf")
+            pdf_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "pdf")
             if not invoice.pdf_path or not os.path.exists(invoice.pdf_path):
                 rendered_docs[-1].write_pdf(pdf_path)
                 invoice.pdf_path = pdf_path
     db.session.commit()
     all_pages = [page for doc in rendered_docs for page in doc.pages]
-    merged_path = os.path.join(pdf_dir, "_bulk_merged.pdf")
+    merged_path = os.path.join(current_app.config["PDF_DIR"], "_bulk_merged.pdf")
+    os.makedirs(current_app.config["PDF_DIR"], exist_ok=True)
     rendered_docs[0].copy(all_pages).write_pdf(merged_path)
     return send_file(merged_path, as_attachment=True, download_name="Rechnungen_gesamt.pdf")
 
@@ -390,16 +530,13 @@ def bulk_pdf_zip():
         flash("WeasyPrint ist nicht installiert. PDF-Export nur im Docker-Container verfügbar.", "danger")
         return redirect(url_for("invoices.index"))
     invoices = Invoice.query.filter(Invoice.id.in_(invoice_ids)).order_by(Invoice.invoice_number).all()
-    pdf_dir = current_app.config["PDF_DIR"]
-    os.makedirs(pdf_dir, exist_ok=True)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for invoice in invoices:
-            pdf_path = os.path.join(pdf_dir, f"{invoice.invoice_number}.pdf")
-            # Cache nutzen wenn vorhanden und nicht Entwurf
             if _invoice_is_locked(invoice) and invoice.pdf_path and os.path.exists(invoice.pdf_path):
                 zf.write(invoice.pdf_path, f"{invoice.invoice_number}.pdf")
             else:
+                pdf_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "pdf")
                 html_content = render_template("invoices/pdf_template.html", invoice=invoice)
                 HTML(string=html_content).write_pdf(pdf_path)
                 if _invoice_is_locked(invoice):
@@ -411,6 +548,67 @@ def bulk_pdf_zip():
                      mimetype="application/zip")
 
 
+@bp.route("/bulk-docx-zip", methods=["POST"])
+@login_required
+def bulk_docx_zip():
+    """Alle markierten Rechnungen als einzelne .docx-Dateien in einer ZIP-Datei."""
+    import zipfile
+    import io
+    from app.invoices.document_service import generate_docx
+    invoice_ids = request.form.getlist("invoice_ids", type=int)
+    if not invoice_ids:
+        flash("Keine Rechnungen ausgewählt.", "warning")
+        return redirect(url_for("invoices.index"))
+    invoices = Invoice.query.filter(Invoice.id.in_(invoice_ids)).order_by(Invoice.invoice_number).all()
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for invoice in invoices:
+            if _invoice_is_locked(invoice) and invoice.doc_path and os.path.exists(invoice.doc_path):
+                zf.write(invoice.doc_path, f"{invoice.invoice_number}.docx")
+            else:
+                doc_data = generate_docx(invoice, wg_settings())
+                if _invoice_is_locked(invoice):
+                    doc_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "docx")
+                    with open(doc_path, "wb") as f:
+                        f.write(doc_data)
+                    invoice.doc_path = doc_path
+                zf.writestr(f"{invoice.invoice_number}.docx", doc_data)
+    db.session.commit()
+    buf.seek(0)
+    return send_file(buf, as_attachment=True, download_name="Rechnungen_docx.zip",
+                     mimetype="application/zip")
+
+
+@bp.route("/bulk-docx-merged", methods=["POST"])
+@login_required
+def bulk_docx_merged():
+    """Alle markierten Rechnungen als einzelnes zusammengeführtes .docx zum Download."""
+    import io as _io
+    from app.invoices.document_service import generate_docx, merge_docx_files
+    invoice_ids = request.form.getlist("invoice_ids", type=int)
+    if not invoice_ids:
+        flash("Keine Rechnungen ausgewählt.", "warning")
+        return redirect(url_for("invoices.index"))
+    invoices = Invoice.query.filter(Invoice.id.in_(invoice_ids)).order_by(Invoice.invoice_number).all()
+    sources = []
+    for invoice in invoices:
+        if _invoice_is_locked(invoice) and invoice.doc_path and os.path.exists(invoice.doc_path):
+            sources.append(invoice.doc_path)
+        else:
+            doc_data = generate_docx(invoice, wg_settings())
+            if _invoice_is_locked(invoice):
+                doc_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "docx")
+                with open(doc_path, "wb") as f:
+                    f.write(doc_data)
+                invoice.doc_path = doc_path
+            sources.append(doc_data)
+    db.session.commit()
+    merged = merge_docx_files(sources)
+    return send_file(_io.BytesIO(merged), as_attachment=True,
+                     download_name="Rechnungen_gesamt.docx",
+                     mimetype=_DOCX_MIME)
+
+
 @bp.route("/<int:invoice_id>/status", methods=["POST"])
 @login_required
 def set_status(invoice_id):
@@ -420,6 +618,12 @@ def set_status(invoice_id):
         abort(400)
     old_status = invoice.status
     invoice.status = new_status
+
+    # Cache invalidieren wenn eine Rechnung zurück auf Entwurf gesetzt wird —
+    # Inhalt könnte danach geändert werden, gecachte Datei wäre veraltet.
+    if new_status == Invoice.STATUS_DRAFT:
+        invoice.pdf_path = None
+        invoice.doc_path = None
 
     if new_status == Invoice.STATUS_SENT:
         _create_or_update_open_item(invoice)
@@ -530,7 +734,29 @@ def pay(invoice_id):
 @bp.route("/<int:invoice_id>/pdf")
 @login_required
 def pdf(invoice_id):
+    import io as _io
     invoice = db.get_or_404(Invoice, invoice_id)
+    fmt = _get_document_format(request.args.get("fmt"))
+
+    if fmt == "docx":
+        # Gecachte .docx ausliefern wenn vorhanden
+        if _invoice_is_locked(invoice) and invoice.doc_path and os.path.exists(invoice.doc_path):
+            return send_file(invoice.doc_path, as_attachment=True,
+                             download_name=f"{invoice.invoice_number}.docx",
+                             mimetype=_DOCX_MIME)
+        from app.invoices.document_service import generate_docx
+        doc_data = generate_docx(invoice, wg_settings())
+        if _invoice_is_locked(invoice):
+            doc_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "docx")
+            with open(doc_path, "wb") as f:
+                f.write(doc_data)
+            invoice.doc_path = doc_path
+            db.session.commit()
+        return send_file(_io.BytesIO(doc_data), as_attachment=True,
+                         download_name=f"{invoice.invoice_number}.docx",
+                         mimetype=_DOCX_MIME)
+
+    # ── PDF (Standard) ────────────────────────────────────────────────────
     # Gesperrte Rechnungen: gecachte PDF ausliefern wenn vorhanden
     if _invoice_is_locked(invoice) and invoice.pdf_path and os.path.exists(invoice.pdf_path):
         return send_file(invoice.pdf_path, as_attachment=False,
@@ -541,9 +767,7 @@ def pdf(invoice_id):
         flash("WeasyPrint ist nicht installiert. PDF-Export nur im Docker-Container verfügbar.", "danger")
         return redirect(url_for("invoices.detail", invoice_id=invoice.id))
     html_content = render_template("invoices/pdf_template.html", invoice=invoice)
-    pdf_dir = current_app.config["PDF_DIR"]
-    os.makedirs(pdf_dir, exist_ok=True)
-    pdf_path = os.path.join(pdf_dir, f"{invoice.invoice_number}.pdf")
+    pdf_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "pdf")
     HTML(string=html_content).write_pdf(pdf_path)
     # Nur für Nicht-Entwürfe persistieren
     if _invoice_is_locked(invoice):
@@ -556,36 +780,59 @@ def pdf(invoice_id):
 @bp.route("/<int:invoice_id>/send-email", methods=["POST"])
 @login_required
 def send_email(invoice_id):
+    import io as _io
     from flask_mail import Message
-    try:
-        import weasyprint
-    except ImportError:
-        flash("WeasyPrint ist nicht installiert. E-Mail-Versand nur im Docker-Container verfügbar.", "danger")
-        return redirect(url_for("invoices.detail", invoice_id=invoice_id))
 
     invoice = db.get_or_404(Invoice, invoice_id)
     if not invoice.customer.email:
         flash("Keine E-Mail-Adresse beim Kunden hinterlegt.", "danger")
         return redirect(url_for("invoices.detail", invoice_id=invoice.id))
 
-    html_content = render_template("invoices/pdf_template.html", invoice=invoice,
-)
-    pdf_dir = current_app.config["PDF_DIR"]
-    os.makedirs(pdf_dir, exist_ok=True)
-    pdf_path = os.path.join(pdf_dir, f"{invoice.invoice_number}.pdf")
-    weasyprint.HTML(string=html_content).write_pdf(pdf_path)
+    fmt = _get_document_format()
 
     msg = Message(
         subject=f"Rechnung {invoice.invoice_number}",
         recipients=[invoice.customer.email],
         body=_render_email_body(invoice),
     )
-    with open(pdf_path, "rb") as fp:
-        msg.attach(f"{invoice.invoice_number}.pdf", "application/pdf", fp.read())
+
+    doc_data = None
+    pdf_path = None
+
+    if fmt in ("docx", "both"):
+        from app.invoices.document_service import generate_docx
+        doc_data = generate_docx(invoice, wg_settings())
+        msg.attach(f"{invoice.invoice_number}.docx", _DOCX_MIME, doc_data)
+
+    if fmt in ("pdf", "both"):
+        try:
+            import weasyprint
+            html_content = render_template("invoices/pdf_template.html", invoice=invoice)
+            pdf_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "pdf")
+            weasyprint.HTML(string=html_content).write_pdf(pdf_path)
+            with open(pdf_path, "rb") as fp:
+                msg.attach(f"{invoice.invoice_number}.pdf", "application/pdf", fp.read())
+        except ImportError:
+            if fmt == "pdf":
+                flash("WeasyPrint ist nicht installiert. E-Mail-Versand nur im Docker-Container verfügbar.", "danger")
+                return redirect(url_for("invoices.detail", invoice_id=invoice_id))
+            # bei 'both': PDF-Anhang überspringen, .docx wurde bereits angehängt
+
+    if not msg.attachments:
+        flash("Kein Dokument konnte generiert werden.", "danger")
+        return redirect(url_for("invoices.detail", invoice_id=invoice.id))
 
     send_mail(msg)
     invoice.status = Invoice.STATUS_SENT
-    invoice.pdf_path = pdf_path
+
+    if doc_data and _invoice_is_locked(invoice):
+        doc_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "docx")
+        with open(doc_path, "wb") as f:
+            f.write(doc_data)
+        invoice.doc_path = doc_path
+    if pdf_path:
+        invoice.pdf_path = pdf_path
+
     _create_or_update_open_item(invoice)
     db.session.commit()
     flash(f"Rechnung an {invoice.customer.email} versendet.", "success")
@@ -598,10 +845,6 @@ def send_email_ajax(invoice_id):
     """JSON-Variante für den Massenmail-Versand per JavaScript."""
     from flask import jsonify
     from flask_mail import Message
-    try:
-        import weasyprint
-    except ImportError:
-        return jsonify({"ok": False, "error": "WeasyPrint nicht verfügbar"}), 503
 
     test_mode = request.form.get("test_mode") == "1"
 
@@ -618,31 +861,55 @@ def send_email_ajax(invoice_id):
     else:
         recipient = invoice.customer.email
 
-    try:
-        html_content = render_template("invoices/pdf_template.html", invoice=invoice)
-        pdf_dir = current_app.config["PDF_DIR"]
-        os.makedirs(pdf_dir, exist_ok=True)
-        pdf_path = os.path.join(pdf_dir, f"{invoice.invoice_number}.pdf")
-        weasyprint.HTML(string=html_content).write_pdf(pdf_path)
+    fmt = _get_document_format()
 
+    try:
         subject = f"Rechnung {invoice.invoice_number}"
         if test_mode:
             subject = f"[TEST – an: {invoice.customer.email}] {subject}"
-
         body = _render_email_body(invoice)
         if test_mode:
             body = f"[TESTMODUS – eigentlicher Empfänger: {invoice.customer.email}]\n\n{body}"
-
         msg = Message(subject=subject, recipients=[recipient], body=body)
-        with open(pdf_path, "rb") as fp:
-            msg.attach(f"{invoice.invoice_number}.pdf", "application/pdf", fp.read())
+
+        doc_data = None
+        pdf_path = None
+
+        if fmt in ("docx", "both"):
+            from app.invoices.document_service import generate_docx
+            doc_data = generate_docx(invoice, wg_settings())
+            msg.attach(f"{invoice.invoice_number}.docx", _DOCX_MIME, doc_data)
+
+        if fmt in ("pdf", "both"):
+            try:
+                import weasyprint
+                html_content = render_template("invoices/pdf_template.html", invoice=invoice)
+                pdf_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "pdf")
+                weasyprint.HTML(string=html_content).write_pdf(pdf_path)
+                with open(pdf_path, "rb") as fp:
+                    msg.attach(f"{invoice.invoice_number}.pdf", "application/pdf", fp.read())
+            except ImportError:
+                if fmt == "pdf":
+                    return jsonify({"ok": False, "error": "WeasyPrint nicht verfügbar"}), 503
+                # bei 'both': PDF-Anhang überspringen, .docx wurde bereits angehängt
+
+        if not msg.attachments:
+            return jsonify({"ok": False, "error": "Kein Dokument konnte generiert werden"}), 500
 
         send_mail(msg)
+
         if not test_mode:
             invoice.status = Invoice.STATUS_SENT
-            invoice.pdf_path = pdf_path
+            if doc_data and _invoice_is_locked(invoice):
+                doc_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "docx")
+                with open(doc_path, "wb") as f:
+                    f.write(doc_data)
+                invoice.doc_path = doc_path
+            if pdf_path:
+                invoice.pdf_path = pdf_path
             _create_or_update_open_item(invoice)
             db.session.commit()
+
         return jsonify({"ok": True, "invoice_number": invoice.invoice_number,
                         "email": recipient, "test_mode": test_mode})
     except Exception as exc:

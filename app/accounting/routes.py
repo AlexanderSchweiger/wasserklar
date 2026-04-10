@@ -1,7 +1,6 @@
 import io
 import csv
 import base64
-import calendar
 import difflib
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -11,9 +10,10 @@ from flask import (
     Response, stream_with_context,
 )
 from flask_login import login_required, current_user
-from sqlalchemy import extract, func, case
+from sqlalchemy import extract, func
 
 from app.accounting import bp
+from app.accounting import services as acc_svc
 from app.extensions import db
 from app.models import Account, Booking, Invoice, OpenItem, WaterTariff, Customer, InvoiceItem, Project, RealAccount, RealAccountYearBalance, FiscalYear, FiscalYearReopenLog, TaxRate, Transfer
 from app.utils import next_invoice_number
@@ -97,125 +97,17 @@ def account_edit(account_id):
 # Buchungen
 # ---------------------------------------------------------------------------
 
-def _auto_post_bookings():
-    """Markiert alle 'Offen'-Buchungen mit Buchungsdatum < heute als 'Verbucht'."""
-    today = date.today()
-    Booking.query.filter(
-        Booking.status == Booking.STATUS_OFFEN,
-        Booking.date < today,
-    ).update({"status": Booking.STATUS_VERBUCHT}, synchronize_session=False)
-    db.session.commit()
-
-
-def _locked_fiscal_year(booking_date):
-    """Gibt das abgeschlossene Buchungsjahr zurück, wenn booking_date darin liegt.
-    Es wird sowohl der Datumsbereich als auch das Kalenderjahr geprüft, damit
-    irrtümlich falsch konfigurierte FY-Daten (z. B. end_date im Folgejahr) keinen
-    falschen Sperrblock auslösen."""
-    fy = FiscalYear.query.filter(
-        FiscalYear.closed == True,
-        FiscalYear.start_date <= booking_date,
-        FiscalYear.end_date >= booking_date,
-    ).first()
-    if fy is not None and fy.year != booking_date.year:
-        return None
-    return fy
-
-
-def _jan1_balance(ra, year):
-    """Kontostand am 1.1. von Jahr `year` (Jahresanfangsstand).
-
-    Sucht den zuletzt gespeicherten RealAccountYearBalance vor `year` als Basis.
-    Wenn keiner vorhanden, wird ra.opening_balance als Basis verwendet.
-    Lücken-Jahre (zwischen gespeichertem Jahr+1 und year-1) werden aufaddiert.
-    """
-    prev = (RealAccountYearBalance.query
-            .filter_by(real_account_id=ra.id)
-            .filter(RealAccountYearBalance.year < year)
-            .order_by(RealAccountYearBalance.year.desc())
-            .first())
-
-    if prev:
-        base = Decimal(str(prev.closing_balance))
-        start_year = prev.year + 1
-    else:
-        base = Decimal(str(ra.opening_balance))
-        start_year = 1
-
-    if start_year < year:
-        add = db.session.query(func.sum(Booking.amount)).filter(
-            Booking.real_account_id == ra.id,
-            extract("year", Booking.date) >= start_year,
-            extract("year", Booking.date) < year,
-        ).scalar() or Decimal("0")
-        inc = db.session.query(func.sum(Transfer.amount)).filter(
-            Transfer.to_real_account_id == ra.id,
-            extract("year", Transfer.date) >= start_year,
-            extract("year", Transfer.date) < year,
-        ).scalar() or Decimal("0")
-        out = db.session.query(func.sum(Transfer.amount)).filter(
-            Transfer.from_real_account_id == ra.id,
-            extract("year", Transfer.date) >= start_year,
-            extract("year", Transfer.date) < year,
-        ).scalar() or Decimal("0")
-        base += Decimal(str(add)) + Decimal(str(inc)) - Decimal(str(out))
-
-    return base
-
-
-def _year_end_balance(ra, year):
-    """Kontostand am 31.12. von Jahr `year` (Jahresabschlussstand)."""
-    jan1 = _jan1_balance(ra, year)
-    bkgs = db.session.query(func.sum(Booking.amount)).filter(
-        Booking.real_account_id == ra.id,
-        extract("year", Booking.date) == year,
-    ).scalar() or Decimal("0")
-    inc = db.session.query(func.sum(Transfer.amount)).filter(
-        Transfer.to_real_account_id == ra.id,
-        extract("year", Transfer.date) == year,
-    ).scalar() or Decimal("0")
-    out = db.session.query(func.sum(Transfer.amount)).filter(
-        Transfer.from_real_account_id == ra.id,
-        extract("year", Transfer.date) == year,
-    ).scalar() or Decimal("0")
-    return jan1 + Decimal(str(bkgs)) + Decimal(str(inc)) - Decimal(str(out))
-
-
-def _current_balance(ra):
-    """Aktueller Kontostand = letzter gespeicherter Jahresabschluss + alle Buchungen danach."""
-    last = (RealAccountYearBalance.query
-            .filter_by(real_account_id=ra.id)
-            .order_by(RealAccountYearBalance.year.desc())
-            .first())
-
-    if last:
-        base = Decimal(str(last.closing_balance))
-        from_date = date(last.year + 1, 1, 1)
-        bkgs = db.session.query(func.sum(Booking.amount)).filter(
-            Booking.real_account_id == ra.id,
-            Booking.date >= from_date,
-        ).scalar() or Decimal("0")
-        inc = db.session.query(func.sum(Transfer.amount)).filter(
-            Transfer.to_real_account_id == ra.id,
-            Transfer.date >= from_date,
-        ).scalar() or Decimal("0")
-        out = db.session.query(func.sum(Transfer.amount)).filter(
-            Transfer.from_real_account_id == ra.id,
-            Transfer.date >= from_date,
-        ).scalar() or Decimal("0")
-    else:
-        base = Decimal(str(ra.opening_balance))
-        bkgs = db.session.query(func.sum(Booking.amount)).filter(
-            Booking.real_account_id == ra.id,
-        ).scalar() or Decimal("0")
-        inc = db.session.query(func.sum(Transfer.amount)).filter(
-            Transfer.to_real_account_id == ra.id,
-        ).scalar() or Decimal("0")
-        out = db.session.query(func.sum(Transfer.amount)).filter(
-            Transfer.from_real_account_id == ra.id,
-        ).scalar() or Decimal("0")
-
-    return base + Decimal(str(bkgs)) + Decimal(str(inc)) - Decimal(str(out))
+# Buchhaltungs-Berechnungen sind im zentralen Service ``app.accounting.services``
+# gebündelt. Die folgenden Aliase erhalten die bisherigen lokalen Aufrufstellen
+# kompatibel und sorgen dafür, dass es nur eine einzige Quelle der Wahrheit gibt.
+_auto_post_bookings = acc_svc.auto_post_bookings
+_locked_fiscal_year = acc_svc.locked_fiscal_year
+_jan1_balance = acc_svc.jan1_balance
+_year_end_balance = acc_svc.year_end_balance
+_current_balance = acc_svc.current_balance
+_year_movements = acc_svc.year_movements
+_ust_period = acc_svc.ust_period
+_ust_berechnen = acc_svc.ust_compute
 
 
 @bp.route("/bookings")
@@ -248,6 +140,46 @@ def bookings():
     projects = Project.query.order_by(Project.name).all()
     real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
 
+    # Umbuchungen laden (gleicher Jahres- und Bankkontofilter)
+    transfer_query = (
+        Transfer.query
+        .filter(extract("year", Transfer.date) == year)
+        .order_by(Transfer.date.desc())
+    )
+    if real_account_id:
+        ra_id = int(real_account_id)
+        transfer_query = transfer_query.filter(
+            db.or_(
+                Transfer.from_real_account_id == ra_id,
+                Transfer.to_real_account_id == ra_id,
+            )
+        )
+    # account_id/project_id gelten nur für Buchungen, nicht für Umbuchungen
+    transfers = [] if (account_id or project_id) else transfer_query.all()
+
+    # Gemeinsame sortierte Liste: type='booking' oder 'transfer'
+    # Umbuchungen erscheinen als zwei Zeilen (Ausgang negativ, Eingang positiv)
+    rows = []
+    for b in bkgs:
+        rows.append({"type": "booking", "obj": b, "date": b.date})
+    ra_id_int = int(real_account_id) if real_account_id else None
+    for t in transfers:
+        if ra_id_int:
+            # Nur die relevante Seite zeigen
+            if t.from_real_account_id == ra_id_int:
+                rows.append({"type": "transfer", "obj": t, "date": t.date,
+                             "side": "out", "amount": -t.amount})
+            else:
+                rows.append({"type": "transfer", "obj": t, "date": t.date,
+                             "side": "in", "amount": t.amount})
+        else:
+            # Beide Seiten anzeigen
+            rows.append({"type": "transfer", "obj": t, "date": t.date,
+                         "side": "out", "amount": -t.amount})
+            rows.append({"type": "transfer", "obj": t, "date": t.date,
+                         "side": "in", "amount": t.amount})
+    rows.sort(key=lambda r: r["date"], reverse=True)
+
     closed_fys = FiscalYear.query.filter_by(closed=True).all()
     locked_booking_ids = set()
     for b in bkgs:
@@ -256,24 +188,25 @@ def bookings():
                 locked_booking_ids.add(b.id)
                 break
 
-    active_bkgs = [b for b in bkgs if b.status != Booking.STATUS_STORNIERT]
-    total_amount = sum((b.amount for b in active_bkgs), Decimal("0"))
-
-    def _tax(b):
-        if not b.tax_rate or b.tax_rate == 0:
-            return Decimal("0")
-        rate = Decimal(str(b.tax_rate))
-        return (abs(b.amount) * rate / (100 + rate)).quantize(Decimal("0.01"))
+    # Stornopaare (Original + Gegenbuchung) müssen gemeinsam ausgeschlossen werden,
+    # sonst zählt der frühere "status != STORNIERT"-Filter nur die Gegenbuchung mit
+    # und verfälscht die Summe.
+    effective_bkgs = [b for b in bkgs if acc_svc.is_effective_booking(b)]
+    total_bookings = sum((b.amount for b in effective_bkgs), Decimal("0"))
+    total_transfers = sum((r["amount"] for r in rows if r["type"] == "transfer"), Decimal("0"))
+    total_amount = total_bookings + total_transfers
 
     total_vorsteuer = sum(
-        _tax(b) for b in active_bkgs if b.amount < 0
+        (acc_svc.booking_tax(b) for b in effective_bkgs if b.amount < 0),
+        Decimal("0"),
     )
     total_ust = sum(
-        _tax(b) for b in active_bkgs if b.amount > 0
+        (acc_svc.booking_tax(b) for b in effective_bkgs if b.amount > 0),
+        Decimal("0"),
     )
 
     table_ctx = dict(
-        bookings=bkgs, year=year,
+        rows=rows, year=year,
         total_amount=total_amount,
         total_vorsteuer=total_vorsteuer,
         total_ust=total_ust,
@@ -283,15 +216,11 @@ def bookings():
     if request.headers.get("HX-Request"):
         return render_template("accounting/_bookings_table.html", **table_ctx)
 
-    # Aktueller Kontostand aller aktiven Bankkonten für den Header-Banner
-    real_account_saldi = {ra.id: _current_balance(ra) for ra in real_accounts}
-
     return render_template(
         "accounting/bookings.html",
         accounts=accounts, projects=projects,
         account_id=account_id, project_id=project_id,
         real_accounts=real_accounts, real_account_id=real_account_id,
-        real_account_saldi=real_account_saldi,
         **table_ctx,
     )
 
@@ -774,87 +703,25 @@ def report():
 
     all_real_accounts = RealAccount.query.order_by(RealAccount.name).all()
 
-    def _base_filter(q):
-        q = q.filter(
-            extract("year", Booking.date) == year,
-            Booking.status != Booking.STATUS_STORNIERT,
-        )
-        if real_account_id:
-            q = q.filter(Booking.real_account_id == real_account_id)
-        return q
+    income_rows, expense_rows, total_income, total_expense, balance = (
+        acc_svc.year_income_expense(year, real_account_id=real_account_id or None)
+    )
 
-    rows = _base_filter(
-        db.session.query(
-            Account.name,
-            func.sum(Booking.amount).label("total"),
-        )
-        .join(Booking, Booking.account_id == Account.id)
-    ).group_by(Account.id).order_by(Account.name).all()
-
-    income_rows = [(r.name, r.total) for r in rows if r.total is not None and r.total > 0]
-    expense_rows = [(r.name, abs(r.total)) for r in rows if r.total is not None and r.total < 0]
-    total_income = sum(r[1] for r in income_rows)
-    total_expense = sum(r[1] for r in expense_rows)
-    balance = total_income - total_expense
-
-    # Projektübersicht
-    project_rows = _base_filter(
-        db.session.query(
-            Project.id.label("project_id"),
-            Project.name.label("project_name"),
-            Account.name.label("account_name"),
-            func.sum(Booking.amount).label("total"),
-        )
-        .select_from(Booking)
-        .outerjoin(Project, Booking.project_id == Project.id)
-        .join(Account, Booking.account_id == Account.id)
-    ).group_by(Project.id, Project.name, Account.id, Account.name).order_by(
-        case((Project.id == None, 1), else_=0),
-        Project.name,
-        Account.name,
-    ).all()
-
-    project_summary = {}
-    for row in project_rows:
-        key = row.project_id
-        if key not in project_summary:
-            project_summary[key] = {
-                "name": row.project_name or "Ohne Projekt",
-                "accounts": [],
-                "income": Decimal("0"),
-                "expense": Decimal("0"),
-            }
-        row_total = row.total or Decimal("0")
-        project_summary[key]["accounts"].append(
-            (row.account_name, row_total)
-        )
-        if row_total >= 0:
-            project_summary[key]["income"] += row_total
-        else:
-            project_summary[key]["expense"] += abs(row_total)
-
-    project_summary_list = [
-        v for k, v in sorted(
-            project_summary.items(),
-            key=lambda x: (x[0] is None, x[1]["name"]),
-        )
-    ]
+    project_summary_list = acc_svc.year_project_summary(
+        year, real_account_id=real_account_id or None
+    )
 
     # Kontenentwicklung Bankkonten
     konten_list = []
     for ra in all_real_accounts:
-        jan1 = _jan1_balance(ra, year)
-        dec31 = _year_end_balance(ra, year)
-        bkgs = db.session.query(func.sum(Booking.amount)).filter(
-            Booking.real_account_id == ra.id,
-            extract("year", Booking.date) == year,
-            Booking.status != Booking.STATUS_STORNIERT,
-        ).scalar() or Decimal("0")
+        jan1 = acc_svc.jan1_balance(ra, year)
+        dec31 = acc_svc.year_end_balance(ra, year)
+        bewegung = acc_svc.year_booking_total(ra.id, year)
         konten_list.append({
             "name": ra.name,
             "iban": ra.iban or "",
             "jan1": jan1,
-            "bewegung": Decimal(str(bkgs)),
+            "bewegung": Decimal(str(bewegung)),
             "dec31": dec31,
         })
 
@@ -926,75 +793,25 @@ def report_export_excel():
     # ---- Daten ermitteln ----
     all_real_accounts = RealAccount.query.order_by(RealAccount.name).all()
 
-    def _bookings_q():
-        return (
-            Booking.query
-            .filter(extract("year", Booking.date) == year)
-            .filter(Booking.status != Booking.STATUS_STORNIERT)
-            .order_by(Booking.date)
-            .all()
-        )
+    bookings_year = acc_svc.year_bookings(year)
 
-    bookings_year = _bookings_q()
-
-    # Einnahmen/Ausgaben nach Konto
-    rows_q = (
-        db.session.query(Account.name, func.sum(Booking.amount).label("total"))
-        .join(Booking, Booking.account_id == Account.id)
-        .filter(extract("year", Booking.date) == year)
-        .filter(Booking.status != Booking.STATUS_STORNIERT)
-        .group_by(Account.id).order_by(Account.name).all()
+    income_rows, expense_rows, total_income, total_expense, balance = (
+        acc_svc.year_income_expense(year)
     )
-    income_rows = [(r.name, Decimal(str(r.total))) for r in rows_q if r.total is not None and r.total > 0]
-    expense_rows = [(r.name, abs(Decimal(str(r.total)))) for r in rows_q if r.total is not None and r.total < 0]
-    total_income = sum(r[1] for r in income_rows)
-    total_expense = sum(r[1] for r in expense_rows)
-    balance = total_income - total_expense
 
     # Kontenentwicklung
     konten_list = []
     for ra in all_real_accounts:
-        jan1 = _jan1_balance(ra, year)
-        dec31 = _year_end_balance(ra, year)
-        bkgs = db.session.query(func.sum(Booking.amount)).filter(
-            Booking.real_account_id == ra.id,
-            extract("year", Booking.date) == year,
-            Booking.status != Booking.STATUS_STORNIERT,
-        ).scalar() or Decimal("0")
+        jan1 = acc_svc.jan1_balance(ra, year)
+        dec31 = acc_svc.year_end_balance(ra, year)
+        bewegung = acc_svc.year_booking_total(ra.id, year)
         konten_list.append({
             "name": ra.name, "iban": ra.iban or "",
-            "jan1": jan1, "bewegung": Decimal(str(bkgs)), "dec31": dec31,
+            "jan1": jan1, "bewegung": Decimal(str(bewegung)), "dec31": dec31,
         })
 
     # Projektübersicht
-    project_rows_q = (
-        db.session.query(
-            Project.id.label("project_id"),
-            Project.name.label("project_name"),
-            Account.name.label("account_name"),
-            func.sum(Booking.amount).label("total"),
-        )
-        .select_from(Booking)
-        .outerjoin(Project, Booking.project_id == Project.id)
-        .join(Account, Booking.account_id == Account.id)
-        .filter(extract("year", Booking.date) == year)
-        .filter(Booking.status != Booking.STATUS_STORNIERT)
-        .group_by(Project.id, Project.name, Account.id, Account.name)
-        .order_by(case((Project.id == None, 1), else_=0), Project.name, Account.name)
-        .all()
-    )
-    project_summary = {}
-    for row in project_rows_q:
-        key = row.project_id
-        if key not in project_summary:
-            project_summary[key] = {"name": row.project_name or "Ohne Projekt", "accounts": [], "income": Decimal("0"), "expense": Decimal("0")}
-        rt = row.total or Decimal("0")
-        project_summary[key]["accounts"].append((row.account_name, rt))
-        if rt >= 0:
-            project_summary[key]["income"] += rt
-        else:
-            project_summary[key]["expense"] += abs(rt)
-    project_list = [v for k, v in sorted(project_summary.items(), key=lambda x: (x[0] is None, x[1]["name"]))]
+    project_list = acc_svc.year_project_summary(year)
 
     # ---- Workbook aufbauen ----
     wb = openpyxl.Workbook()
@@ -1649,47 +1466,8 @@ def export_csv():
 # ---------------------------------------------------------------------------
 # Umsatzsteuervoranmeldung / Umsatzsteuererklärung
 # ---------------------------------------------------------------------------
-
-def _ust_period(year, quartal):
-    """Gibt (date_from, date_to) für ein Jahr/Quartal zurück."""
-    if quartal in (1, 2, 3, 4):
-        m_start = (quartal - 1) * 3 + 1
-        m_end = quartal * 3
-        return date(year, m_start, 1), date(year, m_end, calendar.monthrange(year, m_end)[1])
-    return date(year, 1, 1), date(year, 12, 31)
-
-
-def _ust_berechnen(year, quartal):
-    """Berechnet USt/Vorsteuer-Gruppen. Gibt (ust_rows, vst_rows) zurück."""
-    date_from, date_to = _ust_period(year, quartal)
-    bookings = (
-        Booking.query
-        .filter(Booking.date >= date_from, Booking.date <= date_to)
-        .filter(Booking.status != Booking.STATUS_STORNIERT)
-        .filter(Booking.tax_rate.isnot(None), Booking.tax_rate > 0)
-        .join(Booking.account)
-        .order_by(Booking.date)
-        .all()
-    )
-
-    def _tax(b):
-        rate = Decimal(str(b.tax_rate))
-        return (abs(b.amount) * rate / (100 + rate)).quantize(Decimal("0.01"))
-
-    ust_rows = {}
-    vst_rows = {}
-    for b in bookings:
-        tax = _tax(b)
-        brutto = abs(b.amount)
-        netto = brutto - tax
-        target = ust_rows if b.amount > 0 else vst_rows
-        rate_key = int(b.tax_rate)
-        if rate_key not in target:
-            target[rate_key] = {"brutto": Decimal("0"), "steuer": Decimal("0"), "netto": Decimal("0")}
-        target[rate_key]["brutto"] += brutto
-        target[rate_key]["steuer"] += tax
-        target[rate_key]["netto"] += netto
-    return sorted(ust_rows.items()), sorted(vst_rows.items())
+# Berechnungslogik liegt in ``app.accounting.services``. Die Routen rufen den
+# Service nur noch zum Aufbereiten der Templates auf.
 
 
 @bp.route("/ust")
@@ -1697,23 +1475,16 @@ def _ust_berechnen(year, quartal):
 def ust():
     year = request.args.get("year", date.today().year, type=int)
     quartal = request.args.get("quartal", 0, type=int)
-    date_from, date_to = _ust_period(year, quartal)
-    ust_rows, vst_rows = _ust_berechnen(year, quartal)
-    total_ust = sum(v["steuer"] for _, v in ust_rows)
-    total_vst = sum(v["steuer"] for _, v in vst_rows)
-    zahllast = total_ust - total_vst
-    ust_brutto = sum(v["brutto"] for _, v in ust_rows)
-    ust_netto = sum(v["netto"] for _, v in ust_rows)
-    vst_brutto = sum(v["brutto"] for _, v in vst_rows)
-    vst_netto = sum(v["netto"] for _, v in vst_rows)
+    totals = acc_svc.ust_totals(year, quartal)
     return render_template(
         "accounting/ust.html",
         year=year, quartal=quartal,
-        date_from=date_from, date_to=date_to,
-        ust_rows=ust_rows, vst_rows=vst_rows,
-        total_ust=total_ust, total_vst=total_vst, zahllast=zahllast,
-        ust_brutto=ust_brutto, ust_netto=ust_netto,
-        vst_brutto=vst_brutto, vst_netto=vst_netto,
+        date_from=totals["date_from"], date_to=totals["date_to"],
+        ust_rows=totals["ust_rows"], vst_rows=totals["vst_rows"],
+        total_ust=totals["total_ust"], total_vst=totals["total_vst"],
+        zahllast=totals["zahllast"],
+        ust_brutto=totals["ust_brutto"], ust_netto=totals["ust_netto"],
+        vst_brutto=totals["vst_brutto"], vst_netto=totals["vst_netto"],
     )
 
 
@@ -1722,11 +1493,14 @@ def ust():
 def export_ust_csv():
     year = request.args.get("year", date.today().year, type=int)
     quartal = request.args.get("quartal", 0, type=int)
-    date_from, date_to = _ust_period(year, quartal)
-    ust_rows, vst_rows = _ust_berechnen(year, quartal)
-    total_ust = sum(v["steuer"] for _, v in ust_rows)
-    total_vst = sum(v["steuer"] for _, v in vst_rows)
-    zahllast = total_ust - total_vst
+    totals = acc_svc.ust_totals(year, quartal)
+    date_from = totals["date_from"]
+    date_to = totals["date_to"]
+    ust_rows = totals["ust_rows"]
+    vst_rows = totals["vst_rows"]
+    total_ust = totals["total_ust"]
+    total_vst = totals["total_vst"]
+    zahllast = totals["zahllast"]
 
     label = f"Q{quartal}/{year}" if quartal else str(year)
 
@@ -1767,35 +1541,57 @@ def export_ust_csv():
 @bp.route("/real-accounts")
 @login_required
 def real_accounts():
-    year = request.args.get("year", date.today().year, type=int)
+    current_year = date.today().year
     accounts = RealAccount.query.order_by(RealAccount.name).all()
 
-    # Saldo pro Konto basierend auf gespeichertem Jahresanfangsstand
-    saldi = {}
+    account_data = []
     for ra in accounts:
-        jan1 = _jan1_balance(ra, year)
-        total = db.session.query(func.sum(Booking.amount)).filter(
-            Booking.real_account_id == ra.id,
-            extract("year", Booking.date) == year,
-        ).scalar() or Decimal("0")
-        incoming = db.session.query(func.sum(Transfer.amount)).filter(
-            Transfer.to_real_account_id == ra.id,
-            extract("year", Transfer.date) == year,
-        ).scalar() or Decimal("0")
-        outgoing = db.session.query(func.sum(Transfer.amount)).filter(
-            Transfer.from_real_account_id == ra.id,
-            extract("year", Transfer.date) == year,
-        ).scalar() or Decimal("0")
-        year_total = Decimal(str(total)) + Decimal(str(incoming)) - Decimal(str(outgoing))
-        saldi[ra.id] = {
-            "jan1": jan1,
-            "year_total": year_total,
-            "balance": jan1 + year_total,
-        }
+        # Alle Jahre mit Buchungen oder gespeicherten Abschlüssen ermitteln
+        booking_years = db.session.query(
+            extract("year", Booking.date).label("y")
+        ).filter(Booking.real_account_id == ra.id).distinct()
+        transfer_years_in = db.session.query(
+            extract("year", Transfer.date).label("y")
+        ).filter(Transfer.to_real_account_id == ra.id).distinct()
+        transfer_years_out = db.session.query(
+            extract("year", Transfer.date).label("y")
+        ).filter(Transfer.from_real_account_id == ra.id).distinct()
+        closed_years = {yb.year for yb in ra.year_balances.all()}
+
+        all_years = set()
+        for row in booking_years:
+            all_years.add(int(row.y))
+        for row in transfer_years_in:
+            all_years.add(int(row.y))
+        for row in transfer_years_out:
+            all_years.add(int(row.y))
+        all_years |= closed_years
+        all_years.add(current_year)
+
+        # Jahres-History aufbauen
+        history = []
+        for y in sorted(all_years):
+            jan1 = _jan1_balance(ra, y)
+            income, expense, year_total = _year_movements(ra.id, y)
+            closing = jan1 + year_total
+            is_closed = y in closed_years
+            history.append({
+                "year": y,
+                "jan1": jan1,
+                "income": income,
+                "expense": expense,
+                "year_total": year_total,
+                "closing": closing,
+                "is_closed": is_closed,
+                "is_current": y == current_year,
+            })
+
+        account_data.append({"ra": ra, "history": history})
 
     return render_template(
         "accounting/real_accounts.html",
-        real_accounts=accounts, saldi=saldi, year=year,
+        account_data=account_data,
+        current_year=current_year,
     )
 
 
@@ -2001,37 +1797,8 @@ def fiscal_year_close(year):
         flash(f"Buchungsjahr {year} wurde abgeschlossen.", "success")
         return redirect(url_for("accounting.fiscal_years"))
 
-    # GET – Zusammenfassung berechnen
-    summary = []
-    for ra in real_accs:
-        jan1 = _jan1_balance(ra, year)
-        einnahmen = db.session.query(func.sum(Booking.amount)).filter(
-            Booking.real_account_id == ra.id,
-            extract("year", Booking.date) == year,
-            Booking.amount > 0,
-        ).scalar() or Decimal("0")
-        ausgaben = db.session.query(func.sum(Booking.amount)).filter(
-            Booking.real_account_id == ra.id,
-            extract("year", Booking.date) == year,
-            Booking.amount < 0,
-        ).scalar() or Decimal("0")
-        transfers_in = db.session.query(func.sum(Transfer.amount)).filter(
-            Transfer.to_real_account_id == ra.id,
-            extract("year", Transfer.date) == year,
-        ).scalar() or Decimal("0")
-        transfers_out = db.session.query(func.sum(Transfer.amount)).filter(
-            Transfer.from_real_account_id == ra.id,
-            extract("year", Transfer.date) == year,
-        ).scalar() or Decimal("0")
-        dec31 = jan1 + Decimal(str(einnahmen)) + Decimal(str(ausgaben)) + Decimal(str(transfers_in)) - Decimal(str(transfers_out))
-        summary.append({
-            "ra": ra,
-            "jan1": jan1,
-            "einnahmen": Decimal(str(einnahmen)),
-            "ausgaben": Decimal(str(ausgaben)),
-            "transfers_netto": Decimal(str(transfers_in)) - Decimal(str(transfers_out)),
-            "dec31": dec31,
-        })
+    # GET – Zusammenfassung über zentralen Service ermitteln
+    summary = acc_svc.fiscal_year_close_summary(year)
 
     return render_template(
         "accounting/fiscal_year_close_confirm.html",

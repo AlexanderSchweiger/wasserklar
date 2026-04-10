@@ -47,10 +47,10 @@
         <hr>
         <small class="text-muted d-block mb-1"><i class="fas fa-sliders-h me-1"></i> Individuelle Gebühren</small>
         {% if customer.base_fee_override is not none %}
-        <small class="d-block">Grundgebühr: <strong>{{ "%.2f"|format(customer.base_fee_override) }} €</strong></small>
+        <small class="d-block">Grundgebühr: <strong>{{ customer.base_fee_override|de_number }} €</strong></small>
         {% endif %}
         {% if customer.additional_fee_override is not none %}
-        <small class="d-block">Zusatzgebühr: <strong>{{ "%.2f"|format(customer.additional_fee_override) }} €</strong></small>
+        <small class="d-block">Zusatzgebühr: <strong>{{ customer.additional_fee_override|de_number }} €</strong></small>
         {% endif %}
         {% endif %}
         <form method="post" action="{{ url_for('customers.deactivate', customer_id=customer.id) }}" class="mt-3">
@@ -78,7 +78,7 @@
                 {{ ow.property.label() }}
               </a>
               {% if not ow.valid_to %}
-              <span class="badge bg-success ms-1">aktiv</span>
+              <span class="badge bg-success text-white ms-1">aktiv</span>
               {% else %}
               <br><small class="text-muted">Bis {{ ow.valid_to.strftime('%d.%m.%Y') }}</small>
               {% endif %}
@@ -116,7 +116,7 @@
               <td>{{ inv.invoice_number }}</td>
               <td>{{ inv.period_year or '—' }}</td>
               <td>{{ inv.date.strftime('%d.%m.%Y') }}</td>
-              <td class="text-end"><strong>{{ "%.2f"|format(inv.total_amount) }} €</strong></td>
+              <td class="text-end"><strong>{{ inv.total_amount|de_number }} €</strong></td>
               <td>{% with invoice = inv %}{% include "invoices/_status_badge.html" %}{% endwith %}</td>
               <td class="text-end">
                 <a href="{{ url_for('invoices.detail', invoice_id=inv.id) }}"

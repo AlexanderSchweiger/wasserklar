@@ -1,25 +1,85 @@
+<div class="px-3 py-2 bg-light border-bottom d-flex justify-content-end">
+  <div class="text-end">
+    <div class="fw-bold">Summe:
+      <span class="{{ 'text-success' if total_amount >= 0 else 'text-danger' }}">{{ total_amount|de_number }}&nbsp;€</span>
+    </div>
+    {% if total_vorsteuer and total_vorsteuer > 0 %}
+    <div><small class="text-muted">VSt: {{ total_vorsteuer|de_number }}&nbsp;€</small></div>
+    {% endif %}
+    {% if total_ust and total_ust > 0 %}
+    <div><small class="text-muted">USt: {{ total_ust|de_number }}&nbsp;€</small></div>
+    {% endif %}
+  </div>
+</div>
 <table class="table table-hover mb-0">
   <thead>
     <tr>
-      <th>Datum</th>
-      <th class="text-center"><i class="fas fa-university"></i></th>
+      <th style="white-space:nowrap">Datum</th>
+      <th class="text-center" style="width:1%"><i class="fas fa-university"></i></th>
       <th>Konto</th>
       <th>Beschreibung</th>
       <th>Projekt</th>
       <th>Kunde</th>
-      <th class="text-end">MwSt</th>
-      <th class="text-end">Betrag</th>
-      <th></th>
+      <th class="text-center px-1" style="width:1%">%</th>
+      <th class="text-end" style="width:1%; white-space:nowrap">Steuer</th>
+      <th class="text-end" style="white-space:nowrap">Betrag</th>
+      <th style="width:1%"></th>
     </tr>
   </thead>
   <tbody>
-    {% for b in bookings %}
+    {% for row in rows %}
+
+    {# ── UMBUCHUNG ────────────────────────────────────────────────── #}
+    {% if row.type == 'transfer' %}
+    {% set t = row.obj %}
+    {% set t_amount = row.amount %}
+    <tr class="table-light">
+      <td style="white-space:nowrap">{{ t.date.strftime('%d.%m.%Y') }}</td>
+      <td class="text-center">
+        {% if row.side == 'out' %}
+        <i class="fas {{ t.from_account.icon or 'fa-university' }} text-muted" title="{{ t.from_account.name }}"></i>
+        {% else %}
+        <i class="fas {{ t.to_account.icon or 'fa-university' }} text-muted" title="{{ t.to_account.name }}"></i>
+        {% endif %}
+      </td>
+      <td>
+        <span class="badge bg-purple text-white">Umbuchung</span>
+      </td>
+      <td colspan="3">
+        {% if row.side == 'out' %}
+        <i class="fas fa-arrow-right text-danger me-1" style="font-size:.8em"></i>
+        <span class="text-muted small">{{ t.to_account.name }}</span>
+        {% else %}
+        <i class="fas fa-arrow-left text-success me-1" style="font-size:.8em"></i>
+        <span class="text-muted small">{{ t.from_account.name }}</span>
+        {% endif %}
+        {% if t.description %}
+        <span class="ms-2 small">{{ t.description }}</span>
+        {% endif %}
+      </td>
+      <td class="text-center px-1"><span class="text-muted">—</span></td>
+      <td class="text-end text-nowrap text-muted"><span class="text-muted">—</span></td>
+      <td class="text-end fw-bold text-nowrap {{ 'text-success' if t_amount > 0 else 'text-danger' }}">
+        {{ t_amount|de_number }}&nbsp;€
+      </td>
+      <td class="text-end" style="white-space:nowrap">
+        <a href="{{ url_for('accounting.transfers') }}"
+           class="btn btn-sm btn-outline-secondary" title="Umbuchungen">
+          <i class="fas fa-exchange-alt"></i>
+        </a>
+      </td>
+    </tr>
+
+    {# ── BUCHUNG ──────────────────────────────────────────────────── #}
+    {% else %}
+    {% set b = row.obj %}
+    {% if not b.storno_of_id %}
     <tr class="
       {%- if b.status == 'Storniert' %} text-muted
       {%- elif b.status == 'Offen' %} table-info
       {%- endif %}"
       {%- if b.status == 'Storniert' %} style="opacity:0.5"{% endif %}>
-      <td>{{ b.date.strftime('%d.%m.%Y') }}</td>
+      <td style="white-space:nowrap">{{ b.date.strftime('%d.%m.%Y') }}</td>
       <td class="text-center">
         {% if b.real_account %}
         <i class="fas {{ b.real_account.icon or 'fa-university' }} text-muted" title="{{ b.real_account.name }}"></i>
@@ -27,19 +87,29 @@
         <span class="text-muted">—</span>
         {% endif %}
       </td>
-      <td>{{ b.account.name }}</td>
+      <td style="max-width:120px; overflow:hidden">
+        {% if b.account.code %}
+        <div class="d-flex align-items-center gap-1" style="min-width:0">
+          <span class="badge bg-secondary text-white flex-shrink-0" title="{{ b.account.name }}">{{ b.account.code }}</span>
+          <span class="text-truncate small">{{ b.account.name }}</span>
+        </div>
+        {% else %}
+        <span class="text-truncate d-block small" title="{{ b.account.name }}">{{ b.account.name }}</span>
+        {% endif %}
+      </td>
       <td>
         {% if b.reference %}
-        <span class="badge bg-secondary me-1">{{ b.reference }}</span>
-        {% endif %}
-        {% if b.storno_of_id %}
-        <span class="me-1" title="Storno zu Buchung #{{ b.storno_of_id }}">&#8629;</span>
+        <span class="badge bg-secondary text-white me-1">{{ b.reference }}</span>
         {% endif %}
         <span class="{% if b.status == 'Storniert' %}text-decoration-line-through{% endif %}">
           {{ b.description }}
         </span>
-        {% if b.storno_reason %}
-        <small class="ms-1"><em>({{ b.storno_reason }})</em></small>
+        {% if b.status == 'Storniert' and b.storno_buchung %}
+        {% set sb = b.storno_buchung %}
+        {% set tip %}Storniert am {{ sb.date.strftime('%d.%m.%Y') }}{% if sb.created_by %} von {{ sb.created_by.username }}{% endif %}{% if sb.storno_reason %} — {{ sb.storno_reason }}{% endif %}{% endset %}
+        <span class="ms-1 text-danger" title="{{ tip }}" style="cursor:help">
+          <i class="fas fa-ban fa-xs"></i>
+        </span>
         {% endif %}
         {% if b.invoice_id %}
         <a href="{{ url_for('invoices.detail', invoice_id=b.invoice_id) }}"
@@ -48,36 +118,63 @@
         </a>
         {% endif %}
       </td>
-      <td>
+      <td style="max-width:100px; overflow:hidden">
         {% if b.project %}
         {% set proj_color = b.project.color or '#3498db' %}
+        {% if b.project.code %}
+        <div class="d-flex align-items-center gap-1" style="min-width:0">
+          <a href="{{ url_for('projects.detail', project_id=b.project.id) }}"
+             class="badge flex-shrink-0"
+             style="background-color:{{ proj_color }};color:#fff"
+             title="{{ b.project.name }}">{{ b.project.code }}</a>
+          <a href="{{ url_for('projects.detail', project_id=b.project.id) }}"
+             class="text-truncate small text-decoration-none text-reset">{{ b.project.name }}</a>
+        </div>
+        {% else %}
         <a href="{{ url_for('projects.detail', project_id=b.project.id) }}"
-           class="badge"
-           style="background-color:{{ proj_color }}; color:#fff;">{{ b.project.name }}</a>
+           class="badge text-truncate d-block"
+           style="background-color:{{ proj_color }};color:#fff;max-width:100%"
+           title="{{ b.project.name }}">{{ b.project.name }}</a>
+        {% endif %}
         {% else %}
         <span class="text-muted">—</span>
         {% endif %}
       </td>
-      <td>
+      <td style="max-width:100px; overflow:hidden">
         {% if b.customer %}
-        <a href="{{ url_for('customers.detail', customer_id=b.customer.id) }}"
-           class="badge bg-secondary">{{ b.customer.name }}</a>
+        <div class="d-flex align-items-center gap-1" style="min-width:0">
+          {% if b.customer.customer_number %}
+          <a href="{{ url_for('customers.detail', customer_id=b.customer.id) }}"
+             class="badge bg-secondary text-white flex-shrink-0"
+             title="{{ b.customer.name }}">{{ b.customer.customer_number }}</a>
+          <a href="{{ url_for('customers.detail', customer_id=b.customer.id) }}"
+             class="text-truncate small text-decoration-none text-reset">{{ b.customer.name }}</a>
+          {% else %}
+          <a href="{{ url_for('customers.detail', customer_id=b.customer.id) }}"
+             class="text-truncate small text-decoration-none badge bg-secondary text-white"
+             title="{{ b.customer.name }}">{{ b.customer.name }}</a>
+          {% endif %}
+        </div>
         {% else %}
         <span class="text-muted">—</span>
         {% endif %}
       </td>
-      <td class="text-end text-nowrap">
+      <td class="text-center px-1">
         {% if b.tax_rate and b.tax_rate > 0 and b.status != 'Storniert' %}
-          <span class="badge bg-light text-dark border">{{ b.tax_rate | int }} %</span>
-          <small class="text-muted">
-            {{ "%.2f"|format(b.amount|abs * b.tax_rate / (100 + b.tax_rate)) }} €
-          </small>
+          <span class="text-muted small">{{ b.tax_rate | int }}</span>
         {% else %}
           <span class="text-muted">—</span>
         {% endif %}
       </td>
-      <td class="text-end fw-bold {{ 'text-success' if b.amount > 0 else 'text-danger' }}">
-        {{ "%.2f"|format(b.amount) }} €
+      <td class="text-end text-nowrap text-muted small">
+        {% if b.tax_rate and b.tax_rate > 0 and b.status != 'Storniert' %}
+          {{ (b.amount|abs * b.tax_rate / (100 + b.tax_rate))|de_number }}&nbsp;€
+        {% else %}
+          <span class="text-muted">—</span>
+        {% endif %}
+      </td>
+      <td class="text-end fw-bold text-nowrap {{ 'text-success' if b.amount > 0 else 'text-danger' }}">
+        {{ b.amount|de_number }}&nbsp;€
       </td>
       <td class="text-end" style="white-space:nowrap">
         {% set fy_locked = b.id in locked_booking_ids %}
@@ -110,27 +207,13 @@
         {% endif %}
       </td>
     </tr>
+    {% endif %}
+    {% endif %}
+
     {% else %}
     <tr>
-      <td colspan="9" class="text-center text-muted py-3">Keine Buchungen.</td>
+      <td colspan="10" class="text-center text-muted py-3">Keine Buchungen.</td>
     </tr>
     {% endfor %}
   </tbody>
-  <tfoot class="table-light">
-    <tr>
-      <td colspan="6" class="text-end fw-bold">Summe (ohne Storno):</td>
-      <td class="text-end text-nowrap">
-        {% if total_vorsteuer and total_vorsteuer > 0 %}
-        <small class="text-muted d-block">VSt: {{ "%.2f"|format(total_vorsteuer) }} €</small>
-        {% endif %}
-        {% if total_ust and total_ust > 0 %}
-        <small class="text-muted d-block">USt: {{ "%.2f"|format(total_ust) }} €</small>
-        {% endif %}
-      </td>
-      <td class="text-end fw-bold {{ 'text-success' if total_amount >= 0 else 'text-danger' }}">
-        {{ "%.2f"|format(total_amount) }} €
-      </td>
-      <td></td>
-    </tr>
-  </tfoot>
 </table>

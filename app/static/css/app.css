@@ -27,6 +27,44 @@ tr.overdue { background-color: #fff3cd !important; }
 }
 .btn-link-danger:hover { text-decoration: underline; }
 
+/* TomSelect – immer volle Breite und Mindesthöhe (auch bei leerem Wert) */
+.ts-wrapper { display: block; width: 100%; }
+.ts-wrapper .ts-control { min-height: calc(1.5em + 0.75rem + 2px); }
+.ts-wrapper.form-select-sm .ts-control {
+  min-height: calc(1.5em + 0.5rem + 2px);
+  padding: 0.25rem 0.5rem;
+  font-size: 0.875em;
+}
+
+/* TomSelect Dropdown – weißer Hintergrund (Tabler-Kompatibilität) */
+.ts-dropdown {
+  background-color: #fff;
+}
+.ts-dropdown .option:hover,
+.ts-dropdown .option.active {
+  background-color: #e9ecef;
+  color: inherit;
+}
+
+/* Globaler Lade-Spinner */
+#global-spinner {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(255, 255, 255, 0.55);
+  align-items: center;
+  justify-content: center;
+}
+#global-spinner.active {
+  display: flex;
+}
+#global-spinner .spinner-border {
+  width: 3rem;
+  height: 3rem;
+  color: var(--tblr-primary, #206bc4);
+}
+
 /* Filter-Leiste */
 .filter-bar {
   display: flex;

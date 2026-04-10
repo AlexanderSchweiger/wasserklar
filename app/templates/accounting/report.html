@@ -7,8 +7,6 @@
 <div class="card mb-3">
   <div class="card-body py-2">
     <form method="get" class="d-flex flex-wrap align-items-end gap-3">
-      <input type="hidden" name="year" value="{{ year }}">
-
       <div>
         <label class="form-label fw-bold mb-1">Jahr</label>
         <input type="number" name="year" value="{{ year }}" min="2000" max="2100"
@@ -17,7 +15,7 @@
 
       <div>
         <label class="form-label fw-bold mb-1">Bankkonto</label>
-        <select name="real_account_id" class="form-control form-control-sm tom-select" style="min-width:180px">
+        <select name="real_account_id" class="form-select form-select-sm tom-select" style="min-width:180px">
           <option value="0" {% if real_account_id == 0 %}selected{% endif %}>Alle Konten</option>
           {% for ra in all_real_accounts %}
           <option value="{{ ra.id }}" {% if real_account_id == ra.id %}selected{% endif %}>{{ ra.name }}</option>
@@ -48,7 +46,7 @@
     <div class="card bg-success text-white mb-3">
       <div class="card-body">
         <div class="subheader">Einnahmen {{ year }}</div>
-        <div class="h1 mb-0">{{ "%.2f"|format(total_income) }} €</div>
+        <div class="h1 mb-0">{{ total_income|de_number }} €</div>
       </div>
       <div class="card-footer bg-success-lt text-success border-0 py-2">
         <i class="fas fa-arrow-up me-1"></i>
@@ -59,7 +57,7 @@
     <div class="card bg-danger text-white mb-3">
       <div class="card-body">
         <div class="subheader">Ausgaben {{ year }}</div>
-        <div class="h1 mb-0">{{ "%.2f"|format(total_expense) }} €</div>
+        <div class="h1 mb-0">{{ total_expense|de_number }} €</div>
       </div>
       <div class="card-footer bg-danger-lt text-danger border-0 py-2">
         <i class="fas fa-arrow-down me-1"></i>
@@ -70,7 +68,7 @@
     <div class="card {{ 'bg-success' if balance >= 0 else 'bg-danger' }} text-white mb-3">
       <div class="card-body">
         <div class="subheader">Saldo {{ year }}</div>
-        <div class="h1 mb-0">{{ "%.2f"|format(balance) }} €</div>
+        <div class="h1 mb-0">{{ balance|de_number }} €</div>
       </div>
       <div class="card-footer {{ 'bg-success-lt text-success' if balance >= 0 else 'bg-danger-lt text-danger' }} border-0 py-2">
         <i class="fas fa-balance-scale me-1"></i>
@@ -106,12 +104,12 @@
             <tr>
               <td><strong>{{ k.name }}</strong></td>
               <td class="text-muted" style="font-size:.85em">{{ k.iban }}</td>
-              <td class="text-end">{{ "%.2f"|format(k.jan1) }} €</td>
+              <td class="text-end">{{ k.jan1|de_number }} €</td>
               <td class="text-end {{ 'text-success' if k.bewegung >= 0 else 'text-danger' }}">
-                {{ "%.2f"|format(k.bewegung) }} €
+                {{ k.bewegung|de_number }} €
               </td>
               <td class="text-end fw-bold {{ 'text-success' if k.dec31 >= 0 else 'text-danger' }}">
-                {{ "%.2f"|format(k.dec31) }} €
+                {{ k.dec31|de_number }} €
               </td>
             </tr>
             {% endfor %}
@@ -119,12 +117,12 @@
           <tfoot class="table-light">
             <tr>
               <th colspan="2">Gesamt</th>
-              <th class="text-end">{{ "%.2f"|format(ns.sum_jan1) }} €</th>
+              <th class="text-end">{{ ns.sum_jan1|de_number }} €</th>
               <th class="text-end {{ 'text-success' if (ns.sum_dec31 - ns.sum_jan1) >= 0 else 'text-danger' }}">
-                {{ "%.2f"|format(ns.sum_dec31 - ns.sum_jan1) }} €
+                {{ (ns.sum_dec31 - ns.sum_jan1)|de_number }} €
               </th>
               <th class="text-end fw-bold {{ 'text-success' if ns.sum_dec31 >= 0 else 'text-danger' }}">
-                {{ "%.2f"|format(ns.sum_dec31) }} €
+                {{ ns.sum_dec31|de_number }} €
               </th>
             </tr>
           </tfoot>
@@ -142,7 +140,7 @@
       <div class="card-header">
         <h3 class="card-title"><i class="fas fa-arrow-up me-1"></i> Einnahmen</h3>
         <div class="card-options">
-          <strong class="text-success">{{ "%.2f"|format(total_income) }} €</strong>
+          <strong class="text-success">{{ total_income|de_number }} €</strong>
         </div>
       </div>
       <div class="card-body p-0">
@@ -152,7 +150,7 @@
             <tr>
               <td>{{ name }}</td>
               <td class="text-end text-success fw-bold">
-                {{ "%.2f"|format(total) }} €
+                {{ total|de_number }} €
               </td>
             </tr>
             {% else %}
@@ -168,7 +166,7 @@
       <div class="card-header">
         <h3 class="card-title"><i class="fas fa-arrow-down me-1"></i> Ausgaben</h3>
         <div class="card-options">
-          <strong class="text-danger">{{ "%.2f"|format(total_expense) }} €</strong>
+          <strong class="text-danger">{{ total_expense|de_number }} €</strong>
         </div>
       </div>
       <div class="card-body p-0">
@@ -178,7 +176,7 @@
             <tr>
               <td>{{ name }}</td>
               <td class="text-end text-danger fw-bold">
-                {{ "%.2f"|format(total) }} €
+                {{ total|de_number }} €
               </td>
             </tr>
             {% else %}
@@ -213,7 +211,7 @@
               <td class="text-muted" style="font-size:.85em">{{ acc_name }}</td>
               <td class="text-end {{ 'text-success' if total >= 0 else 'text-danger' }}"
                   style="font-size:.85em">
-                {{ "%.2f"|format(total|abs) }} €
+                {{ total|abs|de_number }} €
               </td>
             </tr>
             {% endfor %}
@@ -221,16 +219,16 @@
           <tfoot class="table-light">
             <tr>
               <td class="text-success fw-bold">Einnahmen</td>
-              <td class="text-end text-success fw-bold">{{ "%.2f"|format(ps.income) }} €</td>
+              <td class="text-end text-success fw-bold">{{ ps.income|de_number }} €</td>
             </tr>
             <tr>
               <td class="text-danger fw-bold">Ausgaben</td>
-              <td class="text-end text-danger fw-bold">{{ "%.2f"|format(ps.expense) }} €</td>
+              <td class="text-end text-danger fw-bold">{{ ps.expense|de_number }} €</td>
             </tr>
             <tr>
               <td class="fw-bold">Saldo</td>
               <td class="text-end fw-bold {{ 'text-success' if ps.income >= ps.expense else 'text-danger' }}">
-                {{ "%.2f"|format(ps.income - ps.expense) }} €
+                {{ (ps.income - ps.expense)|de_number }} €
               </td>
             </tr>
           </tfoot>

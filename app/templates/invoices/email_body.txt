@@ -2,7 +2,7 @@ Sehr geehrte(r) {{ invoice.customer.name }},
 
 anbei erhalten Sie Ihre Rechnung {{ invoice.invoice_number }} vom {{ invoice.date.strftime('%d.%m.%Y') }}.
 
-Rechnungsbetrag: {{ "%.2f"|format(invoice.total_amount) }} Euro
+Rechnungsbetrag: {{ invoice.total_amount|de_number }} Euro
 Fälligkeitsdatum: {{ invoice.due_date.strftime('%d.%m.%Y') if invoice.due_date else '—' }}
 {% if wg.iban %}
 IBAN: {{ wg.iban }}

@@ -35,19 +35,19 @@
             {% if row.ra.iban %}<br><small class="text-muted"><code>{{ row.ra.iban }}</code></small>{% endif %}
           </td>
           <td class="text-end {{ 'text-success' if row.jan1 >= 0 else 'text-danger' }}">
-            {{ "%.2f"|format(row.jan1) }} €
+            {{ row.jan1|de_number }} €
           </td>
           <td class="text-end text-success">
-            {{ "%.2f"|format(row.einnahmen) }} €
+            {{ row.einnahmen|de_number }} €
           </td>
           <td class="text-end text-danger">
-            {{ "%.2f"|format(row.ausgaben) }} €
+            {{ row.ausgaben|de_number }} €
           </td>
           <td class="text-end {{ 'text-success' if row.transfers_netto >= 0 else 'text-danger' }}">
-            {{ "%+.2f"|format(row.transfers_netto) }} €
+            {{ row.transfers_netto|de_number(signed=true) }} €
           </td>
           <td class="text-end fw-bold {{ 'text-success' if row.dec31 >= 0 else 'text-danger' }}">
-            {{ "%.2f"|format(row.dec31) }} €
+            {{ row.dec31|de_number }} €
           </td>
         </tr>
         {% else %}

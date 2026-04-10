@@ -36,6 +36,10 @@ def index():
                 val = request.form.get(f'mail_{attr}', '').strip()
                 AppSetting.set(db_key, val if val else None)
 
+        # Rechnungsformat
+        fmt = request.form.get('invoice_document_format', 'pdf')
+        AppSetting.set('invoice.document_format', fmt if fmt in ('pdf', 'docx', 'both') else 'pdf')
+
         db.session.commit()
         apply_mail_settings()
         flash('Einstellungen gespeichert.', 'success')
@@ -91,7 +95,9 @@ def index():
         db_info = {'engine': '–', 'driver': '–', 'host': '–', 'port': '–',
                    'database': raw_url or '–', 'username': '–', 'url_masked': raw_url}
 
-    return render_template('settings/index.html', wg=wg, mail=mail_cfg, db_info=db_info)
+    doc_format = AppSetting.get('invoice.document_format', 'pdf')
+    return render_template('settings/index.html', wg=wg, mail=mail_cfg, db_info=db_info,
+                           doc_format=doc_format)
 
 
 @bp.route('/test-mail', methods=['POST'])

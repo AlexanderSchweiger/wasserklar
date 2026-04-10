@@ -12,7 +12,7 @@
             <div class="subheader">Offene Posten ({{ open_invoices }} Rechnungen)</div>
           </div>
           <div class="d-flex align-items-baseline mt-2">
-            <div class="h1 mb-0 me-2">{{ "%.2f"|format(total_open) }} €</div>
+            <div class="h1 mb-0 me-2">{{ total_open|de_number }} €</div>
           </div>
           <div class="mt-2"><i class="fas fa-file-invoice-dollar me-1"></i><small>Details &rarr;</small></div>
         </div>
@@ -38,7 +38,7 @@
         <div class="card-body">
           <div class="subheader">Saldo {{ current_year }}</div>
           <div class="d-flex align-items-baseline mt-2">
-            <div class="h1 mb-0 me-2">{{ "%.2f"|format(year_balance) }} €</div>
+            <div class="h1 mb-0 me-2">{{ year_balance|de_number }} €</div>
           </div>
           <div class="mt-2"><i class="fas fa-balance-scale me-1"></i><small>Jahresbericht &rarr;</small></div>
         </div>
@@ -56,7 +56,7 @@
           <span class="bg-success text-white avatar me-3"><i class="fas fa-arrow-up"></i></span>
           <div>
             <div class="text-muted">Einnahmen {{ current_year }}</div>
-            <div class="h3 mb-0 text-success">{{ "%.2f"|format(year_income) }} €</div>
+            <div class="h3 mb-0 text-success">{{ year_income|de_number }} €</div>
           </div>
         </div>
       </div>
@@ -69,7 +69,7 @@
           <span class="bg-danger text-white avatar me-3"><i class="fas fa-arrow-down"></i></span>
           <div>
             <div class="text-muted">Ausgaben {{ current_year }}</div>
-            <div class="h3 mb-0 text-danger">{{ "%.2f"|format(year_expense|abs) }} €</div>
+            <div class="h3 mb-0 text-danger">{{ year_expense|abs|de_number }} €</div>
           </div>
         </div>
       </div>
@@ -99,7 +99,7 @@
           <td>{{ b.account.name }}</td>
           <td>{{ b.description }}</td>
           <td class="text-end fw-bold {{ 'text-success' if b.amount > 0 else 'text-danger' }}">
-            {{ "%.2f"|format(b.amount) }} €
+            {{ b.amount|de_number }} €
           </td>
         </tr>
         {% else %}

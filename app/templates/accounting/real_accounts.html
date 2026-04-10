@@ -4,13 +4,6 @@
 {% block content %}
 
 <div class="row mb-3">
-  <div class="col">
-    <form class="d-flex align-items-center gap-2" method="get">
-      <label class="mb-0">Jahr:</label>
-      <input type="number" name="year" value="{{ year }}" class="form-control form-control-sm" style="width:90px">
-      <button type="submit" class="btn btn-sm btn-secondary">Anzeigen</button>
-    </form>
-  </div>
   <div class="col text-end">
     <a href="{{ url_for('accounting.real_account_new') }}" class="btn btn-primary btn-sm">
       <i class="fas fa-plus me-1"></i> Neues Bankkonto
@@ -19,16 +12,16 @@
 </div>
 
 <div class="row">
-  {% for ra in real_accounts %}
-  {% set s = saldi[ra.id] %}
-  <div class="col-md-6 col-lg-4">
-    <div class="card">
+  {% for entry in account_data %}
+  {% set ra = entry.ra %}
+  <div class="col-md-6 col-xl-4">
+    <div class="card mb-4">
       <div class="card-header">
         <h3 class="card-title">
-          <i class="fas fa-university me-1"></i>
+          <i class="fas {{ ra.icon or 'fa-university' }} me-1"></i>
           {{ ra.name }}
-          {% if ra.is_default %}<span class="badge bg-success ms-1">Standard</span>{% endif %}
-          {% if not ra.active %}<span class="badge bg-secondary ms-1">Inaktiv</span>{% endif %}
+          {% if ra.is_default %}<span class="badge bg-success text-white ms-1">Standard</span>{% endif %}
+          {% if not ra.active %}<span class="badge bg-secondary text-white ms-1">Inaktiv</span>{% endif %}
         </h3>
         <div class="card-options">
           <a href="{{ url_for('accounting.real_account_edit', ra_id=ra.id) }}"
@@ -37,46 +30,78 @@
           </a>
         </div>
       </div>
+
+      {% if ra.iban or ra.description %}
+      <div class="card-body py-2 border-bottom">
+        {% if ra.iban %}
+        <div class="text-muted small"><i class="fas fa-hashtag me-1"></i><code>{{ ra.iban }}</code></div>
+        {% endif %}
+        {% if ra.description %}
+        <div class="text-muted small">{{ ra.description }}</div>
+        {% endif %}
+      </div>
+      {% endif %}
+
       <div class="card-body p-0">
         <table class="table table-sm mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Jahr</th>
+              <th class="text-end text-success">Einnahmen</th>
+              <th class="text-end text-danger">Ausgaben</th>
+              <th class="text-end">Kontostand 31.12.</th>
+            </tr>
+          </thead>
           <tbody>
-            {% if ra.iban %}
-            <tr>
-              <td class="text-muted" style="width:50%">IBAN</td>
-              <td><code>{{ ra.iban }}</code></td>
+            {# Anfangsstand vor dem ersten Jahr #}
+            {% if entry.history %}
+            {% set first = entry.history[0] %}
+            <tr class="table-light text-muted">
+              <td colspan="3"><small>Anfangsstand</small></td>
+              <td class="text-end fw-bold"><small>{{ first.jan1|de_number }} €</small></td>
             </tr>
             {% endif %}
-            {% if ra.description %}
-            <tr>
-              <td class="text-muted">Beschreibung</td>
-              <td>{{ ra.description }}</td>
-            </tr>
-            {% endif %}
-            <tr>
-              <td class="text-muted">Stand 01.01.{{ year }}</td>
-              <td class="{{ 'text-success' if s.jan1 >= 0 else 'text-danger' }}">
-                {{ "%.2f"|format(s.jan1) }} €
+
+            {% for h in entry.history %}
+            <tr class="{% if h.is_current %}table-primary{% endif %}">
+              <td>
+                {{ h.year }}
+                {% if h.is_current %}
+                <span class="badge bg-blue text-white-lt ms-1">offen</span>
+                {% elif h.is_closed %}
+                <span class="badge bg-success text-white-lt text-success ms-1">abgeschlossen</span>
+                {% endif %}
+              </td>
+              <td class="text-end text-success">
+                {% if h.income != 0 %}{{ h.income|de_number }} €{% else %}<span class="text-muted">—</span>{% endif %}
+              </td>
+              <td class="text-end text-danger">
+                {% if h.expense != 0 %}{{ h.expense|de_number }} €{% else %}<span class="text-muted">—</span>{% endif %}
+              </td>
+              <td class="text-end fw-bold {{ 'text-success' if h.closing >= 0 else 'text-danger' }}">
+                {{ h.closing|de_number }} €
               </td>
             </tr>
-            <tr>
-              <td class="text-muted">Buchungen {{ year }}</td>
-              <td class="{{ 'text-success' if s.year_total >= 0 else 'text-danger' }}">
-                {{ "%+.2f"|format(s.year_total) }} €
-              </td>
-            </tr>
-            <tr class="table-active">
-              <td class="fw-bold">Stand 31.12.{{ year }}</td>
-              <td class="fw-bold {{ 'text-success' if s.balance >= 0 else 'text-danger' }}">
-                {{ "%.2f"|format(s.balance) }} €
-              </td>
-            </tr>
+            {% endfor %}
           </tbody>
+          {% if entry.history %}
+          {% set last = entry.history[-1] %}
+          <tfoot class="table-active">
+            <tr>
+              <td colspan="3" class="fw-bold">Aktueller Kontostand</td>
+              <td class="text-end fw-bold fs-5 {{ 'text-success' if last.closing >= 0 else 'text-danger' }}">
+                {{ last.closing|de_number }} €
+              </td>
+            </tr>
+          </tfoot>
+          {% endif %}
         </table>
       </div>
+
       <div class="card-footer text-end py-2">
-        <a href="{{ url_for('accounting.bookings') }}?real_account_id={{ ra.id }}&year={{ year }}"
+        <a href="{{ url_for('accounting.bookings') }}?real_account_id={{ ra.id }}&year={{ current_year }}"
            class="btn btn-sm btn-outline-secondary">
-          <i class="fas fa-list me-1"></i> Buchungen anzeigen
+          <i class="fas fa-list me-1"></i> Buchungen {{ current_year }}
         </a>
       </div>
     </div>

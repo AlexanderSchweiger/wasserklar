@@ -61,6 +61,7 @@ def register_commands(app):
             _add_col_if_missing("customers", "rechnung_per_email INTEGER NOT NULL DEFAULT 0", "rechnung_per_email")
             _add_col_if_missing("accounts", "code VARCHAR(3)", "code")
             _add_col_if_missing("projects", "code VARCHAR(3)", "code")
+            _add_col_if_missing("invoices", "doc_path VARCHAR(500)", "doc_path")
             conn.commit()
 
         # Standard-Steuersätze anlegen
@@ -126,6 +127,7 @@ def register_commands(app):
             _add_col_if_missing("customers", "rechnung_per_email INTEGER NOT NULL DEFAULT 0", "rechnung_per_email")
             _add_col_if_missing("accounts", "code VARCHAR(3)", "code")
             _add_col_if_missing("projects", "code VARCHAR(3)", "code")
+            _add_col_if_missing("invoices", "doc_path VARCHAR(500)", "doc_path")
             conn.commit()
 
         # Standard-Steuersätze anlegen

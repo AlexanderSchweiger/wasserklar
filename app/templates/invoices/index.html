@@ -5,9 +5,9 @@
 <div class="card">
   <div class="card-header">
     <div class="filter-bar">
-      <div class="mb-3">
+      <div class="mb-3" style="width:150px">
         <label class="form-label mb-0 me-1">Status</label>
-        <select name="status" class="form-control form-control-sm"
+        <select name="status" class="form-select form-select-sm tom-select"
           hx-get="{{ url_for('invoices.index') }}"
           hx-trigger="change"
           hx-target="#invoices-table"
@@ -45,9 +45,9 @@
           hx-target="#invoices-table"
           hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id'],[name='nur_email']">
       </div>
-      <div class="mb-3">
+      <div class="mb-3" style="width:180px">
         <label class="form-label mb-0 me-1">Projekt</label>
-        <select name="project_id" class="form-control form-control-sm tom-select"
+        <select name="project_id" class="form-select form-select-sm tom-select"
           hx-get="{{ url_for('invoices.index') }}"
           hx-trigger="change"
           hx-target="#invoices-table"
@@ -61,7 +61,7 @@
         </select>
       </div>
       <div class="input-group input-group-sm" style="width:220px">
-        <input type="search" name="q" placeholder="Kundenname…" class="form-control"
+        <input type="search" name="q" placeholder="Kundenname…" class="form-control form-control-sm"
           hx-get="{{ url_for('invoices.index') }}"
           hx-trigger="input changed delay:300ms"
           hx-target="#invoices-table"
@@ -109,10 +109,18 @@
           </optgroup>
           <option value="delete" class="text-danger">Löschen (nur Entwürfe)</option>
           <option value="massenmail">Massenmail senden</option>
+          {% if doc_format in ('pdf', 'both') %}
           <optgroup label="PDF-Export">
             <option value="bulk-pdf-merged">PDF zusammenführen (Drucken)</option>
             <option value="bulk-pdf-zip">PDFs als ZIP herunterladen</option>
           </optgroup>
+          {% endif %}
+          {% if doc_format in ('docx', 'both') %}
+          <optgroup label="DOCX-Export">
+            <option value="bulk-docx-merged">Word zusammenführen (ein .docx)</option>
+            <option value="bulk-docx-zip">Word-Dateien als ZIP herunterladen</option>
+          </optgroup>
+          {% endif %}
         </select>
         <button type="button" class="btn btn-sm btn-warning" id="bulk-submit"
                 onclick="handleBulkAction()">
@@ -228,11 +236,16 @@ function handleBulkAction() {
     openMassenmailModal();
     return;
   }
-  if (action === 'bulk-pdf-merged' || action === 'bulk-pdf-zip') {
+  if (action === 'bulk-pdf-merged' || action === 'bulk-pdf-zip' ||
+      action === 'bulk-docx-merged' || action === 'bulk-docx-zip') {
+    const urlMap = {
+      'bulk-pdf-merged':  '{{ url_for("invoices.bulk_pdf_merged") }}',
+      'bulk-pdf-zip':     '{{ url_for("invoices.bulk_pdf_zip") }}',
+      'bulk-docx-merged': '{{ url_for("invoices.bulk_docx_merged") }}',
+      'bulk-docx-zip':    '{{ url_for("invoices.bulk_docx_zip") }}',
+    };
     const form = document.getElementById('bulk-form');
-    form.action = action === 'bulk-pdf-merged'
-      ? '{{ url_for("invoices.bulk_pdf_merged") }}'
-      : '{{ url_for("invoices.bulk_pdf_zip") }}';
+    form.action = urlMap[action];
     form.submit();
     form.action = '{{ url_for("invoices.bulk_action") }}';
     return;

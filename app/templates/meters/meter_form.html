@@ -4,9 +4,7 @@
   <i class="fas fa-tachometer-alt me-2"></i> {{ 'Zähler bearbeiten' if meter else 'Neuer Zähler' }}
 {% endblock %}
 {% block content %}
-<div class="row">
-  <div class="col-md-6">
-    <div class="card">
+<div class="card">
       <div class="card-header">
         <h3 class="card-title">{{ meter.meter_number if meter else 'Neuer Zähler' }}</h3>
       </div>
@@ -15,7 +13,7 @@
         <div class="card-body">
           <div class="mb-3">
             <label class="form-label">Objekt <span class="text-danger">*</span></label>
-            <select name="property_id" class="form-control tom-select" required>
+            <select name="property_id" class="form-select tom-select" required>
               {% for p in properties %}
               <option value="{{ p.id }}"
                 {{ 'selected' if (meter and meter.property_id == p.id) or (not meter and selected_property_id == p.id) }}>
@@ -74,6 +72,5 @@
         </div>
       </form>
     </div>
-  </div>
 </div>
 {% endblock %}

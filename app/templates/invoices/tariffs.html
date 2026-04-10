@@ -28,9 +28,9 @@
         <tr>
           <td><strong>{{ t.name }}</strong></td>
           <td>{{ t.valid_from }}</td>
-          <td>{{ t.valid_to or '<span class="badge bg-success">aktuell</span>' | safe }}</td>
-          <td class="text-end">{{ "%.2f"|format(t.base_fee) }} €</td>
-          <td class="text-end">{{ "%.4f"|format(t.price_per_m3) }} €</td>
+          <td>{{ t.valid_to or '<span class="badge bg-success text-white">aktuell</span>' | safe }}</td>
+          <td class="text-end">{{ t.base_fee|de_number }} €</td>
+          <td class="text-end">{{ t.price_per_m3|de_number(4) }} €</td>
           <td class="text-end">
             <a href="{{ url_for('invoices.tariff_edit', tariff_id=t.id) }}"
                class="btn btn-sm btn-outline-secondary">

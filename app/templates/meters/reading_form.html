@@ -4,9 +4,7 @@
   <i class="fas fa-tachometer-alt me-2"></i> Ablesen: {{ meter.property.label() }}
 {% endblock %}
 {% block content %}
-<div class="row">
-  <div class="col-md-5">
-    <div class="card">
+<div class="card">
       <div class="card-header">
         <h3 class="card-title">Zähler <code>{{ meter.meter_number }}</code>
           {% if meter.location %}<small class="text-muted ms-2">{{ meter.location }}</small>{% endif %}
@@ -83,7 +81,6 @@
         </div>
       </form>
     </div>
-  </div>
 </div>
 
 <script>

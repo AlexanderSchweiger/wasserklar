@@ -2,9 +2,7 @@
 {% block title %}Offener Posten anlegen{% endblock %}
 {% block page_title %}<i class="fas fa-plus-circle me-2"></i> Offener Posten anlegen{% endblock %}
 {% block content %}
-<div class="row">
-  <div class="col-md-7">
-    <div class="card">
+<div class="card">
       <div class="card-header">
         <h3 class="card-title">Neuen offenen Posten anlegen</h3>
       </div>
@@ -14,7 +12,7 @@
 
           <div class="mb-3">
             <label class="form-label">Kunde <span class="text-danger">*</span></label>
-            <select name="customer_id" class="form-control tom-select" required>
+            <select name="customer_id" class="form-select tom-select" required>
               <option value="">— Kunde auswählen —</option>
               {% for c in customers %}
               <option value="{{ c.id }}" {{ 'selected' if item and item.customer_id == c.id }}>
@@ -74,6 +72,5 @@
         </div>
       </form>
     </div>
-  </div>
 </div>
 {% endblock %}

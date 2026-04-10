@@ -4,9 +4,7 @@
   <i class="fas fa-sliders-h me-2"></i> {{ 'Tarif bearbeiten' if tariff else 'Neuer Tarif' }}
 {% endblock %}
 {% block content %}
-<div class="row">
-  <div class="col-md-7">
-    <div class="card">
+<div class="card">
       <div class="card-header">
         <h3 class="card-title">{{ tariff.name if tariff else 'Neuer Tarif' }}</h3>
       </div>
@@ -107,6 +105,5 @@
         </div>
       </form>
     </div>
-  </div>
 </div>
 {% endblock %}

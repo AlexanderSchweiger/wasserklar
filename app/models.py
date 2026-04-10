@@ -254,6 +254,7 @@ class Invoice(db.Model):
     status = db.Column(db.String(20), default=STATUS_DRAFT)
     total_amount = db.Column(db.Numeric(10, 2), default=0)
     pdf_path = db.Column(db.String(500))
+    doc_path = db.Column(db.String(500))   # gecachte .docx für gesperrte Rechnungen
     notes = db.Column(db.Text)
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)

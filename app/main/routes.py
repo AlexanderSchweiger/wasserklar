@@ -3,6 +3,7 @@ from flask_login import login_required, current_user
 from app.main import bp
 from app.extensions import db
 from app.models import Invoice, Booking, WaterMeter, MeterReading
+from app.accounting import services as acc_svc
 from datetime import date
 
 
@@ -29,20 +30,8 @@ def dashboard():
     ).count()
     missing_readings = total_meters - read_this_year
 
-    # Saldo laufendes Jahr
-    from sqlalchemy import extract
-    year_income = db.session.query(
-        db.func.sum(Booking.amount)
-    ).filter(
-        extract("year", Booking.date) == current_year,
-        Booking.amount > 0,
-    ).scalar() or 0
-    year_expense = db.session.query(
-        db.func.sum(Booking.amount)
-    ).filter(
-        extract("year", Booking.date) == current_year,
-        Booking.amount < 0,
-    ).scalar() or 0
+    # Saldo laufendes Jahr (Stornopaare werden über den Service ausgeschlossen)
+    _, _, year_income, year_expense, year_balance = acc_svc.year_income_expense(current_year)
 
     # Letzte Buchungen
     recent_bookings = Booking.query.order_by(Booking.created_at.desc()).limit(5).all()
@@ -55,6 +44,6 @@ def dashboard():
         missing_readings=missing_readings,
         year_income=year_income,
         year_expense=year_expense,
-        year_balance=year_income + year_expense,
+        year_balance=year_balance,
         recent_bookings=recent_bookings,
     )

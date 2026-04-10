@@ -56,7 +56,7 @@
             {{ t.to_account.name }}
           </td>
           <td>{{ t.description }}</td>
-          <td class="text-end text-nowrap fw-bold">{{ "%.2f"|format(t.amount) }} €</td>
+          <td class="text-end text-nowrap fw-bold">{{ t.amount|de_number }} €</td>
           <td class="text-end">
             <form method="post" action="{{ url_for('accounting.transfer_delete', transfer_id=t.id) }}"
                   onsubmit="return confirm('Umbuchung wirklich löschen?')">
@@ -80,7 +80,7 @@
         <tr class="table-active fw-bold">
           <td colspan="5">Summe</td>
           <td class="text-end text-nowrap">
-            {{ "%.2f"|format(transfers | sum(attribute='amount')) }} €
+            {{ transfers | sum(attribute='amount')|de_number }} €
           </td>
           <td></td>
         </tr>

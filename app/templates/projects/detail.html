@@ -13,9 +13,9 @@
         <h3 class="card-title fw-bold">{{ project.name }}</h3>
         <div class="card-options">
           {% if project.closed %}
-          <span class="badge bg-secondary me-2">Abgeschlossen</span>
+          <span class="badge bg-secondary text-white me-2">Abgeschlossen</span>
           {% else %}
-          <span class="badge bg-success me-2">Aktiv</span>
+          <span class="badge bg-success text-white me-2">Aktiv</span>
           {% endif %}
           <a href="{{ url_for('projects.edit', project_id=project.id) }}"
              class="btn btn-sm btn-outline-secondary">
@@ -80,7 +80,7 @@
               <td>{{ b.description }}</td>
               <td>{{ b.reference or '—' }}</td>
               <td class="text-end fw-bold {{ 'text-success' if b.amount > 0 else 'text-danger' }}">
-                {{ "%.2f"|format(b.amount) }} €
+                {{ b.amount|de_number }} €
               </td>
               <td class="text-end" style="white-space:nowrap">
                 {% if b.invoice_id %}
@@ -107,7 +107,7 @@
               <td class="text-end fw-bold">
                 {% set total = bookings|sum(attribute='amount') %}
                 <span class="{{ 'text-success' if total >= 0 else 'text-danger' }}">
-                  {{ "%.2f"|format(total) }} €
+                  {{ total|de_number }} €
                 </span>
               </td>
               <td></td>
@@ -151,15 +151,15 @@
               <td>{{ item.due_date.strftime('%d.%m.%Y') if item.due_date else '—' }}</td>
               <td>
                 {% if item.status == 'Offen' %}
-                <span class="badge bg-danger">Offen</span>
+                <span class="badge bg-danger text-white">Offen</span>
                 {% elif item.status == 'Teilbezahlt' %}
                 <span class="badge bg-warning text-dark">Teilbezahlt</span>
                 {% else %}
-                <span class="badge bg-secondary">{{ item.status }}</span>
+                <span class="badge bg-secondary text-white">{{ item.status }}</span>
                 {% endif %}
               </td>
               <td class="text-end fw-bold text-danger">
-                {{ "%.2f"|format(item.open_balance) }} €
+                {{ item.open_balance|de_number }} €
               </td>
               <td class="text-end">
                 {% if item.invoice_id %}

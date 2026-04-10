@@ -3,26 +3,6 @@
 {% block page_title %}<i class="fas fa-book me-2"></i> Buchungen {% endblock %}
 {% block content %}
 
-{% if real_accounts %}
-<div class="card mb-3">
-  <div class="card-body py-2 px-3">
-    <div class="d-flex flex-wrap align-items-center" style="gap:1rem;">
-      <span class="text-muted me-2"><i class="fas fa-university me-1"></i><strong>Aktuelle Kontostände</strong></span>
-      {% for ra in real_accounts %}
-      {% set bal = real_account_saldi[ra.id] %}
-      <span class="me-3">
-        <i class="fas {{ ra.icon or 'fa-university' }} me-1 text-muted"></i>
-        <strong>{{ ra.name }}:</strong>
-        <span class="fw-bold {{ 'text-success' if bal >= 0 else 'text-danger' }}">
-          {{ "%.2f"|format(bal) }} €
-        </span>
-      </span>
-      {% endfor %}
-    </div>
-  </div>
-</div>
-{% endif %}
-
 <div class="card">
   <div class="card-header">
     <div class="filter-bar">
@@ -72,7 +52,7 @@
       </div>
       <div class="mb-3">
         <label class="form-label mb-0 me-1">Konto</label>
-        <select name="account_id" class="form-control form-control-sm tom-select"
+        <select name="account_id" class="form-select form-select-sm tom-select"
           hx-get="{{ url_for('accounting.bookings') }}"
           hx-trigger="change"
           hx-target="#bookings-table"
@@ -87,7 +67,7 @@
       </div>
       <div class="mb-3">
         <label class="form-label mb-0 me-1">Projekt</label>
-        <select name="project_id" class="form-control form-control-sm tom-select"
+        <select name="project_id" class="form-select form-select-sm tom-select"
           hx-get="{{ url_for('accounting.bookings') }}"
           hx-trigger="change"
           hx-target="#bookings-table"
@@ -100,17 +80,45 @@
           {% endfor %}
         </select>
       </div>
+      <div class="mb-3">
+        <button type="button" class="btn btn-sm btn-outline-primary"
+          hx-get="{{ url_for('accounting.bookings') }}"
+          hx-trigger="click"
+          hx-target="#bookings-table"
+          hx-include="[name='year'],[name='account_id'],[name='project_id'],[name='real_account_id']">
+          <i class="fas fa-search me-1"></i> Anzeigen
+        </button>
+      </div>
     </div>
     <div class="card-options">
-      <a href="{{ url_for('accounting.booking_new') }}" class="btn btn-primary btn-sm">
-        <i class="fas fa-plus me-1"></i> Neue Buchung
-      </a>
-      <a href="{{ url_for('accounting.import_bookings') }}" class="btn btn-info btn-sm ms-1">
-        <i class="fas fa-file-import me-1"></i> Importieren
-      </a>
-      <a href="{{ url_for('accounting.export_csv', year=year) }}" class="btn btn-secondary btn-sm ms-1">
-        <i class="fas fa-file-csv me-1"></i> CSV
-      </a>
+      <div class="btn-group">
+        <a href="{{ url_for('accounting.booking_new') }}" class="btn btn-primary btn-sm">
+          <i class="fas fa-plus me-1"></i> Neue Buchung
+        </a>
+        <button type="button" class="btn btn-primary btn-sm dropdown-toggle dropdown-toggle-split"
+                data-bs-toggle="dropdown" aria-expanded="false">
+          <span class="visually-hidden">Dropdown</span>
+        </button>
+        <div class="dropdown-menu dropdown-menu-end">
+          <a class="dropdown-item" href="{{ url_for('accounting.transfer_new') }}">
+            <i class="fas fa-exchange-alt me-1"></i> Neue Umbuchung
+          </a>
+        </div>
+      </div>
+      <div class="btn-group ms-1">
+        <button type="button" class="btn btn-outline-secondary btn-sm dropdown-toggle"
+                data-bs-toggle="dropdown" aria-expanded="false">
+          <i class="fas fa-ellipsis-v"></i>
+        </button>
+        <div class="dropdown-menu dropdown-menu-end">
+          <a class="dropdown-item" href="{{ url_for('accounting.import_bookings') }}">
+            <i class="fas fa-file-import me-1"></i> Importieren
+          </a>
+          <a class="dropdown-item" href="{{ url_for('accounting.export_csv', year=year) }}">
+            <i class="fas fa-file-csv me-1"></i> CSV exportieren
+          </a>
+        </div>
+      </div>
     </div>
   </div>
   <div class="card-body p-0" id="bookings-table">

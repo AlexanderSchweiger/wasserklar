@@ -4,9 +4,7 @@
   <i class="fas fa-exchange-alt me-2"></i> Neue Umbuchung
 {% endblock %}
 {% block content %}
-<div class="row">
-  <div class="col-md-6">
-    <div class="card">
+<div class="card">
       <div class="card-header">
         <h3 class="card-title">Umbuchung zwischen Bankkonten</h3>
       </div>
@@ -35,7 +33,7 @@
 
           <div class="mb-3">
             <label class="form-label">Ausgangskonto <span class="text-danger">*</span></label>
-            <select name="from_real_account_id" id="from_account" class="form-control" required>
+            <select name="from_real_account_id" id="from_account" class="form-select tom-select" required>
               <option value="">– Konto wählen –</option>
               {% for ra in real_accounts %}
               <option value="{{ ra.id }}">
@@ -48,7 +46,7 @@
 
           <div class="mb-3">
             <label class="form-label">Zielkonto <span class="text-danger">*</span></label>
-            <select name="to_real_account_id" id="to_account" class="form-control" required>
+            <select name="to_real_account_id" id="to_account" class="form-select tom-select" required>
               <option value="">– Konto wählen –</option>
               {% for ra in real_accounts %}
               <option value="{{ ra.id }}">
@@ -78,7 +76,6 @@
         </div>
       </form>
     </div>
-  </div>
 </div>
 <script>
 (function () {

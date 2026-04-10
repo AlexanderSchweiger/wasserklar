@@ -13,6 +13,7 @@ email-validator==2.2.0
 psycopg2-binary>=2.9
 PyMySQL>=1.1
 cryptography>=42.0
+python-docx>=1.1.0
 # WeasyPrint wird für PDF-Erzeugung benötigt, braucht auf Windows GTK3:
 # https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#windows
 # Im Docker-Container ist es enthalten.

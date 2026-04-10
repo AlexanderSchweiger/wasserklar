@@ -2,9 +2,7 @@
 {% block title %}Neues Buchungsjahr{% endblock %}
 {% block page_title %}<i class="fas fa-calendar-plus me-2"></i> Neues Buchungsjahr{% endblock %}
 {% block content %}
-<div class="row">
-  <div class="col-md-5">
-    <div class="card">
+<div class="card">
       <div class="card-header"><h3 class="card-title">Buchungsjahr anlegen</h3></div>
       <form method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -33,7 +31,6 @@
         </div>
       </form>
     </div>
-  </div>
 </div>
 <script>
 (function () {

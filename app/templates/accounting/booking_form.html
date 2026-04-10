@@ -5,175 +5,159 @@
 {% endblock %}
 {% set locked = is_verbucht is defined and is_verbucht %}
 {% block content %}
-<div class="row">
-  <div class="col-md-6">
-    <div class="card">
-      <div class="card-header">
-        <h3 class="card-title">Buchungsdetails</h3>
-      </div>
-      {% if locked %}
-      <div class="card-header bg-warning text-dark py-2">
-        <i class="fas fa-lock me-1"></i> Verbuchte Buchung — Datum, Betrag, Belegnummer und Steuersatz können nicht mehr
-        geändert werden.
-      </div>
-      {% endif %}
-      <form method="post" id="booking-form" data-new="{{ 'true' if not booking else 'false' }}">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <div class="card-body">
-          <div class="row g-2">
-            <div class="col-md-6">
-              <div class="mb-3">
-                <label class="form-label">Datum <span class="text-danger">*</span></label>
-                <input type="date" name="date" class="form-control"
-                  value="{{ booking.date.isoformat() if booking else (form_data.get('date', '') if form_data is defined else (keep_date if keep_date is defined and keep_date else (today.isoformat() if today is defined else ''))) }}"
-                  {% if not locked and today is defined %}max="{{ today.isoformat() }}" {% endif %}{{ 'readonly' if locked }} required>
-              </div>
-            </div>
-            <div class="col-md-6">
-              <div class="mb-3">
-                <label class="form-label">Betrag (€) <span class="text-danger">*</span></label>
-                <div class="input-group">
-                  <input type="number" name="amount" id="amount" step="0.01" class="form-control"
-                    value="{{ booking.amount if booking else (form_data.get('amount', '') if form_data is defined else '') }}"
-                    {{ 'readonly' if locked }} {% if not booking %}autofocus{% endif %} required>
-                  <span class="input-group-text">€</span>
-                </div>
-                <div class="mt-1">
-                  <span id="buchungstyp_badge" class="badge bg-secondary">—</span>
-                  <small class="text-muted ms-1">Positiv = Einnahme &nbsp;|&nbsp; Negativ = Ausgabe</small>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div class="row g-2">
-            <div class="col-md-6">
-              <div class="mb-3">
-                <label class="form-label">Steuersatz (MwSt) <span class="text-danger">*</span></label>
-                <select name="tax_rate" id="tax_rate" class="form-control tom-select" {{ 'disabled' if locked }}
-                  {{ 'required' if not locked }}>
-                  {% if not booking %}<option value="">– bitte wählen –</option>{% endif %}
-                  {% for tr in tax_rates %}
-                  <option value="{{ tr.rate }}" {{ 'selected' if (not booking and form_data is defined and
-                    form_data.get('tax_rate') and form_data.get('tax_rate')==tr.rate|string) or (booking and not
-                    booking.tax_rate and tr.rate==0) or (booking and booking.tax_rate and booking.tax_rate==tr.rate) }}>
-                    {{ tr.label or (tr.rate | int ~ ' %') }}
-                  </option>
-                  {% endfor %}
-                </select>
-                {% if locked %}<input type="hidden" name="tax_rate" value="{{ booking.tax_rate or 0 }}">{% endif %}
-              </div>
-            </div>
-            <div class="col-md-6">
-              <div id="tax_display" class="mb-3" style="display:none">
-                <label class="form-label">Berechnete Steuer</label>
-                <div class="input-group">
-                  <input type="text" id="tax_amount_display" class="form-control" readonly>
-                  <span class="input-group-text">€</span>
-                </div>
-                <small class="text-muted">Netto: <span id="net_amount_display">–</span> €</small>
-              </div>
-            </div>
-          </div>
-          <div class="row g-2">
-            <div class="col-md-8">
-              <div class="mb-3">
-                <label class="form-label">Konto <span class="text-danger">*</span></label>
-                <select name="account_id" class="form-control tom-select" required>
-                  {% if not booking %}<option value="">– bitte wählen –</option>{% endif %}
-                  {% for a in accounts %}
-                  <option value="{{ a.id }}" {{ 'selected' if (booking and booking.account_id==a.id) or (not booking and
-                    form_data is defined and form_data.get('account_id')==a.id|string) }}>
-                    {% if a.code %}{{ a.code }} – {% endif %}{{ a.name }}
-                  </option>
-                  {% endfor %}
-                </select>
-              </div>
-            </div>
-            <div class="col-md-4">
-              <div class="mb-3">
-                <label class="form-label">Projekt</label>
-                <select name="project_id" class="form-control tom-select">
-                  <option value="">– kein Projekt –</option>
-                  {% for p in projects %}
-                  <option value="{{ p.id }}" {{ 'selected' if (booking and booking.project_id==p.id) or (not booking and
-                    form_data is defined and form_data.get('project_id')==p.id|string) }}>
-                    {% if p.code %}{{ p.code }} – {% endif %}{{ p.name }}
-                  </option>
-                  {% endfor %}
-                </select>
-              </div>
-            </div>
-          </div>
-          <div class="row g-2">
-            <div class="col-md-2">
-              <div class="mb-3">
-                <label class="form-label">Belegnummer</label>
-                <input type="text" name="reference" class="form-control"
-                  value="{{ booking.reference if booking else (form_data.get('reference', '') if form_data is defined else '') }}"
-                  {{ 'readonly' if locked }}>
-              </div>
-            </div>
-            <div class="col-md-10">
-              <div class="mb-3">
-                <label class="form-label">Beschreibung <span class="text-danger">*</span></label>
-                <input type="text" name="description" class="form-control"
-                  value="{{ booking.description if booking else (form_data.get('description', '') if form_data is defined else '') }}"
-                  required>
-              </div>
-            </div>
-          </div>
-          <div class="row g-2">
-            <div class="col-md-6">
-              <div class="mb-3">
-                <label class="form-label">Kunde</label>
-                <select name="customer_id" class="form-control tom-select">
-                  <option value="">– kein Kunde –</option>
-                  {% for c in customers %}
-                  <option value="{{ c.id }}" {{ 'selected' if (booking and booking.customer_id==c.id) or (not booking and
-                    form_data is defined and form_data.get('customer_id')==c.id|string) }}>
-                    {{ c.name }}
-                  </option>
-                  {% endfor %}
-                </select>
-              </div>
-            </div>
-            <div class="col-md-6">
-              <div class="mb-3">
-                <label class="form-label">Reales Bankkonto</label>
-                <select name="real_account_id" class="form-control tom-select">
-                  <option value="">– kein Bankkonto –</option>
-                  {% for ra in real_accounts %}
-                  <option value="{{ ra.id }}" {{ 'selected' if (booking and booking.real_account_id==ra.id) or (not booking
-                    and form_data is defined and form_data.get('real_account_id')==ra.id|string) or (not booking and
-                    (form_data is not defined or not form_data.get('real_account_id')) and default_real_account and
-                    default_real_account.id==ra.id) }}>
-                    {{ ra.name }}{% if ra.iban %} ({{ ra.iban }}){% endif %}
-                  </option>
-                  {% endfor %}
-                </select>
-              </div>
-            </div>
-          </div>
-        </div>
-        <input type="hidden" name="action" id="form_action" value="">
-        <div class="card-footer">
-          {% if not booking %}
-          <button type="submit" class="btn btn-primary" id="btn_weiteres" onclick="document.getElementById('form_action').value='weiteres'">
-            <i class="fas fa-plus me-1"></i> Speichern und weitere Buchung
-          </button>
-          <button type="submit" class="btn btn-outline-primary ms-2" onclick="document.getElementById('form_action').value=''">
-            <i class="fas fa-save me-1"></i> Speichern
-          </button>
-          {% else %}
-          <button type="submit" class="btn btn-primary">
-            <i class="fas fa-save me-1"></i> Speichern
-          </button>
-          {% endif %}
-          <a href="{{ url_for('accounting.bookings') }}" id="btn-abbrechen" class="btn btn-secondary ms-2">Abbrechen</a>
-        </div>
-      </form>
-    </div>
+<div class="booking-form-wrapper" style="max-width: 820px;">
+<div class="card">
+  <div class="card-header">
+    <h3 class="card-title">Buchungsdetails</h3>
   </div>
+  {% if locked %}
+  <div class="card-header bg-warning text-dark py-2">
+    <i class="fas fa-lock me-1"></i> Verbuchte Buchung — Datum, Betrag, Belegnummer und Steuersatz können nicht mehr
+    geändert werden.
+  </div>
+  {% endif %}
+  <form method="post" id="booking-form" data-new="{{ 'true' if not booking else 'false' }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="card-body">
+
+      <!-- Zeile 1: Datum | Betrag | Steuersatz | Berechnete Steuer -->
+      <div class="row g-3">
+        <div class="col-12 col-sm-3">
+          <label class="form-label">Datum <span class="text-danger">*</span></label>
+          <input type="date" name="date" class="form-control"
+            value="{{ booking.date.isoformat() if booking else (form_data.get('date', '') if form_data is defined else (keep_date if keep_date is defined and keep_date else (today.isoformat() if today is defined else ''))) }}"
+            {% if not locked and today is defined %}max="{{ today.isoformat() }}" {% endif %}{{ 'readonly' if locked }} required>
+        </div>
+        <div class="col-12 col-sm-3">
+          <label class="form-label">Betrag (€) <span class="text-danger">*</span></label>
+          <div class="input-group">
+            <input type="number" name="amount" id="amount" step="0.01" class="form-control"
+              value="{{ booking.amount if booking else (form_data.get('amount', '') if form_data is defined else '') }}"
+              {{ 'readonly' if locked }} {% if not booking %}autofocus{% endif %} required>
+            <span class="input-group-text">€</span>
+          </div>
+          <div class="mt-1">
+            <span id="buchungstyp_badge" class="badge bg-secondary text-white">—</span>
+          </div>
+        </div>
+        <div class="col-12 col-sm-3">
+          <label class="form-label">Steuersatz <span class="text-danger">*</span></label>
+          <select name="tax_rate" id="tax_rate" class="form-select tom-select" {{ 'disabled' if locked }}
+            {{ 'required' if not locked }}>
+            {% if not booking %}<option value="" selected></option>{% endif %}
+            {% for tr in tax_rates %}
+            <option value="{{ tr.rate }}" {{ 'selected' if (not booking and form_data is defined and
+              form_data.get('tax_rate') and form_data.get('tax_rate')==tr.rate|string) or (booking and not
+              booking.tax_rate and tr.rate==0) or (booking and booking.tax_rate and booking.tax_rate==tr.rate) }}>
+              {{ tr.label or (tr.rate | int ~ ' %') }}
+            </option>
+            {% endfor %}
+          </select>
+          {% if locked %}<input type="hidden" name="tax_rate" value="{{ booking.tax_rate or 0 }}">{% endif %}
+        </div>
+        <div id="tax_display" class="col-12 col-sm-3">
+          <label class="form-label">&nbsp;</label>
+          <div class="input-group">
+            <input type="text" id="tax_amount_display" class="form-control" readonly tabindex="-1" placeholder="Steuer –" style="pointer-events:none;background:var(--tblr-bg-surface-secondary,#f6f8fb);">
+            <span class="input-group-text">€</span>
+          </div>
+          <small class="text-muted">Netto: <span id="net_amount_display">–</span>&nbsp;€</small>
+        </div>
+      </div>
+
+      <!-- Zeile 3: Konto | Projekt -->
+      <div class="row g-3 mt-1">
+        <div class="col-12 col-sm-6">
+          <label class="form-label">Konto <span class="text-danger">*</span></label>
+          <select name="account_id" class="form-select tom-select" required>
+            {% if not booking %}<option value="" selected></option>{% endif %}
+            {% for a in accounts %}
+            <option value="{{ a.id }}" {{ 'selected' if (booking and booking.account_id==a.id) or (not booking and
+              form_data is defined and form_data.get('account_id')==a.id|string) }}>
+              {% if a.code %}{{ a.code }} – {% endif %}{{ a.name }}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-12 col-sm-6">
+          <label class="form-label">Projekt</label>
+          <select name="project_id" class="form-select tom-select">
+            <option value="">– kein Projekt –</option>
+            {% for p in projects %}
+            <option value="{{ p.id }}" {{ 'selected' if (booking and booking.project_id==p.id) or (not booking and
+              form_data is defined and form_data.get('project_id')==p.id|string) }}>
+              {% if p.code %}{{ p.code }} – {% endif %}{{ p.name }}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <!-- Zeile 4: Beschreibung | Belegnr. -->
+      <div class="row g-3 mt-1">
+        <div class="col-12 col-sm-8">
+          <label class="form-label">Beschreibung <span class="text-danger">*</span></label>
+          <input type="text" name="description" class="form-control"
+            value="{{ booking.description if booking else (form_data.get('description', '') if form_data is defined else '') }}"
+            required>
+        </div>
+        <div class="col-12 col-sm-4">
+          <label class="form-label">Belegnr.</label>
+          <input type="text" name="reference" class="form-control"
+            value="{{ booking.reference if booking else (form_data.get('reference', '') if form_data is defined else '') }}"
+            {{ 'readonly' if locked }}>
+        </div>
+      </div>
+
+      <!-- Zeile 5: Kunde | Bankkonto -->
+      <div class="row g-3 mt-1">
+        <div class="col-12 col-sm-6">
+          <label class="form-label">Kunde</label>
+          <select name="customer_id" class="form-select tom-select">
+            <option value="">– kein Kunde –</option>
+            {% for c in customers %}
+            <option value="{{ c.id }}" {{ 'selected' if (booking and booking.customer_id==c.id) or (not booking and
+              form_data is defined and form_data.get('customer_id')==c.id|string) }}>
+              {{ c.name }}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-12 col-sm-6">
+          <label class="form-label">Bankkonto</label>
+          <select name="real_account_id" class="form-select tom-select">
+            <option value="">– kein Bankkonto –</option>
+            {% for ra in real_accounts %}
+            <option value="{{ ra.id }}" {{ 'selected' if (booking and booking.real_account_id==ra.id) or (not booking
+              and form_data is defined and form_data.get('real_account_id')==ra.id|string) or (not booking and
+              (form_data is not defined or not form_data.get('real_account_id')) and default_real_account and
+              default_real_account.id==ra.id) }}>
+              {{ ra.name }}{% if ra.iban %} ({{ ra.iban }}){% endif %}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+    </div>
+    <input type="hidden" name="action" id="form_action" value="">
+    <div class="card-footer">
+      {% if not booking %}
+      <button type="submit" class="btn btn-primary" id="btn_weiteres" onclick="document.getElementById('form_action').value='weiteres'">
+        <i class="fas fa-plus me-1"></i> Speichern und weitere Buchung
+      </button>
+      <button type="submit" class="btn btn-outline-primary ms-2" onclick="document.getElementById('form_action').value=''">
+        <i class="fas fa-save me-1"></i> Speichern
+      </button>
+      {% else %}
+      <button type="submit" class="btn btn-primary">
+        <i class="fas fa-save me-1"></i> Speichern
+      </button>
+      {% endif %}
+      <a href="{{ url_for('accounting.bookings') }}" id="btn-abbrechen" class="btn btn-secondary ms-2">Abbrechen</a>
+    </div>
+  </form>
+</div>
 </div>
 <script>
   (function () {
@@ -190,13 +174,13 @@
 
       if (isNaN(amount) || amountEl.value.trim() === '') {
         badgeEl.textContent = '—';
-        badgeEl.className = 'badge bg-secondary';
+        badgeEl.className = 'badge bg-secondary text-white';
       } else if (amount > 0) {
         badgeEl.textContent = 'Einnahme';
-        badgeEl.className = 'badge bg-success';
+        badgeEl.className = 'badge bg-success text-white';
       } else if (amount < 0) {
         badgeEl.textContent = 'Ausgabe';
-        badgeEl.className = 'badge bg-danger';
+        badgeEl.className = 'badge bg-danger text-white';
       } else {
         badgeEl.textContent = 'Betrag = 0';
         badgeEl.className = 'badge bg-warning';
@@ -208,9 +192,9 @@
         var net = absAmount - tax;
         taxAmountEl.value = tax.toFixed(2).replace('.', ',');
         netAmountEl.textContent = net.toFixed(2).replace('.', ',');
-        displayDiv.style.display = '';
       } else {
-        displayDiv.style.display = 'none';
+        taxAmountEl.value = '';
+        netAmountEl.textContent = '–';
       }
     }
 

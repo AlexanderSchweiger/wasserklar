@@ -49,7 +49,7 @@
     <div class="card bg-success text-white mb-3">
       <div class="card-body">
         <div class="subheader">Umsatzsteuer (Zahllast)</div>
-        <div class="h1 mb-0">{{ "%.2f"|format(total_ust) }} €</div>
+        <div class="h1 mb-0">{{ total_ust|de_number }} €</div>
       </div>
       <div class="card-footer bg-success-lt text-success border-0 py-2">
         <i class="fas fa-arrow-up"></i>
@@ -60,7 +60,7 @@
     <div class="card bg-warning text-white mb-3">
       <div class="card-body">
         <div class="subheader">Vorsteuer (Guthaben)</div>
-        <div class="h1 mb-0">{{ "%.2f"|format(total_vst) }} €</div>
+        <div class="h1 mb-0">{{ total_vst|de_number }} €</div>
       </div>
       <div class="card-footer bg-warning-lt text-warning border-0 py-2">
         <i class="fas fa-arrow-down"></i>
@@ -71,7 +71,7 @@
     <div class="card {{ 'bg-danger' if zahllast > 0 else 'bg-success' }} text-white mb-3">
       <div class="card-body">
         <div class="subheader">Zahllast (USt − Vorsteuer)</div>
-        <div class="h1 mb-0">{{ "%.2f"|format(zahllast) }} €</div>
+        <div class="h1 mb-0">{{ zahllast|de_number }} €</div>
       </div>
       <div class="card-footer {{ 'bg-danger-lt text-danger' if zahllast > 0 else 'bg-success-lt text-success' }} border-0 py-2">
         <i class="fas fa-balance-scale"></i>
@@ -87,7 +87,7 @@
       <div class="card-header">
         <h3 class="card-title"><i class="fas fa-arrow-up me-1"></i> Umsatzsteuer (Einnahmen)</h3>
         <div class="card-options">
-          <strong class="text-success">{{ "%.2f"|format(total_ust) }} €</strong>
+          <strong class="text-success">{{ total_ust|de_number }} €</strong>
         </div>
       </div>
       <div class="card-body p-0">
@@ -103,10 +103,10 @@
           <tbody>
             {% for rate, v in ust_rows %}
             <tr>
-              <td><span class="badge bg-success">{{ rate }} %</span></td>
-              <td class="text-end">{{ "%.2f"|format(v.brutto) }} €</td>
-              <td class="text-end text-muted">{{ "%.2f"|format(v.netto) }} €</td>
-              <td class="text-end fw-bold text-success">{{ "%.2f"|format(v.steuer) }} €</td>
+              <td><span class="badge bg-success text-white">{{ rate }} %</span></td>
+              <td class="text-end">{{ v.brutto|de_number }} €</td>
+              <td class="text-end text-muted">{{ v.netto|de_number }} €</td>
+              <td class="text-end fw-bold text-success">{{ v.steuer|de_number }} €</td>
             </tr>
             {% else %}
             <tr>
@@ -120,9 +120,9 @@
           <tfoot class="table-light">
             <tr>
               <th>Gesamt</th>
-              <th class="text-end">{{ "%.2f"|format(ust_brutto) }} €</th>
-              <th class="text-end">{{ "%.2f"|format(ust_netto) }} €</th>
-              <th class="text-end text-success">{{ "%.2f"|format(total_ust) }} €</th>
+              <th class="text-end">{{ ust_brutto|de_number }} €</th>
+              <th class="text-end">{{ ust_netto|de_number }} €</th>
+              <th class="text-end text-success">{{ total_ust|de_number }} €</th>
             </tr>
           </tfoot>
           {% endif %}
@@ -137,7 +137,7 @@
       <div class="card-header">
         <h3 class="card-title"><i class="fas fa-arrow-down me-1"></i> Vorsteuer (Ausgaben)</h3>
         <div class="card-options">
-          <strong class="text-warning">{{ "%.2f"|format(total_vst) }} €</strong>
+          <strong class="text-warning">{{ total_vst|de_number }} €</strong>
         </div>
       </div>
       <div class="card-body p-0">
@@ -154,9 +154,9 @@
             {% for rate, v in vst_rows %}
             <tr>
               <td><span class="badge bg-warning text-dark">{{ rate }} %</span></td>
-              <td class="text-end">{{ "%.2f"|format(v.brutto) }} €</td>
-              <td class="text-end text-muted">{{ "%.2f"|format(v.netto) }} €</td>
-              <td class="text-end fw-bold text-warning">{{ "%.2f"|format(v.steuer) }} €</td>
+              <td class="text-end">{{ v.brutto|de_number }} €</td>
+              <td class="text-end text-muted">{{ v.netto|de_number }} €</td>
+              <td class="text-end fw-bold text-warning">{{ v.steuer|de_number }} €</td>
             </tr>
             {% else %}
             <tr>
@@ -170,9 +170,9 @@
           <tfoot class="table-light">
             <tr>
               <th>Gesamt</th>
-              <th class="text-end">{{ "%.2f"|format(vst_brutto) }} €</th>
-              <th class="text-end">{{ "%.2f"|format(vst_netto) }} €</th>
-              <th class="text-end text-warning">{{ "%.2f"|format(total_vst) }} €</th>
+              <th class="text-end">{{ vst_brutto|de_number }} €</th>
+              <th class="text-end">{{ vst_netto|de_number }} €</th>
+              <th class="text-end text-warning">{{ total_vst|de_number }} €</th>
             </tr>
           </tfoot>
           {% endif %}
@@ -194,18 +194,18 @@
           <tbody>
             <tr>
               <td>Umsatzsteuer gesamt</td>
-              <td class="text-end text-success fw-bold">{{ "%.2f"|format(total_ust) }} €</td>
+              <td class="text-end text-success fw-bold">{{ total_ust|de_number }} €</td>
             </tr>
             <tr>
               <td>Vorsteuer gesamt</td>
-              <td class="text-end text-warning fw-bold">– {{ "%.2f"|format(total_vst) }} €</td>
+              <td class="text-end text-warning fw-bold">– {{ total_vst|de_number }} €</td>
             </tr>
           </tbody>
           <tfoot class="table-light">
             <tr>
               <th>{{ 'Zahllast' if zahllast > 0 else 'Gutschrift' }}</th>
               <th class="text-end {{ 'text-danger' if zahllast > 0 else 'text-success' }}">
-                {{ "%.2f"|format(zahllast|abs) }} €
+                {{ zahllast|abs|de_number }} €
               </th>
             </tr>
           </tfoot>

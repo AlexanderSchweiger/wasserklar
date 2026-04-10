@@ -54,10 +54,17 @@ def create_app(config_name=None):
     app.register_blueprint(settings_bp)
 
     # Jinja2-Filter für deutsche Zahlenformatierung
-    def de_number(value, decimals=2):
-        """Formatiert eine Zahl im deutschen Format (Komma als Dezimaltrennzeichen, Punkt als Tausendertrennzeichen)."""
+    def de_number(value, decimals=2, signed=False):
+        """Formatiert eine Zahl im deutschen Format (z. B. 1.250,90).
+
+        signed=True erzwingt ein explizites +/- Vorzeichen.
+        """
         try:
-            formatted = f"{float(value):,.{decimals}f}"
+            num = float(value)
+            if signed and num >= 0:
+                formatted = f"+{num:,.{decimals}f}"
+            else:
+                formatted = f"{num:,.{decimals}f}"
             # Python verwendet Komma als Tausender und Punkt als Dezimal → tauschen
             return formatted.replace(",", "X").replace(".", ",").replace("X", ".")
         except (TypeError, ValueError):

@@ -67,9 +67,7 @@
   <div class="card-header">
     <h3 class="card-title"><i class="fas fa-exclamation-circle me-1"></i> Offene Posten</h3>
     <div class="card-options d-flex align-items-center">
-      <span class="badge bg-warning text-dark me-2" style="font-size:1rem;padding:.4rem .7rem">
-        Gesamt offen: <strong>{{ "%.2f"|format(total_open) }} €</strong>
-      </span>
+      <span class="me-2 text-muted">Gesamt offen: <strong class="{{ 'text-danger' if total_open > 0 else 'text-success' }}">{{ total_open|de_number }} €</strong></span>
       <a href="{{ url_for('accounting.open_item_new') }}" class="btn btn-sm btn-primary">
         <i class="fas fa-plus me-1"></i> Neuer offener Posten
       </a>
@@ -104,7 +102,7 @@
               {{ item.description }}
               {% if item.invoice %}
               <a href="{{ url_for('invoices.detail', invoice_id=item.invoice_id) }}"
-                 class="badge bg-info ms-1" title="Verknüpfte Rechnung">
+                 class="badge bg-info text-white ms-1" title="Verknüpfte Rechnung">
                 <i class="fas fa-file-invoice"></i> RE
               </a>
               {% endif %}
@@ -128,25 +126,25 @@
           <td>
             {{ item.due_date.strftime('%d.%m.%Y') if item.due_date else '—' }}
             {% if item.due_date and item.due_date < today and not is_closed %}
-            <span class="badge bg-danger ms-1">überfällig</span>
+            <span class="badge bg-danger text-white ms-1">überfällig</span>
             {% endif %}
           </td>
 
           {# Status #}
           <td>
             {% if item.status == 'Offen' %}<span class="badge bg-warning text-dark">Offen</span>
-            {% elif item.status == 'Teilbezahlt' %}<span class="badge bg-info">Teilbezahlt</span>
-            {% elif item.status == 'Bezahlt' %}<span class="badge bg-success">Bezahlt</span>
-            {% elif item.status == 'Gutschrift' %}<span class="badge bg-secondary">Gutschrift</span>
+            {% elif item.status == 'Teilbezahlt' %}<span class="badge bg-info text-white">Teilbezahlt</span>
+            {% elif item.status == 'Bezahlt' %}<span class="badge bg-success text-white">Bezahlt</span>
+            {% elif item.status == 'Gutschrift' %}<span class="badge bg-secondary text-white">Gutschrift</span>
             {% endif %}
           </td>
 
           {# Gesamt #}
-          <td class="text-end">{{ "%.2f"|format(item.amount) }} €</td>
+          <td class="text-end">{{ item.amount|de_number }} €</td>
 
           {# Offen #}
           <td class="text-end">
-            <strong class="{{ 'text-danger' if bal < 0 }}">{{ "%.2f"|format(bal) }} €</strong>
+            <strong class="{{ 'text-danger' if bal < 0 }}">{{ bal|de_number }} €</strong>
           </td>
 
           {# Aktionen #}
@@ -160,7 +158,7 @@
                      class="form-control form-control-sm me-1" style="width:90px"
                      title="Zahlungsbetrag">
               {% if real_accounts %}
-              <select name="real_account_id" class="form-control form-control-sm tom-select me-1"
+              <select name="real_account_id" class="form-select form-select-sm tom-select me-1"
                       title="Bankkonto" style="max-width:140px">
                 <option value="">Bankkonto …</option>
                 {% for ra in real_accounts %}

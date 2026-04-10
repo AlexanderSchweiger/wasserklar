@@ -33,9 +33,9 @@
           <td>{{ fy.start_date.strftime('%d.%m.%Y') }} – {{ fy.end_date.strftime('%d.%m.%Y') }}</td>
           <td>
             {% if fy.closed %}
-            <span class="badge bg-danger"><i class="fas fa-lock me-1"></i>Abgeschlossen</span>
+            <span class="badge bg-danger text-white"><i class="fas fa-lock me-1"></i>Abgeschlossen</span>
             {% else %}
-            <span class="badge bg-success"><i class="fas fa-lock-open me-1"></i>Offen</span>
+            <span class="badge bg-success text-white"><i class="fas fa-lock-open me-1"></i>Offen</span>
             {% endif %}
           </td>
           <td>
