@@ -92,6 +92,57 @@ def locked_fiscal_year(booking_date):
     return fy
 
 
+def fiscal_year_for_date(target_date):
+    """Gibt das Buchungsjahr zurück, das ``target_date`` enthält (offen oder geschlossen)."""
+    fy = FiscalYear.query.filter(
+        FiscalYear.start_date <= target_date,
+        FiscalYear.end_date >= target_date,
+    ).first()
+    if fy is not None and fy.year != target_date.year:
+        return None
+    return fy
+
+
+def open_fiscal_year_error(target_date):
+    """Prüft, ob für ``target_date`` ein offenes Buchungsjahr existiert.
+
+    Gibt ``None`` zurück, wenn ein offenes Buchungsjahr existiert, sonst eine
+    Fehlermeldung (deutsch) mit der konkreten Ursache (kein FY angelegt oder
+    FY geschlossen).
+    """
+    fy = fiscal_year_for_date(target_date)
+    if fy is None:
+        return (
+            f"Für den {target_date.strftime('%d.%m.%Y')} existiert kein Buchungsjahr. "
+            f"Bitte legen Sie zuerst das Buchungsjahr {target_date.year} an."
+        )
+    if fy.closed:
+        return (
+            f"Das Buchungsjahr {fy.year} ist abgeschlossen. "
+            f"Anlage nicht möglich."
+        )
+    return None
+
+
+def is_year_vat_liable(year):
+    """Gibt True zurück, wenn das Buchungsjahr umsatzsteuerpflichtig ist.
+
+    Wenn kein Buchungsjahr existiert, wird False zurückgegeben.
+    """
+    fy = FiscalYear.query.get(year)
+    return bool(fy and fy.is_vat_liable)
+
+
+def default_water_tax_rate(year):
+    """Standard-Steuersatz (Decimal) für Wasserpositionen im angegebenen Jahr.
+
+    Liefert 10 für umsatzsteuerpflichtige Jahre, sonst None.
+    """
+    if is_year_vat_liable(year):
+        return Decimal("10")
+    return None
+
+
 def booking_tax(booking):
     """Berechnet den USt-Anteil einer Buchung (immer als positiver Wert)."""
     if not booking.tax_rate or booking.tax_rate == 0:

@@ -35,14 +35,20 @@
 
           <hr>
           <h6 class="text-muted mb-3">Gebühren</h6>
+          <div class="alert alert-info py-2 mb-3">
+            <i class="fas fa-info-circle me-1"></i>
+            <strong>Hinweis:</strong> Grundgebühr und Zusatzgebühr erscheinen nur dann als Rechnungsposition,
+            wenn ein Betrag eingetragen ist. Auch <code>0,00</code> erzeugt eine Position.
+            Leer lassen = diese Gebühr wird auf der Rechnung gar nicht angezeigt.
+          </div>
 
           <div class="row g-2">
             <div class="col-md-5">
               <div class="mb-3">
-                <label class="form-label">Grundgebühr (€/Jahr)</label>
+                <label class="form-label">Grundgebühr (€/Jahr) <small class="text-muted">(leer = keine Position)</small></label>
                 <div class="input-group">
                   <input type="number" name="base_fee" step="0.01" class="form-control"
-                    value="{{ tariff.base_fee if tariff else '0' }}">
+                    value="{{ tariff.base_fee if tariff and tariff.base_fee is not none else '' }}">
                   <span class="input-group-text">€</span>
                 </div>
               </div>
@@ -60,10 +66,10 @@
           <div class="row g-2">
             <div class="col-md-5">
               <div class="mb-3">
-                <label class="form-label">Zusatzgebühr (€/Jahr)</label>
+                <label class="form-label">Zusatzgebühr (€/Jahr) <small class="text-muted">(leer = keine Position)</small></label>
                 <div class="input-group">
                   <input type="number" name="additional_fee" step="0.01" class="form-control"
-                    value="{{ tariff.additional_fee if tariff else '0' }}">
+                    value="{{ tariff.additional_fee if tariff and tariff.additional_fee is not none else '' }}">
                   <span class="input-group-text">€</span>
                 </div>
               </div>

@@ -1,8 +1,22 @@
-from flask import render_template, redirect, url_for, flash, request
+from flask import render_template, redirect, url_for, flash, request, jsonify
 from flask_login import login_required
+from sqlalchemy import func
+
 from app.customers import bp
+from app.customers.duplicate_check import find_similar_customers
 from app.extensions import db
 from app.models import Customer, PropertyOwnership
+
+
+# Pflichtfelder auf Formular-Ebene (Schema bleibt NULLable, Bestandsdaten mit
+# Leerstring bleiben erhalten — siehe ADR-001).
+REQUIRED_ADDRESS_FIELDS = [
+    ("name", "Name"),
+    ("strasse", "Straße"),
+    ("hausnummer", "Hausnummer"),
+    ("plz", "PLZ"),
+    ("ort", "Ort"),
+]
 
 
 @bp.route("/")
@@ -47,15 +61,44 @@ def index():
 @login_required
 def new():
     if request.method == "POST":
+        # 1) Pflichtfeld-Validierung
+        missing = _missing_required_fields(request.form)
+        if missing:
+            flash(
+                "Bitte folgende Pflichtfelder ausfüllen: " + ", ".join(missing),
+                "danger",
+            )
+            return render_template(
+                "customers/form.html",
+                customer=None,
+                form_data=request.form,
+            )
+
+        # 2) Dubletten-Gate (außer der Nutzer hat "trotzdem anlegen" bestätigt)
+        force = request.form.get("force") == "1"
+        if not force:
+            similar = find_similar_customers(
+                name=request.form.get("name", ""),
+                strasse=request.form.get("strasse", ""),
+                plz=request.form.get("plz", ""),
+                ort=request.form.get("ort", ""),
+            )
+            if similar:
+                return render_template(
+                    "customers/_duplicate_warning.html",
+                    similar=similar,
+                    form_data=request.form,
+                )
+
+        # 3) Anlage
         c = _customer_from_form(Customer())
-        from sqlalchemy import func
         max_nr = db.session.query(func.max(Customer.customer_number)).scalar() or 0
         c.customer_number = max_nr + 1
         db.session.add(c)
         db.session.commit()
         flash(f"Kunde '{c.name}' angelegt.", "success")
         return redirect(url_for("customers.index"))
-    return render_template("customers/form.html", customer=None)
+    return render_template("customers/form.html", customer=None, form_data=None)
 
 
 @bp.route("/<int:customer_id>")
@@ -74,11 +117,22 @@ def detail(customer_id):
 def edit(customer_id):
     customer = db.get_or_404(Customer, customer_id)
     if request.method == "POST":
+        missing = _missing_required_fields(request.form)
+        if missing:
+            flash(
+                "Bitte folgende Pflichtfelder ausfüllen: " + ", ".join(missing),
+                "danger",
+            )
+            return render_template(
+                "customers/form.html",
+                customer=customer,
+                form_data=request.form,
+            )
         _customer_from_form(customer)
         db.session.commit()
         flash("Kunde aktualisiert.", "success")
         return redirect(url_for("customers.detail", customer_id=customer.id))
-    return render_template("customers/form.html", customer=customer)
+    return render_template("customers/form.html", customer=customer, form_data=None)
 
 
 @bp.route("/<int:customer_id>/deactivate", methods=["POST"])
@@ -89,6 +143,104 @@ def deactivate(customer_id):
     db.session.commit()
     flash(f"Kunde '{customer.name}' archiviert.", "info")
     return redirect(url_for("customers.index"))
+
+
+@bp.route("/check-duplicates")
+@login_required
+def check_duplicates():
+    """HTMX-Endpoint: liefert ein HTML-Fragment mit ähnlichen Kunden
+    für die Live-Anzeige im Quick-Create-Modal oder Formular."""
+    name = request.args.get("name", "").strip()
+    strasse = request.args.get("strasse", "").strip()
+    plz = request.args.get("plz", "").strip()
+    ort = request.args.get("ort", "").strip()
+    exclude_id = request.args.get("exclude_id", type=int)
+
+    if not name:
+        return ""
+
+    similar = find_similar_customers(
+        name=name,
+        strasse=strasse,
+        plz=plz,
+        ort=ort,
+        exclude_id=exclude_id,
+    )
+    return render_template("customers/_similar_customers.html", similar=similar)
+
+
+@bp.route("/quick-create", methods=["POST"])
+@login_required
+def quick_create():
+    """Quick-Create-Endpoint für das Rechnungs-Anlage-Modal.
+
+    Legt einen Kunden mit den Pflichtfeldern an und liefert JSON
+    ``{id, name, label}`` zurück, damit das TomSelect im Rechnungsformular
+    den neuen Kunden sofort übernehmen kann. Dubletten-Prüfung wird
+    durchgeführt, sofern ``force=1`` nicht gesetzt ist.
+    """
+    missing = _missing_required_fields(request.form)
+    if missing:
+        return jsonify({
+            "ok": False,
+            "error": "missing_fields",
+            "missing": missing,
+        }), 400
+
+    force = request.form.get("force") == "1"
+    if not force:
+        similar = find_similar_customers(
+            name=request.form.get("name", ""),
+            strasse=request.form.get("strasse", ""),
+            plz=request.form.get("plz", ""),
+            ort=request.form.get("ort", ""),
+        )
+        if similar:
+            return jsonify({
+                "ok": False,
+                "error": "duplicates_found",
+                "candidates": [
+                    {
+                        "id": c.id,
+                        "name": c.name,
+                        "address": c.address_display(),
+                        "active": bool(c.active),
+                        "score": round(score, 2),
+                    }
+                    for c, score in similar
+                ],
+            }), 409
+
+    c = Customer(
+        name=request.form.get("name", "").strip(),
+        strasse=request.form.get("strasse", "").strip(),
+        hausnummer=request.form.get("hausnummer", "").strip(),
+        plz=request.form.get("plz", "").strip(),
+        ort=request.form.get("ort", "").strip(),
+        land=request.form.get("land", "Österreich").strip() or "Österreich",
+        email=request.form.get("email", "").strip(),
+        active=True,
+    )
+    max_nr = db.session.query(func.max(Customer.customer_number)).scalar() or 0
+    c.customer_number = max_nr + 1
+    db.session.add(c)
+    db.session.commit()
+
+    return jsonify({
+        "ok": True,
+        "id": c.id,
+        "name": c.name,
+        "label": f"{c.name} – {c.address_display()}",
+    })
+
+
+def _missing_required_fields(form) -> list[str]:
+    """Gibt die Labels der leeren Pflichtfelder zurück."""
+    missing = []
+    for field, label in REQUIRED_ADDRESS_FIELDS:
+        if not form.get(field, "").strip():
+            missing.append(label)
+    return missing
 
 
 def _customer_from_form(customer):

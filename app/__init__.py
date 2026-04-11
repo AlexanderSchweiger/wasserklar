@@ -81,6 +81,16 @@ def create_app(config_name=None):
         except Exception:
             return dict(wg={})
 
+    # Context Processor: flag setzen, wenn mindestens ein USt-pflichtiges Jahr existiert
+    @app.context_processor
+    def inject_vat_flag():
+        try:
+            from app.models import FiscalYear
+            has_vat = FiscalYear.query.filter_by(is_vat_liable=True).first() is not None
+            return dict(has_vat_fiscal_year=has_vat)
+        except Exception:
+            return dict(has_vat_fiscal_year=False)
+
     # Mail-Einstellungen aus DB laden (überschreibt .env-Werte)
     with app.app_context():
         try:

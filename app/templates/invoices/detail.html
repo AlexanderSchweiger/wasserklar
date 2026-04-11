@@ -63,7 +63,7 @@
         {% endif %}
         {% if doc_format in ('docx', 'both') %}
         <a href="{{ url_for('invoices.pdf', invoice_id=invoice.id) }}?fmt=docx"
-           class="btn btn-sm btn-outline-secondary ms-1">
+           class="btn btn-sm btn-outline-secondary ms-1" target="_blank">
           <i class="fas fa-file-word me-1"></i> Word
         </a>
         {% endif %}
@@ -83,12 +83,15 @@
         <h3 class="card-title">Status ändern</h3>
       </div>
       <div class="card-body">
-        <form method="post" action="{{ url_for('invoices.set_status', invoice_id=invoice.id) }}">
+        <form method="post" action="{{ url_for('invoices.set_status', invoice_id=invoice.id) }}"
+              id="statusForm">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <div class="input-group input-group-sm mb-2">
-            <select name="status" class="form-select tom-select">
+            <select name="status" class="form-select tom-select" id="statusSelect">
               {% for s in invoice.ALL_STATUSES %}
+              {% if s != 'Entwurf' or invoice.status == 'Entwurf' %}
               <option value="{{ s }}" {{ 'selected' if invoice.status == s }}>{{ s }}</option>
+              {% endif %}
               {% endfor %}
             </select>
             <button type="submit" class="btn btn-outline-secondary">
@@ -112,17 +115,40 @@
 
   <!-- Positionen -->
   <div class="col-md-8">
+    {% if invoice.status == 'Entwurf' %}
+    {# --- Entwurf: Inline-Editor mit Batch-Speichern --- #}
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Rechnungspositionen bearbeiten</h3>
+      </div>
+      <form method="post" action="{{ url_for('invoices.items_save', invoice_id=invoice.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="card-body">
+          <p class="text-muted small mb-2">
+            Fügen Sie Positionen hinzu oder bearbeiten Sie bestehende. Beim Speichern
+            werden alle Positionen übernommen; der zugeordnete Offene Posten wird
+            automatisch aktualisiert.
+          </p>
+          {% with tariffs=tariffs, existing_items=invoice.items, can_delete_items=True %}
+          {% include "invoices/_items_editor.html" %}
+          {% endwith %}
+        </div>
+        <div class="card-footer d-flex justify-content-between align-items-center">
+          <div>
+            <strong>Aktueller Gesamtbetrag:</strong>
+            {{ invoice_gross_total|de_number }} €
+          </div>
+          <button type="submit" class="btn btn-primary" id="submitBtn">
+            <i class="fas fa-save me-1"></i> Positionen speichern
+          </button>
+        </div>
+      </form>
+    </div>
+    {% else %}
+    {# --- Gesperrt: Read-only Tabelle mit Summen und Steuer-Aufteilung --- #}
     <div class="card">
       <div class="card-header">
         <h3 class="card-title">Rechnungspositionen</h3>
-        {% if invoice.status == 'Entwurf' %}
-        <div class="card-options">
-          <button type="button" class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#itemModal"
-                  onclick="openItemModal()">
-            <i class="fas fa-plus me-1"></i> Position hinzufügen
-          </button>
-        </div>
-        {% endif %}
       </div>
       <div class="card-body p-0">
         <table class="table table-bordered mb-0">
@@ -132,8 +158,8 @@
               <th class="text-end">Menge</th>
               <th>Einheit</th>
               <th class="text-end">Einzelpreis</th>
+              {% if fy_vat_liable %}<th class="text-end">USt</th>{% endif %}
               <th class="text-end">Betrag</th>
-              {% if invoice.status == 'Entwurf' %}<th style="width:1%"></th>{% endif %}
             </tr>
           </thead>
           <tbody>
@@ -143,111 +169,61 @@
               <td class="text-end">{{ item.quantity|de_number(0) }}</td>
               <td>{{ item.unit }}</td>
               <td class="text-end">{{ item.unit_price|de_number }} €</td>
-              <td class="text-end">{{ item.amount|de_number }} €</td>
-              {% if invoice.status == 'Entwurf' %}
-              <td class="text-nowrap">
-                <button type="button" class="btn btn-sm btn-outline-secondary"
-                        data-bs-toggle="modal" data-bs-target="#itemModal"
-                        onclick="openItemModal({{ item.id }}, '{{ item.description|replace("'", "\\'") }}', '{{ item.quantity }}', '{{ item.unit }}', '{{ item.unit_price }}')">
-                  <i class="fas fa-edit"></i>
-                </button>
-                <form method="post" action="{{ url_for('invoices.item_delete', invoice_id=invoice.id, item_id=item.id) }}"
-                      style="display:inline"
-                      onsubmit="return confirm('Position löschen?')">
-                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                  <button type="submit" class="btn btn-sm btn-outline-danger">
-                    <i class="fas fa-trash"></i>
-                  </button>
-                </form>
-              </td>
+              {% if fy_vat_liable %}
+              <td class="text-end">{% if item.tax_rate %}{{ item.tax_rate|de_number(0) }} %{% else %}—{% endif %}</td>
               {% endif %}
+              <td class="text-end">{{ item.amount|de_number }} €</td>
             </tr>
             {% endfor %}
           </tbody>
           <tfoot>
+            {% if fy_vat_liable and tax_summary %}
+            <tr>
+              <th colspan="{% if fy_vat_liable %}5{% else %}4{% endif %}" class="text-end">Nettosumme</th>
+              <th class="text-end">{{ invoice.net_total|de_number }} €</th>
+            </tr>
+            {% for rate, info in tax_summary.items() %}
+            <tr>
+              <th colspan="{% if fy_vat_liable %}5{% else %}4{% endif %}" class="text-end">
+                zzgl. USt. {{ rate|de_number(0) }} % auf {{ info.net|de_number }} €
+              </th>
+              <th class="text-end">{{ info.tax|de_number }} €</th>
+            </tr>
+            {% endfor %}
+            {% endif %}
             <tr class="table-active">
-              <th colspan="4" class="text-end">Gesamtbetrag</th>
-              <th class="text-end">{{ invoice.total_amount|de_number }} €</th>
-              {% if invoice.status == 'Entwurf' %}<th></th>{% endif %}
+              <th colspan="{% if fy_vat_liable %}5{% else %}4{% endif %}" class="text-end">Gesamtbetrag</th>
+              <th class="text-end">{{ invoice_gross_total|de_number }} €</th>
             </tr>
           </tfoot>
         </table>
       </div>
     </div>
+    {% endif %}
   </div>
 </div>
 
 {% if invoice.status == 'Entwurf' %}
-<!-- Modal: Position hinzufügen / bearbeiten -->
-<div class="modal fade" id="itemModal" tabindex="-1">
-  <div class="modal-dialog">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title" id="itemModalTitle">Position hinzufügen</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-      </div>
-      <form method="post" id="itemModalForm" action="{{ url_for('invoices.item_add', invoice_id=invoice.id) }}">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <div class="modal-body">
-          <div class="mb-3">
-            <label class="form-label">Beschreibung <span class="text-danger">*</span></label>
-            <input type="text" name="description" id="itemDesc" class="form-control" required>
-          </div>
-          <div class="row g-2">
-            <div class="col-sm-4">
-              <label class="form-label">Menge</label>
-              <input type="text" name="quantity" id="itemQty" class="form-control" value="1">
-            </div>
-            <div class="col-sm-4">
-              <label class="form-label">Einheit</label>
-              <input type="text" name="unit" id="itemUnit" class="form-control">
-            </div>
-            <div class="col-sm-4">
-              <label class="form-label">Einzelpreis (€)</label>
-              <input type="text" name="unit_price" id="itemPrice" class="form-control" value="0">
-            </div>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
-          <button type="submit" class="btn btn-primary">
-            <i class="fas fa-save me-1"></i> Speichern
-          </button>
-        </div>
-      </form>
-    </div>
-  </div>
-</div>
 <script>
-function openItemModal(itemId, desc, qty, unit, unitPrice) {
-  var isEdit = itemId !== undefined;
-  document.getElementById('itemModalTitle').textContent = isEdit ? 'Position bearbeiten' : 'Position hinzufügen';
-  document.getElementById('itemDesc').value = isEdit ? desc : '';
-  document.getElementById('itemUnit').value = isEdit ? unit : '';
-
-  // Menge: Nachkommastellen nur wenn vorhanden
-  if (isEdit) {
-    var qtyNum = parseFloat(qty);
-    document.getElementById('itemQty').value = Number.isInteger(qtyNum) ? String(qtyNum) : String(qtyNum).replace('.', ',');
-  } else {
-    document.getElementById('itemQty').value = '1';
-  }
-
-  // Preis: deutsches Format mit 2 Nachkommastellen
-  if (isEdit) {
-    var priceNum = parseFloat(unitPrice);
-    document.getElementById('itemPrice').value = priceNum.toLocaleString('de-DE', {minimumFractionDigits: 2, maximumFractionDigits: 4});
-  } else {
-    document.getElementById('itemPrice').value = '0';
-  }
-
-  // Formular-Action je nach Modus
-  var baseUrl = "{{ url_for('invoices.item_add', invoice_id=invoice.id) }}";
-  if (isEdit) {
-    baseUrl = "{{ url_for('invoices.item_add', invoice_id=invoice.id) }}".replace('/items/add', '/items/' + itemId + '/edit');
-  }
-  document.getElementById('itemModalForm').action = baseUrl;
-}
+// Confirm-Dialog: Wenn der Nutzer den Status auf „Versendet" setzt, wird
+// automatisch ein Offener Posten über den aktuellen Rechnungsbetrag erzeugt.
+(function () {
+  const form = document.getElementById('statusForm');
+  const select = document.getElementById('statusSelect');
+  if (!form || !select) return;
+  form.addEventListener('submit', function (e) {
+    const chosen = select.value;
+    if (chosen === 'Versendet') {
+      const betrag = "{{ invoice_gross_total|de_number }}";
+      const msg = "Die Rechnung wird auf „Versendet" gesetzt.\n\n" +
+                  "Dabei wird automatisch ein Offener Posten über " + betrag + " € erzeugt.\n\n" +
+                  "Fortfahren?";
+      if (!window.confirm(msg)) {
+        e.preventDefault();
+      }
+    }
+  });
+})();
 </script>
 {% endif %}
 {% endblock %}

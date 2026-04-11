@@ -1,0 +1,27 @@
+{# Live-Dubletten-Vorschläge (HTMX). Wird vom customers/form.html und vom
+   Quick-Create-Modal als inline Partial eingebunden. #}
+{% if similar %}
+<div class="alert alert-warning py-2 mb-3">
+  <div class="d-flex align-items-center mb-2">
+    <i class="fas fa-exclamation-triangle me-2"></i>
+    <strong>Ähnliche Kunden gefunden ({{ similar|length }})</strong>
+  </div>
+  <ul class="list-unstyled mb-0 small">
+    {% for c, score in similar %}
+    <li class="mb-1">
+      <a href="{{ url_for('customers.detail', customer_id=c.id) }}" target="_blank"
+         class="text-decoration-none">
+        <strong>{{ c.name }}</strong>
+      </a>
+      {% if c.customer_number %}<span class="text-muted">(Nr. {{ c.customer_number }})</span>{% endif %}
+      {% if not c.active %}<span class="badge bg-secondary ms-1">Inaktiv</span>{% endif %}
+      – <span class="text-muted">{{ c.address_display() or '—' }}</span>
+      <span class="badge bg-warning text-dark ms-1">{{ (score * 100)|int }} %</span>
+    </li>
+    {% endfor %}
+  </ul>
+  <div class="text-muted small mt-2">
+    Prüfe, ob es sich um einen bestehenden Kunden handelt, bevor du einen neuen anlegst.
+  </div>
+</div>
+{% endif %}

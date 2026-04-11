@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Rechnungsläufe{% endblock %}
+{% block page_title %}<i class="fas fa-history me-2"></i> Rechnungsläufe{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="card-header">
+    <h3 class="card-title">Alle Rechnungsläufe</h3>
+    <div class="card-options">
+      <a href="{{ url_for('invoices.generate') }}" class="btn btn-primary btn-sm">
+        <i class="fas fa-play me-1"></i> Neuer Rechnungslauf
+      </a>
+      <a href="{{ url_for('invoices.index') }}" class="btn btn-secondary btn-sm ms-1">
+        <i class="fas fa-arrow-left me-1"></i> Rechnungen
+      </a>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <table class="table table-hover table-striped mb-0">
+      <thead>
+        <tr>
+          <th>Datum / Uhrzeit</th>
+          <th>Benutzer</th>
+          <th>Abrechnungsjahr</th>
+          <th>Tarif</th>
+          <th class="text-end">Preis/m³</th>
+          <th class="text-end">Erstellt</th>
+          <th class="text-end">Übersprungen</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for run in runs %}
+        <tr>
+          <td>
+            <a href="{{ url_for('invoices.billing_run_detail', run_id=run.id) }}">
+              {{ run.created_at.strftime('%d.%m.%Y %H:%M') }}
+            </a>
+          </td>
+          <td>{{ run.created_by.username if run.created_by else '—' }}</td>
+          <td><strong>{{ run.period_year }}</strong></td>
+          <td>
+            {{ run.tariff_name }}
+            <small class="text-muted">
+              ({{ run.tariff_valid_from }}{% if run.tariff_valid_to %}–{{ run.tariff_valid_to }}{% else %} aktuell{% endif %})
+            </small>
+          </td>
+          <td class="text-end">{{ run.tariff_price_per_m3 | de_number(4) }} €</td>
+          <td class="text-end">
+            <span class="badge bg-success text-white">{{ run.invoices_created }}</span>
+          </td>
+          <td class="text-end">
+            {% if run.invoices_skipped > 0 %}
+            <span class="badge bg-secondary text-white">{{ run.invoices_skipped }}</span>
+            {% else %}
+            <span class="text-muted">0</span>
+            {% endif %}
+          </td>
+          <td class="text-end">
+            <a href="{{ url_for('invoices.billing_run_detail', run_id=run.id) }}"
+               class="btn btn-sm btn-outline-secondary">
+              <i class="fas fa-eye"></i>
+            </a>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="8" class="text-center text-muted py-4">
+            Noch keine Rechnungsläufe vorhanden.
+            <a href="{{ url_for('invoices.generate') }}">Jetzt ersten Rechnungslauf starten →</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

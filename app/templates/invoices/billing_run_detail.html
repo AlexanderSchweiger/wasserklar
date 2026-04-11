@@ -1,0 +1,228 @@
+{% extends "base.html" %}
+{% block title %}Rechnungslauf {{ run.period_year }} – {{ run.created_at.strftime('%d.%m.%Y %H:%M') }}{% endblock %}
+{% block page_title %}<i class="fas fa-history me-2"></i> Rechnungslauf{% endblock %}
+{% block content %}
+
+{# Zähle löschbare und gesperrte Rechnungen #}
+{% set deletable = invoices | selectattr('status', 'equalto', 'Entwurf') | list %}
+{% set locked = invoices | rejectattr('status', 'equalto', 'Entwurf') | list %}
+
+<div class="row">
+  <!-- Lauf-Metadaten -->
+  <div class="col-md-5 mb-3">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Details</h3>
+        <div class="card-options">
+          <a href="{{ url_for('invoices.billing_runs') }}" class="btn btn-secondary btn-sm">
+            <i class="fas fa-arrow-left me-1"></i> Alle Läufe
+          </a>
+        </div>
+      </div>
+      <div class="card-body">
+        <dl class="row mb-0">
+          <dt class="col-5">Datum / Uhrzeit</dt>
+          <dd class="col-7">{{ run.created_at.strftime('%d.%m.%Y %H:%M:%S') }}</dd>
+
+          <dt class="col-5">Benutzer</dt>
+          <dd class="col-7">{{ run.created_by.username if run.created_by else '—' }}</dd>
+
+          <dt class="col-5">Abrechnungsjahr</dt>
+          <dd class="col-7"><strong>{{ run.period_year }}</strong></dd>
+
+          <dt class="col-5">Erstellt</dt>
+          <dd class="col-7">
+            <span class="badge bg-success text-white">{{ run.invoices_created }} Rechnungen</span>
+          </dd>
+
+          <dt class="col-5">Übersprungen</dt>
+          <dd class="col-7">
+            {% if run.invoices_skipped > 0 %}
+            <span class="badge bg-secondary text-white">{{ run.invoices_skipped }}</span>
+            {% else %}
+            <span class="text-muted">0</span>
+            {% endif %}
+          </dd>
+        </dl>
+      </div>
+    </div>
+
+    <!-- Tarif-Snapshot -->
+    <div class="card mt-3">
+      <div class="card-header">
+        <h3 class="card-title"><i class="fas fa-sliders-h me-1"></i> Verwendeter Tarif (Kopie)</h3>
+      </div>
+      <div class="card-body">
+        <dl class="row mb-0">
+          <dt class="col-6">Name</dt>
+          <dd class="col-6"><strong>{{ run.tariff_name }}</strong></dd>
+
+          <dt class="col-6">Gültig von</dt>
+          <dd class="col-6">{{ run.tariff_valid_from or '—' }}</dd>
+
+          <dt class="col-6">Gültig bis</dt>
+          <dd class="col-6">
+            {% if run.tariff_valid_to %}{{ run.tariff_valid_to }}
+            {% else %}<span class="badge bg-success text-white">aktuell</span>{% endif %}
+          </dd>
+
+          {% if run.tariff_base_fee %}
+          <dt class="col-6">{{ run.tariff_base_fee_label or 'Grundgebühr' }}</dt>
+          <dd class="col-6">{{ run.tariff_base_fee | de_number }} €</dd>
+          {% endif %}
+
+          {% if run.tariff_additional_fee %}
+          <dt class="col-6">{{ run.tariff_additional_fee_label or 'Zusatzgebühr' }}</dt>
+          <dd class="col-6">{{ run.tariff_additional_fee | de_number }} €</dd>
+          {% endif %}
+
+          <dt class="col-6">Preis/m³</dt>
+          <dd class="col-6"><strong>{{ run.tariff_price_per_m3 | de_number(4) }} €</strong></dd>
+
+          {% if run.tariff_notes %}
+          <dt class="col-6">Notizen</dt>
+          <dd class="col-6"><small class="text-muted">{{ run.tariff_notes }}</small></dd>
+          {% endif %}
+        </dl>
+      </div>
+    </div>
+
+    <!-- Löschen -->
+    <div class="card mt-3 border-danger">
+      <div class="card-header bg-danger-lt">
+        <h3 class="card-title text-danger"><i class="fas fa-trash me-1"></i> Rechnungslauf löschen</h3>
+      </div>
+      <div class="card-body">
+        {% if locked %}
+        <div class="alert alert-warning mb-3">
+          <strong>{{ locked | length }} Rechnung(en) können nicht gelöscht werden</strong>,
+          da sie nicht mehr im Entwurfsstatus sind
+          ({% for inv in locked %}<code>{{ inv.invoice_number }}</code>{% if not loop.last %}, {% endif %}{% endfor %}).
+          <br>Diese Rechnungen müssen manuell storniert oder entfernt werden.
+        </div>
+        {% if deletable %}
+        <p class="text-muted mb-3">
+          Die verbleibenden <strong>{{ deletable | length }} Entwurf-Rechnung(en)</strong>
+          können einzeln gelöscht werden:
+          {% for inv in deletable %}<code>{{ inv.invoice_number }}</code>{% if not loop.last %}, {% endif %}{% endfor %}.
+        </p>
+        {% endif %}
+        <button class="btn btn-danger" disabled title="Zuerst gesperrte Rechnungen manuell entfernen">
+          <i class="fas fa-trash me-1"></i> Löschen nicht möglich
+        </button>
+        {% elif invoices %}
+        <p class="text-muted mb-3">
+          Alle <strong>{{ invoices | length }} Rechnung(en)</strong> dieses Laufs sind Entwürfe und
+          werden beim Löschen mit entfernt.
+        </p>
+        <form method="post" action="{{ url_for('invoices.billing_run_delete', run_id=run.id) }}"
+              onsubmit="return confirm('Rechnungslauf und alle {{ invoices | length }} Entwurf-Rechnung(en) unwiderruflich löschen?')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-danger">
+            <i class="fas fa-trash me-1"></i> Lauf + {{ invoices | length }} Rechnung(en) löschen
+          </button>
+        </form>
+        {% else %}
+        <p class="text-muted mb-3">Dieser Rechnungslauf enthält keine Rechnungen.</p>
+        <form method="post" action="{{ url_for('invoices.billing_run_delete', run_id=run.id) }}"
+              onsubmit="return confirm('Leeren Rechnungslauf löschen?')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-danger">
+            <i class="fas fa-trash me-1"></i> Leeren Lauf löschen
+          </button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Rechnungen des Laufs -->
+  <div class="col-md-7 mb-3">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">
+          Rechnungen dieses Laufs
+          <span class="badge bg-primary text-white ms-1">{{ invoices | length }}</span>
+        </h3>
+        <div class="card-options">
+          <a href="{{ url_for('invoices.index', year=run.period_year) }}"
+             class="btn btn-outline-secondary btn-sm">
+            <i class="fas fa-list me-1"></i> Alle {{ run.period_year }}-Rechnungen
+          </a>
+        </div>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-hover table-striped mb-0">
+          <thead>
+            <tr>
+              <th>Rechnungsnr.</th>
+              <th>Kunde</th>
+              <th>Objekt</th>
+              <th class="text-end">Betrag</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for inv in invoices %}
+            <tr>
+              <td><code>{{ inv.invoice_number }}</code></td>
+              <td>
+                <a href="{{ url_for('customers.detail', customer_id=inv.customer_id) }}">
+                  {{ inv.customer.name }}
+                </a>
+              </td>
+              <td>
+                {% if inv.property %}
+                <a href="{{ url_for('properties.detail', property_id=inv.property_id) }}">
+                  {{ inv.property.object_number or inv.property_id }}
+                </a>
+                {% else %}—{% endif %}
+              </td>
+              <td class="text-end">{{ inv.total_amount | de_number }} €</td>
+              <td>
+                {% if inv.status == 'Entwurf' %}
+                  <span class="badge bg-secondary text-white">{{ inv.status }}</span>
+                {% elif inv.status == 'Versendet' %}
+                  <span class="badge bg-info text-white">{{ inv.status }}</span>
+                {% elif inv.status == 'Bezahlt' %}
+                  <span class="badge bg-success text-white">{{ inv.status }}</span>
+                {% elif inv.status == 'Storniert' %}
+                  <span class="badge bg-danger text-white">{{ inv.status }}</span>
+                {% else %}
+                  <span class="badge bg-warning text-white">{{ inv.status }}</span>
+                {% endif %}
+              </td>
+              <td class="text-nowrap">
+                <a href="{{ url_for('invoices.detail', invoice_id=inv.id) }}"
+                   class="btn btn-sm btn-outline-secondary" title="Rechnungsdetail">
+                  <i class="fas fa-eye"></i>
+                </a>
+                {% if doc_format in ('pdf', 'both') %}
+                <a href="{{ url_for('invoices.pdf', invoice_id=inv.id) }}?fmt=pdf"
+                   class="btn btn-sm btn-outline-danger ms-1" target="_blank" title="PDF">
+                  <i class="fas fa-file-pdf"></i>
+                </a>
+                {% endif %}
+                {% if doc_format in ('docx', 'both') %}
+                <a href="{{ url_for('invoices.pdf', invoice_id=inv.id) }}?fmt=docx"
+                   class="btn btn-sm btn-outline-secondary ms-1" target="_blank" title="Word">
+                  <i class="fas fa-file-word"></i>
+                </a>
+                {% endif %}
+              </td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="6" class="text-center text-muted py-4">
+                Keine Rechnungen in diesem Lauf.
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

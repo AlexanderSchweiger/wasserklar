@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Ähnliche Kunden gefunden{% endblock %}
+{% block page_title %}
+  <i class="fas fa-exclamation-triangle text-warning me-2"></i> Ähnliche Kunden gefunden
+{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="card-header">
+    <h3 class="card-title">Bitte prüfen: Dublette möglich</h3>
+  </div>
+  <div class="card-body">
+    <p class="mb-3">
+      Beim Anlegen des Kunden <strong>„{{ form_data.get('name', '') }}"</strong>
+      wurden {{ similar|length }} ähnliche Kunden gefunden. Wähle einen
+      bestehenden Kunden aus oder lege den neuen Datensatz trotzdem an.
+    </p>
+
+    <div class="table-responsive mb-3">
+      <table class="table table-bordered">
+        <thead>
+          <tr>
+            <th>Kunde</th>
+            <th>Kundennr.</th>
+            <th>Adresse</th>
+            <th class="text-end">Übereinstimmung</th>
+            <th style="width:1%"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c, score in similar %}
+          <tr>
+            <td>
+              <strong>{{ c.name }}</strong>
+              {% if not c.active %}<span class="badge bg-secondary ms-1">Inaktiv</span>{% endif %}
+            </td>
+            <td>{{ c.customer_number or '—' }}</td>
+            <td>{{ c.address_display() or '—' }}</td>
+            <td class="text-end">
+              <span class="badge bg-warning text-dark">{{ (score * 100)|int }} %</span>
+            </td>
+            <td class="text-nowrap">
+              <a href="{{ url_for('customers.detail', customer_id=c.id) }}"
+                 class="btn btn-sm btn-outline-primary">
+                <i class="fas fa-user me-1"></i> Verwenden
+              </a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <form method="post" action="{{ url_for('customers.new') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="force" value="1">
+      {# Alle Formularfelder aus dem ursprünglichen Submit erneut mitsenden. #}
+      {% for key, value in form_data.items() %}
+        {% if key not in ('csrf_token', 'force') %}
+        <input type="hidden" name="{{ key }}" value="{{ value }}">
+        {% endif %}
+      {% endfor %}
+      <button type="submit" class="btn btn-warning">
+        <i class="fas fa-user-plus me-1"></i> Trotzdem anlegen
+      </button>
+      <a href="{{ url_for('customers.new') }}" class="btn btn-secondary ms-2">
+        Zurück zum Formular
+      </a>
+    </form>
+  </div>
+</div>
+{% endblock %}

@@ -4,11 +4,19 @@
   <i class="fas fa-user me-2"></i> {{ 'Kunde bearbeiten' if customer else 'Neuer Kunde' }}
 {% endblock %}
 {% block content %}
+{# Wenn form_data gesetzt ist (nach Validierungsfehler), werden dessen Werte
+   als Eingabe-Rehydratation verwendet; sonst Werte aus dem Customer-Objekt. #}
+{% macro fval(name, default='') -%}
+  {%- if form_data is defined and form_data -%}{{ form_data.get(name, default) }}
+  {%- elif customer -%}{{ customer[name] if customer[name] is not none else default }}
+  {%- else -%}{{ default }}
+  {%- endif -%}
+{%- endmacro %}
 <div class="card">
       <div class="card-header">
         <h3 class="card-title">{{ customer.name if customer else 'Neuer Kunde' }}</h3>
       </div>
-      <form method="post">
+      <form method="post" id="customerForm">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="card-body">
           <div class="row">
@@ -23,15 +31,22 @@
             <div class="col-md-6">
               <div class="mb-3">
                 <label class="form-label">Name <span class="text-danger">*</span></label>
-                <input type="text" name="name" class="form-control"
-                  value="{{ customer.name if customer else '' }}" required>
+                <input type="text" name="name" id="cust-name" class="form-control"
+                  value="{{ fval('name') }}" required
+                  hx-get="{{ url_for('customers.check_duplicates') }}"
+                  hx-trigger="keyup changed delay:500ms, change"
+                  hx-target="#cust-duplicates"
+                  hx-include="#cust-plz, #cust-ort{% if customer %}, [name=exclude_id]{% endif %}">
+                {% if customer %}
+                <input type="hidden" name="exclude_id" value="{{ customer.id }}">
+                {% endif %}
               </div>
             </div>
             <div class="col-md-4">
               <div class="mb-3">
                 <label class="form-label">Telefon</label>
                 <input type="tel" name="phone" class="form-control"
-                  value="{{ customer.phone if customer else '' }}">
+                  value="{{ fval('phone') }}">
               </div>
             </div>
           </div>
@@ -41,62 +56,66 @@
                 <label class="form-label">Externe Kennung</label>
                 <input type="text" name="externe_kennung" class="form-control"
                   placeholder="optional"
-                  value="{{ customer.externe_kennung if customer and customer.externe_kennung else '' }}">
+                  value="{{ fval('externe_kennung') }}">
               </div>
             </div>
           </div>
           <div class="row">
             <div class="col-md-8">
               <div class="mb-3">
-                <label class="form-label">Straße</label>
+                <label class="form-label">Straße <span class="text-danger">*</span></label>
                 <input type="text" name="strasse" class="form-control"
-                  value="{{ customer.strasse if customer else '' }}">
+                  value="{{ fval('strasse') }}" required>
               </div>
             </div>
             <div class="col-md-4">
               <div class="mb-3">
-                <label class="form-label">Hausnummer</label>
+                <label class="form-label">Hausnummer <span class="text-danger">*</span></label>
                 <input type="text" name="hausnummer" class="form-control"
-                  value="{{ customer.hausnummer if customer else '' }}">
+                  value="{{ fval('hausnummer') }}" required>
               </div>
             </div>
           </div>
           <div class="row">
             <div class="col-md-3">
               <div class="mb-3">
-                <label class="form-label">PLZ</label>
-                <input type="text" name="plz" class="form-control"
-                  value="{{ customer.plz if customer else '' }}">
+                <label class="form-label">PLZ <span class="text-danger">*</span></label>
+                <input type="text" name="plz" id="cust-plz" class="form-control"
+                  value="{{ fval('plz') }}" required>
               </div>
             </div>
             <div class="col-md-5">
               <div class="mb-3">
-                <label class="form-label">Ort / Stadt</label>
-                <input type="text" name="ort" class="form-control"
-                  value="{{ customer.ort if customer else '' }}">
+                <label class="form-label">Ort / Stadt <span class="text-danger">*</span></label>
+                <input type="text" name="ort" id="cust-ort" class="form-control"
+                  value="{{ fval('ort') }}" required>
               </div>
             </div>
             <div class="col-md-4">
               <div class="mb-3">
                 <label class="form-label">Land</label>
                 <input type="text" name="land" class="form-control"
-                  value="{{ customer.land if customer else 'Österreich' }}">
+                  value="{{ fval('land', 'Österreich') }}">
               </div>
             </div>
           </div>
+
+          {# Live-Dubletten-Vorschläge (HTMX) #}
+          <div id="cust-duplicates"></div>
+
           <div class="row">
             <div class="col-md-5">
               <div class="mb-3">
                 <label class="form-label">E-Mail</label>
                 <input type="email" name="email" class="form-control"
-                  value="{{ customer.email if customer else '' }}">
+                  value="{{ fval('email') }}">
               </div>
             </div>
             <div class="col-md-4">
               <div class="mb-3">
                 <label class="form-label">Mitglied seit</label>
                 <input type="date" name="member_since" class="form-control"
-                  value="{{ customer.member_since.isoformat() if customer and customer.member_since else '' }}">
+                  value="{% if form_data is defined and form_data %}{{ form_data.get('member_since', '') }}{% elif customer and customer.member_since %}{{ customer.member_since.isoformat() }}{% endif %}">
               </div>
             </div>
             <div class="col-md-3">
@@ -105,7 +124,7 @@
                 <div class="form-check mt-2">
                   <input type="checkbox" class="form-check-input"
                          id="rechnung_per_email" name="rechnung_per_email" value="1"
-                         {{ 'checked' if customer and customer.rechnung_per_email }}>
+                         {% if form_data is defined and form_data %}{{ 'checked' if form_data.get('rechnung_per_email') == '1' }}{% elif customer and customer.rechnung_per_email %}checked{% endif %}>
                   <label class="form-check-label" for="rechnung_per_email">
                     Rechnung per E-Mail
                   </label>
@@ -115,7 +134,7 @@
           </div>
           <div class="mb-3">
             <label class="form-label">Notizen</label>
-            <textarea name="notes" class="form-control" rows="3">{{ customer.notes if customer else '' }}</textarea>
+            <textarea name="notes" class="form-control" rows="3">{{ fval('notes') }}</textarea>
           </div>
 
           <hr>
@@ -128,7 +147,7 @@
                 <div class="input-group">
                   <input type="number" name="base_fee_override" step="0.01" class="form-control"
                     placeholder="Tarif-Standard"
-                    value="{{ '%.2f'|format(customer.base_fee_override) if customer and customer.base_fee_override is not none else '' }}">
+                    value="{% if form_data is defined and form_data %}{{ form_data.get('base_fee_override', '') }}{% elif customer and customer.base_fee_override is not none %}{{ '%.2f'|format(customer.base_fee_override) }}{% endif %}">
                   <span class="input-group-text">€</span>
                 </div>
               </div>
@@ -139,7 +158,7 @@
                 <div class="input-group">
                   <input type="number" name="additional_fee_override" step="0.01" class="form-control"
                     placeholder="Tarif-Standard"
-                    value="{{ '%.2f'|format(customer.additional_fee_override) if customer and customer.additional_fee_override is not none else '' }}">
+                    value="{% if form_data is defined and form_data %}{{ form_data.get('additional_fee_override', '') }}{% elif customer and customer.additional_fee_override is not none %}{{ '%.2f'|format(customer.additional_fee_override) }}{% endif %}">
                   <span class="input-group-text">€</span>
                 </div>
               </div>
@@ -154,5 +173,4 @@
         </div>
       </form>
     </div>
-</div>
 {% endblock %}

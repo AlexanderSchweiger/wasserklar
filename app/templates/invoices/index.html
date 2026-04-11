@@ -81,8 +81,14 @@
       </div>
     </div>
     <div class="card-options">
+      <a href="{{ url_for('invoices.new') }}" class="btn btn-success btn-sm me-1">
+        <i class="fas fa-plus me-1"></i> Neue Rechnung
+      </a>
       <a href="{{ url_for('invoices.generate') }}" class="btn btn-primary btn-sm">
         <i class="fas fa-play me-1"></i> Rechnungslauf
+      </a>
+      <a href="{{ url_for('invoices.billing_runs') }}" class="btn btn-secondary btn-sm ms-1" title="Rechnungslauf-Übersicht">
+        <i class="fas fa-history me-1"></i> Läufe
       </a>
       <a href="{{ url_for('invoices.tariffs') }}" class="btn btn-secondary btn-sm ms-1">
         <i class="fas fa-sliders-h me-1"></i> Tarife

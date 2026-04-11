@@ -219,15 +219,49 @@ class WaterTariff(db.Model):
     name = db.Column(db.String(100), nullable=False)
     valid_from = db.Column(db.Integer, nullable=False)   # Jahr
     valid_to = db.Column(db.Integer)                      # Jahr (None = aktuell gültig)
-    base_fee = db.Column(db.Numeric(10, 2), default=0)   # Grundgebühr €
+    base_fee = db.Column(db.Numeric(10, 2))               # Grundgebühr €; None = keine Position auf Rechnung
     base_fee_label = db.Column(db.String(100), default="Grundgebühr")
-    additional_fee = db.Column(db.Numeric(10, 2), default=0)  # Zusatzgebühr €
+    additional_fee = db.Column(db.Numeric(10, 2))          # Zusatzgebühr €; None = keine Position auf Rechnung
     additional_fee_label = db.Column(db.String(100), default="Zusatzgebühr")
     price_per_m3 = db.Column(db.Numeric(10, 2), nullable=False)  # Preis pro m³
     notes = db.Column(db.Text)
 
     def __repr__(self):
         return f"<WaterTariff {self.name} {self.valid_from}>"
+
+
+# ---------------------------------------------------------------------------
+# Rechnungsläufe
+# ---------------------------------------------------------------------------
+
+class BillingRun(db.Model):
+    """Historisierter Rechnungslauf – gespeichert bei jeder Massenabrechnung."""
+    __tablename__ = "billing_runs"
+
+    id = db.Column(db.Integer, primary_key=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    period_year = db.Column(db.Integer, nullable=False)
+
+    # Snapshot des verwendeten Tarifs (historische Kopie)
+    tariff_name = db.Column(db.String(100), nullable=False)
+    tariff_valid_from = db.Column(db.Integer, nullable=True)
+    tariff_valid_to = db.Column(db.Integer, nullable=True)
+    tariff_base_fee = db.Column(db.Numeric(10, 2), nullable=True)
+    tariff_base_fee_label = db.Column(db.String(100), nullable=True)
+    tariff_additional_fee = db.Column(db.Numeric(10, 2), nullable=True)
+    tariff_additional_fee_label = db.Column(db.String(100), nullable=True)
+    tariff_price_per_m3 = db.Column(db.Numeric(10, 2), nullable=False)
+    tariff_notes = db.Column(db.Text, nullable=True)
+
+    invoices_created = db.Column(db.Integer, default=0, nullable=False)
+    invoices_skipped = db.Column(db.Integer, default=0, nullable=False)
+
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+    invoices = db.relationship("Invoice", backref="billing_run", lazy="dynamic")
+
+    def __repr__(self):
+        return f"<BillingRun {self.period_year} {self.created_at}>"
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +282,7 @@ class Invoice(db.Model):
     invoice_number = db.Column(db.String(50), unique=True, nullable=False)
     customer_id = db.Column(db.Integer, db.ForeignKey("customers.id"), nullable=False)
     property_id = db.Column(db.Integer, db.ForeignKey("properties.id"), nullable=True)
+    billing_run_id = db.Column(db.Integer, db.ForeignKey("billing_runs.id"), nullable=True)
     period_year = db.Column(db.Integer)
     date = db.Column(db.Date, default=date.today)
     due_date = db.Column(db.Date)
@@ -265,7 +300,45 @@ class Invoice(db.Model):
     bookings = db.relationship("Booking", backref="invoice", lazy="dynamic")
 
     def recalculate_total(self):
-        self.total_amount = sum(item.amount for item in self.items)
+        """Berechnet den Bruttobetrag (netto + USt) und speichert ihn in ``total_amount``.
+
+        Positionen speichern den Nettobetrag. Ist für eine Position kein Steuersatz
+        gesetzt, entspricht ihr Brutto- dem Nettobetrag (nicht umsatzsteuerpflichtig).
+        """
+        from decimal import Decimal
+        gross = Decimal("0")
+        for item in self.items:
+            net = Decimal(str(item.amount or 0))
+            gross += net
+            if item.tax_rate and item.tax_rate > 0:
+                rate = Decimal(str(item.tax_rate))
+                gross += (net * rate / Decimal("100")).quantize(Decimal("0.01"))
+        self.total_amount = gross
+
+    @property
+    def net_total(self):
+        """Nettosumme (Summe der Positionsbeträge ohne USt)."""
+        from decimal import Decimal
+        return sum((Decimal(str(item.amount or 0)) for item in self.items), Decimal("0"))
+
+    @property
+    def tax_breakdown(self):
+        """Aufschlüsselung der USt pro Satz als OrderedDict ``{rate: {"net", "tax"}}``."""
+        from collections import OrderedDict
+        from decimal import Decimal
+        summary = OrderedDict()
+        for item in self.items:
+            rate = item.tax_rate
+            if not rate or rate <= 0:
+                continue
+            rate_key = Decimal(str(rate))
+            net = Decimal(str(item.amount or 0))
+            tax = (net * rate_key / Decimal("100")).quantize(Decimal("0.01"))
+            if rate_key not in summary:
+                summary[rate_key] = {"net": Decimal("0"), "tax": Decimal("0")}
+            summary[rate_key]["net"] += net
+            summary[rate_key]["tax"] += tax
+        return summary
 
     @property
     def paid_amount(self):
@@ -476,6 +549,7 @@ class FiscalYear(db.Model):
     closed = db.Column(db.Boolean, default=False, nullable=False)
     closed_at = db.Column(db.DateTime, nullable=True)
     closed_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    is_vat_liable = db.Column(db.Boolean, default=False, nullable=False)  # umsatzsteuerpflichtig
 
     closed_by = db.relationship("User", foreign_keys=[closed_by_id])
     reopen_logs = db.relationship(

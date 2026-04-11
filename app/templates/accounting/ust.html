@@ -9,8 +9,11 @@
     <form method="get" class="d-flex flex-wrap align-items-end gap-3">
       <div>
         <label class="form-label mb-1">Jahr</label>
-        <input type="number" name="year" value="{{ year }}" min="2000" max="2100"
-               class="form-control form-control-sm" style="width:90px">
+        <select name="year" class="form-select form-select-sm" style="width:110px">
+          {% for y in vat_years %}
+          <option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y }}</option>
+          {% endfor %}
+        </select>
       </div>
       <div>
         <label class="form-label mb-1">Zeitraum</label>

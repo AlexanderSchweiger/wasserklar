@@ -1,0 +1,286 @@
+{# Wiederverwendbarer Positions-Editor für Rechnungen.
+
+   Kontext-Variablen (vom Caller bereitzustellen):
+     - tariffs: Liste der verfügbaren WaterTariff-Objekte
+     - existing_items: bestehende InvoiceItem-Liste (optional, für Pre-Fill
+       im Invoice-Detail-Modus)
+     - can_delete_items: True wenn Lösch/Edit-Buttons angezeigt werden sollen
+     - container_id (optional, default 'rowsContainer')
+     - submit_btn_id (optional, default 'submitBtn') — dieses Element wird
+       aktiviert/deaktiviert je nachdem ob mindestens eine Position existiert
+     - form_name_prefix (optional, default '') — Präfix für Feldnamen,
+       z.B. wenn der Editor neben anderen Formularen auf derselben Seite steht
+
+   Das Partial liefert die Button-Leiste, den Row-Container und alle
+   Row-Templates. Der Caller muss den Submit-Button selbst rendern und
+   seine ID als submit_btn_id angeben.
+#}
+{% set _container = container_id|default('rowsContainer') %}
+{% set _submit = submit_btn_id|default('submitBtn') %}
+{% set _prefix = form_name_prefix|default('') %}
+
+<div id="{{ _container }}">
+  {# Bestehende Positionen als vorkonfigurierte „Freie Position"-Zeilen
+     einblenden, damit der Editor im Invoice-Detail-Modus bestehende Daten
+     anzeigen kann. Für das Rechnungs-Anlage-Modal ist existing_items leer. #}
+  {% if existing_items %}
+  {% for item in existing_items %}
+  <div class="row-item border rounded p-2 mb-2 existing-item" data-item-id="{{ item.id }}">
+    <input type="hidden" name="{{ _prefix }}row_type[]" value="free">
+    <input type="hidden" name="{{ _prefix }}row_tariff_id[]" value="">
+    <input type="hidden" name="{{ _prefix }}row_consumption_m3[]" value="">
+    <input type="hidden" name="{{ _prefix }}existing_item_id[]" value="{{ item.id }}">
+    <div class="row align-items-end">
+      <div class="col-md-3">
+        <label class="small">Beschreibung</label>
+        <input type="text" name="{{ _prefix }}row_description[]" class="form-control form-control-sm"
+               value="{{ item.description }}" required>
+      </div>
+      <div class="col-md-1">
+        <label class="small">Menge</label>
+        <input type="number" name="{{ _prefix }}row_quantity[]" class="form-control form-control-sm free-qty"
+               step="0.001" value="{{ item.quantity }}" onchange="itemsEditorCalcFree(this)">
+      </div>
+      <div class="col-md-1">
+        <label class="small">Einheit</label>
+        <input type="text" name="{{ _prefix }}row_unit[]" class="form-control form-control-sm"
+               value="{{ item.unit or '' }}">
+      </div>
+      <div class="col-md-2">
+        <label class="small">Einzelpreis €</label>
+        <input type="number" name="{{ _prefix }}row_unit_price[]" class="form-control form-control-sm free-price"
+               step="0.01" min="0" value="{{ item.unit_price }}" required onchange="itemsEditorCalcFree(this)">
+      </div>
+      <div class="col-md-1">
+        <label class="small">MwSt %</label>
+        <input type="number" name="{{ _prefix }}row_tax_rate[]" class="form-control form-control-sm"
+               step="0.01" min="0" max="100" value="{{ item.tax_rate or '' }}">
+      </div>
+      <div class="col-md-2">
+        <label class="small">Betrag</label>
+        <input type="text" class="form-control form-control-sm amount-display" readonly
+               value="{{ '%.2f'|format(item.amount or 0) }} €">
+      </div>
+      {% if can_delete_items %}
+      <div class="col-md-1 d-flex align-items-end">
+        <button type="button" class="btn btn-sm btn-outline-danger" onclick="itemsEditorRemoveRow(this)">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+  {% endif %}
+</div>
+
+<div class="btn-group mt-2" role="group">
+  {% if tariffs %}
+  <button type="button" class="btn btn-outline-info btn-sm" onclick="itemsEditorAddTariff()">
+    <i class="fas fa-plus me-1"></i> Tarif-Paket
+  </button>
+  {% endif %}
+  <button type="button" class="btn btn-outline-secondary btn-sm" onclick="itemsEditorAddWater()">
+    <i class="fas fa-plus me-1"></i> Wasser m³
+  </button>
+  <button type="button" class="btn btn-outline-primary btn-sm" onclick="itemsEditorAddFree()">
+    <i class="fas fa-plus me-1"></i> Freie Position
+  </button>
+</div>
+
+{# Row-Templates #}
+<template id="tmplTariff">
+  <div class="row-item border rounded p-2 mb-2 bg-light">
+    <input type="hidden" name="{{ _prefix }}row_type[]" value="tariff">
+    <input type="hidden" name="{{ _prefix }}row_description[]" value="">
+    <input type="hidden" name="{{ _prefix }}row_quantity[]" value="">
+    <input type="hidden" name="{{ _prefix }}row_unit[]" value="">
+    <input type="hidden" name="{{ _prefix }}row_tax_rate[]" value="0">
+    <div class="row align-items-end">
+      <div class="col-md-4">
+        <label class="small">Tarif <span class="text-danger">*</span></label>
+        <select name="{{ _prefix }}row_tariff_id[]" class="form-control form-control-sm tariff-select" required onchange="itemsEditorUpdateTariffPrice(this)">
+          <option value="">— Tarif wählen —</option>
+          {% for t in tariffs %}
+          <option value="{{ t.id }}"
+                  data-price="{{ t.price_per_m3 }}"
+                  data-base="{{ t.base_fee or 0 }}">
+            {{ t.name }} ({{ t.valid_from }}{% if t.valid_to %}–{{ t.valid_to }}{% else %} aktuell{% endif %})
+            – {{ t.price_per_m3 }} €/m³{% if t.base_fee %}, Grundgebühr {{ t.base_fee }} €{% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="small">Verbrauch (m³) <span class="text-danger">*</span></label>
+        <input type="number" name="{{ _prefix }}row_consumption_m3[]" class="form-control form-control-sm consumption-input"
+               step="0.001" min="0" placeholder="0.000" required onchange="itemsEditorCalcTariff(this)">
+      </div>
+      <div class="col-md-2">
+        <label class="small">Preis/m³ €</label>
+        <input type="text" name="{{ _prefix }}row_unit_price[]" class="form-control form-control-sm price-display"
+               readonly placeholder="—">
+      </div>
+      <div class="col-md-2">
+        <label class="small">Betrag (ca.)</label>
+        <input type="text" class="form-control form-control-sm amount-display" readonly placeholder="—">
+      </div>
+      <div class="col-md-1 d-flex align-items-end">
+        <button type="button" class="btn btn-sm btn-outline-danger" onclick="itemsEditorRemoveRow(this)">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<template id="tmplWater">
+  <div class="row-item border rounded p-2 mb-2 bg-light">
+    <input type="hidden" name="{{ _prefix }}row_type[]" value="water">
+    <input type="hidden" name="{{ _prefix }}row_tariff_id[]" value="">
+    <input type="hidden" name="{{ _prefix }}row_tax_rate[]" value="0">
+    <div class="row align-items-end">
+      <div class="col-md-4">
+        <label class="small">Beschreibung</label>
+        <input type="text" name="{{ _prefix }}row_description[]" class="form-control form-control-sm"
+               placeholder="Wasserverbrauch (leer = automatisch)">
+      </div>
+      <div class="col-md-2">
+        <label class="small">Menge (m³) <span class="text-danger">*</span></label>
+        <input type="number" name="{{ _prefix }}row_consumption_m3[]" class="form-control form-control-sm water-consumption"
+               step="0.001" min="0" placeholder="0.000" required onchange="itemsEditorCalcWater(this)">
+      </div>
+      <div class="col-md-2">
+        <label class="small">Preis/m³ € <span class="text-danger">*</span></label>
+        <input type="number" name="{{ _prefix }}row_unit_price[]" class="form-control form-control-sm water-price"
+               step="0.0001" min="0" placeholder="0.0000" required onchange="itemsEditorCalcWater(this)">
+      </div>
+      <div class="col-md-2">
+        <label class="small">Betrag (ca.)</label>
+        <input type="text" class="form-control form-control-sm amount-display" readonly placeholder="—">
+      </div>
+      <div class="col-md-1 d-flex align-items-end">
+        <button type="button" class="btn btn-sm btn-outline-danger" onclick="itemsEditorRemoveRow(this)">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<template id="tmplFree">
+  <div class="row-item border rounded p-2 mb-2">
+    <input type="hidden" name="{{ _prefix }}row_type[]" value="free">
+    <input type="hidden" name="{{ _prefix }}row_tariff_id[]" value="">
+    <input type="hidden" name="{{ _prefix }}row_consumption_m3[]" value="">
+    <div class="row align-items-end">
+      <div class="col-md-3">
+        <label class="small">Beschreibung <span class="text-danger">*</span></label>
+        <input type="text" name="{{ _prefix }}row_description[]" class="form-control form-control-sm" required
+               placeholder="z.B. Mahngebühr">
+      </div>
+      <div class="col-md-1">
+        <label class="small">Menge</label>
+        <input type="number" name="{{ _prefix }}row_quantity[]" class="form-control form-control-sm free-qty"
+               step="0.001" value="1" onchange="itemsEditorCalcFree(this)">
+      </div>
+      <div class="col-md-1">
+        <label class="small">Einheit</label>
+        <input type="text" name="{{ _prefix }}row_unit[]" class="form-control form-control-sm" value="Stk">
+      </div>
+      <div class="col-md-2">
+        <label class="small">Einzelpreis € <span class="text-danger">*</span></label>
+        <input type="number" name="{{ _prefix }}row_unit_price[]" class="form-control form-control-sm free-price"
+               step="0.01" min="0" placeholder="0.00" required onchange="itemsEditorCalcFree(this)">
+      </div>
+      <div class="col-md-1">
+        <label class="small">MwSt %</label>
+        <input type="number" name="{{ _prefix }}row_tax_rate[]" class="form-control form-control-sm"
+               step="0.01" min="0" max="100" placeholder="0">
+      </div>
+      <div class="col-md-2">
+        <label class="small">Betrag (ca.)</label>
+        <input type="text" class="form-control form-control-sm amount-display" readonly placeholder="—">
+      </div>
+      <div class="col-md-1 d-flex align-items-end">
+        <button type="button" class="btn btn-sm btn-outline-danger" onclick="itemsEditorRemoveRow(this)">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script>
+(function () {
+  const containerId = "{{ _container }}";
+  const submitBtnId = "{{ _submit }}";
+  const container = document.getElementById(containerId);
+
+  function cloneTemplate(id) {
+    return document.getElementById(id).content.cloneNode(true);
+  }
+
+  function updateSubmitBtn() {
+    const btn = document.getElementById(submitBtnId);
+    if (!btn) return;
+    const rows = container.querySelectorAll('.row-item');
+    btn.disabled = rows.length === 0;
+  }
+
+  // Globale Funktionen, damit die onclick-/onchange-Handler der Templates
+  // sie erreichen. Mehrere Editoren auf derselben Seite werden aktuell nicht
+  // unterstützt (es gibt nur einen Container + Submit-Button pro Seite).
+  window.itemsEditorRemoveRow = function (btn) {
+    btn.closest('.row-item').remove();
+    updateSubmitBtn();
+  };
+  window.itemsEditorAddTariff = function () {
+    container.appendChild(cloneTemplate('tmplTariff'));
+    updateSubmitBtn();
+  };
+  window.itemsEditorAddWater = function () {
+    container.appendChild(cloneTemplate('tmplWater'));
+    updateSubmitBtn();
+  };
+  window.itemsEditorAddFree = function () {
+    container.appendChild(cloneTemplate('tmplFree'));
+    updateSubmitBtn();
+  };
+  window.itemsEditorUpdateTariffPrice = function (select) {
+    const row = select.closest('.row-item');
+    const opt = select.options[select.selectedIndex];
+    const price = opt.dataset.price || '';
+    row.querySelector('.price-display').value = price ? parseFloat(price).toFixed(4) : '';
+    window.itemsEditorCalcTariff(row.querySelector('.consumption-input'));
+  };
+  window.itemsEditorCalcTariff = function (input) {
+    const row = input.closest('.row-item');
+    const consumption = parseFloat(row.querySelector('.consumption-input').value) || 0;
+    const priceStr = row.querySelector('.price-display').value;
+    const price = parseFloat(priceStr) || 0;
+    const select = row.querySelector('.tariff-select');
+    const opt = select ? select.options[select.selectedIndex] : null;
+    const baseFee = opt ? (parseFloat(opt.dataset.base) || 0) : 0;
+    const total = (consumption * price + baseFee).toFixed(2);
+    row.querySelector('.amount-display').value = price > 0 ? total + ' €' : '';
+  };
+  window.itemsEditorCalcWater = function (input) {
+    const row = input.closest('.row-item');
+    const qty = parseFloat(row.querySelector('.water-consumption').value) || 0;
+    const price = parseFloat(row.querySelector('.water-price').value) || 0;
+    const amount = (qty * price).toFixed(2);
+    row.querySelector('.amount-display').value = price > 0 ? amount + ' €' : '';
+  };
+  window.itemsEditorCalcFree = function (input) {
+    const row = input.closest('.row-item');
+    const qty = parseFloat(row.querySelector('.free-qty').value) || 1;
+    const price = parseFloat(row.querySelector('.free-price').value) || 0;
+    const amount = (qty * price).toFixed(2);
+    row.querySelector('.amount-display').value = price > 0 ? amount + ' €' : '';
+  };
+
+  // Initialen Submit-Button-Status setzen (für existing_items).
+  updateSubmitBtn();
+})();
+</script>

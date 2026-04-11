@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+{% block title %}Neue Rechnung{% endblock %}
+{% block page_title %}
+  <i class="fas fa-file-invoice me-2"></i> Neue Rechnung
+{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="col-md-10">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Rechnung anlegen</h3>
+      </div>
+      <form method="post" id="invoiceForm">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="card-body">
+
+          {# ---- Kunde ---- #}
+          <div class="row">
+            <div class="col-md-8">
+              <div class="mb-3">
+                <label class="form-label">Kunde <span class="text-danger">*</span></label>
+                <div class="input-group">
+                  <select name="customer_id" id="customer_id"
+                          class="form-select tom-select" required>
+                    <option value="">— Kunde wählen —</option>
+                    {% for c in customers %}
+                    <option value="{{ c.id }}">
+                      {{ c.name }}{% if c.address_display() %} – {{ c.address_display() }}{% endif %}{% if not c.active %} [Inaktiv]{% endif %}
+                    </option>
+                    {% endfor %}
+                  </select>
+                  <button type="button" class="btn btn-outline-primary"
+                          data-bs-toggle="modal" data-bs-target="#customerQuickCreateModal">
+                    <i class="fas fa-user-plus me-1"></i> Neuer Kunde
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {# ---- Rechnungskopf ---- #}
+          <div class="row g-2">
+            <div class="col-md-4">
+              <div class="mb-3">
+                <label class="form-label">Rechnungsdatum <span class="text-danger">*</span></label>
+                <input type="date" name="date" id="inv-date" class="form-control" required
+                       value="{{ today.isoformat() }}" onchange="invRecalcFromDate()">
+              </div>
+            </div>
+            <div class="col-md-2">
+              <div class="mb-3">
+                <label class="form-label">Fällig in Tagen</label>
+                <input type="number" id="inv-due-days" class="form-control"
+                       value="30" min="0" step="1" onchange="invRecalcFromDays()">
+              </div>
+            </div>
+            <div class="col-md-4">
+              <div class="mb-3">
+                <label class="form-label">Fällig bis</label>
+                <input type="date" name="due_date" id="inv-due-date" class="form-control"
+                       onchange="invRecalcFromDueDate()">
+              </div>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Notizen / Freitext (erscheint auf der Rechnung)</label>
+            <textarea name="notes" class="form-control" rows="2"
+                      placeholder="z.B. Nachzahlung gemäß Abrechnung …"></textarea>
+          </div>
+
+          <hr>
+
+          {# ---- Rechnungspositionen ---- #}
+          <h5>Rechnungspositionen</h5>
+          <p class="text-muted small mb-2">
+            Fügen Sie Positionen hinzu: Tarif-Paket (Grundgebühr + Verbrauch), manuelle Wasserzeile oder freie Position.
+          </p>
+
+          {% include "invoices/_items_editor.html" %}
+
+        </div>
+        <div class="card-footer">
+          <button type="submit" class="btn btn-success" id="submitBtn" disabled>
+            <i class="fas fa-file-invoice me-1"></i> Rechnung erstellen (Entwurf)
+          </button>
+          <a href="{{ url_for('invoices.index') }}" class="btn btn-secondary ms-2">Abbrechen</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% include "customers/_customer_quick_create_modal.html" %}
+
+<script>
+// Bidirektionale Berechnung Fälligkeitsdatum ↔ Fällig-in-Tagen
+function invRecalcFromDate() {
+  // Rechnungsdatum geändert → Fälligkeitsdatum neu berechnen (Tage beibehalten)
+  const dateEl = document.getElementById('inv-date');
+  const daysEl = document.getElementById('inv-due-days');
+  const dueEl  = document.getElementById('inv-due-date');
+  if (!dateEl.value) return;
+  const days = parseInt(daysEl.value, 10);
+  if (isNaN(days) || days < 0) return;
+  const base = new Date(dateEl.value);
+  base.setDate(base.getDate() + days);
+  dueEl.value = base.toISOString().slice(0, 10);
+}
+
+function invRecalcFromDays() {
+  // Tage-Feld geändert → Fälligkeitsdatum berechnen
+  const dateEl = document.getElementById('inv-date');
+  const daysEl = document.getElementById('inv-due-days');
+  const dueEl  = document.getElementById('inv-due-date');
+  if (!dateEl.value) return;
+  const days = parseInt(daysEl.value, 10);
+  if (isNaN(days) || days < 0) { dueEl.value = ''; return; }
+  const base = new Date(dateEl.value);
+  base.setDate(base.getDate() + days);
+  dueEl.value = base.toISOString().slice(0, 10);
+}
+
+function invRecalcFromDueDate() {
+  // Fälligkeitsdatum manuell geändert → Tage rückrechnen
+  const dateEl = document.getElementById('inv-date');
+  const daysEl = document.getElementById('inv-due-days');
+  const dueEl  = document.getElementById('inv-due-date');
+  if (!dateEl.value || !dueEl.value) return;
+  const base = new Date(dateEl.value);
+  const due  = new Date(dueEl.value);
+  const diff = Math.round((due - base) / 86400000);
+  daysEl.value = diff >= 0 ? diff : '';
+}
+
+// Initialisierung: Fälligkeitsdatum beim Laden befüllen
+invRecalcFromDate();
+</script>
+
+<script>
+// Nach erfolgreicher Kundenanlage im Modal: neuen Eintrag in TomSelect
+// hinzufügen und direkt auswählen.
+window.addEventListener('customer:created', function (e) {
+  const data = e.detail || {};
+  if (!data.id) return;
+  const selectEl = document.getElementById('customer_id');
+  if (!selectEl) return;
+  // TomSelect-Instanz ist in der Tabler-Init an dem Element hinterlegt.
+  const ts = selectEl.tomselect;
+  if (ts) {
+    ts.addOption({value: String(data.id), text: data.label || data.name});
+    ts.addItem(String(data.id));
+  } else {
+    // Fallback: native select
+    const opt = document.createElement('option');
+    opt.value = String(data.id);
+    opt.textContent = data.label || data.name;
+    opt.selected = true;
+    selectEl.appendChild(opt);
+  }
+});
+</script>
+{% endblock %}

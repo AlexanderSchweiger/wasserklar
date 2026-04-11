@@ -62,6 +62,8 @@ def register_commands(app):
             _add_col_if_missing("accounts", "code VARCHAR(3)", "code")
             _add_col_if_missing("projects", "code VARCHAR(3)", "code")
             _add_col_if_missing("invoices", "doc_path VARCHAR(500)", "doc_path")
+            _add_col_if_missing("invoices", "billing_run_id INTEGER REFERENCES billing_runs(id)", "billing_run_id")
+            _add_col_if_missing("fiscal_years", "is_vat_liable INTEGER NOT NULL DEFAULT 0", "is_vat_liable")
             conn.commit()
 
         # Standard-Steuersätze anlegen
@@ -128,6 +130,8 @@ def register_commands(app):
             _add_col_if_missing("accounts", "code VARCHAR(3)", "code")
             _add_col_if_missing("projects", "code VARCHAR(3)", "code")
             _add_col_if_missing("invoices", "doc_path VARCHAR(500)", "doc_path")
+            _add_col_if_missing("invoices", "billing_run_id INTEGER REFERENCES billing_runs(id)", "billing_run_id")
+            _add_col_if_missing("fiscal_years", "is_vat_liable INTEGER NOT NULL DEFAULT 0", "is_vat_liable")
             conn.commit()
 
         # Standard-Steuersätze anlegen

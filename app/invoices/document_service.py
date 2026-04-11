@@ -173,18 +173,16 @@ def generate_docx(invoice, wg: dict) -> bytes:
 
     # ── Positionen-Tabelle ────────────────────────────────────────────────
     items = invoice.items
-    has_tax = any(i.tax_rate for i in items)
-    col_count = 6 if has_tax else 5
+    tax_summary = invoice.tax_breakdown  # {rate: {"net", "tax"}}
+    has_tax = bool(tax_summary)
+    col_count = 5  # Beschreibung / Menge / Einheit / Einzelpreis / Betrag
 
     tbl = doc.add_table(rows=1, cols=col_count)
     tbl.style = "Table Grid"
 
     # Kopfzeile
     hdr_cells = tbl.rows[0].cells
-    headers = ["Beschreibung", "Menge", "Einheit", "Einzelpreis"]
-    if has_tax:
-        headers.append("MwSt")
-    headers.append("Betrag")
+    headers = ["Beschreibung", "Menge", "Einheit", "Einzelpreis", "Betrag"]
 
     for i, hdr in enumerate(headers):
         hdr_cells[i].text = hdr
@@ -193,7 +191,7 @@ def generate_docx(invoice, wg: dict) -> bytes:
         run.font.size = Pt(10)
         _set_cell_bg(hdr_cells[i], "F0F0F0")
         _set_cell_border_bottom(hdr_cells[i], 16)
-        if hdr in ("Menge", "Einzelpreis", "MwSt", "Betrag"):
+        if hdr in ("Menge", "Einzelpreis", "Betrag"):
             hdr_cells[i].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
 
     # Positionen
@@ -205,17 +203,8 @@ def generate_docx(invoice, wg: dict) -> bytes:
         row_cells[2].text = item.unit or ""
         row_cells[3].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
         row_cells[3].text = f"{_de_fmt(item.unit_price, 2)} €"
-        col_offset = 0
-        if has_tax:
-            tax_cell = row_cells[4]
-            tax_cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
-            tax_cell.text = (
-                f"{int(item.tax_rate)} %" if item.tax_rate else "—"
-            )
-            col_offset = 1
-        amount_cell = row_cells[4 + col_offset]
-        amount_cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        amount_cell.text = f"{_de_fmt(item.amount, 2)} €"
+        row_cells[4].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        row_cells[4].text = f"{_de_fmt(item.amount, 2)} €"
 
         for cell in row_cells:
             for run in cell.paragraphs[0].runs:
@@ -223,33 +212,34 @@ def generate_docx(invoice, wg: dict) -> bytes:
 
     # Summenzeilen
     if has_tax:
-        tax_items = [i for i in items if i.tax_rate and i.tax_rate > 0]
-        tax_total = sum(i.amount * i.tax_rate / 100 for i in tax_items)
-        if tax_total:
-            # Netto
-            row_net = tbl.add_row().cells
-            row_net[0].merge(row_net[col_count - 2])
-            row_net[0].text = "Nettobetrag"
-            row_net[col_count - 1].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
-            row_net[col_count - 1].text = f"{_de_fmt(invoice.total_amount, 2)} €"
-            # MwSt
+        # Nettosumme
+        row_net = tbl.add_row().cells
+        row_net[0].merge(row_net[col_count - 2])
+        row_net[0].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        row_net[0].text = "Nettosumme"
+        row_net[col_count - 1].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        row_net[col_count - 1].text = f"{_de_fmt(invoice.net_total, 2)} €"
+        # USt pro Satz
+        for rate, info in tax_summary.items():
             row_tax = tbl.add_row().cells
             row_tax[0].merge(row_tax[col_count - 2])
-            row_tax[0].text = "MwSt"
-            row_tax[col_count - 1].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
-            row_tax[col_count - 1].text = f"{_de_fmt(tax_total, 2)} €"
-            # Gesamt
-            row_total = tbl.add_row().cells
-            row_total[0].merge(row_total[col_count - 2])
-            p_total_label = row_total[0].paragraphs[0]
-            p_total_label.add_run("Gesamtbetrag inkl. MwSt").bold = True
-            row_total[col_count - 1].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
-            total_run = row_total[col_count - 1].paragraphs[0].add_run(
-                f"{_de_fmt(invoice.total_amount + tax_total, 2)} €"
+            row_tax[0].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            row_tax[0].text = (
+                f"zzgl. USt. {_de_fmt(rate, 0)} % auf {_de_fmt(info['net'], 2)} €"
             )
-            total_run.bold = True
-        else:
-            _add_total_row(tbl, col_count, invoice.total_amount, "Gesamtbetrag")
+            row_tax[col_count - 1].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            row_tax[col_count - 1].text = f"{_de_fmt(info['tax'], 2)} €"
+        # Gesamt
+        row_total = tbl.add_row().cells
+        row_total[0].merge(row_total[col_count - 2])
+        row_total[0].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        p_total_label = row_total[0].paragraphs[0]
+        p_total_label.add_run("Gesamtbetrag inkl. USt.").bold = True
+        row_total[col_count - 1].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        total_run = row_total[col_count - 1].paragraphs[0].add_run(
+            f"{_de_fmt(invoice.total_amount, 2)} €"
+        )
+        total_run.bold = True
     else:
         _add_total_row(tbl, col_count, invoice.total_amount, "Gesamtbetrag")
 

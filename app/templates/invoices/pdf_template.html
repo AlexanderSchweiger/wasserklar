@@ -54,15 +54,15 @@
 
 <h1>Rechnung</h1>
 
+{% set tax_summary = invoice.tax_breakdown %}
+{% set has_tax = tax_summary | length > 0 %}
 <table>
-  {% set has_tax = invoice.items | selectattr('tax_rate') | list | length > 0 %}
   <thead>
     <tr>
       <th>Beschreibung</th>
       <th class="text-right">Menge</th>
       <th>Einheit</th>
       <th class="text-right">Einzelpreis</th>
-      {% if has_tax %}<th class="text-right">MwSt</th>{% endif %}
       <th class="text-right">Betrag</th>
     </tr>
   </thead>
@@ -73,45 +73,26 @@
       <td class="text-right">{{ item.quantity|de_number(2) }}</td>
       <td>{{ item.unit }}</td>
       <td class="text-right">{{ item.unit_price|de_number(2) }} €</td>
-      {% if has_tax %}<td class="text-right">{{ "%.0f"|format(item.tax_rate) if item.tax_rate else '—' }} %</td>{% endif %}
       <td class="text-right">{{ item.amount|de_number(2) }} €</td>
     </tr>
     {% endfor %}
   </tbody>
   <tfoot>
     {% if has_tax %}
-    {% set tax_total = [] %}
-    {% for item in invoice.items %}
-      {% if item.tax_rate and item.tax_rate > 0 %}
-        {% set _ = tax_total.append(item.amount * item.tax_rate / 100) %}
-      {% endif %}
+    <tr>
+      <td colspan="4" class="text-right">Nettosumme</td>
+      <td class="text-right">{{ invoice.net_total|de_number(2) }} €</td>
+    </tr>
+    {% for rate, info in tax_summary.items() %}
+    <tr>
+      <td colspan="4" class="text-right">zzgl. USt. {{ rate|de_number(0) }} % auf {{ info.net|de_number(2) }} €</td>
+      <td class="text-right">{{ info.tax|de_number(2) }} €</td>
+    </tr>
     {% endfor %}
-    {% if tax_total %}
-    <tr>
-      <td colspan="{{ 5 if has_tax else 4 }}">Nettobetrag</td>
-      <td class="text-right">{{ invoice.total_amount|de_number(2) }} €</td>
-    </tr>
-    <tr>
-      <td colspan="{{ 5 if has_tax else 4 }}">MwSt</td>
-      <td class="text-right">{{ (tax_total | sum)|de_number(2) }} €</td>
-    </tr>
-    <tr class="total-row">
-      <td colspan="{{ 5 if has_tax else 4 }}">Gesamtbetrag inkl. MwSt</td>
-      <td class="text-right">{{ (invoice.total_amount + (tax_total | sum))|de_number(2) }} €</td>
-    </tr>
-    {% else %}
-    <tr class="total-row">
-      <td colspan="{{ 5 if has_tax else 4 }}">Gesamtbetrag</td>
-      <td class="text-right">{{ invoice.total_amount|de_number(2) }} €</td>
-    </tr>
     {% endif %}
-    {% else %}
     <tr class="total-row">
-      <td colspan="4">Gesamtbetrag</td>
+      <td colspan="4" class="text-right">Gesamtbetrag{% if has_tax %} inkl. USt.{% endif %}</td>
       <td class="text-right">{{ invoice.total_amount|de_number(2) }} €</td>
-    </tr>
-    {% endif %}
-  </tfoot>
     </tr>
   </tfoot>
 </table>

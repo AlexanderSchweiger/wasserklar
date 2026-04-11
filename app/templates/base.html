@@ -63,9 +63,11 @@
             {% set _nav_projekte       = request.blueprint == 'projects' %}
 
             {# Rechnungen / OP #}
-            {% set _nav_alle_rechnungen = request.endpoint in ('invoices.index','invoices.detail','invoices.edit','invoices.generate','invoices.item_add','invoices.item_edit','invoices.item_delete','invoices.pdf','invoices.send_email','invoices.send_email_ajax','invoices.set_status','invoices.pay','invoices.bulk_action','invoices.bulk_pdf_merged','invoices.bulk_pdf_zip','invoices.counters','invoices.counter_reset') %}
-            {% set _nav_offene_posten   = request.endpoint == 'accounting.open_items' %}
+            {% set _nav_neue_rechnung   = request.endpoint == 'invoices.new' %}
+            {% set _nav_alle_rechnungen = request.endpoint in ('invoices.index','invoices.detail','invoices.edit','invoices.generate','invoices.items_save','invoices.pdf','invoices.send_email','invoices.send_email_ajax','invoices.set_status','invoices.pay','invoices.bulk_action','invoices.bulk_pdf_merged','invoices.bulk_pdf_zip','invoices.counters','invoices.counter_reset') %}
+            {% set _nav_offene_posten   = request.endpoint in ('accounting.open_items','accounting.open_item_invoice') %}
             {% set _nav_rechnungslauf   = request.endpoint == 'invoices.generate' %}
+            {% set _nav_rechnungslaeufe = request.endpoint in ('invoices.billing_runs','invoices.billing_run_detail','invoices.billing_run_delete') %}
             {% set _nav_email_settings  = request.endpoint == 'invoices.email_settings' %}
 
             {# Auswertungen #}
@@ -80,7 +82,7 @@
 
             {# Eltern-Aktiv aus Kinder-OR ableiten #}
             {% set accounting_active   = _nav_buchungen or _nav_umbuchungen or _nav_buchungsjahre or _nav_bankkonten or _nav_kontenplan or  _nav_projekte %}
-            {% set invoices_active     = _nav_alle_rechnungen or _nav_offene_posten or _nav_rechnungslauf or _nav_email_settings or _nav_tarife %}
+            {% set invoices_active     = _nav_neue_rechnung or _nav_alle_rechnungen or _nav_offene_posten or _nav_rechnungslauf or _nav_rechnungslaeufe or _nav_email_settings or _nav_tarife %}
             {% set auswertungen_active = _nav_jahresbericht or _nav_ust %}
             {% set stammdaten_active   = _nav_kunden or _nav_objekte or _nav_zaehler or _nav_import %}
 
@@ -145,6 +147,12 @@
               <div class="collapse {% if invoices_active %}show{% endif %}" id="navbar-invoices">
                 <ul class="nav nav-sm flex-column ps-3">
                   <li class="nav-item">
+                    <a class="nav-link {% if _nav_neue_rechnung %}active{% endif %}"
+                      href="{{ url_for('invoices.new') }}">
+                      <i class="fas fa-plus me-2"></i>Rechnung erstellen
+                    </a>
+                  </li>
+                  <li class="nav-item">
                     <a class="nav-link {% if _nav_alle_rechnungen %}active{% endif %}"
                       href="{{ url_for('invoices.index') }}">
                       <i class="fas fa-list me-2"></i>Alle Rechnungen
@@ -157,9 +165,9 @@
                     </a>
                   </li>
                   <li class="nav-item">
-                    <a class="nav-link {% if _nav_rechnungslauf %}active{% endif %}"
-                      href="{{ url_for('invoices.generate') }}">
-                      <i class="fas fa-play-circle me-2"></i>Rechnungslauf
+                    <a class="nav-link {% if _nav_rechnungslaeufe or _nav_rechnungslauf %}active{% endif %}"
+                      href="{{ url_for('invoices.billing_runs') }}">
+                      <i class="fas fa-history me-2"></i>Rechnungsläufe
                     </a>
                   </li>
                     <li class="nav-item">
@@ -196,12 +204,14 @@
                       <i class="fas fa-chart-bar me-2"></i>Jahresbericht
                     </a>
                   </li>
+                  {% if has_vat_fiscal_year %}
                   <li class="nav-item">
                     <a class="nav-link {% if _nav_ust %}active{% endif %}"
                       href="{{ url_for('accounting.ust') }}">
                       <i class="fas fa-percentage me-2"></i>USt-Voranmeldung
                     </a>
                   </li>
+                  {% endif %}
                 </ul>
               </div>
             </li>
@@ -417,7 +427,8 @@
         if (link.hasAttribute('data-bs-toggle')) return;
         if (link.hasAttribute('hx-get') || link.hasAttribute('hx-post')) return;
         start();
-        // Spinner verschwindet automatisch beim Laden der neuen Seite
+        // Fallback: Spinner nach 30 s ausblenden (bei Datei-Downloads bleibt die Seite geladen)
+        setTimeout(end, 30000);
       });
 
       // Programmatisches form.submit() (z. B. Massenaktionen wie Word/PDF-Download)

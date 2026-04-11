@@ -15,7 +15,7 @@ from sqlalchemy import extract, func
 from app.accounting import bp
 from app.accounting import services as acc_svc
 from app.extensions import db
-from app.models import Account, Booking, Invoice, OpenItem, WaterTariff, Customer, InvoiceItem, Project, RealAccount, RealAccountYearBalance, FiscalYear, FiscalYearReopenLog, TaxRate, Transfer
+from app.models import Account, Booking, Invoice, OpenItem, WaterTariff, Customer, Project, RealAccount, RealAccountYearBalance, FiscalYear, FiscalYearReopenLog, TaxRate, Transfer
 from app.utils import next_invoice_number
 
 
@@ -253,9 +253,9 @@ def booking_new():
         if booking_date > today:
             flash("Das Buchungsdatum darf nicht in der Zukunft liegen.", "danger")
             return _render_new(form_data=request.form, keep_date=request.form.get("date", ""))
-        fy_locked = _locked_fiscal_year(booking_date)
-        if fy_locked:
-            flash(f"Das Buchungsjahr {fy_locked.year} ist abgeschlossen. Buchung wurde nicht gespeichert.", "danger")
+        fy_error = acc_svc.open_fiscal_year_error(booking_date)
+        if fy_error:
+            flash(f"{fy_error} Buchung wurde nicht gespeichert.", "danger")
             return _render_new(form_data=request.form, keep_date=request.form.get("date", ""))
         amount_raw = request.form.get("amount", "0").replace(",", ".")
         amount = Decimal(amount_raw)
@@ -380,45 +380,54 @@ def booking_stornieren(booking_id):
             flash("Bitte einen Storno-Grund angeben.", "danger")
             return render_template("accounting/storno_form.html", booking=b)
 
-        # Storno-Buchung anlegen (gleiches Datum wie Ursprungsbuchung)
-        storno = Booking(
-            date=b.date,
-            account_id=b.account_id,
-            amount=b.amount * -1,
-            description=f"Storno: {b.description}",
-            invoice_id=b.invoice_id,
-            open_item_id=b.open_item_id,
-            project_id=b.project_id,
-            tax_rate=b.tax_rate,
-            storno_of_id=b.id,
-            storno_reason=reason,
-            storno_date=date.today(),
-            status=Booking.STATUS_VERBUCHT,
-            created_by_id=current_user.id,
-        )
-        db.session.add(storno)
+        try:
+            # Storno-Buchung anlegen (gleiches Datum wie Ursprungsbuchung)
+            storno = Booking(
+                date=b.date,
+                account_id=b.account_id,
+                amount=b.amount * -1,
+                description=f"Storno: {b.description}",
+                invoice_id=b.invoice_id,
+                open_item_id=b.open_item_id,
+                project_id=b.project_id,
+                tax_rate=b.tax_rate,
+                storno_of_id=b.id,
+                storno_reason=reason,
+                storno_date=date.today(),
+                status=Booking.STATUS_VERBUCHT,
+                created_by_id=current_user.id,
+            )
+            db.session.add(storno)
 
-        # Ursprungsbuchung als storniert markieren
-        b.status = Booking.STATUS_STORNIERT
+            # Ursprungsbuchung als storniert markieren
+            b.status = Booking.STATUS_STORNIERT
 
-        # Verknüpfte Rechnung stornieren
-        if b.invoice_id:
-            inv = db.session.get(Invoice, b.invoice_id)
-            if inv and inv.status not in (Invoice.STATUS_CANCELLED,):
-                inv.status = Invoice.STATUS_CANCELLED
-                flash(
-                    f"Rechnung {inv.invoice_number} wurde storniert. "
-                    f"Bitte eine neue Rechnung ausstellen.",
-                    "warning",
-                )
+            # Verknüpfte Rechnung stornieren
+            cancelled_invoice_number = None
+            if b.invoice_id:
+                inv = db.session.get(Invoice, b.invoice_id)
+                if inv and inv.status not in (Invoice.STATUS_CANCELLED,):
+                    inv.status = Invoice.STATUS_CANCELLED
+                    cancelled_invoice_number = inv.invoice_number
 
-        # Offenen Posten zurücksetzen wenn gewünscht
-        if b.open_item_id and request.form.get("close_open_item"):
-            oi = db.session.get(OpenItem, b.open_item_id)
-            if oi:
-                oi.status = OpenItem.STATUS_OPEN
+            # Offenen Posten zurücksetzen wenn gewünscht
+            if b.open_item_id and request.form.get("close_open_item"):
+                oi = db.session.get(OpenItem, b.open_item_id)
+                if oi:
+                    oi.status = OpenItem.STATUS_OPEN
 
-        db.session.commit()
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            flash(f"Fehler beim Stornieren – alle Änderungen wurden zurückgesetzt: {e}", "danger")
+            return redirect(url_for("accounting.bookings"))
+
+        if cancelled_invoice_number:
+            flash(
+                f"Rechnung {cancelled_invoice_number} wurde storniert. "
+                f"Bitte eine neue Rechnung ausstellen.",
+                "warning",
+            )
         flash("Buchung erfolgreich storniert.", "success")
         return redirect(url_for("accounting.bookings"))
 
@@ -489,13 +498,22 @@ def open_item_new():
     customers = Customer.query.filter_by(active=True).order_by(Customer.name).all()
     if request.method == "POST":
         from decimal import Decimal
+        item_date = date.fromisoformat(request.form["date"])
+        fy_error = acc_svc.open_fiscal_year_error(item_date)
+        if fy_error:
+            flash(f"{fy_error} Offener Posten wurde nicht gespeichert.", "danger")
+            return render_template(
+                "accounting/open_item_form.html",
+                item=None, customers=customers, today=date.today(),
+                form_data=request.form,
+            )
         amount_raw = request.form.get("amount", "0").replace(",", ".")
         item = OpenItem(
             customer_id=int(request.form["customer_id"]),
             description=request.form["description"].strip(),
             notes=request.form.get("notes", "").strip(),
             amount=Decimal(amount_raw),
-            date=date.fromisoformat(request.form["date"]),
+            date=item_date,
             due_date=date.fromisoformat(request.form["due_date"]) if request.form.get("due_date") else None,
             status=OpenItem.STATUS_OPEN,
             created_by_id=current_user.id,
@@ -529,48 +547,57 @@ def open_item_pay(item_id):
         return redirect(url_for("accounting.open_items"))
 
     real_account_id_raw = request.form.get("real_account_id") or None
-    ref = item.invoice.invoice_number if item.invoice_id else f"OP-{item.id}"
-    booking = Booking(
-        date=date.today(),
-        account_id=acc.id,
-        amount=amount,
-        description=f"Zahlung – {item.description} – {item.customer.name}",
-        reference=ref,
-        open_item_id=item.id,
-        invoice_id=item.invoice_id,
-        real_account_id=int(real_account_id_raw) if real_account_id_raw else None,
-        created_by_id=current_user.id,
-    )
-    db.session.add(booking)
-    db.session.flush()
+    try:
+        ref = item.invoice.invoice_number if item.invoice_id else f"OP-{item.id}"
+        booking = Booking(
+            date=date.today(),
+            account_id=acc.id,
+            amount=amount,
+            description=f"Zahlung – {item.description} – {item.customer.name}",
+            reference=ref,
+            open_item_id=item.id,
+            invoice_id=item.invoice_id,
+            real_account_id=int(real_account_id_raw) if real_account_id_raw else None,
+            created_by_id=current_user.id,
+        )
+        db.session.add(booking)
+        db.session.flush()
 
-    paid_total = db.session.query(func.sum(Booking.amount)).filter(
-        Booking.open_item_id == item.id
-    ).scalar() or Decimal("0")
-    balance = Decimal(str(item.amount)) - Decimal(str(paid_total))
+        paid_total = db.session.query(func.sum(Booking.amount)).filter(
+            Booking.open_item_id == item.id
+        ).scalar() or Decimal("0")
+        balance = Decimal(str(item.amount)) - Decimal(str(paid_total))
+
+        if balance > Decimal("0"):
+            item.status = OpenItem.STATUS_PARTIAL
+        elif balance == Decimal("0"):
+            item.status = OpenItem.STATUS_PAID
+        else:
+            item.status = OpenItem.STATUS_CREDIT
+
+        # Verknüpfte Rechnung synchronisieren
+        if item.invoice_id:
+            inv = db.session.get(Invoice, item.invoice_id)
+            if inv:
+                if balance > Decimal("0"):
+                    inv.status = Invoice.STATUS_SENT
+                elif balance == Decimal("0"):
+                    inv.status = Invoice.STATUS_PAID
+                else:
+                    inv.status = Invoice.STATUS_CREDIT
+
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        flash(f"Fehler bei der Zahlung – alle Änderungen wurden zurückgesetzt: {e}", "danger")
+        return redirect(url_for("accounting.open_items"))
 
     if balance > Decimal("0"):
-        item.status = OpenItem.STATUS_PARTIAL
         flash(f"Teilzahlung von {amount:.2f} \u20ac gebucht. Offener Restbetrag: {balance:.2f} \u20ac", "success")
     elif balance == Decimal("0"):
-        item.status = OpenItem.STATUS_PAID
         flash("Offener Posten vollst\u00e4ndig bezahlt.", "success")
     else:
-        item.status = OpenItem.STATUS_CREDIT
         flash(f"\u00dcberzahlung von {abs(balance):.2f} \u20ac. Offener Posten als Gutschrift markiert.", "info")
-
-    # Verknüpfte Rechnung synchronisieren
-    if item.invoice_id:
-        inv = db.session.get(Invoice, item.invoice_id)
-        if inv:
-            if balance > Decimal("0"):
-                inv.status = Invoice.STATUS_SENT
-            elif balance == Decimal("0"):
-                inv.status = Invoice.STATUS_PAID
-            else:
-                inv.status = Invoice.STATUS_CREDIT
-
-    db.session.commit()
     return redirect(url_for("accounting.open_items"))
 
 
@@ -582,11 +609,15 @@ def open_item_invoice(item_id):
     tariffs = WaterTariff.query.order_by(WaterTariff.valid_from.desc()).all()
 
     if request.method == "POST":
-        from decimal import Decimal
-        from datetime import timedelta
-        from app.models import Invoice, InvoiceItem
+        from app.models import Invoice
+        from app.invoices.routes import _apply_row_items_to_invoice
 
         inv_date = date.fromisoformat(request.form["date"])
+        fy_error = acc_svc.open_fiscal_year_error(inv_date)
+        if fy_error:
+            flash(f"{fy_error} Rechnung wurde nicht erstellt.", "danger")
+            return redirect(url_for("accounting.open_item_invoice", item_id=item_id))
+        is_vat_liable_year = acc_svc.is_year_vat_liable(inv_date.year)
         due_date = date.fromisoformat(request.form["due_date"]) if request.form.get("due_date") else None
         notes = request.form.get("notes", "").strip()
 
@@ -602,84 +633,16 @@ def open_item_invoice(item_id):
         db.session.add(inv)
         db.session.flush()
 
-        row_types = request.form.getlist("row_type[]")
-        row_tariff_ids = request.form.getlist("row_tariff_id[]")
-        row_consumptions = request.form.getlist("row_consumption_m3[]")
-        row_descriptions = request.form.getlist("row_description[]")
-        row_quantities = request.form.getlist("row_quantity[]")
-        row_units = request.form.getlist("row_unit[]")
-        row_unit_prices = request.form.getlist("row_unit_price[]")
-        row_tax_rates = request.form.getlist("row_tax_rate[]")
-
-        for i, rtype in enumerate(row_types):
-            def _dec(lst, idx, default="0"):
-                v = lst[idx].replace(",", ".") if idx < len(lst) and lst[idx].strip() else default
-                try:
-                    return Decimal(v)
-                except Exception:
-                    return Decimal(default)
-
-            if rtype == "tariff":
-                tariff_id = int(row_tariff_ids[i]) if i < len(row_tariff_ids) and row_tariff_ids[i] else None
-                if not tariff_id:
-                    continue
-                tariff = db.session.get(WaterTariff, tariff_id)
-                if not tariff:
-                    continue
-                consumption = _dec(row_consumptions, i)
-                if tariff.base_fee:
-                    db.session.add(InvoiceItem(
-                        invoice_id=inv.id,
-                        description="Grundgebühr",
-                        quantity=Decimal("1"),
-                        unit="Jahr",
-                        unit_price=tariff.base_fee,
-                        amount=tariff.base_fee,
-                    ))
-                amount = (consumption * tariff.price_per_m3).quantize(Decimal("0.01"))
-                db.session.add(InvoiceItem(
-                    invoice_id=inv.id,
-                    description=f"Wasserverbrauch ({consumption} m\u00b3 \u00d7 {tariff.price_per_m3} \u20ac/m\u00b3)",
-                    quantity=consumption,
-                    unit="m\u00b3",
-                    unit_price=tariff.price_per_m3,
-                    amount=amount,
-                ))
-            elif rtype == "water":
-                consumption = _dec(row_consumptions, i)
-                unit_price = _dec(row_unit_prices, i)
-                desc = row_descriptions[i].strip() if i < len(row_descriptions) and row_descriptions[i].strip() else f"Wasserverbrauch ({consumption} m\u00b3)"
-                amount = (consumption * unit_price).quantize(Decimal("0.01"))
-                db.session.add(InvoiceItem(
-                    invoice_id=inv.id,
-                    description=desc,
-                    quantity=consumption,
-                    unit="m\u00b3",
-                    unit_price=unit_price,
-                    amount=amount,
-                ))
-            else:  # free
-                desc = row_descriptions[i].strip() if i < len(row_descriptions) else ""
-                if not desc:
-                    continue
-                qty = _dec(row_quantities, i, "1")
-                unit = row_units[i] if i < len(row_units) and row_units[i].strip() else "Stk"
-                unit_price = _dec(row_unit_prices, i)
-                tax_rate = _dec(row_tax_rates, i)
-                amount = (qty * unit_price).quantize(Decimal("0.01"))
-                db.session.add(InvoiceItem(
-                    invoice_id=inv.id,
-                    description=desc,
-                    quantity=qty,
-                    unit=unit,
-                    unit_price=unit_price,
-                    amount=amount,
-                    tax_rate=tax_rate if tax_rate > 0 else None,
-                ))
+        _apply_row_items_to_invoice(inv, request.form, is_vat_liable_year)
 
         inv.recalculate_total()
         item.invoice_id = inv.id
-        db.session.commit()
+        try:
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            flash(f"Fehler beim Erstellen der Rechnung – alle Änderungen wurden zurückgesetzt: {e}", "danger")
+            return redirect(url_for("accounting.open_items"))
         flash(f"Rechnung {inv.invoice_number} erstellt.", "success")
         return redirect(url_for("invoices.detail", invoice_id=inv.id))
 
@@ -737,6 +700,7 @@ def report():
         balance=balance,
         project_summary_list=project_summary_list,
         konten_list=konten_list,
+        fy_vat_liable=acc_svc.is_year_vat_liable(year),
     )
 
 
@@ -749,6 +713,7 @@ def report_export_excel():
     import io as _io
 
     year = request.args.get("year", date.today().year, type=int)
+    fy_vat_liable = acc_svc.is_year_vat_liable(year)
 
     # ---- Hilfsfunktionen ----
     HDR_FILL = PatternFill("solid", fgColor="2F5496")
@@ -852,15 +817,18 @@ def report_export_excel():
     c4 = _eur(ws, r, 4, total_dec31); c4.font = TOTAL_FONT; c4.border = BORDER
     r += 2
 
-    # USt-Zahllast Jahresübersicht
-    ust_rows_y, vst_rows_y = _ust_berechnen(year, 0)
-    zahllast_y = sum(v["steuer"] for _, v in ust_rows_y) - sum(v["steuer"] for _, v in vst_rows_y)
-    _subhdr(ws, r, ["USt/VSt", "", "Betrag"])
-    r += 1
-    _eur(ws, r, 3, sum(v["steuer"] for _, v in ust_rows_y)); ws.cell(row=r, column=1, value="Umsatzsteuer gesamt"); r += 1
-    _eur(ws, r, 3, sum(v["steuer"] for _, v in vst_rows_y)); ws.cell(row=r, column=1, value="Vorsteuer gesamt"); r += 1
-    c = _eur(ws, r, 3, zahllast_y); c.font = TOTAL_FONT
-    ws.cell(row=r, column=1, value="Zahllast").font = TOTAL_FONT
+    # USt-Zahllast Jahresübersicht (nur wenn Jahr umsatzsteuerpflichtig ist)
+    if fy_vat_liable:
+        ust_rows_y, vst_rows_y = _ust_berechnen(year, 0)
+        zahllast_y = sum(v["steuer"] for _, v in ust_rows_y) - sum(v["steuer"] for _, v in vst_rows_y)
+        _subhdr(ws, r, ["USt/VSt", "", "Betrag"])
+        r += 1
+        _eur(ws, r, 3, sum(v["steuer"] for _, v in ust_rows_y)); ws.cell(row=r, column=1, value="Umsatzsteuer gesamt"); r += 1
+        _eur(ws, r, 3, sum(v["steuer"] for _, v in vst_rows_y)); ws.cell(row=r, column=1, value="Vorsteuer gesamt"); r += 1
+        c = _eur(ws, r, 3, zahllast_y); c.font = TOTAL_FONT
+        ws.cell(row=r, column=1, value="Zahllast").font = TOTAL_FONT
+    else:
+        ust_rows_y, vst_rows_y = [], []
     _autowidth(ws)
 
     # ================================================================
@@ -887,12 +855,12 @@ def report_export_excel():
     # BLATT 3: Buchungen
     # ================================================================
     ws3 = wb.create_sheet("Buchungen")
-    _hdr(ws3, 1, ["Datum", "Bankkonto", "Konto", "Typ", "Beschreibung", "Belegnummer", "Projekt", "Kunde", "MwSt %", "MwSt Betrag", "Betrag", "Status"])
+    if fy_vat_liable:
+        _hdr(ws3, 1, ["Datum", "Bankkonto", "Konto", "Typ", "Beschreibung", "Belegnummer", "Projekt", "Kunde", "USt %", "USt Betrag", "Betrag", "Status"])
+    else:
+        _hdr(ws3, 1, ["Datum", "Bankkonto", "Konto", "Typ", "Beschreibung", "Belegnummer", "Projekt", "Kunde", "Betrag", "Status"])
     r3 = 2
     for b in bookings_year:
-        tax_amt = ""
-        if b.tax_rate and b.tax_rate > 0:
-            tax_amt = float((abs(b.amount) * Decimal(str(b.tax_rate)) / (100 + Decimal(str(b.tax_rate)))).quantize(Decimal("0.01")))
         ws3.cell(row=r3, column=1, value=b.date).number_format = DATE_FMT
         ws3.cell(row=r3, column=2, value=b.real_account.name if b.real_account else "")
         ws3.cell(row=r3, column=3, value=b.account.name)
@@ -901,11 +869,18 @@ def report_export_excel():
         ws3.cell(row=r3, column=6, value=b.reference or "")
         ws3.cell(row=r3, column=7, value=b.project.name if b.project else "")
         ws3.cell(row=r3, column=8, value=b.customer.name if b.customer else "")
-        ws3.cell(row=r3, column=9, value=int(b.tax_rate) if b.tax_rate else "")
-        if tax_amt != "":
-            _eur(ws3, r3, 10, tax_amt)
-        _eur(ws3, r3, 11, float(b.amount))
-        ws3.cell(row=r3, column=12, value=b.status or "")
+        if fy_vat_liable:
+            tax_amt = ""
+            if b.tax_rate and b.tax_rate > 0:
+                tax_amt = float((abs(b.amount) * Decimal(str(b.tax_rate)) / (100 + Decimal(str(b.tax_rate)))).quantize(Decimal("0.01")))
+            ws3.cell(row=r3, column=9, value=int(b.tax_rate) if b.tax_rate else "")
+            if tax_amt != "":
+                _eur(ws3, r3, 10, tax_amt)
+            _eur(ws3, r3, 11, float(b.amount))
+            ws3.cell(row=r3, column=12, value=b.status or "")
+        else:
+            _eur(ws3, r3, 9, float(b.amount))
+            ws3.cell(row=r3, column=10, value=b.status or "")
         r3 += 1
     _autowidth(ws3)
 
@@ -987,15 +962,16 @@ def report_export_excel():
             ru += 1
         _autowidth(ws_ust)
 
-    for q in range(1, 5):
-        df, dt = _ust_period(year, q)
-        ur, vr = _ust_berechnen(year, q)
-        ws_q = wb.create_sheet(f"USt Q{q}")
-        _ust_sheet(ws_q, f"Q{q}/{year}", df, dt, ur, vr)
+    if fy_vat_liable:
+        for q in range(1, 5):
+            df, dt = _ust_period(year, q)
+            ur, vr = _ust_berechnen(year, q)
+            ws_q = wb.create_sheet(f"USt Q{q}")
+            _ust_sheet(ws_q, f"Q{q}/{year}", df, dt, ur, vr)
 
-    df_y, dt_y = _ust_period(year, 0)
-    ws_y = wb.create_sheet("USt Gesamtjahr")
-    _ust_sheet(ws_y, str(year), df_y, dt_y, ust_rows_y, vst_rows_y)
+        df_y, dt_y = _ust_period(year, 0)
+        ws_y = wb.create_sheet("USt Gesamtjahr")
+        _ust_sheet(ws_y, str(year), df_y, dt_y, ust_rows_y, vst_rows_y)
 
     # ---- Ausgabe ----
     buf = _io.BytesIO()
@@ -1475,10 +1451,28 @@ def export_csv():
 def ust():
     year = request.args.get("year", date.today().year, type=int)
     quartal = request.args.get("quartal", 0, type=int)
+    # Nur für umsatzsteuerpflichtige Jahre verfügbar
+    vat_years = [fy.year for fy in FiscalYear.query.filter_by(is_vat_liable=True)
+                 .order_by(FiscalYear.year.desc()).all()]
+    if not vat_years:
+        flash(
+            "Es ist kein umsatzsteuerpflichtiges Buchungsjahr angelegt. "
+            "Die Umsatzsteuer-Voranmeldung ist nicht verfügbar.",
+            "warning",
+        )
+        return redirect(url_for("accounting.fiscal_years"))
+    if not acc_svc.is_year_vat_liable(year):
+        flash(
+            f"Das Buchungsjahr {year} ist nicht umsatzsteuerpflichtig. "
+            f"Die Umsatzsteuer-Voranmeldung ist nur für pflichtige Jahre verfügbar.",
+            "warning",
+        )
+        year = vat_years[0]
     totals = acc_svc.ust_totals(year, quartal)
     return render_template(
         "accounting/ust.html",
         year=year, quartal=quartal,
+        vat_years=vat_years,
         date_from=totals["date_from"], date_to=totals["date_to"],
         ust_rows=totals["ust_rows"], vst_rows=totals["vst_rows"],
         total_ust=totals["total_ust"], total_vst=totals["total_vst"],
@@ -1493,6 +1487,9 @@ def ust():
 def export_ust_csv():
     year = request.args.get("year", date.today().year, type=int)
     quartal = request.args.get("quartal", 0, type=int)
+    if not acc_svc.is_year_vat_liable(year):
+        flash(f"Das Buchungsjahr {year} ist nicht umsatzsteuerpflichtig.", "warning")
+        return redirect(url_for("accounting.ust"))
     totals = acc_svc.ust_totals(year, quartal)
     date_from = totals["date_from"]
     date_to = totals["date_to"]
@@ -1672,9 +1669,9 @@ def transfer_new():
     real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
     if request.method == "POST":
         transfer_date = date.fromisoformat(request.form["date"])
-        locked = _locked_fiscal_year(transfer_date)
-        if locked:
-            flash(f"Das Buchungsjahr {locked.year} ist abgeschlossen. Umbuchung nicht möglich.", "danger")
+        fy_error = acc_svc.open_fiscal_year_error(transfer_date)
+        if fy_error:
+            flash(f"{fy_error} Umbuchung nicht möglich.", "danger")
             return render_template("accounting/transfer_form.html", real_accounts=real_accounts, today=date.today().isoformat())
 
         amount_raw = request.form["amount"].replace(",", ".")
@@ -1747,6 +1744,7 @@ def fiscal_year_new():
             year=year,
             start_date=date.fromisoformat(request.form["start_date"]),
             end_date=date.fromisoformat(request.form["end_date"]),
+            is_vat_liable=bool(request.form.get("is_vat_liable")),
         )
         db.session.add(fy)
         db.session.commit()
@@ -1761,6 +1759,36 @@ def fiscal_year_new():
         default_year=default_year,
         default_start=default_start,
         default_end=default_end,
+        edit_mode=False,
+    )
+
+
+@bp.route("/fiscal-years/<int:year>/edit", methods=["GET", "POST"])
+@login_required
+def fiscal_year_edit(year):
+    fy = db.get_or_404(FiscalYear, year)
+    if request.method == "POST":
+        if fy.closed:
+            flash(
+                f"Buchungsjahr {year} ist abgeschlossen und kann nicht bearbeitet werden.",
+                "warning",
+            )
+            return redirect(url_for("accounting.fiscal_years"))
+        try:
+            fy.start_date = date.fromisoformat(request.form["start_date"])
+            fy.end_date = date.fromisoformat(request.form["end_date"])
+            fy.is_vat_liable = bool(request.form.get("is_vat_liable"))
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            flash(f"Fehler beim Speichern: {e}", "danger")
+            return redirect(url_for("accounting.fiscal_year_edit", year=year))
+        flash(f"Buchungsjahr {year} aktualisiert.", "success")
+        return redirect(url_for("accounting.fiscal_years"))
+    return render_template(
+        "accounting/fiscal_year_form.html",
+        fiscal_year=fy,
+        edit_mode=True,
     )
 
 
@@ -1776,24 +1804,29 @@ def fiscal_year_close(year):
     real_accs = RealAccount.query.order_by(RealAccount.name).all()
 
     if request.method == "POST":
-        # Jahresabschlussstand pro Bankkonto speichern
-        for ra in real_accs:
-            dec31 = _year_end_balance(ra, year)
-            existing = RealAccountYearBalance.query.filter_by(
-                real_account_id=ra.id, year=year
-            ).first()
-            if existing:
-                existing.closing_balance = dec31
-            else:
-                db.session.add(RealAccountYearBalance(
-                    real_account_id=ra.id,
-                    year=year,
-                    closing_balance=dec31,
-                ))
-        fy.closed = True
-        fy.closed_at = _dt.utcnow()
-        fy.closed_by_id = current_user.id
-        db.session.commit()
+        try:
+            # Jahresabschlussstand pro Bankkonto speichern
+            for ra in real_accs:
+                dec31 = _year_end_balance(ra, year)
+                existing = RealAccountYearBalance.query.filter_by(
+                    real_account_id=ra.id, year=year
+                ).first()
+                if existing:
+                    existing.closing_balance = dec31
+                else:
+                    db.session.add(RealAccountYearBalance(
+                        real_account_id=ra.id,
+                        year=year,
+                        closing_balance=dec31,
+                    ))
+            fy.closed = True
+            fy.closed_at = _dt.utcnow()
+            fy.closed_by_id = current_user.id
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            flash(f"Fehler beim Jahresabschluss – alle Änderungen wurden zurückgesetzt: {e}", "danger")
+            return redirect(url_for("accounting.fiscal_years"))
         flash(f"Buchungsjahr {year} wurde abgeschlossen.", "success")
         return redirect(url_for("accounting.fiscal_years"))
 
@@ -1819,16 +1852,21 @@ def fiscal_year_reopen(year):
         if not reason:
             flash("Bitte einen Grund für die Wiederöffnung angeben.", "danger")
             return render_template("accounting/fiscal_year_reopen_form.html", fiscal_year=fy)
-        log = FiscalYearReopenLog(
-            fiscal_year_id=fy.year,
-            reopened_by_id=current_user.id,
-            reason=reason,
-        )
-        db.session.add(log)
-        fy.closed = False
-        fy.closed_at = None
-        fy.closed_by_id = None
-        db.session.commit()
+        try:
+            log = FiscalYearReopenLog(
+                fiscal_year_id=fy.year,
+                reopened_by_id=current_user.id,
+                reason=reason,
+            )
+            db.session.add(log)
+            fy.closed = False
+            fy.closed_at = None
+            fy.closed_by_id = None
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            flash(f"Fehler beim Wiederöffnen – alle Änderungen wurden zurückgesetzt: {e}", "danger")
+            return redirect(url_for("accounting.fiscal_years"))
         flash(f"Buchungsjahr {year} wurde wieder geöffnet.", "success")
         return redirect(url_for("accounting.fiscal_years"))
     return render_template("accounting/fiscal_year_reopen_form.html", fiscal_year=fy)

@@ -1,37 +1,60 @@
 {% extends "base.html" %}
-{% block title %}Neues Buchungsjahr{% endblock %}
-{% block page_title %}<i class="fas fa-calendar-plus me-2"></i> Neues Buchungsjahr{% endblock %}
+{% block title %}{% if edit_mode %}Buchungsjahr bearbeiten{% else %}Neues Buchungsjahr{% endif %}{% endblock %}
+{% block page_title %}
+  <i class="fas fa-calendar-plus me-2"></i>
+  {% if edit_mode %}Buchungsjahr {{ fiscal_year.year }} bearbeiten{% else %}Neues Buchungsjahr{% endif %}
+{% endblock %}
 {% block content %}
 <div class="card">
-      <div class="card-header"><h3 class="card-title">Buchungsjahr anlegen</h3></div>
+      <div class="card-header"><h3 class="card-title">
+        {% if edit_mode %}Buchungsjahr bearbeiten{% else %}Buchungsjahr anlegen{% endif %}
+      </h3></div>
       <form method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="card-body">
           <div class="mb-3">
             <label class="form-label">Jahr <span class="text-danger">*</span></label>
             <input type="number" name="year" class="form-control"
-              value="{{ default_year }}" min="2000" max="2100" required>
+              value="{{ fiscal_year.year if edit_mode else default_year }}"
+              min="2000" max="2100" required
+              {% if edit_mode %}readonly{% endif %}>
           </div>
           <div class="mb-3">
             <label class="form-label">Startdatum <span class="text-danger">*</span></label>
             <input type="date" name="start_date" class="form-control"
-              value="{{ default_start }}" required>
+              value="{{ fiscal_year.start_date.isoformat() if edit_mode else default_start }}" required>
           </div>
           <div class="mb-3">
             <label class="form-label">Enddatum <span class="text-danger">*</span></label>
             <input type="date" name="end_date" class="form-control"
-              value="{{ default_end }}" required>
+              value="{{ fiscal_year.end_date.isoformat() if edit_mode else default_end }}" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-check">
+              <input type="checkbox" name="is_vat_liable" value="1" class="form-check-input"
+                {% if edit_mode and fiscal_year.is_vat_liable %}checked{% endif %}>
+              <span class="form-check-label">
+                <strong>Umsatzsteuerpflichtig</strong>
+                <br>
+                <small class="text-muted">
+                  Wenn aktiv, werden Rechnungen mit USt ausgewiesen (Wasser-Standard: 10 %)
+                  und die Umsatzsteuer-Voranmeldung ist für dieses Jahr verfügbar.
+                </small>
+              </span>
+            </label>
           </div>
         </div>
         <div class="card-footer">
           <button type="submit" class="btn btn-primary">
-            <i class="fas fa-save me-1"></i> Anlegen
+            <i class="fas fa-save me-1"></i>
+            {% if edit_mode %}Speichern{% else %}Anlegen{% endif %}
           </button>
           <a href="{{ url_for('accounting.fiscal_years') }}" class="btn btn-secondary ms-2">Abbrechen</a>
         </div>
       </form>
     </div>
 </div>
+{% if not edit_mode %}
 <script>
 (function () {
   var yearEl = document.querySelector('input[name="year"]');
@@ -46,4 +69,5 @@
   });
 })();
 </script>
+{% endif %}
 {% endblock %}

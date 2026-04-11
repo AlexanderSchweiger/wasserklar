@@ -1,0 +1,177 @@
+{# Quick-Create-Modal für Kunden. Wird aus Rechnungs- und ähnlichen Flows
+   eingebunden. Verwendet das Window-Event „customer:created" um den
+   Parent-Kontext (z.B. ein TomSelect) darüber zu informieren, dass ein
+   neuer Kunde verfügbar ist. #}
+<div class="modal fade" id="customerQuickCreateModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">
+          <i class="fas fa-user-plus me-2"></i> Neuen Kunden anlegen
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <form id="customerQuickCreateForm">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-body">
+          <div id="cqc-error" class="alert alert-danger d-none" role="alert"></div>
+
+          <div class="row">
+            <div class="col-md-8">
+              <div class="mb-3">
+                <label class="form-label">Name <span class="text-danger">*</span></label>
+                <input type="text" name="name" id="cqc-name" class="form-control" required
+                       hx-get="{{ url_for('customers.check_duplicates') }}"
+                       hx-trigger="keyup changed delay:500ms, change"
+                       hx-target="#cqc-duplicates"
+                       hx-include="#cqc-plz, #cqc-ort">
+              </div>
+            </div>
+            <div class="col-md-4">
+              <div class="mb-3">
+                <label class="form-label">E-Mail</label>
+                <input type="email" name="email" class="form-control">
+              </div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="col-md-8">
+              <div class="mb-3">
+                <label class="form-label">Straße <span class="text-danger">*</span></label>
+                <input type="text" name="strasse" class="form-control" required>
+              </div>
+            </div>
+            <div class="col-md-4">
+              <div class="mb-3">
+                <label class="form-label">Hausnummer <span class="text-danger">*</span></label>
+                <input type="text" name="hausnummer" class="form-control" required>
+              </div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="col-md-3">
+              <div class="mb-3">
+                <label class="form-label">PLZ <span class="text-danger">*</span></label>
+                <input type="text" name="plz" id="cqc-plz" class="form-control" required>
+              </div>
+            </div>
+            <div class="col-md-9">
+              <div class="mb-3">
+                <label class="form-label">Ort / Stadt <span class="text-danger">*</span></label>
+                <input type="text" name="ort" id="cqc-ort" class="form-control" required>
+              </div>
+            </div>
+          </div>
+
+          {# Live-Dubletten-Anzeige + Block für Server-geprüfte Dublettenliste
+             nach dem (blockierten) Submit #}
+          <div id="cqc-duplicates"></div>
+          <div id="cqc-server-duplicates"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+          <button type="submit" class="btn btn-primary" id="cqc-submit-btn">
+            <i class="fas fa-save me-1"></i> Anlegen
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const modalEl = document.getElementById('customerQuickCreateModal');
+  const form = document.getElementById('customerQuickCreateForm');
+  const errBox = document.getElementById('cqc-error');
+  const serverDupsBox = document.getElementById('cqc-server-duplicates');
+  const submitBtn = document.getElementById('cqc-submit-btn');
+  let forceCreate = false;
+
+  // Reset beim Öffnen
+  modalEl.addEventListener('show.bs.modal', function () {
+    form.reset();
+    errBox.classList.add('d-none');
+    errBox.textContent = '';
+    serverDupsBox.innerHTML = '';
+    document.getElementById('cqc-duplicates').innerHTML = '';
+    forceCreate = false;
+    submitBtn.innerHTML = '<i class="fas fa-save me-1"></i> Anlegen';
+  });
+
+  form.addEventListener('submit', async function (e) {
+    e.preventDefault();
+    errBox.classList.add('d-none');
+    serverDupsBox.innerHTML = '';
+
+    const fd = new FormData(form);
+    if (forceCreate) fd.append('force', '1');
+
+    try {
+      const resp = await fetch("{{ url_for('customers.quick_create') }}", {
+        method: 'POST',
+        body: fd,
+        headers: {'X-Requested-With': 'XMLHttpRequest'},
+      });
+      const data = await resp.json();
+
+      if (resp.ok && data.ok) {
+        // Event auslösen, damit der Parent den neuen Kunden im TomSelect übernehmen kann.
+        window.dispatchEvent(new CustomEvent('customer:created', {detail: data}));
+        bootstrap.Modal.getInstance(modalEl).hide();
+        return;
+      }
+
+      if (data.error === 'missing_fields') {
+        errBox.textContent = 'Bitte folgende Pflichtfelder ausfüllen: ' + (data.missing || []).join(', ');
+        errBox.classList.remove('d-none');
+        return;
+      }
+
+      if (data.error === 'duplicates_found') {
+        const list = (data.candidates || []).map(function (c) {
+          const inactive = c.active ? '' : ' <span class="badge bg-secondary ms-1">Inaktiv</span>';
+          return '<li class="mb-1"><strong>' + escapeHtml(c.name) + '</strong>' + inactive +
+                 ' <span class="text-muted">– ' + escapeHtml(c.address || '—') + '</span>' +
+                 ' <span class="badge bg-warning text-dark ms-1">' + Math.round(c.score * 100) + ' %</span>' +
+                 ' <button type="button" class="btn btn-sm btn-outline-primary ms-2" data-pick-id="' + c.id +
+                 '" data-pick-name="' + escapeHtml(c.name) + '" data-pick-label="' + escapeHtml(c.name + ' – ' + (c.address || '')) +
+                 '">Verwenden</button></li>';
+        }).join('');
+        serverDupsBox.innerHTML =
+          '<div class="alert alert-warning py-2">' +
+          '<div class="mb-2"><i class="fas fa-exclamation-triangle me-2"></i>' +
+          '<strong>Ähnliche Kunden gefunden</strong> – bitte prüfen, ob schon vorhanden.</div>' +
+          '<ul class="list-unstyled small mb-0">' + list + '</ul></div>';
+        forceCreate = true;
+        submitBtn.innerHTML = '<i class="fas fa-exclamation-triangle me-1"></i> Trotzdem anlegen';
+
+        // Click-Handler für die „Verwenden"-Buttons
+        serverDupsBox.querySelectorAll('[data-pick-id]').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            window.dispatchEvent(new CustomEvent('customer:created', {detail: {
+              id: parseInt(btn.dataset.pickId, 10),
+              name: btn.dataset.pickName,
+              label: btn.dataset.pickLabel,
+            }}));
+            bootstrap.Modal.getInstance(modalEl).hide();
+          });
+        });
+        return;
+      }
+
+      errBox.textContent = 'Unerwarteter Fehler beim Anlegen.';
+      errBox.classList.remove('d-none');
+    } catch (err) {
+      errBox.textContent = 'Netzwerkfehler: ' + err.message;
+      errBox.classList.remove('d-none');
+    }
+  });
+
+  function escapeHtml(s) {
+    return (s || '').replace(/[&<>"']/g, function (m) {
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];
+    });
+  }
+})();
+</script>

@@ -20,6 +20,7 @@
         <tr>
           <th>Jahr</th>
           <th>Zeitraum</th>
+          <th>USt</th>
           <th>Status</th>
           <th>Abgeschlossen am</th>
           <th>Abgeschlossen von</th>
@@ -31,6 +32,13 @@
         <tr>
           <td><strong>{{ fy.year }}</strong></td>
           <td>{{ fy.start_date.strftime('%d.%m.%Y') }} – {{ fy.end_date.strftime('%d.%m.%Y') }}</td>
+          <td>
+            {% if fy.is_vat_liable %}
+            <span class="badge bg-info text-white"><i class="fas fa-percent me-1"></i>Pflichtig</span>
+            {% else %}
+            <span class="badge bg-light text-muted">—</span>
+            {% endif %}
+          </td>
           <td>
             {% if fy.closed %}
             <span class="badge bg-danger text-white"><i class="fas fa-lock me-1"></i>Abgeschlossen</span>
@@ -44,8 +52,12 @@
           <td>
             {% if fy.closed_by %}{{ fy.closed_by.username }}{% else %}–{% endif %}
           </td>
-          <td class="text-end">
+          <td class="text-end text-nowrap">
             {% if not fy.closed %}
+            <a href="{{ url_for('accounting.fiscal_year_edit', year=fy.year) }}"
+               class="btn btn-outline-secondary btn-sm">
+              <i class="fas fa-edit me-1"></i> Bearbeiten
+            </a>
             <a href="{{ url_for('accounting.fiscal_year_close', year=fy.year) }}"
                class="btn btn-warning btn-sm">
               <i class="fas fa-lock me-1"></i> Abschließen
@@ -60,7 +72,7 @@
         </tr>
         {% if fy.reopen_logs.count() > 0 %}
         <tr class="bg-light">
-          <td colspan="6" class="ps-4 pt-1 pb-1">
+          <td colspan="7" class="ps-4 pt-1 pb-1">
             <small class="text-muted"><strong>Wiederöffnungsprotokoll:</strong></small>
             <ul class="mb-0 mt-1" style="font-size:0.85em;">
               {% for log in fy.reopen_logs %}

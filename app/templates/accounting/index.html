@@ -47,6 +47,7 @@
       </div>
     </a>
   </div>
+  {% if has_vat_fiscal_year %}
   <div class="col-md-3 col-sm-6">
     <a href="{{ url_for('accounting.ust', year=year) }}" class="card card-link text-white" style="background-color:#6f42c1">
       <div class="card-body">
@@ -58,5 +59,6 @@
       </div>
     </a>
   </div>
+  {% endif %}
 </div>
 {% endblock %}
