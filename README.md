@@ -65,7 +65,7 @@ docker compose -f docker-compose.test.yml exec wg flask --app run init-db
 
 # 4. Admin-Benutzer anlegen (einmalig)
 docker compose -f docker-compose.test.yml exec wg flask --app run create-admin
-#    → http://NAS-IP:5000
+#    → http://SERVER-IP:5000
 ```
 
 ---
@@ -89,12 +89,40 @@ docker compose -f docker-compose.prod.yml exec wg flask --app run init-db
 
 # 4. Admin-Benutzer anlegen (einmalig bei Erstinstallation)
 docker compose -f docker-compose.prod.yml exec wg flask --app run create-admin
-#    → http://NAS-IP:5000
+#    → https://deine-domain.at  (oder http://SERVER-IP:5000)
 
 # Update (ohne Datenverlust):
 docker compose -f docker-compose.prod.yml up -d --build
 docker compose -f docker-compose.prod.yml exec wg flask --app run upgrade-db
 ```
+
+---
+
+## Automatisierte Tests
+
+Die Tests laufen mit **pytest** gegen eine SQLite-In-Memory-Datenbank — kein laufender Server nötig.
+
+```bash
+# Alle Tests ausführen
+.venv/Scripts/pytest tests/
+
+# Mit Details (welcher Test läuft)
+.venv/Scripts/pytest tests/ -v
+
+# Nur Unit-Tests (keine DB, sehr schnell ~0,5 s)
+.venv/Scripts/pytest tests/unit/ -v
+
+# Mit Coverage-Report
+.venv/Scripts/pytest tests/ --cov=app --cov-report=term-missing
+```
+
+### Teststruktur
+
+| Verzeichnis | Inhalt | DB? |
+|-------------|--------|-----|
+| `tests/unit/` | Reine Berechnungsfunktionen (Storno-Filter, Split-Logik, MwSt, Quartale) | nein |
+| `tests/integration/` | Sammelbuchung, Storno, Kontostand, Rechnungsnummer | ja (SQLite) |
+| `tests/http/` | Login-Schutz, Auth-Flow, HTMX-Partials | ja (SQLite) |
 
 ---
 

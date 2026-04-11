@@ -99,6 +99,14 @@ def create_app(config_name=None):
         except Exception:
             pass  # DB noch nicht initialisiert (Erststart)
 
+        # Offene Buchungen der Vortage als "Verbucht" markieren (Catch-up beim Start,
+        # falls der Scheduler-Container um Mitternacht nicht lief)
+        try:
+            from app.accounting.services import auto_post_bookings
+            auto_post_bookings()
+        except Exception:
+            pass  # DB noch nicht initialisiert (Erststart)
+
     # CLI-Befehle
     from cli import register_commands
     register_commands(app)

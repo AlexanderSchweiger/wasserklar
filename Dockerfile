@@ -8,6 +8,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgdk-pixbuf-2.0-0 \
     libffi-dev \
     shared-mime-info \
+    curl \
+    && curl -fsSL "https://github.com/aptible/supercronic/releases/latest/download/supercronic-linux-amd64" \
+       -o /usr/local/bin/supercronic \
+    && chmod +x /usr/local/bin/supercronic \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

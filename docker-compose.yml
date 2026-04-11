@@ -36,5 +36,17 @@ services:
       timeout: 10s
       retries: 3
 
+  scheduler:
+    build: .
+    command: ["/usr/local/bin/supercronic", "/app/scheduler/crontab"]
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://wg:${POSTGRES_PASSWORD}@postgres:5432/wgbuchhaltung
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   postgres_data:

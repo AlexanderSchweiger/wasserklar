@@ -1,0 +1,2 @@
+# Täglich um 00:05 Uhr alle offenen Buchungen der Vortage auf "Verbucht" setzen
+5 0 * * * flask --app run mark-posted

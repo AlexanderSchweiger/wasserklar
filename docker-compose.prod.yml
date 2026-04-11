@@ -17,3 +17,11 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+  scheduler:
+    build: .
+    command: ["/usr/local/bin/supercronic", "/app/scheduler/crontab"]
+    env_file:
+      - .env.prod
+    # Dieselbe DATABASE_URL wie der wg-Container
+    restart: unless-stopped

@@ -44,7 +44,12 @@
     {% endfor %}
     {% set total_gross = ns.total %}
     {% set total_tax = ns.tax %}
-    <tr class="table-warning booking-group-header{% if is_stornogruppe %} text-muted{% endif %}"
+    {% set all_children_offen = effective_children and (effective_children|selectattr('status', 'equalto', 'Offen')|list|length == effective_children|length) %}
+    {% set any_child_verbucht = effective_children and (effective_children|selectattr('status', 'equalto', 'Verbucht')|list|length > 0) %}
+    <tr class="booking-group-header
+        {%- if is_stornogruppe %} text-muted
+        {%- elif all_children_offen %} table-info
+        {%- endif %}"
         {% if is_stornogruppe %}style="opacity:0.55"{% endif %}>
       <td style="white-space:nowrap">{{ g.date.strftime('%d.%m.%Y') }}</td>
       <td class="text-center">
@@ -93,39 +98,42 @@
         {{ total_gross|de_number }}&nbsp;€
       </td>
       <td class="text-end" style="white-space:nowrap">
-        <a href="{{ url_for('accounting.booking_group_detail', group_id=g.id) }}"
-           class="btn btn-sm btn-outline-secondary" title="Details">
-          <i class="fas fa-search"></i>
-        </a>
         {% set fy_locked = effective_children and (effective_children|first).id in locked_booking_ids %}
-        {% set all_children_offen = effective_children and (effective_children|selectattr('status', 'equalto', 'Offen')|list|length == effective_children|length) %}
-        {% set can_edit = not is_stornogruppe and not fy_locked and g.date.year == now_year and all_children_offen %}
-        {% if can_edit %}
-        <a href="{{ url_for('accounting.booking_group_edit', group_id=g.id) }}"
-           class="btn btn-sm btn-outline-primary" title="Bearbeiten">
-          <i class="fas fa-edit"></i>
-        </a>
-        <form method="post" action="{{ url_for('accounting.booking_group_delete', group_id=g.id) }}"
-              style="display:inline"
-              onsubmit="return confirm('Sammelbuchung wirklich löschen? Alle {{ effective_children|length }} Zeilen werden entfernt.');">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button type="submit" class="btn btn-sm btn-outline-danger" title="Löschen">
-            <i class="fas fa-trash"></i>
-          </button>
-        </form>
-        {% endif %}
-        {% if not is_stornogruppe and not fy_locked and g.date.year == now_year %}
-        <a href="{{ url_for('accounting.booking_group_stornieren', group_id=g.id) }}"
-           class="btn btn-sm btn-outline-danger" title="Stornieren">
-          <i class="fas fa-ban"></i>
-        </a>
+        {% if fy_locked %}
+          <span class="text-muted" title="Buchungsjahr abgeschlossen"><i class="fas fa-lock"></i></span>
+        {% elif is_stornogruppe %}
+          {# nichts – stornierte Gruppe #}
+        {% elif all_children_offen %}
+          <a href="{{ url_for('accounting.booking_group_edit', group_id=g.id) }}"
+             class="btn btn-sm btn-outline-secondary" title="Bearbeiten">
+            <i class="fas fa-edit"></i>
+          </a>
+          <form method="post" action="{{ url_for('accounting.booking_group_delete', group_id=g.id) }}"
+                style="display:inline"
+                onsubmit="return confirm('Sammelbuchung wirklich löschen? Alle {{ effective_children|length }} Zeilen werden entfernt.');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-sm btn-outline-danger" title="Löschen">
+              <i class="fas fa-trash"></i>
+            </button>
+          </form>
+        {% elif any_child_verbucht %}
+          <a href="{{ url_for('accounting.booking_group_edit', group_id=g.id) }}"
+             class="btn btn-sm btn-outline-secondary" title="Bearbeiten">
+            <i class="fas fa-edit"></i>
+          </a>
+          <a href="{{ url_for('accounting.booking_group_stornieren', group_id=g.id) }}"
+             class="btn btn-sm btn-outline-danger" title="Stornieren">
+            <i class="fas fa-ban"></i>
+          </a>
         {% endif %}
       </td>
     </tr>
     {% for b in row.children %}
     {% if not b.storno_of_id %}
     <tr class="booking-group-child
-        {%- if b.status == 'Storniert' %} text-muted{% endif %}"
+        {%- if b.status == 'Storniert' %} text-muted
+        {%- elif b.status == 'Offen' %} table-info
+        {%- endif %}"
         {% if b.status == 'Storniert' %}style="opacity:0.5"{% endif %}>
       <td></td>
       <td class="text-center">

@@ -101,7 +101,6 @@ def account_edit(account_id):
 # Buchhaltungs-Berechnungen sind im zentralen Service ``app.accounting.services``
 # gebündelt. Die folgenden Aliase erhalten die bisherigen lokalen Aufrufstellen
 # kompatibel und sorgen dafür, dass es nur eine einzige Quelle der Wahrheit gibt.
-_auto_post_bookings = acc_svc.auto_post_bookings
 _locked_fiscal_year = acc_svc.locked_fiscal_year
 _jan1_balance = acc_svc.jan1_balance
 _year_end_balance = acc_svc.year_end_balance
@@ -114,8 +113,6 @@ _ust_berechnen = acc_svc.ust_compute
 @bp.route("/bookings")
 @login_required
 def bookings():
-    _auto_post_bookings()
-
     year = request.args.get("year", date.today().year, type=int)
     account_id = request.args.get("account_id", "", type=str)
     project_id = request.args.get("project_id", "", type=str)
@@ -322,7 +319,7 @@ def booking_edit(booking_id):
             "Bitte Sammelbuchung stornieren und neu anlegen.",
             "warning",
         )
-        return redirect(url_for("accounting.booking_group_detail", group_id=b.group_id))
+        return redirect(url_for("accounting.booking_group_edit", group_id=b.group_id))
     if b.status == Booking.STATUS_STORNIERT:
         flash("Stornierte Buchungen können nicht bearbeitet werden.", "warning")
         return redirect(url_for("accounting.bookings"))
@@ -379,7 +376,7 @@ def booking_delete(booking_id):
             "einzeln gelöscht werden. Bitte Sammelbuchung stornieren.",
             "warning",
         )
-        return redirect(url_for("accounting.booking_group_detail", group_id=b.group_id))
+        return redirect(url_for("accounting.booking_group_edit", group_id=b.group_id))
     if b.status != Booking.STATUS_OFFEN:
         flash("Nur offene Buchungen können gelöscht werden.", "warning")
         return redirect(url_for("accounting.bookings"))
@@ -491,15 +488,12 @@ def booking_stornieren(booking_id):
 @bp.route("/booking-groups/<int:group_id>")
 @login_required
 def booking_group_detail(group_id):
-    group = db.get_or_404(BookingGroup, group_id)
-    fy_locked = _locked_fiscal_year(group.date)
-    is_locked = fy_locked is not None or group.date.year != date.today().year
-    return render_template(
-        "accounting/booking_group_detail.html",
-        group=group,
-        fy_locked=fy_locked,
-        is_locked=is_locked,
-    )
+    """Alt-URL – leitet auf die Bearbeiten-Ansicht um.
+
+    Die reine Ansichts-Route wurde entfernt; ``booking_group_edit`` rendert
+    das Formular readonly, sobald die Gruppe nicht mehr bearbeitbar ist.
+    """
+    return redirect(url_for("accounting.booking_group_edit", group_id=group_id))
 
 
 @bp.route("/booking-groups/new", methods=["GET", "POST"])
@@ -656,7 +650,7 @@ def booking_group_new():
             return _render_new(form_data=request.form)
 
         flash("Sammelbuchung angelegt.", "success")
-        return redirect(url_for("accounting.booking_group_detail", group_id=group.id))
+        return redirect(url_for("accounting.booking_group_edit", group_id=group.id))
 
     return _render_new()
 
@@ -685,18 +679,20 @@ def _group_is_editable(group):
 @bp.route("/booking-groups/<int:group_id>/edit", methods=["GET", "POST"])
 @login_required
 def booking_group_edit(group_id):
-    """Bearbeiten einer Sammelbuchung (ADR-002).
+    """Bearbeiten / Anzeigen einer Sammelbuchung (ADR-002).
 
-    Erlaubt solange die Gruppe aktiv und noch nicht verbucht ist. Beim
-    Speichern werden *alle* aktiven Kinder ersetzt (delete + create), damit
-    Zeilen frei hinzugefügt/entfernt werden können. Die Kopplung an
+    Bearbeitung ist erlaubt, solange die Gruppe aktiv und noch nicht verbucht
+    ist. Ist das nicht der Fall, wird dasselbe Formular im Readonly-Modus
+    angezeigt – die reine Ansichts-Route ``booking_group_detail`` wurde
+    abgeschafft und leitet hierher weiter.
+
+    Beim Speichern werden *alle* aktiven Kinder ersetzt (delete + create),
+    damit Zeilen frei hinzugefügt/entfernt werden können. Die Kopplung an
     Rechnung/OpenItem/Kunde bleibt erhalten.
     """
     group = db.get_or_404(BookingGroup, group_id)
     ok, msg = _group_is_editable(group)
-    if not ok:
-        flash(msg, "warning")
-        return redirect(url_for("accounting.booking_group_detail", group_id=group.id))
+    fy_locked = _locked_fiscal_year(group.date)
 
     accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
     active_projects = Project.query.filter_by(closed=False).order_by(Project.name).all()
@@ -718,8 +714,19 @@ def booking_group_edit(group_id):
             default_real_account=default_real_account,
             today=today,
             is_edit=True,
+            readonly=not ok,
+            readonly_reason=msg,
+            fy_locked=fy_locked,
             **extra,
         )
+
+    # Bei nicht bearbeitbaren Gruppen (storniert / verbucht / FY gesperrt)
+    # wird das Formular readonly gerendert – POST-Anfragen werden abgewiesen.
+    if not ok:
+        if request.method == "POST":
+            flash(msg, "warning")
+            return redirect(url_for("accounting.booking_group_edit", group_id=group.id))
+        return _render_edit()
 
     if request.method == "POST":
         try:
@@ -851,7 +858,7 @@ def booking_group_edit(group_id):
             return _render_edit(form_data=request.form)
 
         flash("Sammelbuchung aktualisiert.", "success")
-        return redirect(url_for("accounting.booking_group_detail", group_id=group.id))
+        return redirect(url_for("accounting.booking_group_edit", group_id=group.id))
 
     return _render_edit()
 
@@ -868,7 +875,7 @@ def booking_group_delete(group_id):
     ok, msg = _group_is_editable(group)
     if not ok:
         flash(msg, "warning")
-        return redirect(url_for("accounting.booking_group_detail", group_id=group.id))
+        return redirect(url_for("accounting.booking_group_edit", group_id=group.id))
     try:
         for child in list(group.children):
             db.session.delete(child)
@@ -877,7 +884,7 @@ def booking_group_delete(group_id):
     except Exception as e:
         db.session.rollback()
         flash(f"Fehler beim Löschen der Sammelbuchung: {e}", "danger")
-        return redirect(url_for("accounting.booking_group_detail", group_id=group.id))
+        return redirect(url_for("accounting.booking_group_edit", group_id=group.id))
     flash("Sammelbuchung gelöscht.", "info")
     return redirect(url_for("accounting.bookings"))
 
@@ -889,7 +896,7 @@ def booking_group_stornieren(group_id):
 
     if group.status == BookingGroup.STATUS_STORNIERT:
         flash("Diese Sammelbuchung ist bereits storniert.", "warning")
-        return redirect(url_for("accounting.booking_group_detail", group_id=group.id))
+        return redirect(url_for("accounting.booking_group_edit", group_id=group.id))
 
     fy_locked = _locked_fiscal_year(group.date)
     if fy_locked:
@@ -898,10 +905,10 @@ def booking_group_stornieren(group_id):
             f"Diese Sammelbuchung kann nicht storniert werden.",
             "danger",
         )
-        return redirect(url_for("accounting.booking_group_detail", group_id=group.id))
+        return redirect(url_for("accounting.booking_group_edit", group_id=group.id))
     if group.date.year != date.today().year:
         flash("Sammelbuchungen aus Vorjahren können nicht storniert werden.", "warning")
-        return redirect(url_for("accounting.booking_group_detail", group_id=group.id))
+        return redirect(url_for("accounting.booking_group_edit", group_id=group.id))
 
     if request.method == "POST":
         reason = request.form.get("storno_reason", "").strip()
@@ -932,7 +939,7 @@ def booking_group_stornieren(group_id):
         except Exception as e:
             db.session.rollback()
             flash(f"Fehler beim Stornieren – alle Änderungen wurden zurückgesetzt: {e}", "danger")
-            return redirect(url_for("accounting.booking_group_detail", group_id=group.id))
+            return redirect(url_for("accounting.booking_group_edit", group_id=group.id))
 
         if cancelled_invoice_number:
             flash(

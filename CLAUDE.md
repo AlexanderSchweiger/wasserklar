@@ -28,7 +28,7 @@ flask --app run upgrade-db
 # Run dev server (http://127.0.0.1:5000)
 flask --app run run
 
-# Docker (production on Synology NAS)
+# Docker (production, z.B. Hetzner-Server)
 docker compose up -d --build
 docker compose exec wg flask --app run init-db
 docker compose exec wg flask --app run create-admin
