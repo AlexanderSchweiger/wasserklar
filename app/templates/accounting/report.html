@@ -6,7 +6,7 @@
 <!-- Filter-Leiste -->
 <div class="card mb-3">
   <div class="card-body py-2">
-    <form method="get" class="d-flex flex-wrap align-items-end gap-3">
+    <form method="get" class="filter-bar">
       <div>
         <label class="form-label fw-bold mb-1">Jahr</label>
         <input type="number" name="year" value="{{ year }}" min="2000" max="2100"
@@ -15,7 +15,7 @@
 
       <div>
         <label class="form-label fw-bold mb-1">Bankkonto</label>
-        <select name="real_account_id" class="form-select form-select-sm tom-select" style="min-width:180px">
+        <select name="real_account_id" class="form-select form-select-sm tom-select">
           <option value="0" {% if real_account_id == 0 %}selected{% endif %}>Alle Konten</option>
           {% for ra in all_real_accounts %}
           <option value="{{ ra.id }}" {% if real_account_id == ra.id %}selected{% endif %}>{{ ra.name }}</option>
@@ -24,9 +24,12 @@
       </div>
 
       <div class="d-flex gap-2 align-items-end">
-        <button type="submit" class="btn btn-sm btn-secondary">
-          <i class="fas fa-sync me-1"></i> Anzeigen
+        <button type="submit" class="btn btn-sm btn-primary">
+          <i class="fas fa-search me-1"></i> Anzeigen
         </button>
+        <a href="{{ url_for('accounting.report') }}" class="btn btn-sm btn-outline-secondary">
+          <i class="fas fa-times me-1"></i> Zurücksetzen
+        </a>
         <a href="{{ url_for('accounting.export_csv', year=year) }}"
            class="btn btn-sm btn-outline-secondary">
           <i class="fas fa-file-csv me-1"></i> CSV
@@ -41,37 +44,43 @@
 </div>
 
 <!-- Saldo-Kacheln -->
-<div class="row">
+<div class="row row-deck row-cards mb-3">
   <div class="col-md-4">
-    <div class="card bg-success text-white mb-3">
-      <div class="card-body">
-        <div class="subheader">Einnahmen {{ year }}</div>
-        <div class="h1 mb-0">{{ total_income|de_number }} €</div>
-      </div>
-      <div class="card-footer bg-success-lt text-success border-0 py-2">
-        <i class="fas fa-arrow-up me-1"></i>
+    <div class="card bg-success text-white h-100">
+      <div class="card-body d-flex flex-column">
+        <div class="small text-uppercase fw-semibold mb-2" style="color: rgba(255,255,255,0.7)">
+          Einnahmen {{ year }}
+        </div>
+        <div class="h1 mb-0 flex-grow-1">{{ total_income|de_number }} €</div>
+        <div class="mt-3 small" style="color: rgba(255,255,255,0.7)">
+          <i class="fas fa-arrow-up me-1"></i> Einnahmen
+        </div>
       </div>
     </div>
   </div>
   <div class="col-md-4">
-    <div class="card bg-danger text-white mb-3">
-      <div class="card-body">
-        <div class="subheader">Ausgaben {{ year }}</div>
-        <div class="h1 mb-0">{{ total_expense|de_number }} €</div>
-      </div>
-      <div class="card-footer bg-danger-lt text-danger border-0 py-2">
-        <i class="fas fa-arrow-down me-1"></i>
+    <div class="card bg-danger text-white h-100">
+      <div class="card-body d-flex flex-column">
+        <div class="small text-uppercase fw-semibold mb-2" style="color: rgba(255,255,255,0.7)">
+          Ausgaben {{ year }}
+        </div>
+        <div class="h1 mb-0 flex-grow-1">{{ total_expense|de_number }} €</div>
+        <div class="mt-3 small" style="color: rgba(255,255,255,0.7)">
+          <i class="fas fa-arrow-down me-1"></i> Ausgaben
+        </div>
       </div>
     </div>
   </div>
   <div class="col-md-4">
-    <div class="card {{ 'bg-success' if balance >= 0 else 'bg-danger' }} text-white mb-3">
-      <div class="card-body">
-        <div class="subheader">Saldo {{ year }}</div>
-        <div class="h1 mb-0">{{ balance|de_number }} €</div>
-      </div>
-      <div class="card-footer {{ 'bg-success-lt text-success' if balance >= 0 else 'bg-danger-lt text-danger' }} border-0 py-2">
-        <i class="fas fa-balance-scale me-1"></i>
+    <div class="card {{ 'bg-success' if balance >= 0 else 'bg-danger' }} text-white h-100">
+      <div class="card-body d-flex flex-column">
+        <div class="small text-uppercase fw-semibold mb-2" style="color: rgba(255,255,255,0.7)">
+          Saldo {{ year }}
+        </div>
+        <div class="h1 mb-0 flex-grow-1">{{ balance|de_number }} €</div>
+        <div class="mt-3 small" style="color: rgba(255,255,255,0.7)">
+          <i class="fas fa-balance-scale me-1"></i> Jahressaldo
+        </div>
       </div>
     </div>
   </div>

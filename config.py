@@ -38,11 +38,17 @@ class DevelopmentConfig(Config):
 
 
 class TestingConfig(Config):
+    """Für automatisierte Unit-Tests: SQLite in-memory, kein CSRF."""
     DEBUG = False
     TESTING = True
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
     WTF_CSRF_ENABLED = False
     SECRET_KEY = "test-secret-key"
+
+
+class StagingConfig(Config):
+    """Docker-Testinstallation: verhält sich wie Production, nutzt DATABASE_URL aus .env.test."""
+    DEBUG = False
 
 
 class ProductionConfig(Config):
@@ -52,6 +58,7 @@ class ProductionConfig(Config):
 config = {
     "development": DevelopmentConfig,
     "testing":     TestingConfig,
+    "staging":     StagingConfig,
     "production":  ProductionConfig,
     "default":     DevelopmentConfig,
 }

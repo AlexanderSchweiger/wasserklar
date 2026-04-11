@@ -14,7 +14,7 @@
 <div class="row">
   {% for entry in account_data %}
   {% set ra = entry.ra %}
-  <div class="col-md-6 col-xl-4">
+  <div class="col-md-6 col-xl-5 col-xxl-4">
     <div class="card mb-4">
       <div class="card-header">
         <h3 class="card-title">
@@ -69,14 +69,14 @@
                 {% if h.is_current %}
                 <span class="badge bg-blue text-white-lt ms-1">offen</span>
                 {% elif h.is_closed %}
-                <span class="badge bg-success text-white-lt text-success ms-1">abgeschlossen</span>
+                <span class="badge bg-success text-white ms-1">geschlossen</span>
                 {% endif %}
               </td>
               <td class="text-end text-success">
                 {% if h.income != 0 %}{{ h.income|de_number }} €{% else %}<span class="text-muted">—</span>{% endif %}
               </td>
               <td class="text-end text-danger">
-                {% if h.expense != 0 %}{{ h.expense|de_number }} €{% else %}<span class="text-muted">—</span>{% endif %}
+                <span>{% if h.expense != 0 %}{{ h.expense|de_number }}&nbsp;€{% else %}<span class="text-muted">—</span>{% endif %}
               </td>
               <td class="text-end fw-bold {{ 'text-success' if h.closing >= 0 else 'text-danger' }}">
                 {{ h.closing|de_number }} €

@@ -12,7 +12,12 @@
         <option value="{{ y }}" {{ 'selected' if y == year }}>{{ y }}</option>
         {% endfor %}
       </select>
-      <button type="submit" class="btn btn-sm btn-secondary">Anzeigen</button>
+      <button type="submit" class="btn btn-sm btn-primary">
+        <i class="fas fa-search me-1"></i> Anzeigen
+      </button>
+      <a href="{{ url_for('accounting.transfers') }}" class="btn btn-sm btn-outline-secondary">
+        <i class="fas fa-times me-1"></i> Zurücksetzen
+      </a>
     </form>
   </div>
   <div class="col text-end">

@@ -23,6 +23,16 @@
       <i class="fas fa-filter me-1"></i> Ohne Objekt anzeigen
     </a>
     {% endif %}
+    <button type="button" class="btn btn-sm btn-primary"
+      hx-get="{{ url_for('customers.index') }}"
+      hx-trigger="click"
+      hx-target="#customer-table"
+      hx-include="[name='q'],[name='ohne_objekt']">
+      <i class="fas fa-search me-1"></i> Anzeigen
+    </button>
+    <a href="{{ url_for('customers.index') }}" class="btn btn-sm btn-outline-secondary">
+      <i class="fas fa-times me-1"></i> Zurücksetzen
+    </a>
     <div class="ms-auto">
       <a href="{{ url_for('customers.new') }}" class="btn btn-primary btn-sm">
         <i class="fas fa-plus me-1"></i> Neuer Kunde

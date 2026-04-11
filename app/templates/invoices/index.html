@@ -5,7 +5,7 @@
 <div class="card">
   <div class="card-header">
     <div class="filter-bar">
-      <div class="mb-3" style="width:150px">
+      <div class="mb-3">
         <label class="form-label mb-0 me-1">Status</label>
         <select name="status" class="form-select form-select-sm tom-select"
           hx-get="{{ url_for('invoices.index') }}"
@@ -78,6 +78,18 @@
                  hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id'],[name='nur_email']">
           <label class="form-check-label" for="nur_email">Nur E-Mail-Rechnungen</label>
         </div>
+      </div>
+      <div class="mb-3 d-flex gap-2 align-items-center">
+        <button type="button" class="btn btn-sm btn-primary"
+          hx-get="{{ url_for('invoices.index') }}"
+          hx-trigger="click"
+          hx-target="#invoices-table"
+          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id'],[name='nur_email']">
+          <i class="fas fa-search me-1"></i> Anzeigen
+        </button>
+        <a href="{{ url_for('invoices.index') }}" class="btn btn-sm btn-outline-secondary">
+          <i class="fas fa-times me-1"></i> Zurücksetzen
+        </a>
       </div>
     </div>
     <div class="card-options">

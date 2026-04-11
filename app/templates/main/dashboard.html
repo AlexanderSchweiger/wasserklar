@@ -5,42 +5,46 @@
 <!-- Stat-Kacheln -->
 <div class="row row-deck row-cards mb-3">
   <div class="col-lg-4 col-md-6">
-    <a href="{{ url_for('accounting.open_items') }}" class="text-decoration-none">
-      <div class="card {{ 'bg-danger text-white' if total_open > 0 else 'bg-success text-white' }}">
-        <div class="card-body">
-          <div class="d-flex align-items-center">
-            <div class="subheader">Offene Posten ({{ open_invoices }} Rechnungen)</div>
+    <a href="{{ url_for('accounting.open_items') }}" class="text-decoration-none d-flex h-100">
+      <div class="card w-100 {{ 'bg-danger' if total_open > 0 else 'bg-success' }} text-white">
+        <div class="card-body d-flex flex-column">
+          <div class="small text-uppercase fw-semibold mb-2" style="color: rgba(255,255,255,0.7)">
+            Offene Posten ({{ open_invoices }} Rechnungen)
           </div>
-          <div class="d-flex align-items-baseline mt-2">
-            <div class="h1 mb-0 me-2">{{ total_open|de_number }} €</div>
+          <div class="h1 mb-0 flex-grow-1">{{ total_open|de_number }} €</div>
+          <div class="mt-3 small" style="color: rgba(255,255,255,0.7)">
+            <i class="fas fa-file-invoice-dollar me-1"></i> Details &rarr;
           </div>
-          <div class="mt-2"><i class="fas fa-file-invoice-dollar me-1"></i><small>Details &rarr;</small></div>
         </div>
       </div>
     </a>
   </div>
   <div class="col-lg-4 col-md-6">
-    <a href="{{ url_for('meters.index', year=current_year) }}" class="text-decoration-none">
-      <div class="card {{ 'bg-warning text-white' if missing_readings > 0 else 'bg-success text-white' }}">
-        <div class="card-body">
-          <div class="subheader">Fehlende Ablesungen {{ current_year }}</div>
-          <div class="d-flex align-items-baseline mt-2">
-            <div class="h1 mb-0 me-2">{{ missing_readings }}</div>
+    <a href="{{ url_for('meters.index', year=current_year) }}" class="text-decoration-none d-flex h-100">
+      <div class="card w-100 {{ 'bg-warning' if missing_readings > 0 else 'bg-success' }} text-white">
+        <div class="card-body d-flex flex-column">
+          <div class="small text-uppercase fw-semibold mb-2" style="color: rgba(255,255,255,0.7)">
+            Fehlende Ablesungen {{ current_year }}
           </div>
-          <div class="mt-2"><i class="fas fa-tachometer-alt me-1"></i><small>Zur Übersicht &rarr;</small></div>
+          <div class="h1 mb-0 flex-grow-1">{{ missing_readings }}</div>
+          <div class="mt-3 small" style="color: rgba(255,255,255,0.7)">
+            <i class="fas fa-tachometer-alt me-1"></i> Zur Übersicht &rarr;
+          </div>
         </div>
       </div>
     </a>
   </div>
   <div class="col-lg-4 col-md-6">
-    <a href="{{ url_for('accounting.report', year=current_year) }}" class="text-decoration-none">
-      <div class="card {{ 'bg-success text-white' if year_balance >= 0 else 'bg-danger text-white' }}">
-        <div class="card-body">
-          <div class="subheader">Saldo {{ current_year }}</div>
-          <div class="d-flex align-items-baseline mt-2">
-            <div class="h1 mb-0 me-2">{{ year_balance|de_number }} €</div>
+    <a href="{{ url_for('accounting.report', year=current_year) }}" class="text-decoration-none d-flex h-100">
+      <div class="card w-100 {{ 'bg-success' if year_balance >= 0 else 'bg-danger' }} text-white">
+        <div class="card-body d-flex flex-column">
+          <div class="small text-uppercase fw-semibold mb-2" style="color: rgba(255,255,255,0.7)">
+            Saldo {{ current_year }}
           </div>
-          <div class="mt-2"><i class="fas fa-balance-scale me-1"></i><small>Jahresbericht &rarr;</small></div>
+          <div class="h1 mb-0 flex-grow-1">{{ year_balance|de_number }} €</div>
+          <div class="mt-3 small" style="color: rgba(255,255,255,0.7)">
+            <i class="fas fa-balance-scale me-1"></i> Jahresbericht &rarr;
+          </div>
         </div>
       </div>
     </a>

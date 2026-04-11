@@ -24,6 +24,18 @@
           hx-include="[name='q'],[id='year-select'],[name='mode']">
         <span class="input-group-text"><i class="fas fa-search"></i></span>
       </div>
+      <div class="mb-3 d-flex gap-2 align-items-center">
+        <button type="button" class="btn btn-sm btn-primary"
+          hx-get="{{ url_for('meters.index') }}"
+          hx-trigger="click"
+          hx-target="#meters-table"
+          hx-include="[name='q'],[id='year-select'],[name='mode']">
+          <i class="fas fa-search me-1"></i> Anzeigen
+        </button>
+        <a href="{{ url_for('meters.index') }}" class="btn btn-sm btn-outline-secondary">
+          <i class="fas fa-times me-1"></i> Zurücksetzen
+        </a>
+      </div>
     </div>
     <div class="card-options">
       <button type="button" id="btn-toggle-mode"
