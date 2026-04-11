@@ -2,6 +2,7 @@ import io
 import csv
 import base64
 import difflib
+from collections import OrderedDict
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
@@ -15,7 +16,7 @@ from sqlalchemy import extract, func
 from app.accounting import bp
 from app.accounting import services as acc_svc
 from app.extensions import db
-from app.models import Account, Booking, Invoice, OpenItem, WaterTariff, Customer, Project, RealAccount, RealAccountYearBalance, FiscalYear, FiscalYearReopenLog, TaxRate, Transfer
+from app.models import Account, Booking, BookingGroup, Invoice, OpenItem, WaterTariff, Customer, Project, RealAccount, RealAccountYearBalance, FiscalYear, FiscalYearReopenLog, TaxRate, Transfer
 from app.utils import next_invoice_number
 
 
@@ -157,11 +158,31 @@ def bookings():
     # account_id/project_id gelten nur für Buchungen, nicht für Umbuchungen
     transfers = [] if (account_id or project_id) else transfer_query.all()
 
-    # Gemeinsame sortierte Liste: type='booking' oder 'transfer'
-    # Umbuchungen erscheinen als zwei Zeilen (Ausgang negativ, Eingang positiv)
+    # Grouping-Modus: Sammelbuchungen werden nur im ungefilterten Jahresview
+    # gruppiert. Sobald Konto-/Projekt-/Bankkonto-Filter aktiv sind, fällt die
+    # Ansicht auf eine flache Zeilenliste zurück (ADR-002), damit Filter
+    # innerhalb einer Sammelbuchung konsistent wirken.
+    group_mode = not (account_id or project_id or real_account_id)
+
     rows = []
+    seen_groups = OrderedDict()  # group_id → row-dict (für In-Place-Update)
     for b in bkgs:
-        rows.append({"type": "booking", "obj": b, "date": b.date})
+        if group_mode and b.group_id:
+            entry = seen_groups.get(b.group_id)
+            if entry is None:
+                group = b.group
+                entry = {
+                    "type": "booking_group",
+                    "group": group,
+                    "children": [],
+                    "date": group.date if group else b.date,
+                }
+                seen_groups[b.group_id] = entry
+                rows.append(entry)
+            entry["children"].append(b)
+        else:
+            rows.append({"type": "booking", "obj": b, "date": b.date})
+
     ra_id_int = int(real_account_id) if real_account_id else None
     for t in transfers:
         if ra_id_int:
@@ -207,6 +228,7 @@ def bookings():
 
     table_ctx = dict(
         rows=rows, year=year,
+        now_year=date.today().year,
         total_amount=total_amount,
         total_vorsteuer=total_vorsteuer,
         total_ust=total_ust,
@@ -294,6 +316,13 @@ def booking_new():
 @login_required
 def booking_edit(booking_id):
     b = db.get_or_404(Booking, booking_id)
+    if b.group_id is not None:
+        flash(
+            "Kinder einer Sammelbuchung können nicht einzeln bearbeitet werden. "
+            "Bitte Sammelbuchung stornieren und neu anlegen.",
+            "warning",
+        )
+        return redirect(url_for("accounting.booking_group_detail", group_id=b.group_id))
     if b.status == Booking.STATUS_STORNIERT:
         flash("Stornierte Buchungen können nicht bearbeitet werden.", "warning")
         return redirect(url_for("accounting.bookings"))
@@ -342,6 +371,15 @@ def booking_edit(booking_id):
 @login_required
 def booking_delete(booking_id):
     b = db.get_or_404(Booking, booking_id)
+    # Sammelbuchungs-Kinder dürfen nicht einzeln gelöscht werden (ADR-002,
+    # Regel 4: Storno/Löschung immer der ganzen Gruppe).
+    if b.group_id is not None:
+        flash(
+            "Diese Buchung gehört zu einer Sammelbuchung und kann nicht "
+            "einzeln gelöscht werden. Bitte Sammelbuchung stornieren.",
+            "warning",
+        )
+        return redirect(url_for("accounting.booking_group_detail", group_id=b.group_id))
     if b.status != Booking.STATUS_OFFEN:
         flash("Nur offene Buchungen können gelöscht werden.", "warning")
         return redirect(url_for("accounting.bookings"))
@@ -359,6 +397,18 @@ def booking_delete(booking_id):
 @login_required
 def booking_stornieren(booking_id):
     b = db.get_or_404(Booking, booking_id)
+
+    # Sammelbuchungs-Kinder dürfen nicht einzeln storniert werden (ADR-002,
+    # Regel 4: Storno immer der ganzen Gruppe). Weiterleitung auf das
+    # Gruppen-Storno-Formular, damit der Anwender die gesamte Sammelbuchung
+    # zurücksetzt.
+    if b.group_id is not None:
+        flash(
+            "Diese Buchung gehört zu einer Sammelbuchung und kann nur als "
+            "Ganzes storniert werden.",
+            "warning",
+        )
+        return redirect(url_for("accounting.booking_group_stornieren", group_id=b.group_id))
 
     if b.status == Booking.STATUS_STORNIERT:
         flash("Diese Buchung ist bereits storniert.", "warning")
@@ -435,6 +485,468 @@ def booking_stornieren(booking_id):
 
 
 # ---------------------------------------------------------------------------
+# Sammelbuchungen (BookingGroup) — ADR-002
+# ---------------------------------------------------------------------------
+
+@bp.route("/booking-groups/<int:group_id>")
+@login_required
+def booking_group_detail(group_id):
+    group = db.get_or_404(BookingGroup, group_id)
+    fy_locked = _locked_fiscal_year(group.date)
+    is_locked = fy_locked is not None or group.date.year != date.today().year
+    return render_template(
+        "accounting/booking_group_detail.html",
+        group=group,
+        fy_locked=fy_locked,
+        is_locked=is_locked,
+    )
+
+
+@bp.route("/booking-groups/new", methods=["GET", "POST"])
+@login_required
+def booking_group_new():
+    """Manuelle Anlage einer Sammelbuchung.
+
+    Der Header enthält Datum, Beschreibung, Belegnummer, optional Kunde/Rechnung/
+    Bankkonto. Die Kinder werden als dynamische Zeilen (Konto, Projekt, Steuersatz,
+    Betrag, Beschreibung) geliefert. Es müssen mindestens 2 Zeilen übergeben
+    werden — einzeilige Sammelbuchungen werden vom Editor abgewiesen (ADR-002,
+    Regel 1).
+    """
+    accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
+    active_projects = Project.query.filter_by(closed=False).order_by(Project.name).all()
+    real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
+    customers = Customer.query.filter_by(active=True).order_by(Customer.name).all()
+    tax_rates = TaxRate.query.order_by(TaxRate.rate).all()
+    default_real_account = RealAccount.query.filter_by(is_default=True, active=True).first()
+    today = date.today()
+
+    def _render_new(**extra):
+        return render_template(
+            "accounting/booking_group_form.html",
+            group=None,
+            accounts=accounts,
+            projects=active_projects,
+            real_accounts=real_accounts,
+            customers=customers,
+            tax_rates=tax_rates,
+            default_real_account=default_real_account,
+            today=today,
+            **extra,
+        )
+
+    if request.method == "POST":
+        try:
+            group_date = date.fromisoformat(request.form["date"])
+        except (KeyError, ValueError):
+            flash("Ungültiges Datum.", "danger")
+            return _render_new(form_data=request.form)
+        if group_date > today:
+            flash("Das Datum darf nicht in der Zukunft liegen.", "danger")
+            return _render_new(form_data=request.form)
+        fy_error = acc_svc.open_fiscal_year_error(group_date)
+        if fy_error:
+            flash(f"{fy_error} Sammelbuchung wurde nicht gespeichert.", "danger")
+            return _render_new(form_data=request.form)
+
+        description = request.form.get("description", "").strip()
+        if not description:
+            flash("Bitte eine Beschreibung angeben.", "danger")
+            return _render_new(form_data=request.form)
+
+        reference = request.form.get("reference", "").strip() or None
+        customer_id_raw = request.form.get("customer_id") or None
+        invoice_id_raw = request.form.get("invoice_id") or None
+        real_account_id_raw = request.form.get("real_account_id") or None
+
+        customer_id = int(customer_id_raw) if customer_id_raw else None
+        invoice_id = int(invoice_id_raw) if invoice_id_raw else None
+        real_account_id = int(real_account_id_raw) if real_account_id_raw else None
+
+        # Kind-Zeilen einsammeln
+        child_accounts = request.form.getlist("child_account_id[]")
+        child_projects = request.form.getlist("child_project_id[]")
+        child_tax_rates = request.form.getlist("child_tax_rate[]")
+        child_amounts = request.form.getlist("child_amount[]")
+        child_descriptions = request.form.getlist("child_description[]")
+
+        parsed_children = []
+        for i, acc_raw in enumerate(child_accounts):
+            if not acc_raw:
+                continue
+            try:
+                acc_id = int(acc_raw)
+            except ValueError:
+                continue
+            amount_raw = child_amounts[i].replace(",", ".") if i < len(child_amounts) else "0"
+            try:
+                amount = Decimal(amount_raw)
+            except Exception:
+                continue
+            if amount == 0:
+                continue
+            proj_raw = child_projects[i] if i < len(child_projects) else ""
+            try:
+                proj_id = int(proj_raw) if proj_raw else None
+            except ValueError:
+                proj_id = None
+            tax_raw = child_tax_rates[i] if i < len(child_tax_rates) else ""
+            try:
+                tax_rate = Decimal(tax_raw) if tax_raw else Decimal("0")
+            except Exception:
+                tax_rate = Decimal("0")
+            desc = (
+                child_descriptions[i].strip()
+                if i < len(child_descriptions) and child_descriptions[i].strip()
+                else description
+            )
+            parsed_children.append({
+                "account_id": acc_id,
+                "project_id": proj_id,
+                "tax_rate": tax_rate,
+                "amount": amount,
+                "description": desc,
+            })
+
+        if len(parsed_children) < 2:
+            flash(
+                "Eine Sammelbuchung benötigt mindestens 2 Zeilen. "
+                "Für Einzelbuchungen bitte 'Neue Buchung' verwenden.",
+                "danger",
+            )
+            return _render_new(form_data=request.form)
+
+        try:
+            group = BookingGroup(
+                date=group_date,
+                description=description,
+                reference=reference,
+                invoice_id=invoice_id,
+                customer_id=customer_id,
+                total_amount=Decimal("0"),
+                status=BookingGroup.STATUS_AKTIV,
+                created_by_id=current_user.id,
+            )
+            db.session.add(group)
+            db.session.flush()
+
+            for c in parsed_children:
+                child = Booking(
+                    date=group_date,
+                    account_id=c["account_id"],
+                    project_id=c["project_id"],
+                    amount=c["amount"],
+                    description=c["description"],
+                    reference=reference,
+                    invoice_id=invoice_id,
+                    customer_id=customer_id,
+                    real_account_id=real_account_id,
+                    tax_rate=c["tax_rate"] if c["tax_rate"] and c["tax_rate"] > 0 else None,
+                    group_id=group.id,
+                    created_by_id=current_user.id,
+                )
+                db.session.add(child)
+
+            db.session.flush()
+            acc_svc.recompute_group_total(group.id)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            flash(f"Fehler beim Anlegen der Sammelbuchung – alle Änderungen wurden zurückgesetzt: {e}", "danger")
+            return _render_new(form_data=request.form)
+
+        flash("Sammelbuchung angelegt.", "success")
+        return redirect(url_for("accounting.booking_group_detail", group_id=group.id))
+
+    return _render_new()
+
+
+def _group_is_editable(group):
+    """Liefert (ok, msg). Eine Sammelbuchung darf bearbeitet/gelöscht werden,
+    solange sie aktiv ist, kein Kind bereits verbucht wurde und das
+    Buchungsjahr nicht abgeschlossen ist (analog zur Einzelbuchung)."""
+    if group.status == BookingGroup.STATUS_STORNIERT:
+        return False, "Stornierte Sammelbuchungen können nicht bearbeitet werden."
+    fy_locked = _locked_fiscal_year(group.date)
+    if fy_locked:
+        return False, (
+            f"Das Buchungsjahr {fy_locked.year} ist abgeschlossen. "
+            f"Diese Sammelbuchung kann nicht bearbeitet werden."
+        )
+    for c in group.children:
+        if c.status != Booking.STATUS_OFFEN:
+            return False, (
+                "Diese Sammelbuchung ist bereits verbucht und kann "
+                "nicht mehr geändert werden."
+            )
+    return True, None
+
+
+@bp.route("/booking-groups/<int:group_id>/edit", methods=["GET", "POST"])
+@login_required
+def booking_group_edit(group_id):
+    """Bearbeiten einer Sammelbuchung (ADR-002).
+
+    Erlaubt solange die Gruppe aktiv und noch nicht verbucht ist. Beim
+    Speichern werden *alle* aktiven Kinder ersetzt (delete + create), damit
+    Zeilen frei hinzugefügt/entfernt werden können. Die Kopplung an
+    Rechnung/OpenItem/Kunde bleibt erhalten.
+    """
+    group = db.get_or_404(BookingGroup, group_id)
+    ok, msg = _group_is_editable(group)
+    if not ok:
+        flash(msg, "warning")
+        return redirect(url_for("accounting.booking_group_detail", group_id=group.id))
+
+    accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
+    active_projects = Project.query.filter_by(closed=False).order_by(Project.name).all()
+    real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
+    customers = Customer.query.filter_by(active=True).order_by(Customer.name).all()
+    tax_rates = TaxRate.query.order_by(TaxRate.rate).all()
+    default_real_account = RealAccount.query.filter_by(is_default=True, active=True).first()
+    today = date.today()
+
+    def _render_edit(**extra):
+        return render_template(
+            "accounting/booking_group_form.html",
+            group=group,
+            accounts=accounts,
+            projects=active_projects,
+            real_accounts=real_accounts,
+            customers=customers,
+            tax_rates=tax_rates,
+            default_real_account=default_real_account,
+            today=today,
+            is_edit=True,
+            **extra,
+        )
+
+    if request.method == "POST":
+        try:
+            group_date = date.fromisoformat(request.form["date"])
+        except (KeyError, ValueError):
+            flash("Ungültiges Datum.", "danger")
+            return _render_edit(form_data=request.form)
+        if group_date > today:
+            flash("Das Datum darf nicht in der Zukunft liegen.", "danger")
+            return _render_edit(form_data=request.form)
+        fy_error = acc_svc.open_fiscal_year_error(group_date)
+        if fy_error:
+            flash(f"{fy_error} Sammelbuchung wurde nicht gespeichert.", "danger")
+            return _render_edit(form_data=request.form)
+
+        description = request.form.get("description", "").strip()
+        if not description:
+            flash("Bitte eine Beschreibung angeben.", "danger")
+            return _render_edit(form_data=request.form)
+
+        reference = request.form.get("reference", "").strip() or None
+        customer_id_raw = request.form.get("customer_id") or None
+        invoice_id_raw = request.form.get("invoice_id") or None
+        real_account_id_raw = request.form.get("real_account_id") or None
+
+        customer_id = int(customer_id_raw) if customer_id_raw else None
+        invoice_id = int(invoice_id_raw) if invoice_id_raw else None
+        real_account_id = int(real_account_id_raw) if real_account_id_raw else None
+
+        # Kind-Zeilen einsammeln
+        child_accounts = request.form.getlist("child_account_id[]")
+        child_projects = request.form.getlist("child_project_id[]")
+        child_tax_rates = request.form.getlist("child_tax_rate[]")
+        child_amounts = request.form.getlist("child_amount[]")
+        child_descriptions = request.form.getlist("child_description[]")
+
+        parsed_children = []
+        for i, acc_raw in enumerate(child_accounts):
+            if not acc_raw:
+                continue
+            try:
+                acc_id = int(acc_raw)
+            except ValueError:
+                continue
+            amount_raw = child_amounts[i].replace(",", ".") if i < len(child_amounts) else "0"
+            try:
+                amount = Decimal(amount_raw)
+            except Exception:
+                continue
+            if amount == 0:
+                continue
+            proj_raw = child_projects[i] if i < len(child_projects) else ""
+            try:
+                proj_id = int(proj_raw) if proj_raw else None
+            except ValueError:
+                proj_id = None
+            tax_raw = child_tax_rates[i] if i < len(child_tax_rates) else ""
+            try:
+                tax_rate = Decimal(tax_raw) if tax_raw else Decimal("0")
+            except Exception:
+                tax_rate = Decimal("0")
+            desc = (
+                child_descriptions[i].strip()
+                if i < len(child_descriptions) and child_descriptions[i].strip()
+                else description
+            )
+            parsed_children.append({
+                "account_id": acc_id,
+                "project_id": proj_id,
+                "tax_rate": tax_rate,
+                "amount": amount,
+                "description": desc,
+            })
+
+        if len(parsed_children) < 2:
+            flash(
+                "Eine Sammelbuchung benötigt mindestens 2 Zeilen. "
+                "Für Einzelbuchungen bitte 'Neue Buchung' verwenden.",
+                "danger",
+            )
+            return _render_edit(form_data=request.form)
+
+        # OpenItem-Referenz aus bestehenden Kindern übernehmen (kann nicht
+        # über das Form geändert werden — bleibt am Offenen Posten gebunden).
+        existing_open_item_ids = {c.open_item_id for c in group.children if c.open_item_id}
+        open_item_id = next(iter(existing_open_item_ids), None) if len(existing_open_item_ids) == 1 else None
+
+        try:
+            # Header aktualisieren
+            group.date = group_date
+            group.description = description
+            group.reference = reference
+            group.invoice_id = invoice_id
+            group.customer_id = customer_id
+
+            # Alte Kinder komplett ersetzen
+            for old in list(group.children):
+                db.session.delete(old)
+            db.session.flush()
+
+            for c in parsed_children:
+                child = Booking(
+                    date=group_date,
+                    account_id=c["account_id"],
+                    project_id=c["project_id"],
+                    amount=c["amount"],
+                    description=c["description"],
+                    reference=reference,
+                    invoice_id=invoice_id,
+                    open_item_id=open_item_id,
+                    customer_id=customer_id,
+                    real_account_id=real_account_id,
+                    tax_rate=c["tax_rate"] if c["tax_rate"] and c["tax_rate"] > 0 else None,
+                    group_id=group.id,
+                    created_by_id=current_user.id,
+                )
+                db.session.add(child)
+
+            db.session.flush()
+            acc_svc.recompute_group_total(group.id)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            flash(
+                f"Fehler beim Aktualisieren der Sammelbuchung – alle Änderungen "
+                f"wurden zurückgesetzt: {e}",
+                "danger",
+            )
+            return _render_edit(form_data=request.form)
+
+        flash("Sammelbuchung aktualisiert.", "success")
+        return redirect(url_for("accounting.booking_group_detail", group_id=group.id))
+
+    return _render_edit()
+
+
+@bp.route("/booking-groups/<int:group_id>/delete", methods=["POST"])
+@login_required
+def booking_group_delete(group_id):
+    """Löscht eine Sammelbuchung inklusive aller Kinder (ADR-002).
+
+    Erlaubt solange die Gruppe aktiv und keine Buchungszeile bereits verbucht
+    wurde — analog zur Einzelbuchung (``booking_delete``).
+    """
+    group = db.get_or_404(BookingGroup, group_id)
+    ok, msg = _group_is_editable(group)
+    if not ok:
+        flash(msg, "warning")
+        return redirect(url_for("accounting.booking_group_detail", group_id=group.id))
+    try:
+        for child in list(group.children):
+            db.session.delete(child)
+        db.session.delete(group)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        flash(f"Fehler beim Löschen der Sammelbuchung: {e}", "danger")
+        return redirect(url_for("accounting.booking_group_detail", group_id=group.id))
+    flash("Sammelbuchung gelöscht.", "info")
+    return redirect(url_for("accounting.bookings"))
+
+
+@bp.route("/booking-groups/<int:group_id>/stornieren", methods=["GET", "POST"])
+@login_required
+def booking_group_stornieren(group_id):
+    group = db.get_or_404(BookingGroup, group_id)
+
+    if group.status == BookingGroup.STATUS_STORNIERT:
+        flash("Diese Sammelbuchung ist bereits storniert.", "warning")
+        return redirect(url_for("accounting.booking_group_detail", group_id=group.id))
+
+    fy_locked = _locked_fiscal_year(group.date)
+    if fy_locked:
+        flash(
+            f"Das Buchungsjahr {fy_locked.year} ist abgeschlossen. "
+            f"Diese Sammelbuchung kann nicht storniert werden.",
+            "danger",
+        )
+        return redirect(url_for("accounting.booking_group_detail", group_id=group.id))
+    if group.date.year != date.today().year:
+        flash("Sammelbuchungen aus Vorjahren können nicht storniert werden.", "warning")
+        return redirect(url_for("accounting.booking_group_detail", group_id=group.id))
+
+    if request.method == "POST":
+        reason = request.form.get("storno_reason", "").strip()
+        if not reason:
+            flash("Bitte einen Storno-Grund angeben.", "danger")
+            return render_template("accounting/booking_group_storno_form.html", group=group)
+
+        try:
+            acc_svc.storno_booking_group(group, reason, current_user.id)
+
+            # Verknüpfte Rechnung analog zur Einzel-Storno-Kaskade behandeln.
+            cancelled_invoice_number = None
+            if group.invoice_id:
+                inv = db.session.get(Invoice, group.invoice_id)
+                if inv and inv.status != Invoice.STATUS_CANCELLED:
+                    inv.status = Invoice.STATUS_CANCELLED
+                    cancelled_invoice_number = inv.invoice_number
+
+            # Verknüpften Offenen Posten (über die Kinder) ggf. wieder öffnen.
+            if request.form.get("close_open_item"):
+                open_item_ids = {c.open_item_id for c in group.children if c.open_item_id}
+                for oid in open_item_ids:
+                    oi = db.session.get(OpenItem, oid)
+                    if oi:
+                        oi.status = OpenItem.STATUS_OPEN
+
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            flash(f"Fehler beim Stornieren – alle Änderungen wurden zurückgesetzt: {e}", "danger")
+            return redirect(url_for("accounting.booking_group_detail", group_id=group.id))
+
+        if cancelled_invoice_number:
+            flash(
+                f"Rechnung {cancelled_invoice_number} wurde storniert. "
+                f"Bitte eine neue Rechnung ausstellen.",
+                "warning",
+            )
+        flash("Sammelbuchung erfolgreich storniert.", "success")
+        return redirect(url_for("accounting.bookings"))
+
+    return render_template("accounting/booking_group_storno_form.html", group=group)
+
+
+# ---------------------------------------------------------------------------
 # Offene Posten
 # ---------------------------------------------------------------------------
 
@@ -475,7 +987,6 @@ def open_items():
 
     items = item_q.order_by(OpenItem.due_date).all()
     total_open = sum(item.open_balance for item in items)
-    real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
 
     return render_template(
         "accounting/open_items.html",
@@ -488,14 +999,15 @@ def open_items():
         f_year=year_q,
         f_amount_min=amount_min_raw,
         f_amount_max=amount_max_raw,
-        real_accounts=real_accounts,
     )
 
 
 @bp.route("/open-items/new", methods=["GET", "POST"])
 @login_required
 def open_item_new():
+    from app.models import Account
     customers = Customer.query.filter_by(active=True).order_by(Customer.name).all()
+    accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
     if request.method == "POST":
         from decimal import Decimal
         item_date = date.fromisoformat(request.form["date"])
@@ -504,10 +1016,11 @@ def open_item_new():
             flash(f"{fy_error} Offener Posten wurde nicht gespeichert.", "danger")
             return render_template(
                 "accounting/open_item_form.html",
-                item=None, customers=customers, today=date.today(),
+                item=None, customers=customers, accounts=accounts, today=date.today(),
                 form_data=request.form,
             )
         amount_raw = request.form.get("amount", "0").replace(",", ".")
+        account_id_raw = request.form.get("account_id") or None
         item = OpenItem(
             customer_id=int(request.form["customer_id"]),
             description=request.form["description"].strip(),
@@ -516,19 +1029,26 @@ def open_item_new():
             date=item_date,
             due_date=date.fromisoformat(request.form["due_date"]) if request.form.get("due_date") else None,
             status=OpenItem.STATUS_OPEN,
+            account_id=int(account_id_raw) if account_id_raw else None,
             created_by_id=current_user.id,
         )
         db.session.add(item)
         db.session.commit()
         flash("Offener Posten angelegt.", "success")
         return redirect(url_for("accounting.open_items"))
-    return render_template("accounting/open_item_form.html", item=None, customers=customers, today=date.today())
+    return render_template("accounting/open_item_form.html", item=None, customers=customers, accounts=accounts, today=date.today())
 
 
 @bp.route("/open-items/<int:item_id>/pay", methods=["POST"])
 @login_required
 def open_item_pay(item_id):
-    """Zahlung (Teil- oder Vollzahlung) auf einen manuellen offenen Posten buchen."""
+    """Zahlung (Teil- oder Vollzahlung) auf einen offenen Posten buchen.
+
+    Ist der Posten mit einer Rechnung verknüpft, läuft die Buchungserzeugung
+    über ``booking_group_from_invoice_payment`` (ADR-002) — bei mehreren
+    Dimensionen (Konto/Projekt/Steuersatz) wird dabei eine Sammelbuchung
+    angelegt, sonst fällt sie auf eine einzelne Buchung zurück.
+    """
     item = db.get_or_404(OpenItem, item_id)
     from decimal import Decimal
     amount_raw = request.form.get("amount", "0").replace(",", ".")
@@ -541,27 +1061,52 @@ def open_item_pay(item_id):
         flash("Betrag muss positiv sein.", "danger")
         return redirect(url_for("accounting.open_items"))
 
-    acc = Account.query.filter_by(active=True).first()
-    if not acc:
-        flash("Kein aktives Konto gefunden.", "danger")
-        return redirect(url_for("accounting.open_items"))
+    # Standard-Bankkonto verwenden
+    default_ra = RealAccount.query.filter_by(is_default=True, active=True).first() \
+        or RealAccount.query.filter_by(active=True).first()
+    real_account_id = default_ra.id if default_ra else None
 
-    real_account_id_raw = request.form.get("real_account_id") or None
     try:
-        ref = item.invoice.invoice_number if item.invoice_id else f"OP-{item.id}"
-        booking = Booking(
-            date=date.today(),
-            account_id=acc.id,
-            amount=amount,
-            description=f"Zahlung – {item.description} – {item.customer.name}",
-            reference=ref,
-            open_item_id=item.id,
-            invoice_id=item.invoice_id,
-            real_account_id=int(real_account_id_raw) if real_account_id_raw else None,
-            created_by_id=current_user.id,
-        )
-        db.session.add(booking)
-        db.session.flush()
+        payment_date = date.today()
+
+        if item.invoice_id:
+            # Rechnungs-Zahlung → Sammelbuchung oder Einzelbuchung via Service.
+            invoice = db.session.get(Invoice, item.invoice_id)
+            if invoice is None:
+                flash("Verknüpfte Rechnung nicht gefunden.", "danger")
+                return redirect(url_for("accounting.open_items"))
+            group, children = acc_svc.booking_group_from_invoice_payment(
+                invoice=invoice,
+                amount=amount,
+                payment_date=payment_date,
+                real_account_id=real_account_id,
+                created_by_id=current_user.id,
+                open_item=item,
+                reference=invoice.invoice_number,
+            )
+        else:
+            # Manueller OpenItem ohne Rechnung → einfache Einzelbuchung.
+            if item.account_id:
+                acc = Account.query.get(item.account_id)
+            else:
+                acc = Account.query.filter_by(active=True).first()
+            if not acc:
+                flash("Kein aktives Konto gefunden.", "danger")
+                return redirect(url_for("accounting.open_items"))
+
+            booking = Booking(
+                date=payment_date,
+                account_id=acc.id,
+                amount=amount,
+                description=f"Zahlung – {item.description} – {item.customer.name}",
+                reference=f"OP-{item.id}",
+                open_item_id=item.id,
+                real_account_id=real_account_id,
+                customer_id=item.customer_id,
+                created_by_id=current_user.id,
+            )
+            db.session.add(booking)
+            db.session.flush()
 
         paid_total = db.session.query(func.sum(Booking.amount)).filter(
             Booking.open_item_id == item.id
@@ -587,6 +1132,10 @@ def open_item_pay(item_id):
                     inv.status = Invoice.STATUS_CREDIT
 
         db.session.commit()
+    except ValueError as ve:
+        db.session.rollback()
+        flash(f"Fehler bei der Zahlung: {ve}", "danger")
+        return redirect(url_for("accounting.open_items"))
     except Exception as e:
         db.session.rollback()
         flash(f"Fehler bei der Zahlung – alle Änderungen wurden zurückgesetzt: {e}", "danger")
@@ -607,6 +1156,8 @@ def open_item_invoice(item_id):
     """Rechnung aus einem manuellen offenen Posten generieren."""
     item = db.get_or_404(OpenItem, item_id)
     tariffs = WaterTariff.query.order_by(WaterTariff.valid_from.desc()).all()
+    editor_accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
+    editor_projects = Project.query.filter_by(closed=False).order_by(Project.name).all()
 
     if request.method == "POST":
         from app.models import Invoice
@@ -651,6 +1202,8 @@ def open_item_invoice(item_id):
         item=item,
         tariffs=tariffs,
         today=date.today(),
+        editor_accounts=editor_accounts,
+        editor_projects=editor_projects,
     )
 
 
@@ -856,9 +1409,9 @@ def report_export_excel():
     # ================================================================
     ws3 = wb.create_sheet("Buchungen")
     if fy_vat_liable:
-        _hdr(ws3, 1, ["Datum", "Bankkonto", "Konto", "Typ", "Beschreibung", "Belegnummer", "Projekt", "Kunde", "USt %", "USt Betrag", "Betrag", "Status"])
+        _hdr(ws3, 1, ["Datum", "Bankkonto", "Konto", "Typ", "Beschreibung", "Belegnummer", "Projekt", "Kunde", "USt %", "USt Betrag", "Betrag", "Status", "Sammel-ID"])
     else:
-        _hdr(ws3, 1, ["Datum", "Bankkonto", "Konto", "Typ", "Beschreibung", "Belegnummer", "Projekt", "Kunde", "Betrag", "Status"])
+        _hdr(ws3, 1, ["Datum", "Bankkonto", "Konto", "Typ", "Beschreibung", "Belegnummer", "Projekt", "Kunde", "Betrag", "Status", "Sammel-ID"])
     r3 = 2
     for b in bookings_year:
         ws3.cell(row=r3, column=1, value=b.date).number_format = DATE_FMT
@@ -869,6 +1422,9 @@ def report_export_excel():
         ws3.cell(row=r3, column=6, value=b.reference or "")
         ws3.cell(row=r3, column=7, value=b.project.name if b.project else "")
         ws3.cell(row=r3, column=8, value=b.customer.name if b.customer else "")
+        # Sammel-ID: zeigt die BookingGroup-ID an — macht in Excel-Pivot
+        # die Zusammengehörigkeit von Split-Buchungen nachvollziehbar (ADR-002).
+        group_label = f"#{b.group_id}" if b.group_id else ""
         if fy_vat_liable:
             tax_amt = ""
             if b.tax_rate and b.tax_rate > 0:
@@ -878,9 +1434,11 @@ def report_export_excel():
                 _eur(ws3, r3, 10, tax_amt)
             _eur(ws3, r3, 11, float(b.amount))
             ws3.cell(row=r3, column=12, value=b.status or "")
+            ws3.cell(row=r3, column=13, value=group_label)
         else:
             _eur(ws3, r3, 9, float(b.amount))
             ws3.cell(row=r3, column=10, value=b.status or "")
+            ws3.cell(row=r3, column=11, value=group_label)
         r3 += 1
     _autowidth(ws3)
 
@@ -1411,6 +1969,7 @@ def export_csv():
         writer.writerow([
             "Datum", "Bankkonto", "Konto", "Typ", "Beschreibung",
             "Belegnummer", "Projekt", "Kunde", "MwSt %", "MwSt Betrag", "Betrag", "Status",
+            "Sammel-ID",
         ])
         for b in bookings:
             tax_amount = ""
@@ -1429,6 +1988,7 @@ def export_csv():
                 tax_amount,
                 str(b.amount).replace(".", ","),
                 b.status or "",
+                f"#{b.group_id}" if b.group_id else "",
             ])
         return output.getvalue()
 

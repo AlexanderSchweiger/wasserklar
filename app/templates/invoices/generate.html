@@ -47,6 +47,16 @@
               {% endfor %}
             </select>
           </div>
+          <div class="mb-3">
+            <label class="form-label">Buchungskonto <span class="text-danger">*</span></label>
+            <select name="account_id" class="form-select tom-select" required {% if not accounts %}disabled{% endif %}>
+              <option value="">— Konto auswählen —</option>
+              {% for a in accounts %}
+              <option value="{{ a.id }}">{% if a.code %}[{{ a.code }}] {% endif %}{{ a.name }}</option>
+              {% endfor %}
+            </select>
+            <div class="form-text">Wird beim Bezahlen der erzeugten Rechnungen als Buchungskonto verwendet.</div>
+          </div>
           {% if not tariffs %}
           <div class="alert alert-warning">
             <a href="{{ url_for('invoices.tariff_new') }}">Zuerst einen Tarif anlegen →</a>

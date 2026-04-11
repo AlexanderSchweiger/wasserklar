@@ -15,7 +15,17 @@ from app.utils import next_invoice_number as _next_invoice_number
 from app.settings_service import get_wg, send_mail, wg_settings
 
 
-def _create_or_update_open_item(invoice):
+def _resolve_open_item_account_id(invoice, form_account_id=None):
+    """Ermittelt das Buchungskonto für einen aus einer Rechnung erzeugten Offenen Posten.
+
+    Priorität: Rechnungslauf-Konto > Formularwert (manuelle Rechnung).
+    """
+    if invoice.billing_run_id and invoice.billing_run and invoice.billing_run.account_id:
+        return invoice.billing_run.account_id
+    return form_account_id
+
+
+def _create_or_update_open_item(invoice, account_id=None):
     """Erzeugt oder aktualisiert den verknüpften OpenItem wenn eine Rechnung versendet wird."""
     oi = invoice.open_item
     if oi is None:
@@ -28,12 +38,15 @@ def _create_or_update_open_item(invoice):
             period_year=invoice.period_year,
             status=OpenItem.STATUS_OPEN,
             invoice_id=invoice.id,
+            account_id=account_id,
         )
         db.session.add(oi)
     else:
         oi.amount = invoice.total_amount
         oi.due_date = invoice.due_date
         oi.period_year = invoice.period_year
+        if account_id is not None:
+            oi.account_id = account_id
 
 
 def _invoice_is_locked(invoice):
@@ -154,6 +167,7 @@ def index():
 
     invoices = query.all()
     projects_for_filter = Project.query.order_by(Project.name).all()
+    accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
     if request.headers.get("HX-Request"):
         return render_template("invoices/_table.html", invoices=invoices)
     return render_template(
@@ -168,6 +182,7 @@ def index():
         project_id_filter=project_id_filter,
         nur_email=nur_email,
         doc_format=AppSetting.get("invoice.document_format", "pdf"),
+        accounts=accounts,
     )
 
 
@@ -177,11 +192,17 @@ def generate():
     """Massenrechnungslauf: Alle Kunden mit Ablesung für ein Jahr."""
     from app.accounting import services as acc_svc
     tariffs = WaterTariff.query.order_by(WaterTariff.valid_from.desc()).all()
+    accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
     if request.method == "POST":
         year = int(request.form["year"])
         tariff_id = int(request.form["tariff_id"])
         tariff = db.get_or_404(WaterTariff, tariff_id)
         due_days = int(request.form.get("due_days", 30))
+        account_id_raw = request.form.get("account_id") or None
+        if not account_id_raw:
+            flash("Bitte ein Buchungskonto für den Rechnungslauf auswählen.", "danger")
+            return render_template("invoices/generate.html", tariffs=tariffs, accounts=accounts, year=date.today().year)
+        billing_account_id = int(account_id_raw)
 
         # Rechnungsdatum für den Rechnungslauf ist heute.
         invoice_date = date.today()
@@ -222,6 +243,7 @@ def generate():
             tariff_additional_fee_label=tariff.additional_fee_label or "Zusatzgebühr",
             tariff_price_per_m3=tariff.price_per_m3,
             tariff_notes=tariff.notes,
+            account_id=billing_account_id,
         )
         db.session.add(billing_run)
         db.session.flush()
@@ -354,6 +376,7 @@ def generate():
     return render_template(
         "invoices/generate.html",
         tariffs=tariffs,
+        accounts=accounts,
         year=date.today().year,
     )
 
@@ -371,6 +394,8 @@ def new():
     from app.accounting import services as acc_svc
     customers = Customer.query.order_by(Customer.name).all()
     tariffs = WaterTariff.query.order_by(WaterTariff.valid_from.desc()).all()
+    editor_accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
+    editor_projects = Project.query.filter_by(closed=False).order_by(Project.name).all()
 
     if request.method == "POST":
         customer_id_raw = request.form.get("customer_id", "").strip()
@@ -438,6 +463,8 @@ def new():
         customers=customers,
         tariffs=tariffs,
         today=date.today(),
+        editor_accounts=editor_accounts,
+        editor_projects=editor_projects,
     )
 
 
@@ -446,6 +473,11 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
     zur Rechnung hinzu. Shared zwischen ``invoices.new`` und
     ``accounting.open_item_invoice`` (dort noch inline), damit die
     Parse-Logik nur einmal existiert.
+
+    Leere ``row_account_id[]`` / ``row_project_id[]`` bleiben als NULL
+    erhalten — die Vererbung auf ``open_item.account_id`` /
+    ``billing_run.account_id`` passiert später im Service-Layer
+    (``booking_group_from_invoice_payment``).
     """
     row_types = form.getlist("row_type[]")
     row_tariff_ids = form.getlist("row_tariff_id[]")
@@ -455,6 +487,8 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
     row_units = form.getlist("row_unit[]")
     row_unit_prices = form.getlist("row_unit_price[]")
     row_tax_rates = form.getlist("row_tax_rate[]")
+    row_account_ids = form.getlist("row_account_id[]")
+    row_project_ids = form.getlist("row_project_id[]")
 
     def _dec(lst, idx, default="0"):
         v = lst[idx].replace(",", ".") if idx < len(lst) and lst[idx].strip() else default
@@ -463,9 +497,25 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
         except Exception:
             return Decimal(default)
 
+    def _int_or_none(lst, idx):
+        if idx >= len(lst):
+            return None
+        raw = (lst[idx] or "").strip()
+        if not raw:
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            return None
+
     water_tax = Decimal("10") if is_vat_liable_year else None
 
     for i, rtype in enumerate(row_types):
+        # Dimensionen sind pro Zeile gleich, auch wenn eine Tarif-Zeile
+        # mehrere Items erzeugt (Grundgebühr/Zusatz/Verbrauch).
+        row_account_id = _int_or_none(row_account_ids, i)
+        row_project_id = _int_or_none(row_project_ids, i)
+
         if rtype == "tariff":
             tariff_id_raw = row_tariff_ids[i] if i < len(row_tariff_ids) else ""
             if not tariff_id_raw:
@@ -487,6 +537,8 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
                     unit_price=tariff.base_fee,
                     amount=tariff.base_fee,
                     tax_rate=water_tax,
+                    account_id=row_account_id,
+                    project_id=row_project_id,
                 ))
             if tariff.additional_fee is not None:
                 db.session.add(InvoiceItem(
@@ -497,6 +549,8 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
                     unit_price=tariff.additional_fee,
                     amount=tariff.additional_fee,
                     tax_rate=water_tax,
+                    account_id=row_account_id,
+                    project_id=row_project_id,
                 ))
             amount = (consumption * tariff.price_per_m3).quantize(Decimal("0.01"))
             db.session.add(InvoiceItem(
@@ -507,6 +561,8 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
                 unit_price=tariff.price_per_m3,
                 amount=amount,
                 tax_rate=water_tax,
+                account_id=row_account_id,
+                project_id=row_project_id,
             ))
         elif rtype == "water":
             consumption = _dec(row_consumptions, i)
@@ -525,6 +581,8 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
                 unit_price=unit_price,
                 amount=amount,
                 tax_rate=water_tax,
+                account_id=row_account_id,
+                project_id=row_project_id,
             ))
         else:  # free
             desc = row_descriptions[i].strip() if i < len(row_descriptions) else ""
@@ -543,6 +601,8 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
                 unit_price=unit_price,
                 amount=amount,
                 tax_rate=tax_rate if tax_rate > 0 else None,
+                account_id=row_account_id,
+                project_id=row_project_id,
             ))
 
 
@@ -552,25 +612,29 @@ def detail(invoice_id):
     from app.accounting import services as acc_svc
     from app.models import TaxRate
     invoice = db.get_or_404(Invoice, invoice_id)
-    real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
-    default_real_account = RealAccount.query.filter_by(is_default=True, active=True).first()
+    accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
     doc_format = AppSetting.get("invoice.document_format", "pdf")
     fy_vat_liable = acc_svc.is_year_vat_liable(invoice.date.year) if invoice.date else False
     tax_rates = TaxRate.query.order_by(TaxRate.rate).all() if fy_vat_liable else []
-    # Tarife werden nur im Entwurfs-Modus für den Positions-Editor benötigt.
-    tariffs = (
-        WaterTariff.query.order_by(WaterTariff.valid_from.desc()).all()
-        if invoice.status == Invoice.STATUS_DRAFT else []
-    )
+    # Tarife und Projekte werden nur im Entwurfs-Modus für den Positions-Editor benötigt.
+    if invoice.status == Invoice.STATUS_DRAFT:
+        tariffs = WaterTariff.query.order_by(WaterTariff.valid_from.desc()).all()
+        editor_projects = Project.query.filter_by(closed=False).order_by(Project.name).all()
+    else:
+        tariffs = []
+        # Auch in Read-Only-Ansicht brauchen wir Projekte, damit bestehende
+        # Items korrekt als hidden-Inputs gerendert werden (Backward-Compat).
+        editor_projects = Project.query.order_by(Project.name).all()
     return render_template(
         "invoices/detail.html",
         invoice=invoice,
-        real_accounts=real_accounts,
-        default_real_account=default_real_account,
+        accounts=accounts,
         doc_format=doc_format,
         fy_vat_liable=fy_vat_liable,
         tax_rates=tax_rates,
         tariffs=tariffs,
+        editor_accounts=accounts,
+        editor_projects=editor_projects,
         tax_summary=invoice.tax_breakdown,
         invoice_gross_total=invoice.total_amount,
     )
@@ -672,12 +736,22 @@ def bulk_action():
         if action == Invoice.STATUS_DRAFT:
             flash("Rechnungen können nicht auf 'Entwurf' zurückgesetzt werden.", "danger")
             return redirect(url_for("invoices.index"))
+        # Für Massen-Versenden: ein Buchungskonto für alle manuellen Rechnungen
+        bulk_account_id_raw = request.form.get("account_id") or None
+        bulk_account_id = int(bulk_account_id_raw) if bulk_account_id_raw else None
+        if action == Invoice.STATUS_SENT:
+            # Prüfen ob manuelle Rechnungen enthalten sind, für die ein Konto fehlt
+            manual_invoices = [inv for inv in invoices if not inv.billing_run_id]
+            if manual_invoices and not bulk_account_id:
+                flash("Bitte ein Buchungskonto wählen für manuelle Rechnungen (ohne Rechnungslauf).", "danger")
+                return redirect(url_for("invoices.index"))
         changed = 0
         try:
             for inv in invoices:
                 inv.status = action
                 if action == Invoice.STATUS_SENT:
-                    _create_or_update_open_item(inv)
+                    account_id = _resolve_open_item_account_id(inv, bulk_account_id)
+                    _create_or_update_open_item(inv, account_id=account_id)
                 elif action == Invoice.STATUS_CANCELLED and inv.open_item:
                     inv.open_item.status = OpenItem.STATUS_PAID
                 changed += 1
@@ -840,46 +914,45 @@ def set_status(invoice_id):
 
     try:
         old_status = invoice.status
-        invoice.status = new_status
 
         if new_status == Invoice.STATUS_SENT:
-            _create_or_update_open_item(invoice)
-        elif new_status == Invoice.STATUS_CANCELLED and invoice.open_item:
-            invoice.open_item.status = OpenItem.STATUS_PAID
+            form_account_id_raw = request.form.get("account_id") or None
+            form_account_id = int(form_account_id_raw) if form_account_id_raw else None
+            # Für manuelle Rechnungen ist das Buchungskonto Pflicht
+            if not invoice.billing_run_id and not form_account_id:
+                flash("Bitte ein Buchungskonto wählen, bevor die Rechnung auf 'Versendet' gesetzt wird.", "danger")
+                if request.headers.get("HX-Request"):
+                    return render_template("invoices/_status_badge.html", invoice=invoice)
+                return redirect(url_for("invoices.detail", invoice_id=invoice.id))
+            account_id = _resolve_open_item_account_id(invoice, form_account_id)
+            invoice.status = new_status
+            _create_or_update_open_item(invoice, account_id=account_id)
+        else:
+            invoice.status = new_status
+            if new_status == Invoice.STATUS_CANCELLED and invoice.open_item:
+                invoice.open_item.status = OpenItem.STATUS_PAID
 
         # Automatische Buchung bei Bezahlt-Markierung
         if new_status == Invoice.STATUS_PAID and old_status != Invoice.STATUS_PAID:
-            acc = Account.query.filter_by(active=True).first()
-            if acc:
-                real_account_id_raw = request.form.get("real_account_id") or None
-                real_account_id = int(real_account_id_raw) if real_account_id_raw else None
-                # Buchungen pro Steuersatz aufteilen, damit USt-Voranmeldung korrekt ist.
-                # Booking.amount speichert brutto; Items speichern netto → hier brutto bilden.
-                from collections import defaultdict
-                from decimal import Decimal as _D
-                groups = defaultdict(lambda: _D("0"))
-                for item in invoice.items:
-                    rate = item.tax_rate if item.tax_rate is not None else _D("0")
-                    net = _D(str(item.amount or 0))
-                    if rate and rate > 0:
-                        gross = net + (net * _D(str(rate)) / _D("100")).quantize(_D("0.01"))
-                    else:
-                        gross = net
-                    groups[rate] += gross
-                if not groups:
-                    groups[None] = invoice.total_amount
-                for rate, amount in groups.items():
-                    db.session.add(Booking(
-                        date=date.today(),
-                        account_id=acc.id,
-                        amount=amount,
-                        description=f"Zahlung {invoice.invoice_number} – {invoice.customer.name}",
-                        reference=invoice.invoice_number,
-                        invoice_id=invoice.id,
-                        real_account_id=real_account_id,
-                        created_by_id=current_user.id,
-                        tax_rate=rate if rate and rate > 0 else None,
-                    ))
+            # Zahlung über Service-Layer erzeugen. Bei mehreren Dimensionen
+            # (Konto/Projekt/Steuersatz) entsteht automatisch eine
+            # Sammelbuchung (ADR-002), sonst eine Einzelbuchung.
+            from app.accounting import services as acc_svc
+            default_ra = RealAccount.query.filter_by(is_default=True, active=True).first() \
+                or RealAccount.query.filter_by(active=True).first()
+            real_account_id = default_ra.id if default_ra else None
+            try:
+                acc_svc.booking_group_from_invoice_payment(
+                    invoice=invoice,
+                    amount=invoice.total_amount,
+                    payment_date=date.today(),
+                    real_account_id=real_account_id,
+                    created_by_id=current_user.id,
+                    open_item=invoice.open_item,
+                    reference=invoice.invoice_number,
+                )
+            except ValueError as ve:
+                raise ve
             if invoice.open_item:
                 invoice.open_item.status = OpenItem.STATUS_PAID
 
@@ -920,61 +993,24 @@ def pay(invoice_id):
         flash(fy_error, "danger")
         return redirect(url_for("accounting.open_items"))
 
-    acc = Account.query.filter_by(active=True).first()
-    if not acc:
-        flash("Kein aktives Konto gefunden.", "danger")
-        return redirect(url_for("accounting.open_items"))
+    # Standard-Bankkonto verwenden
+    default_ra = RealAccount.query.filter_by(is_default=True, active=True).first() \
+        or RealAccount.query.filter_by(active=True).first()
+    real_account_id = default_ra.id if default_ra else None
 
-    real_account_id_raw = request.form.get("real_account_id") or None
-    real_account_id = int(real_account_id_raw) if real_account_id_raw else None
     try:
-        # Zahlung proportional nach Steuersatz aufteilen, damit die
-        # USt-Voranmeldung (Ist-Besteuerung) den korrekten Anteil erhält.
-        # Items sind netto, Booking.amount ist brutto → hier brutto pro Satz bilden.
-        from collections import defaultdict
-        from decimal import ROUND_HALF_UP
-        gross_by_rate = defaultdict(lambda: Decimal("0"))
-        for item in invoice.items:
-            rate = item.tax_rate if item.tax_rate is not None else Decimal("0")
-            net = Decimal(str(item.amount or 0))
-            if rate and rate > 0:
-                gross = net + (net * Decimal(str(rate)) / Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-            else:
-                gross = net
-            gross_by_rate[rate] += gross
-
-        total_gross = sum(gross_by_rate.values(), Decimal("0"))
-        splits = []
-        if total_gross > 0 and gross_by_rate:
-            remaining = amount
-            items_list = list(gross_by_rate.items())
-            for i, (rate, rate_gross) in enumerate(items_list):
-                if i == len(items_list) - 1:
-                    share = remaining  # Restbetrag absorbiert Rundungsdifferenzen
-                else:
-                    share = (amount * rate_gross / total_gross).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-                    remaining -= share
-                if share > 0:
-                    splits.append((rate, share))
-        if not splits:
-            splits.append((Decimal("0"), amount))
-
-        created_bookings = []
-        for rate, share in splits:
-            b = Booking(
-                date=payment_date,
-                account_id=acc.id,
-                amount=share,
-                description=f"Zahlung {invoice.invoice_number} – {invoice.customer.name}",
-                reference=invoice.invoice_number,
-                invoice_id=invoice.id,
-                real_account_id=real_account_id,
-                created_by_id=current_user.id,
-                tax_rate=rate if rate and rate > 0 else None,
-            )
-            db.session.add(b)
-            created_bookings.append(b)
-        db.session.flush()
+        # Zahlung über Service-Layer erzeugen. Bei mehreren Dimensionen
+        # (Konto/Projekt/Steuersatz) entsteht automatisch eine Sammelbuchung,
+        # sonst eine einzelne Buchung (ADR-002).
+        acc_svc.booking_group_from_invoice_payment(
+            invoice=invoice,
+            amount=amount,
+            payment_date=payment_date,
+            real_account_id=real_account_id,
+            created_by_id=current_user.id,
+            open_item=invoice.open_item,
+            reference=invoice.invoice_number,
+        )
 
         from sqlalchemy import func
         paid_total = db.session.query(func.sum(Booking.amount)).filter(
@@ -991,8 +1027,6 @@ def pay(invoice_id):
 
         if invoice.open_item:
             oi = invoice.open_item
-            for b in created_bookings:
-                b.open_item_id = oi.id
             if balance > Decimal("0"):
                 oi.status = OpenItem.STATUS_PARTIAL
             elif balance == Decimal("0"):
@@ -1001,6 +1035,10 @@ def pay(invoice_id):
                 oi.status = OpenItem.STATUS_CREDIT
 
         db.session.commit()
+    except ValueError as ve:
+        db.session.rollback()
+        flash(f"Fehler bei der Zahlung: {ve}", "danger")
+        return redirect(url_for("accounting.open_items"))
     except Exception as e:
         db.session.rollback()
         flash(f"Fehler bei der Zahlung – alle Änderungen wurden zurückgesetzt: {e}", "danger")
@@ -1117,7 +1155,10 @@ def send_email(invoice_id):
     if pdf_path:
         invoice.pdf_path = pdf_path
 
-    _create_or_update_open_item(invoice)
+    form_account_id_raw = request.form.get("account_id") or None
+    form_account_id = int(form_account_id_raw) if form_account_id_raw else None
+    account_id = _resolve_open_item_account_id(invoice, form_account_id)
+    _create_or_update_open_item(invoice, account_id=account_id)
     db.session.commit()
     flash(f"Rechnung an {invoice.customer.email} versendet.", "success")
     return redirect(url_for("invoices.detail", invoice_id=invoice.id))
@@ -1191,7 +1232,10 @@ def send_email_ajax(invoice_id):
                 invoice.doc_path = doc_path
             if pdf_path:
                 invoice.pdf_path = pdf_path
-            _create_or_update_open_item(invoice)
+            ajax_account_id_raw = request.form.get("account_id") or None
+            ajax_account_id = int(ajax_account_id_raw) if ajax_account_id_raw else None
+            account_id = _resolve_open_item_account_id(invoice, ajax_account_id)
+            _create_or_update_open_item(invoice, account_id=account_id)
             db.session.commit()
 
         return jsonify({"ok": True, "invoice_number": invoice.invoice_number,

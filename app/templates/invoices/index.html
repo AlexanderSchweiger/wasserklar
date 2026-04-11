@@ -106,7 +106,8 @@
          style="display:flex; align-items:center; gap:12px; flex-wrap:wrap">
       <span class="text-muted" id="bulk-count">0 ausgewählt</span>
       <div class="input-group input-group-sm" style="width:auto">
-        <select name="action" class="form-control form-control-sm" id="bulk-action-select" style="min-width:180px">
+        <select name="action" class="form-control form-control-sm" id="bulk-action-select" style="min-width:180px"
+                onchange="toggleBulkBuchungskonto(this.value)">
           <option value="">— Aktion wählen —</option>
           <optgroup label="Status setzen">
             {% for s in statuses %}
@@ -133,6 +134,16 @@
           <i class="fas fa-check me-1"></i> Ausführen
         </button>
       </div>
+      {% if accounts %}
+      <div id="bulk-buchungskonto-wrap" style="display:none">
+        <select name="account_id" class="form-select form-select-sm" id="bulk-account-select" style="min-width:200px">
+          <option value="">— Buchungskonto (manuelle Rechnungen) —</option>
+          {% for a in accounts %}
+          <option value="{{ a.id }}">{% if a.code %}[{{ a.code }}] {% endif %}{{ a.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% endif %}
     </div>
 
     <div class="card-body p-0" id="invoices-table">
@@ -155,6 +166,18 @@
         <p class="text-muted mb-2">
           Kunden ohne E-Mail-Adresse oder ohne aktivierten E-Mail-Versand werden übersprungen.
         </p>
+        {% if accounts %}
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Buchungskonto <span class="text-danger">*</span></label>
+          <select id="massenmail-account-id" class="form-select form-select-sm">
+            <option value="">— Buchungskonto für manuelle Rechnungen —</option>
+            {% for a in accounts %}
+            <option value="{{ a.id }}">{% if a.code %}[{{ a.code }}] {% endif %}{{ a.name }}</option>
+            {% endfor %}
+          </select>
+          <div class="form-text">Für Rechnungen aus einem Rechnungslauf wird das dort hinterlegte Konto verwendet.</div>
+        </div>
+        {% endif %}
         <table class="table table-sm mb-0">
           <thead>
             <tr>
@@ -233,6 +256,11 @@
   });
 })();
 
+function toggleBulkBuchungskonto(val) {
+  const wrap = document.getElementById('bulk-buchungskonto-wrap');
+  if (wrap) wrap.style.display = (val === 'Versendet' || val === 'massenmail') ? '' : 'none';
+}
+
 function handleBulkAction() {
   const action = document.getElementById('bulk-action-select').value;
   const count = document.querySelectorAll('.invoice-cb:checked').length;
@@ -301,6 +329,8 @@ async function startMassenmail() {
   document.getElementById('massenmail-start-btn').disabled = true;
   const csrfToken = document.querySelector('#bulk-form input[name="csrf_token"]').value;
   const testMode = document.getElementById('massenmail-testmode').checked;
+  const accountEl = document.getElementById('massenmail-account-id');
+  const accountId = accountEl ? accountEl.value : '';
   const eligible = [];
   document.querySelectorAll('#massenmail-rows tr[id^="mm-row-"]').forEach(tr => {
     const id = tr.id.replace('mm-row-', '');
@@ -313,6 +343,7 @@ async function startMassenmail() {
     try {
       let body = 'csrf_token=' + encodeURIComponent(csrfToken);
       if (testMode) body += '&test_mode=1';
+      if (accountId) body += '&account_id=' + encodeURIComponent(accountId);
       const resp = await fetch('/invoices/' + id + '/send-email-ajax', {
         method: 'POST',
         headers: {

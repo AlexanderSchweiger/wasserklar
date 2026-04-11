@@ -1,0 +1,248 @@
+{% extends "base.html" %}
+{% set is_edit = is_edit|default(false) %}
+{% block title %}{% if is_edit %}Sammelbuchung #{{ group.id }} bearbeiten{% else %}Neue Sammelbuchung{% endif %}{% endblock %}
+{% block page_title %}
+  <i class="fas fa-layer-group me-2"></i>
+  {% if is_edit %}Sammelbuchung #{{ group.id }} bearbeiten{% else %}Neue Sammelbuchung{% endif %}
+{% endblock %}
+{% block content %}
+{% macro _sel(form_key, fallback) -%}
+  {%- if form_data is defined and form_data.get(form_key) -%}{{ form_data.get(form_key) }}
+  {%- else -%}{{ fallback if fallback is not none else '' }}{%- endif -%}
+{%- endmacro %}
+<div class="booking-group-form-wrapper" style="max-width: 1100px;">
+<div class="card">
+  <div class="card-header">
+    <h3 class="card-title">
+      {% if is_edit %}Sammelbuchung bearbeiten{% else %}Sammelbuchung anlegen{% endif %}
+    </h3>
+    <div class="card-subtitle text-muted small mt-1">
+      Eine Sammelbuchung gruppiert mehrere Buchungszeilen mit gemeinsamer
+      Belegnummer (z.&nbsp;B. eine Rechnung, deren Positionen auf unterschiedliche
+      Konten, Projekte oder Steuersätze verteilt sind). Es werden mindestens
+      <strong>2 Zeilen</strong> benötigt.
+    </div>
+  </div>
+  <form method="post" id="groupForm"
+        action="{% if is_edit %}{{ url_for('accounting.booking_group_edit', group_id=group.id) }}{% else %}{{ url_for('accounting.booking_group_new') }}{% endif %}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="card-body">
+
+      {# ───────── Header ───────── #}
+      {% set hdr_date = (form_data.get('date') if form_data is defined else None) or (group.date.isoformat() if is_edit and group else today.isoformat()) %}
+      {% set hdr_description = (form_data.get('description') if form_data is defined else None) or (group.description if is_edit and group else '') %}
+      {% set hdr_reference = (form_data.get('reference') if form_data is defined else None) or (group.reference if is_edit and group else '') %}
+      {% set hdr_customer_id = (form_data.get('customer_id') if form_data is defined else None) or (group.customer_id|string if is_edit and group and group.customer_id else '') %}
+      {% set hdr_invoice_id = (form_data.get('invoice_id') if form_data is defined else None) or (group.invoice_id|string if is_edit and group and group.invoice_id else '') %}
+      {% set _ra_from_child = (group.children|first).real_account_id if is_edit and group and group.children else None %}
+      {% set hdr_real_account_id = (form_data.get('real_account_id') if form_data is defined else None) or (_ra_from_child|string if _ra_from_child else '') %}
+
+      <div class="row g-3">
+        <div class="col-12 col-sm-3">
+          <label class="form-label">Datum <span class="text-danger">*</span></label>
+          <input type="date" name="date" class="form-control"
+                 value="{{ hdr_date }}"
+                 max="{{ today.isoformat() }}" required>
+        </div>
+        <div class="col-12 col-sm-6">
+          <label class="form-label">Beschreibung <span class="text-danger">*</span></label>
+          <input type="text" name="description" class="form-control"
+                 value="{{ hdr_description }}"
+                 placeholder="z.B. Zahlung Rechnung 2026-00012" required>
+        </div>
+        <div class="col-12 col-sm-3">
+          <label class="form-label">Belegnr.</label>
+          <input type="text" name="reference" class="form-control"
+                 value="{{ hdr_reference }}">
+        </div>
+      </div>
+
+      <div class="row g-3 mt-1">
+        <div class="col-12 col-sm-4">
+          <label class="form-label">Kunde</label>
+          <select name="customer_id" class="form-select tom-select">
+            <option value="">– kein Kunde –</option>
+            {% for c in customers %}
+            <option value="{{ c.id }}" {{ 'selected' if hdr_customer_id == c.id|string }}>
+              {{ c.name }}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-12 col-sm-4">
+          <label class="form-label">Bankkonto</label>
+          <select name="real_account_id" class="form-select tom-select">
+            <option value="">– kein Bankkonto –</option>
+            {% for ra in real_accounts %}
+            <option value="{{ ra.id }}"
+                    {{ 'selected' if hdr_real_account_id == ra.id|string
+                                     or (not hdr_real_account_id and not is_edit and default_real_account and default_real_account.id==ra.id) }}>
+              {{ ra.name }}{% if ra.iban %} ({{ ra.iban }}){% endif %}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-12 col-sm-4">
+          <label class="form-label">Rechnungs-ID <small class="text-muted">(optional)</small></label>
+          <input type="number" name="invoice_id" class="form-control"
+                 value="{{ hdr_invoice_id }}"
+                 placeholder="ID der verknüpften Rechnung">
+        </div>
+      </div>
+
+      <hr>
+
+      {# ───────── Kind-Zeilen ───────── #}
+      <h5>Buchungszeilen</h5>
+      <p class="text-muted small mb-2">
+        Jede Zeile erzeugt eine eigene Buchung mit individuellem Konto,
+        Projekt, Steuersatz und Betrag. Negative Beträge bedeuten Ausgaben.
+      </p>
+
+      <div id="rowsContainer">
+        {% if is_edit and group and form_data is not defined %}
+        {% for ch in group.children if not ch.storno_of_id %}
+        <div class="row-child border rounded p-2 mb-2">
+          <div class="row g-2 align-items-end">
+            <div class="col-md-3">
+              <label class="small">Konto <span class="text-danger">*</span></label>
+              <select name="child_account_id[]" class="form-select form-select-sm" required>
+                <option value="">– Konto –</option>
+                {% for a in accounts %}
+                <option value="{{ a.id }}" {{ 'selected' if ch.account_id == a.id }}>{% if a.code %}{{ a.code }} – {% endif %}{{ a.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-2">
+              <label class="small">Projekt</label>
+              <select name="child_project_id[]" class="form-select form-select-sm">
+                <option value="">– kein –</option>
+                {% for p in projects %}
+                <option value="{{ p.id }}" {{ 'selected' if ch.project_id == p.id }}>{% if p.code %}{{ p.code }} – {% endif %}{{ p.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-3">
+              <label class="small">Beschreibung</label>
+              <input type="text" name="child_description[]" class="form-control form-control-sm"
+                     value="{{ ch.description if ch.description != group.description else '' }}"
+                     placeholder="(erbt vom Kopf)">
+            </div>
+            <div class="col-md-1">
+              <label class="small">MwSt %</label>
+              <input type="number" name="child_tax_rate[]" class="form-control form-control-sm"
+                     step="0.01" min="0" max="100" placeholder="0"
+                     value="{{ ch.tax_rate if ch.tax_rate else '' }}">
+            </div>
+            <div class="col-md-2">
+              <label class="small">Betrag € <span class="text-danger">*</span></label>
+              <input type="number" name="child_amount[]" class="form-control form-control-sm"
+                     step="0.01" placeholder="0,00" required
+                     value="{{ ch.amount }}">
+            </div>
+            <div class="col-md-1 d-flex align-items-end">
+              <button type="button" class="btn btn-sm btn-outline-danger" onclick="groupRemoveRow(this)">
+                <i class="fas fa-times"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+        {% endif %}
+      </div>
+
+      <div class="mt-2">
+        <button type="button" class="btn btn-sm btn-outline-primary" onclick="groupAddRow()">
+          <i class="fas fa-plus me-1"></i> Zeile hinzufügen
+        </button>
+      </div>
+
+      {# Template für eine Buchungszeile #}
+      <template id="tmplChild">
+        <div class="row-child border rounded p-2 mb-2">
+          <div class="row g-2 align-items-end">
+            <div class="col-md-3">
+              <label class="small">Konto <span class="text-danger">*</span></label>
+              <select name="child_account_id[]" class="form-select form-select-sm" required>
+                <option value="">– Konto –</option>
+                {% for a in accounts %}
+                <option value="{{ a.id }}">{% if a.code %}{{ a.code }} – {% endif %}{{ a.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-2">
+              <label class="small">Projekt</label>
+              <select name="child_project_id[]" class="form-select form-select-sm">
+                <option value="">– kein –</option>
+                {% for p in projects %}
+                <option value="{{ p.id }}">{% if p.code %}{{ p.code }} – {% endif %}{{ p.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-3">
+              <label class="small">Beschreibung</label>
+              <input type="text" name="child_description[]" class="form-control form-control-sm"
+                     placeholder="(erbt vom Kopf)">
+            </div>
+            <div class="col-md-1">
+              <label class="small">MwSt %</label>
+              <input type="number" name="child_tax_rate[]" class="form-control form-control-sm"
+                     step="0.01" min="0" max="100" placeholder="0">
+            </div>
+            <div class="col-md-2">
+              <label class="small">Betrag € <span class="text-danger">*</span></label>
+              <input type="number" name="child_amount[]" class="form-control form-control-sm"
+                     step="0.01" placeholder="0,00" required>
+            </div>
+            <div class="col-md-1 d-flex align-items-end">
+              <button type="button" class="btn btn-sm btn-outline-danger" onclick="groupRemoveRow(this)">
+                <i class="fas fa-times"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+      </template>
+
+    </div>
+    <div class="card-footer">
+      <button type="submit" class="btn btn-primary" id="submitBtn">
+        <i class="fas fa-save me-1"></i>
+        {% if is_edit %}Änderungen speichern{% else %}Sammelbuchung speichern{% endif %}
+      </button>
+      <a href="{% if is_edit %}{{ url_for('accounting.booking_group_detail', group_id=group.id) }}{% else %}{{ url_for('accounting.bookings') }}{% endif %}"
+         class="btn btn-secondary ms-2">Abbrechen</a>
+    </div>
+  </form>
+</div>
+</div>
+
+<script>
+(function () {
+  const container = document.getElementById('rowsContainer');
+  const tmpl = document.getElementById('tmplChild');
+  const submitBtn = document.getElementById('submitBtn');
+
+  window.groupAddRow = function () {
+    const frag = tmpl.content.cloneNode(true);
+    container.appendChild(frag);
+    updateSubmit();
+  };
+  window.groupRemoveRow = function (btn) {
+    btn.closest('.row-child').remove();
+    updateSubmit();
+  };
+  function updateSubmit() {
+    const rows = container.querySelectorAll('.row-child').length;
+    submitBtn.disabled = rows < 2;
+  }
+
+  // Wenn bereits Zeilen aus dem Server-Side-Render vorhanden sind (Edit-Modus),
+  // keine leeren Zeilen anhängen. Sonst mit zwei leeren Zeilen starten.
+  if (container.querySelectorAll('.row-child').length === 0) {
+    groupAddRow();
+    groupAddRow();
+  }
+  updateSubmit();
+})();
+</script>
+{% endblock %}

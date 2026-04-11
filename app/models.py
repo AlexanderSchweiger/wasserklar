@@ -256,9 +256,11 @@ class BillingRun(db.Model):
 
     invoices_created = db.Column(db.Integer, default=0, nullable=False)
     invoices_skipped = db.Column(db.Integer, default=0, nullable=False)
+    account_id = db.Column(db.Integer, db.ForeignKey("accounts.id"), nullable=True)
 
     created_by = db.relationship("User", foreign_keys=[created_by_id])
     invoices = db.relationship("Invoice", backref="billing_run", lazy="dynamic")
+    account = db.relationship("Account", foreign_keys=[account_id])
 
     def __repr__(self):
         return f"<BillingRun {self.period_year} {self.created_at}>"
@@ -378,6 +380,14 @@ class InvoiceItem(db.Model):
     unit_price = db.Column(db.Numeric(10, 4), nullable=False)
     amount = db.Column(db.Numeric(10, 2), nullable=False)
     tax_rate = db.Column(db.Numeric(5, 2), nullable=True)  # MwSt in %; None = keine MwSt
+    # Optionale Zuordnung pro Position. Bei Zahlung splittet die Sammelbuchung
+    # nach (account_id, project_id, tax_rate). Leeres account_id erbt vom
+    # OpenItem/BillingRun, leeres project_id bleibt NULL (siehe ADR-002).
+    account_id = db.Column(db.Integer, db.ForeignKey("accounts.id"), nullable=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("projects.id"), nullable=True)
+
+    account = db.relationship("Account", foreign_keys=[account_id])
+    project = db.relationship("Project", foreign_keys=[project_id])
 
     def __repr__(self):
         return f"<InvoiceItem {self.description}>"
@@ -512,6 +522,10 @@ class Booking(db.Model):
     invoice_id = db.Column(db.Integer, db.ForeignKey("invoices.id"), nullable=True)
     open_item_id = db.Column(db.Integer, db.ForeignKey("open_items.id"), nullable=True)
     project_id = db.Column(db.Integer, db.ForeignKey("projects.id"), nullable=True)
+    # Sammelbuchung: optionaler Header-Verweis. Wenn gesetzt, gehört diese
+    # Buchung zu einer BookingGroup (siehe ADR-002). Storno/Edit-Operationen
+    # laufen dann ausschliesslich über die Gruppe, nie einzeln.
+    group_id = db.Column(db.Integer, db.ForeignKey("booking_groups.id"), nullable=True)
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     status = db.Column(db.String(20), nullable=False, default="Offen")
@@ -530,6 +544,50 @@ class Booking(db.Model):
 
     def __repr__(self):
         return f"<Booking {self.date} {self.amount}>"
+
+
+class BookingGroup(db.Model):
+    """Sammelbuchung — Header-Entität über mehreren ``Booking``-Kindern (ADR-002).
+
+    Die buchhalterisch wirksamen Werte stehen ausschliesslich auf den Kindern
+    (``Booking``). Der Header ist reine Metadaten- und Gruppierungsebene,
+    damit eine Rechnung mit mehreren Steuersätzen / Konten / Projekten in der
+    Buchungsliste gemeinsam sichtbar ist und gemeinsam storniert werden kann.
+    """
+    __tablename__ = "booking_groups"
+
+    STATUS_AKTIV = "Aktiv"
+    STATUS_STORNIERT = "Storniert"
+
+    id = db.Column(db.Integer, primary_key=True)
+    date = db.Column(db.Date, default=date.today, nullable=False)
+    description = db.Column(db.String(500), nullable=False)
+    reference = db.Column(db.String(100))              # Belegnummer
+    invoice_id = db.Column(db.Integer, db.ForeignKey("invoices.id"), nullable=True)
+    customer_id = db.Column(db.Integer, db.ForeignKey("customers.id"), nullable=True)
+    # denormalisierte Summe aller Kinder — via ``recompute_group_total`` aktuell halten
+    total_amount = db.Column(db.Numeric(10, 2), default=0, nullable=False)
+    status = db.Column(db.String(20), default=STATUS_AKTIV, nullable=False)
+    storno_reason = db.Column(db.String(500), nullable=True)
+    storno_date = db.Column(db.Date, nullable=True)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    invoice = db.relationship("Invoice", foreign_keys=[invoice_id],
+                              backref=db.backref("booking_groups", lazy="dynamic"))
+    customer = db.relationship("Customer", foreign_keys=[customer_id],
+                               backref=db.backref("booking_groups", lazy="dynamic"))
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+    children = db.relationship(
+        "Booking",
+        backref=db.backref("group", foreign_keys="Booking.group_id"),
+        foreign_keys="Booking.group_id",
+        lazy="select",
+        order_by="Booking.id",
+    )
+
+    def __repr__(self):
+        return f"<BookingGroup {self.date} {self.total_amount}>"
 
 
 # ---------------------------------------------------------------------------
@@ -606,12 +664,14 @@ class OpenItem(db.Model):
     period_year = db.Column(db.Integer, nullable=True)
     status = db.Column(db.String(20), default=STATUS_OPEN, nullable=False)
     invoice_id = db.Column(db.Integer, db.ForeignKey("invoices.id"), nullable=True)
+    account_id = db.Column(db.Integer, db.ForeignKey("accounts.id"), nullable=True)
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     customer = db.relationship("Customer", backref=db.backref("open_items", lazy="dynamic"))
     invoice = db.relationship("Invoice", backref=db.backref("open_item", uselist=False))
     created_by = db.relationship("User", foreign_keys=[created_by_id])
+    account = db.relationship("Account", foreign_keys=[account_id])
     bookings = db.relationship("Booking", backref="open_item", lazy="dynamic",
                                foreign_keys="Booking.open_item_id")
 

@@ -58,6 +58,19 @@
           </div>
 
           <div class="mb-3">
+            <label class="form-label">Buchungskonto</label>
+            <select name="account_id" class="form-select tom-select">
+              <option value="">— kein Konto gewählt —</option>
+              {% for a in accounts %}
+              <option value="{{ a.id }}" {{ 'selected' if item and item.account_id == a.id }}>
+                {% if a.code %}[{{ a.code }}] {% endif %}{{ a.name }}
+              </option>
+              {% endfor %}
+            </select>
+            <div class="form-text">Wird beim Bezahlen als Buchungskonto verwendet.</div>
+          </div>
+
+          <div class="mb-3">
             <label class="form-label">Notizen</label>
             <textarea name="notes" class="form-control" rows="3"
                       placeholder="Interne Notizen (nicht auf Rechnung)">{{ item.notes if item else '' }}</textarea>

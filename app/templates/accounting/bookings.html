@@ -100,6 +100,9 @@
           <span class="visually-hidden">Dropdown</span>
         </button>
         <div class="dropdown-menu dropdown-menu-end">
+          <a class="dropdown-item" href="{{ url_for('accounting.booking_group_new') }}">
+            <i class="fas fa-layer-group me-1"></i> Neue Sammelbuchung
+          </a>
           <a class="dropdown-item" href="{{ url_for('accounting.transfer_new') }}">
             <i class="fas fa-exchange-alt me-1"></i> Neue Umbuchung
           </a>

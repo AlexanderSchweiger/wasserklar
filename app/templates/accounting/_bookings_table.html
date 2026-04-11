@@ -29,8 +29,173 @@
   <tbody>
     {% for row in rows %}
 
+    {# ── SAMMELBUCHUNG ────────────────────────────────────────────── #}
+    {% if row.type == 'booking_group' %}
+    {% set g = row.group %}
+    {% set is_stornogruppe = g.status == 'Storniert' %}
+    {% set effective_children = row.children | rejectattr('storno_of_id') | list %}
+    {% set total_bkgs = row.children | selectattr('storno_of_id', 'none') | rejectattr('status', 'equalto', 'Storniert') | list %}
+    {% set ns = namespace(total=0, tax=0) %}
+    {% for c in total_bkgs %}
+      {% set ns.total = ns.total + c.amount %}
+      {% if c.tax_rate and c.tax_rate > 0 %}
+        {% set ns.tax = ns.tax + (c.amount|abs * c.tax_rate / (100 + c.tax_rate)) %}
+      {% endif %}
+    {% endfor %}
+    {% set total_gross = ns.total %}
+    {% set total_tax = ns.tax %}
+    <tr class="table-warning booking-group-header{% if is_stornogruppe %} text-muted{% endif %}"
+        {% if is_stornogruppe %}style="opacity:0.55"{% endif %}>
+      <td style="white-space:nowrap">{{ g.date.strftime('%d.%m.%Y') }}</td>
+      <td class="text-center">
+        <i class="fas fa-layer-group" title="Sammelbuchung" style="color:#b5651d"></i>
+      </td>
+      <td colspan="3">
+        <span class="badge bg-orange text-white me-1" title="Sammelbuchung">
+          <i class="fas fa-layer-group me-1"></i>SAMMEL
+        </span>
+        {% if g.reference %}
+        <span class="badge bg-secondary text-white me-1">{{ g.reference }}</span>
+        {% endif %}
+        <span class="fw-bold{% if is_stornogruppe %} text-decoration-line-through{% endif %}">{{ g.description }}</span>
+        {% if g.invoice_id %}
+        <a href="{{ url_for('invoices.detail', invoice_id=g.invoice_id) }}"
+           class="badge bg-light text-dark ms-1">
+          <i class="fas fa-file-invoice me-1"></i>RE
+        </a>
+        {% endif %}
+        <small class="text-muted ms-1">({{ effective_children|length }} Zeilen)</small>
+        {% if is_stornogruppe %}
+        <span class="badge bg-danger ms-1"><i class="fas fa-ban me-1"></i>STORNIERT</span>
+        {% endif %}
+      </td>
+      <td style="max-width:140px; white-space:nowrap; overflow:hidden">
+        {% if g.customer %}
+        <a href="{{ url_for('customers.detail', customer_id=g.customer.id) }}"
+           class="text-truncate d-inline-block small text-decoration-none"
+           style="max-width:100%"
+           title="{{ g.customer.name }}">
+          <i class="fas fa-user me-1 text-muted"></i>{{ g.customer.name }}
+        </a>
+        {% else %}
+        <span class="text-muted">—</span>
+        {% endif %}
+      </td>
+      <td class="text-center px-1"><span class="text-muted">—</span></td>
+      <td class="text-end text-nowrap text-muted small">
+        {% if total_tax and total_tax > 0 %}
+          {{ total_tax|de_number }}&nbsp;€
+        {% else %}
+          <span class="text-muted">—</span>
+        {% endif %}
+      </td>
+      <td class="text-end fw-bold text-nowrap {{ 'text-success' if total_gross >= 0 else 'text-danger' }}">
+        {{ total_gross|de_number }}&nbsp;€
+      </td>
+      <td class="text-end" style="white-space:nowrap">
+        <a href="{{ url_for('accounting.booking_group_detail', group_id=g.id) }}"
+           class="btn btn-sm btn-outline-secondary" title="Details">
+          <i class="fas fa-search"></i>
+        </a>
+        {% set fy_locked = effective_children and (effective_children|first).id in locked_booking_ids %}
+        {% set all_children_offen = effective_children and (effective_children|selectattr('status', 'equalto', 'Offen')|list|length == effective_children|length) %}
+        {% set can_edit = not is_stornogruppe and not fy_locked and g.date.year == now_year and all_children_offen %}
+        {% if can_edit %}
+        <a href="{{ url_for('accounting.booking_group_edit', group_id=g.id) }}"
+           class="btn btn-sm btn-outline-primary" title="Bearbeiten">
+          <i class="fas fa-edit"></i>
+        </a>
+        <form method="post" action="{{ url_for('accounting.booking_group_delete', group_id=g.id) }}"
+              style="display:inline"
+              onsubmit="return confirm('Sammelbuchung wirklich löschen? Alle {{ effective_children|length }} Zeilen werden entfernt.');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-sm btn-outline-danger" title="Löschen">
+            <i class="fas fa-trash"></i>
+          </button>
+        </form>
+        {% endif %}
+        {% if not is_stornogruppe and not fy_locked and g.date.year == now_year %}
+        <a href="{{ url_for('accounting.booking_group_stornieren', group_id=g.id) }}"
+           class="btn btn-sm btn-outline-danger" title="Stornieren">
+          <i class="fas fa-ban"></i>
+        </a>
+        {% endif %}
+      </td>
+    </tr>
+    {% for b in row.children %}
+    {% if not b.storno_of_id %}
+    <tr class="booking-group-child
+        {%- if b.status == 'Storniert' %} text-muted{% endif %}"
+        {% if b.status == 'Storniert' %}style="opacity:0.5"{% endif %}>
+      <td></td>
+      <td class="text-center">
+        {% if b.real_account %}
+        <i class="fas {{ b.real_account.icon or 'fa-university' }} text-muted" title="{{ b.real_account.name }}"></i>
+        {% else %}
+        <span class="text-muted">—</span>
+        {% endif %}
+      </td>
+      <td style="max-width:140px; white-space:nowrap; overflow:hidden">
+        <div class="d-flex align-items-center gap-1" style="min-width:0">
+          <span class="text-muted flex-shrink-0" title="Kind der Sammelbuchung">↳</span>
+          {% if b.account.code %}
+          <span class="badge bg-secondary text-white flex-shrink-0" title="{{ b.account.name }}">{{ b.account.code }}</span>
+          {% endif %}
+          <span class="text-truncate small" title="{{ b.account.name }}">{{ b.account.name }}</span>
+        </div>
+      </td>
+      <td>
+        <span class="small {% if b.status == 'Storniert' %}text-decoration-line-through{% endif %}">
+          {{ b.description }}
+        </span>
+      </td>
+      <td style="max-width:100px; overflow:hidden">
+        {% if b.project %}
+        {% set proj_color = b.project.color or '#3498db' %}
+        {% if b.project.code %}
+        <div class="d-flex align-items-center gap-1" style="min-width:0">
+          <a href="{{ url_for('projects.detail', project_id=b.project.id) }}"
+             class="badge flex-shrink-0"
+             style="background-color:{{ proj_color }};color:#fff"
+             title="{{ b.project.name }}">{{ b.project.code }}</a>
+          <a href="{{ url_for('projects.detail', project_id=b.project.id) }}"
+             class="text-truncate small text-decoration-none text-reset">{{ b.project.name }}</a>
+        </div>
+        {% else %}
+        <a href="{{ url_for('projects.detail', project_id=b.project.id) }}"
+           class="badge text-truncate d-block"
+           style="background-color:{{ proj_color }};color:#fff;max-width:100%"
+           title="{{ b.project.name }}">{{ b.project.name }}</a>
+        {% endif %}
+        {% else %}
+        <span class="text-muted">—</span>
+        {% endif %}
+      </td>
+      <td class="text-muted small">—</td>
+      <td class="text-center px-1">
+        {% if b.tax_rate and b.tax_rate > 0 and b.status != 'Storniert' %}
+          <span class="text-muted small">{{ b.tax_rate | int }}</span>
+        {% else %}
+          <span class="text-muted">—</span>
+        {% endif %}
+      </td>
+      <td class="text-end text-nowrap text-muted small">
+        {% if b.tax_rate and b.tax_rate > 0 and b.status != 'Storniert' %}
+          {{ (b.amount|abs * b.tax_rate / (100 + b.tax_rate))|de_number }}&nbsp;€
+        {% else %}
+          <span class="text-muted">—</span>
+        {% endif %}
+      </td>
+      <td class="text-end text-nowrap small {{ 'text-success' if b.amount > 0 else 'text-danger' }}">
+        {{ b.amount|de_number }}&nbsp;€
+      </td>
+      <td></td>
+    </tr>
+    {% endif %}
+    {% endfor %}
+
     {# ── UMBUCHUNG ────────────────────────────────────────────────── #}
-    {% if row.type == 'transfer' %}
+    {% elif row.type == 'transfer' %}
     {% set t = row.obj %}
     {% set t_amount = row.amount %}
     <tr class="table-light">

@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block title %}Sammelbuchung stornieren{% endblock %}
+{% block page_title %}
+  <i class="fas fa-ban me-2"></i> Sammelbuchung stornieren
+{% endblock %}
+{% block content %}
+<div>
+
+  {# Sammelbuchung – read-only #}
+  <div class="card mb-3">
+    <div class="card-header">
+      <h3 class="card-title">
+        <i class="fas fa-layer-group me-1"></i> Sammelbuchung #{{ group.id }}
+      </h3>
+    </div>
+    <div class="card-body pb-0">
+      <div class="row g-2">
+        <div class="col-sm-4">
+          <div class="mb-3">
+            <label class="text-muted small form-label">Datum</label>
+            <p class="fw-bold">{{ group.date.strftime('%d.%m.%Y') }}</p>
+          </div>
+        </div>
+        <div class="col-sm-4">
+          <div class="mb-3">
+            <label class="text-muted small form-label">Gesamtbetrag</label>
+            <p class="fw-bold {{ 'text-success' if group.total_amount > 0 else 'text-danger' }}">
+              {{ group.total_amount|de_number }} €
+            </p>
+          </div>
+        </div>
+        <div class="col-sm-4">
+          <div class="mb-3">
+            <label class="text-muted small form-label">Zeilen</label>
+            <p>{{ group.children|length }}</p>
+          </div>
+        </div>
+      </div>
+      <div class="mb-3">
+        <label class="text-muted small form-label">Beschreibung</label>
+        <p>{{ group.description }}</p>
+      </div>
+      {% if group.reference %}
+      <div class="mb-3">
+        <label class="text-muted small form-label">Belegnummer</label>
+        <p>{{ group.reference }}</p>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  {# Kinder-Übersicht #}
+  <div class="card mb-3">
+    <div class="card-header">
+      <h3 class="card-title">Betroffene Buchungszeilen</h3>
+    </div>
+    <div class="card-body p-0">
+      <table class="table table-sm mb-0">
+        <thead>
+          <tr>
+            <th>Konto</th>
+            <th>Projekt</th>
+            <th>Beschreibung</th>
+            <th class="text-center">MwSt %</th>
+            <th class="text-end">Betrag</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for b in group.children %}
+          {% if not b.storno_of_id %}
+          <tr>
+            <td>
+              {% if b.account.code %}<span class="badge bg-secondary text-white me-1">{{ b.account.code }}</span>{% endif %}
+              {{ b.account.name }}
+            </td>
+            <td>{% if b.project %}{{ b.project.code or b.project.name }}{% else %}—{% endif %}</td>
+            <td>{{ b.description }}</td>
+            <td class="text-center">{% if b.tax_rate %}{{ b.tax_rate | int }}{% else %}—{% endif %}</td>
+            <td class="text-end {{ 'text-success' if b.amount > 0 else 'text-danger' }}">
+              {{ b.amount|de_number }} €
+            </td>
+          </tr>
+          {% endif %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="alert alert-warning">
+    <i class="fas fa-info-circle me-1"></i>
+    Für jede aktive Zeile wird eine Gegenbuchung mit umgekehrtem Vorzeichen
+    angelegt. Die Sammelbuchung wird gruppen-atomar storniert — Einzel-Storno
+    für einzelne Zeilen ist nicht möglich.
+  </div>
+
+  {% if group.invoice_id %}
+  <div class="alert alert-danger">
+    <i class="fas fa-exclamation-triangle me-1"></i>
+    Diese Sammelbuchung ist mit einer Rechnung verknüpft.
+    <strong>Die Rechnung wird ebenfalls auf "Storniert" gesetzt</strong>
+    und ist danach ungültig. Bitte anschließend eine neue Rechnung ausstellen.
+  </div>
+  {% endif %}
+
+  {% set has_open_item = group.children | selectattr('open_item_id') | list | length > 0 %}
+
+  <div class="card border-danger">
+    <div class="card-header">
+      <h3 class="card-title">Storno durchführen</h3>
+    </div>
+    <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="card-body">
+        <div class="mb-3">
+          <label class="form-label">Storno-Grund <span class="text-danger">*</span></label>
+          <textarea name="storno_reason" class="form-control" rows="3"
+                    placeholder="Bitte Grund für die Stornierung angeben …"
+                    required minlength="5">{{ request.form.get('storno_reason', '') }}</textarea>
+        </div>
+        {% if has_open_item %}
+        <div class="mb-3">
+          <div class="form-check">
+            <input type="checkbox" class="form-check-input" id="close_open_item"
+                   name="close_open_item" value="1">
+            <label class="form-check-label" for="close_open_item">
+              Verknüpfte Offene Posten auf "Offen" zurücksetzen
+              <small class="text-muted d-block">
+                (Hebt die bisherige Zahlung der offenen Posten auf)
+              </small>
+            </label>
+          </div>
+        </div>
+        {% endif %}
+      </div>
+      <div class="card-footer">
+        <button type="submit" class="btn btn-danger">
+          <i class="fas fa-ban me-1"></i> Sammelbuchung stornieren
+        </button>
+        <a href="{{ url_for('accounting.booking_group_detail', group_id=group.id) }}"
+           class="btn btn-outline-secondary ms-2">Abbrechen</a>
+      </div>
+    </form>
+  </div>
+
+</div>
+{% endblock %}

@@ -10,6 +10,11 @@
        aktiviert/deaktiviert je nachdem ob mindestens eine Position existiert
      - form_name_prefix (optional, default '') — Präfix für Feldnamen,
        z.B. wenn der Editor neben anderen Formularen auf derselben Seite steht
+     - editor_accounts (optional): Liste der Account-Objekte für das
+       Konto-Dropdown pro Zeile (ADR-002). Wenn nicht übergeben, wird die
+       Konto-Spalte versteckt (Kompatibilität mit alten Callern).
+     - editor_projects (optional): Liste der Project-Objekte für das
+       Projekt-Dropdown pro Zeile (ADR-002).
 
    Das Partial liefert die Button-Leiste, den Row-Container und alle
    Row-Templates. Der Caller muss den Submit-Button selbst rendern und
@@ -18,6 +23,9 @@
 {% set _container = container_id|default('rowsContainer') %}
 {% set _submit = submit_btn_id|default('submitBtn') %}
 {% set _prefix = form_name_prefix|default('') %}
+{% set _accounts = editor_accounts|default([]) %}
+{% set _projects = editor_projects|default([]) %}
+{% set _show_dims = _accounts|length > 0 or _projects|length > 0 %}
 
 <div id="{{ _container }}">
   {# Bestehende Positionen als vorkonfigurierte „Freie Position"-Zeilen
@@ -30,7 +38,7 @@
     <input type="hidden" name="{{ _prefix }}row_tariff_id[]" value="">
     <input type="hidden" name="{{ _prefix }}row_consumption_m3[]" value="">
     <input type="hidden" name="{{ _prefix }}existing_item_id[]" value="{{ item.id }}">
-    <div class="row align-items-end">
+    <div class="row align-items-end g-2">
       <div class="col-md-3">
         <label class="small">Beschreibung</label>
         <input type="text" name="{{ _prefix }}row_description[]" class="form-control form-control-sm"
@@ -46,8 +54,8 @@
         <input type="text" name="{{ _prefix }}row_unit[]" class="form-control form-control-sm"
                value="{{ item.unit or '' }}">
       </div>
-      <div class="col-md-2">
-        <label class="small">Einzelpreis €</label>
+      <div class="col-md-1">
+        <label class="small">Preis €</label>
         <input type="number" name="{{ _prefix }}row_unit_price[]" class="form-control form-control-sm free-price"
                step="0.01" min="0" value="{{ item.unit_price }}" required onchange="itemsEditorCalcFree(this)">
       </div>
@@ -56,7 +64,34 @@
         <input type="number" name="{{ _prefix }}row_tax_rate[]" class="form-control form-control-sm"
                step="0.01" min="0" max="100" value="{{ item.tax_rate or '' }}">
       </div>
+      {% if _show_dims %}
       <div class="col-md-2">
+        <label class="small">Konto</label>
+        <select name="{{ _prefix }}row_account_id[]" class="form-select form-select-sm">
+          <option value="">– Default –</option>
+          {% for a in _accounts %}
+          <option value="{{ a.id }}" {{ 'selected' if item.account_id == a.id }}>
+            {% if a.code %}{{ a.code }} – {% endif %}{{ a.name }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-1">
+        <label class="small">Projekt</label>
+        <select name="{{ _prefix }}row_project_id[]" class="form-select form-select-sm">
+          <option value="">–</option>
+          {% for p in _projects %}
+          <option value="{{ p.id }}" {{ 'selected' if item.project_id == p.id }}>
+            {% if p.code %}{{ p.code }} – {% endif %}{{ p.name }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      {% else %}
+      <input type="hidden" name="{{ _prefix }}row_account_id[]" value="{{ item.account_id or '' }}">
+      <input type="hidden" name="{{ _prefix }}row_project_id[]" value="{{ item.project_id or '' }}">
+      {% endif %}
+      <div class="col-md-{% if _show_dims %}1{% else %}2{% endif %}">
         <label class="small">Betrag</label>
         <input type="text" class="form-control form-control-sm amount-display" readonly
                value="{{ '%.2f'|format(item.amount or 0) }} €">
@@ -96,8 +131,8 @@
     <input type="hidden" name="{{ _prefix }}row_quantity[]" value="">
     <input type="hidden" name="{{ _prefix }}row_unit[]" value="">
     <input type="hidden" name="{{ _prefix }}row_tax_rate[]" value="0">
-    <div class="row align-items-end">
-      <div class="col-md-4">
+    <div class="row align-items-end g-2">
+      <div class="col-md-{% if _show_dims %}3{% else %}4{% endif %}">
         <label class="small">Tarif <span class="text-danger">*</span></label>
         <select name="{{ _prefix }}row_tariff_id[]" class="form-control form-control-sm tariff-select" required onchange="itemsEditorUpdateTariffPrice(this)">
           <option value="">— Tarif wählen —</option>
@@ -116,11 +151,34 @@
         <input type="number" name="{{ _prefix }}row_consumption_m3[]" class="form-control form-control-sm consumption-input"
                step="0.001" min="0" placeholder="0.000" required onchange="itemsEditorCalcTariff(this)">
       </div>
-      <div class="col-md-2">
+      <div class="col-md-{% if _show_dims %}1{% else %}2{% endif %}">
         <label class="small">Preis/m³ €</label>
         <input type="text" name="{{ _prefix }}row_unit_price[]" class="form-control form-control-sm price-display"
                readonly placeholder="—">
       </div>
+      {% if _show_dims %}
+      <div class="col-md-2">
+        <label class="small">Konto</label>
+        <select name="{{ _prefix }}row_account_id[]" class="form-select form-select-sm">
+          <option value="">– Default –</option>
+          {% for a in _accounts %}
+          <option value="{{ a.id }}">{% if a.code %}{{ a.code }} – {% endif %}{{ a.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-1">
+        <label class="small">Projekt</label>
+        <select name="{{ _prefix }}row_project_id[]" class="form-select form-select-sm">
+          <option value="">–</option>
+          {% for p in _projects %}
+          <option value="{{ p.id }}">{% if p.code %}{{ p.code }} – {% endif %}{{ p.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% else %}
+      <input type="hidden" name="{{ _prefix }}row_account_id[]" value="">
+      <input type="hidden" name="{{ _prefix }}row_project_id[]" value="">
+      {% endif %}
       <div class="col-md-2">
         <label class="small">Betrag (ca.)</label>
         <input type="text" class="form-control form-control-sm amount-display" readonly placeholder="—">
@@ -139,8 +197,8 @@
     <input type="hidden" name="{{ _prefix }}row_type[]" value="water">
     <input type="hidden" name="{{ _prefix }}row_tariff_id[]" value="">
     <input type="hidden" name="{{ _prefix }}row_tax_rate[]" value="0">
-    <div class="row align-items-end">
-      <div class="col-md-4">
+    <div class="row align-items-end g-2">
+      <div class="col-md-{% if _show_dims %}3{% else %}4{% endif %}">
         <label class="small">Beschreibung</label>
         <input type="text" name="{{ _prefix }}row_description[]" class="form-control form-control-sm"
                placeholder="Wasserverbrauch (leer = automatisch)">
@@ -150,11 +208,34 @@
         <input type="number" name="{{ _prefix }}row_consumption_m3[]" class="form-control form-control-sm water-consumption"
                step="0.001" min="0" placeholder="0.000" required onchange="itemsEditorCalcWater(this)">
       </div>
-      <div class="col-md-2">
+      <div class="col-md-{% if _show_dims %}1{% else %}2{% endif %}">
         <label class="small">Preis/m³ € <span class="text-danger">*</span></label>
         <input type="number" name="{{ _prefix }}row_unit_price[]" class="form-control form-control-sm water-price"
                step="0.0001" min="0" placeholder="0.0000" required onchange="itemsEditorCalcWater(this)">
       </div>
+      {% if _show_dims %}
+      <div class="col-md-2">
+        <label class="small">Konto</label>
+        <select name="{{ _prefix }}row_account_id[]" class="form-select form-select-sm">
+          <option value="">– Default –</option>
+          {% for a in _accounts %}
+          <option value="{{ a.id }}">{% if a.code %}{{ a.code }} – {% endif %}{{ a.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-1">
+        <label class="small">Projekt</label>
+        <select name="{{ _prefix }}row_project_id[]" class="form-select form-select-sm">
+          <option value="">–</option>
+          {% for p in _projects %}
+          <option value="{{ p.id }}">{% if p.code %}{{ p.code }} – {% endif %}{{ p.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% else %}
+      <input type="hidden" name="{{ _prefix }}row_account_id[]" value="">
+      <input type="hidden" name="{{ _prefix }}row_project_id[]" value="">
+      {% endif %}
       <div class="col-md-2">
         <label class="small">Betrag (ca.)</label>
         <input type="text" class="form-control form-control-sm amount-display" readonly placeholder="—">
@@ -173,8 +254,8 @@
     <input type="hidden" name="{{ _prefix }}row_type[]" value="free">
     <input type="hidden" name="{{ _prefix }}row_tariff_id[]" value="">
     <input type="hidden" name="{{ _prefix }}row_consumption_m3[]" value="">
-    <div class="row align-items-end">
-      <div class="col-md-3">
+    <div class="row align-items-end g-2">
+      <div class="col-md-{% if _show_dims %}2{% else %}3{% endif %}">
         <label class="small">Beschreibung <span class="text-danger">*</span></label>
         <input type="text" name="{{ _prefix }}row_description[]" class="form-control form-control-sm" required
                placeholder="z.B. Mahngebühr">
@@ -188,7 +269,7 @@
         <label class="small">Einheit</label>
         <input type="text" name="{{ _prefix }}row_unit[]" class="form-control form-control-sm" value="Stk">
       </div>
-      <div class="col-md-2">
+      <div class="col-md-{% if _show_dims %}1{% else %}2{% endif %}">
         <label class="small">Einzelpreis € <span class="text-danger">*</span></label>
         <input type="number" name="{{ _prefix }}row_unit_price[]" class="form-control form-control-sm free-price"
                step="0.01" min="0" placeholder="0.00" required onchange="itemsEditorCalcFree(this)">
@@ -198,7 +279,30 @@
         <input type="number" name="{{ _prefix }}row_tax_rate[]" class="form-control form-control-sm"
                step="0.01" min="0" max="100" placeholder="0">
       </div>
+      {% if _show_dims %}
       <div class="col-md-2">
+        <label class="small">Konto</label>
+        <select name="{{ _prefix }}row_account_id[]" class="form-select form-select-sm">
+          <option value="">– Default –</option>
+          {% for a in _accounts %}
+          <option value="{{ a.id }}">{% if a.code %}{{ a.code }} – {% endif %}{{ a.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-1">
+        <label class="small">Projekt</label>
+        <select name="{{ _prefix }}row_project_id[]" class="form-select form-select-sm">
+          <option value="">–</option>
+          {% for p in _projects %}
+          <option value="{{ p.id }}">{% if p.code %}{{ p.code }} – {% endif %}{{ p.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% else %}
+      <input type="hidden" name="{{ _prefix }}row_account_id[]" value="">
+      <input type="hidden" name="{{ _prefix }}row_project_id[]" value="">
+      {% endif %}
+      <div class="col-md-{% if _show_dims %}1{% else %}2{% endif %}">
         <label class="small">Betrag (ca.)</label>
         <input type="text" class="form-control form-control-sm amount-display" readonly placeholder="—">
       </div>

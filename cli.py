@@ -64,6 +64,14 @@ def register_commands(app):
             _add_col_if_missing("invoices", "doc_path VARCHAR(500)", "doc_path")
             _add_col_if_missing("invoices", "billing_run_id INTEGER REFERENCES billing_runs(id)", "billing_run_id")
             _add_col_if_missing("fiscal_years", "is_vat_liable INTEGER NOT NULL DEFAULT 0", "is_vat_liable")
+            _add_col_if_missing("open_items", "account_id INTEGER REFERENCES accounts(id)", "account_id")
+            _add_col_if_missing("billing_runs", "account_id INTEGER REFERENCES accounts(id)", "account_id")
+            # ADR-002: Sammelbuchung. Neue Tabelle booking_groups wird durch
+            # db.create_all() angelegt; hier nur die ALTER-Spalten auf
+            # bestehenden Tabellen ergänzen.
+            _add_col_if_missing("bookings", "group_id INTEGER REFERENCES booking_groups(id)", "group_id")
+            _add_col_if_missing("invoice_items", "account_id INTEGER REFERENCES accounts(id)", "account_id")
+            _add_col_if_missing("invoice_items", "project_id INTEGER REFERENCES projects(id)", "project_id")
             conn.commit()
 
         # Standard-Steuersätze anlegen
@@ -132,6 +140,14 @@ def register_commands(app):
             _add_col_if_missing("invoices", "doc_path VARCHAR(500)", "doc_path")
             _add_col_if_missing("invoices", "billing_run_id INTEGER REFERENCES billing_runs(id)", "billing_run_id")
             _add_col_if_missing("fiscal_years", "is_vat_liable INTEGER NOT NULL DEFAULT 0", "is_vat_liable")
+            _add_col_if_missing("open_items", "account_id INTEGER REFERENCES accounts(id)", "account_id")
+            _add_col_if_missing("billing_runs", "account_id INTEGER REFERENCES accounts(id)", "account_id")
+            # ADR-002: Sammelbuchung. Neue Tabelle booking_groups wird durch
+            # db.create_all() angelegt; hier nur die ALTER-Spalten auf
+            # bestehenden Tabellen ergänzen.
+            _add_col_if_missing("bookings", "group_id INTEGER REFERENCES booking_groups(id)", "group_id")
+            _add_col_if_missing("invoice_items", "account_id INTEGER REFERENCES accounts(id)", "account_id")
+            _add_col_if_missing("invoice_items", "project_id INTEGER REFERENCES projects(id)", "project_id")
             conn.commit()
 
         # Standard-Steuersätze anlegen

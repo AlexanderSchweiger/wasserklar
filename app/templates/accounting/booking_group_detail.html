@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+{% block title %}Sammelbuchung {{ group.id }}{% endblock %}
+{% block page_title %}
+  <i class="fas fa-layer-group me-2"></i> Sammelbuchung #{{ group.id }}
+  {% if group.status == 'Storniert' %}
+  <span class="badge bg-danger ms-2"><i class="fas fa-ban me-1"></i>Storniert</span>
+  {% else %}
+  <span class="badge bg-success ms-2">Aktiv</span>
+  {% endif %}
+{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="col-md-4">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Kopfdaten</h3>
+      </div>
+      <div class="card-body">
+        <dl class="row mb-0">
+          <dt class="col-sm-5">Datum</dt>
+          <dd class="col-sm-7">{{ group.date.strftime('%d.%m.%Y') }}</dd>
+
+          <dt class="col-sm-5">Beschreibung</dt>
+          <dd class="col-sm-7">{{ group.description }}</dd>
+
+          {% if group.reference %}
+          <dt class="col-sm-5">Belegnr.</dt>
+          <dd class="col-sm-7">{{ group.reference }}</dd>
+          {% endif %}
+
+          {% if group.invoice_id %}
+          <dt class="col-sm-5">Rechnung</dt>
+          <dd class="col-sm-7">
+            <a href="{{ url_for('invoices.detail', invoice_id=group.invoice_id) }}">
+              {{ group.invoice.invoice_number if group.invoice else group.invoice_id }}
+            </a>
+          </dd>
+          {% endif %}
+
+          {% if group.customer %}
+          <dt class="col-sm-5">Kunde</dt>
+          <dd class="col-sm-7">
+            <a href="{{ url_for('customers.detail', customer_id=group.customer.id) }}">
+              {{ group.customer.name }}
+            </a>
+          </dd>
+          {% endif %}
+
+          <dt class="col-sm-5">Gesamtbetrag</dt>
+          <dd class="col-sm-7">
+            <strong class="{{ 'text-success' if group.total_amount >= 0 else 'text-danger' }}">
+              {{ group.total_amount|de_number }} €
+            </strong>
+          </dd>
+
+          <dt class="col-sm-5">Zeilen</dt>
+          <dd class="col-sm-7">{{ group.children|length }}</dd>
+
+          {% if group.created_by %}
+          <dt class="col-sm-5">Angelegt von</dt>
+          <dd class="col-sm-7">{{ group.created_by.username }}</dd>
+          {% endif %}
+          {% if group.created_at %}
+          <dt class="col-sm-5">Angelegt am</dt>
+          <dd class="col-sm-7">{{ group.created_at.strftime('%d.%m.%Y %H:%M') }}</dd>
+          {% endif %}
+
+          {% if group.status == 'Storniert' %}
+          <dt class="col-sm-5">Storniert am</dt>
+          <dd class="col-sm-7">{{ group.storno_date.strftime('%d.%m.%Y') if group.storno_date else '—' }}</dd>
+          <dt class="col-sm-5">Storno-Grund</dt>
+          <dd class="col-sm-7">{{ group.storno_reason or '—' }}</dd>
+          {% endif %}
+        </dl>
+      </div>
+      <div class="card-footer">
+        <a href="{{ url_for('accounting.bookings') }}" class="btn btn-sm btn-outline-secondary">
+          <i class="fas fa-arrow-left me-1"></i> Zurück
+        </a>
+        {% set _all_offen = group.children and (group.children|selectattr('status', 'equalto', 'Offen')|list|length == group.children|rejectattr('storno_of_id')|list|length) %}
+        {% set _can_edit = group.status != 'Storniert' and not is_locked and _all_offen %}
+        {% if _can_edit %}
+        <a href="{{ url_for('accounting.booking_group_edit', group_id=group.id) }}"
+           class="btn btn-sm btn-outline-primary ms-1">
+          <i class="fas fa-edit me-1"></i> Bearbeiten
+        </a>
+        <form method="post" action="{{ url_for('accounting.booking_group_delete', group_id=group.id) }}"
+              style="display:inline"
+              onsubmit="return confirm('Sammelbuchung wirklich löschen? Alle {{ group.children|rejectattr('storno_of_id')|list|length }} Zeilen werden entfernt.');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-sm btn-outline-danger ms-1">
+            <i class="fas fa-trash me-1"></i> Löschen
+          </button>
+        </form>
+        {% endif %}
+        {% if group.status != 'Storniert' and not is_locked %}
+        <a href="{{ url_for('accounting.booking_group_stornieren', group_id=group.id) }}"
+           class="btn btn-sm btn-outline-danger ms-1">
+          <i class="fas fa-ban me-1"></i> Stornieren
+        </a>
+        {% endif %}
+        {% if is_locked and group.status != 'Storniert' %}
+        <span class="ms-2 text-muted small">
+          <i class="fas fa-lock me-1"></i>
+          {% if fy_locked %}
+          Buchungsjahr {{ fy_locked.year }} abgeschlossen.
+          {% else %}
+          Vorjahre können nicht storniert werden.
+          {% endif %}
+        </span>
+        {% endif %}
+        {% if group.status != 'Storniert' and not is_locked and not _all_offen %}
+        <span class="ms-2 text-muted small">
+          <i class="fas fa-lock me-1"></i> Bereits verbucht – nur Stornierung möglich.
+        </span>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-8">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Buchungszeilen ({{ group.children|length }})</h3>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-bordered mb-0">
+          <thead>
+            <tr>
+              <th style="width:1%" class="text-center"><i class="fas fa-university"></i></th>
+              <th>Konto</th>
+              <th>Beschreibung</th>
+              <th>Projekt</th>
+              <th class="text-center px-1">%</th>
+              <th class="text-end">Steuer</th>
+              <th class="text-end">Betrag</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for b in group.children %}
+            {% if not b.storno_of_id %}
+            <tr {% if b.status == 'Storniert' %}class="text-muted" style="opacity:0.6"{% endif %}>
+              <td class="text-center">
+                {% if b.real_account %}
+                <i class="fas {{ b.real_account.icon or 'fa-university' }} text-muted" title="{{ b.real_account.name }}"></i>
+                {% else %}
+                <span class="text-muted">—</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if b.account.code %}<span class="badge bg-secondary text-white me-1">{{ b.account.code }}</span>{% endif %}
+                {{ b.account.name }}
+              </td>
+              <td class="{% if b.status == 'Storniert' %}text-decoration-line-through{% endif %}">
+                {{ b.description }}
+              </td>
+              <td>
+                {% if b.project %}
+                {% set proj_color = b.project.color or '#3498db' %}
+                <a href="{{ url_for('projects.detail', project_id=b.project.id) }}"
+                   class="badge" style="background-color:{{ proj_color }};color:#fff">
+                  {{ b.project.code or b.project.name }}
+                </a>
+                {% else %}
+                <span class="text-muted">—</span>
+                {% endif %}
+              </td>
+              <td class="text-center px-1">
+                {% if b.tax_rate and b.tax_rate > 0 %}
+                  {{ b.tax_rate | int }}
+                {% else %}
+                  <span class="text-muted">—</span>
+                {% endif %}
+              </td>
+              <td class="text-end text-muted small">
+                {% if b.tax_rate and b.tax_rate > 0 %}
+                  {{ (b.amount|abs * b.tax_rate / (100 + b.tax_rate))|de_number }}&nbsp;€
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+              <td class="text-end {{ 'text-success' if b.amount > 0 else 'text-danger' }}">
+                <strong>{{ b.amount|de_number }} €</strong>
+              </td>
+            </tr>
+            {% endif %}
+            {% endfor %}
+          </tbody>
+          <tfoot>
+            <tr class="table-active">
+              <th colspan="6" class="text-end">Gesamt</th>
+              <th class="text-end">{{ group.total_amount|de_number }} €</th>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

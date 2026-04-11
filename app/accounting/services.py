@@ -21,6 +21,7 @@ Gegenbuchung mit – das ergab fälschlicherweise ``-original.amount`` statt
 mitzählen. Dieser Service ignoriert beide.
 """
 
+from collections import OrderedDict
 from datetime import date
 from decimal import Decimal
 import calendar
@@ -30,6 +31,7 @@ from sqlalchemy import extract, func
 from app.extensions import db
 from app.models import (
     Booking, Transfer, RealAccount, RealAccountYearBalance, FiscalYear,
+    BookingGroup,
 )
 
 
@@ -491,3 +493,282 @@ def fiscal_year_close_summary(year):
             "dec31": dec31,
         })
     return summary
+
+
+# ---------------------------------------------------------------------------
+# Sammelbuchung (BookingGroup) — ADR-002
+# ---------------------------------------------------------------------------
+
+def recompute_group_total(group_id):
+    """Aktualisiert ``booking_groups.total_amount`` als Summe aller aktiven Kinder.
+
+    Stornierte Kinder und Storno-Gegenbuchungen werden ausgeschlossen, damit
+    der Header-Betrag dem tatsächlichen Netto-Zahlungswert entspricht.
+    """
+    group = db.session.get(BookingGroup, group_id)
+    if group is None:
+        return
+    q = db.session.query(func.sum(Booking.amount)).filter(Booking.group_id == group_id)
+    q = apply_storno_filter(q)
+    group.total_amount = q.scalar() or Decimal("0")
+
+
+def _split_invoice_by_dimensions(invoice, gross_amount):
+    """Splittet den Brutto-Zahlbetrag einer Rechnung nach (account_id, project_id, tax_rate).
+
+    Die Rechnungs-Positionen werden über ihren Nettobetrag gewichtet, der
+    letzte Split-Eintrag gleicht Rundungsdifferenzen aus, damit die Summe
+    exakt dem Zahlbetrag entspricht.
+
+    Liefert eine Liste ``[{account_id, project_id, tax_rate, amount, description}, ...]``
+    mit den gruppierten Zeilen (Reihenfolge stabil nach Einfügen). ``description``
+    übernimmt dabei die Positionstexte der Rechnung (zusammengeführt, falls
+    mehrere Positionen im selben Split landen).
+    """
+    gross_amount = Decimal(str(gross_amount))
+
+    # Fallback-Konto aus OpenItem oder BillingRun (Default-Vererbung, ADR-002).
+    default_account_id = None
+    if invoice.open_item and invoice.open_item.account_id:
+        default_account_id = invoice.open_item.account_id
+    elif getattr(invoice, "billing_run", None) and invoice.billing_run.account_id:
+        default_account_id = invoice.billing_run.account_id
+
+    # Erst: Positionen gruppieren, Netto & Brutto je Dimension sammeln.
+    groups = OrderedDict()
+    for item in invoice.items:
+        acc_id = item.account_id or default_account_id
+        proj_id = item.project_id
+        rate = item.tax_rate if item.tax_rate is not None else Decimal("0")
+        net = Decimal(str(item.amount or 0))
+        if rate and rate > 0:
+            gross = net + (net * Decimal(str(rate)) / Decimal("100")).quantize(Decimal("0.01"))
+        else:
+            gross = net
+        key = (acc_id, proj_id, Decimal(str(rate)))
+        if key not in groups:
+            groups[key] = {
+                "account_id": acc_id,
+                "project_id": proj_id,
+                "tax_rate": Decimal(str(rate)),
+                "net": Decimal("0"),
+                "gross": Decimal("0"),
+                "descriptions": [],
+            }
+        groups[key]["net"] += net
+        groups[key]["gross"] += gross
+        if item.description:
+            d = item.description.strip()
+            if d and d not in groups[key]["descriptions"]:
+                groups[key]["descriptions"].append(d)
+
+    invoice_gross = sum((g["gross"] for g in groups.values()), Decimal("0"))
+    if invoice_gross == 0:
+        # Defensiver Fallback: alles in eine einzige Zeile
+        return [{
+            "account_id": default_account_id,
+            "project_id": None,
+            "tax_rate": Decimal("0"),
+            "amount": gross_amount,
+            "description": None,
+        }]
+
+    # Proportional auf Zahlbetrag umlegen (wichtig bei Teilzahlung/Rundung).
+    result = []
+    remaining = gross_amount
+    keys = list(groups.keys())
+    for i, key in enumerate(keys):
+        g = groups[key]
+        if i == len(keys) - 1:
+            portion = remaining
+        else:
+            portion = (gross_amount * g["gross"] / invoice_gross).quantize(Decimal("0.01"))
+            remaining -= portion
+        if portion == 0:
+            continue
+        # Positionstexte zusammenführen; bei Überlänge defensiv kürzen, damit
+        # die VARCHAR(500)-Grenze der Booking-Beschreibung sicher eingehalten wird.
+        desc = ", ".join(g["descriptions"]) if g["descriptions"] else None
+        if desc and len(desc) > 480:
+            desc = desc[:477] + "…"
+        result.append({
+            "account_id": g["account_id"],
+            "project_id": g["project_id"],
+            "tax_rate": g["tax_rate"],
+            "amount": portion,
+            "description": desc,
+        })
+
+    return result
+
+
+def booking_group_from_invoice_payment(
+    invoice,
+    amount,
+    payment_date,
+    real_account_id,
+    created_by_id,
+    open_item=None,
+    reference=None,
+):
+    """Erzeugt (bei Bedarf) eine Sammelbuchung für eine Rechnungs-Zahlung.
+
+    Regel (ADR-002): Liefert der Split nach ``(account_id, project_id, tax_rate)``
+    genau eine Zeile, wird eine einfache Einzelbuchung angelegt (kein
+    ``BookingGroup``-Eintrag). Bei ≥ 2 Zeilen wird ein Gruppen-Header plus
+    pro Split-Zeile ein Kind angelegt.
+
+    Parameter
+    ---------
+    invoice : Invoice
+        Zu bezahlende Rechnung, deren Positionen die Dimensionen liefern.
+    amount : Decimal | float | int
+        Brutto-Zahlbetrag (positiv für Einnahmen, negativ für Rückzahlungen).
+    payment_date : date
+    real_account_id : int
+        Bankkonto, über das die Zahlung lief.
+    created_by_id : int
+    open_item : OpenItem | None
+        Wenn übergeben, werden alle Kinder ebenfalls mit ``open_item_id`` verknüpft.
+    reference : str | None
+        Belegnummer (default = ``invoice.invoice_number``).
+
+    Rückgabe
+    --------
+    tuple (group, children)
+        ``group`` ist ``BookingGroup`` oder ``None`` (bei Einzelbuchung);
+        ``children`` ist die Liste der angelegten ``Booking``-Objekte.
+    """
+    amount = Decimal(str(amount))
+    reference = reference or invoice.invoice_number
+    open_item_id = open_item.id if open_item is not None else None
+    fallback_desc = f"Zahlung Rechnung {invoice.invoice_number}"
+
+    splits = _split_invoice_by_dimensions(invoice, amount)
+
+    # Einzelzeile → flache Einzelbuchung, wie bisher
+    if len(splits) <= 1:
+        s = splits[0]
+        acc_id = s["account_id"]
+        if acc_id is None:
+            raise ValueError(
+                "Zahlungsbuchung kann nicht angelegt werden: Kein Konto "
+                "auf der Rechnungsposition und kein Default (OpenItem/BillingRun)."
+            )
+        booking = Booking(
+            date=payment_date,
+            account_id=acc_id,
+            project_id=s.get("project_id"),
+            amount=s["amount"],
+            description=s.get("description") or fallback_desc,
+            reference=reference,
+            invoice_id=invoice.id,
+            open_item_id=open_item_id,
+            real_account_id=real_account_id,
+            customer_id=invoice.customer_id,
+            tax_rate=s["tax_rate"] if s["tax_rate"] and s["tax_rate"] > 0 else None,
+            created_by_id=created_by_id,
+        )
+        db.session.add(booking)
+        db.session.flush()
+        return None, [booking]
+
+    # ≥ 2 Zeilen → Sammelbuchung anlegen
+    group = BookingGroup(
+        date=payment_date,
+        description=fallback_desc,
+        reference=reference,
+        invoice_id=invoice.id,
+        customer_id=invoice.customer_id,
+        total_amount=amount,
+        status=BookingGroup.STATUS_AKTIV,
+        created_by_id=created_by_id,
+    )
+    db.session.add(group)
+    db.session.flush()
+
+    children = []
+    for s in splits:
+        acc_id = s["account_id"]
+        if acc_id is None:
+            raise ValueError(
+                "Zahlungsbuchung kann nicht angelegt werden: Kein Konto "
+                "auf der Rechnungsposition und kein Default (OpenItem/BillingRun)."
+            )
+        child = Booking(
+            date=payment_date,
+            account_id=acc_id,
+            project_id=s.get("project_id"),
+            amount=s["amount"],
+            description=s.get("description") or fallback_desc,
+            reference=reference,
+            invoice_id=invoice.id,
+            open_item_id=open_item_id,
+            real_account_id=real_account_id,
+            customer_id=invoice.customer_id,
+            tax_rate=s["tax_rate"] if s["tax_rate"] and s["tax_rate"] > 0 else None,
+            group_id=group.id,
+            created_by_id=created_by_id,
+        )
+        db.session.add(child)
+        children.append(child)
+    db.session.flush()
+
+    # Summe denormalisieren (falls Rundung den Übergabewert verfälscht hat).
+    recompute_group_total(group.id)
+    return group, children
+
+
+def storno_booking_group(group, reason, created_by_id, storno_date=None):
+    """Storniert eine Sammelbuchung gruppen-atomar (ADR-002).
+
+    Für *jedes* aktive Kind wird ein Storno-Partner-Booking angelegt (Betrag
+    negiert, ``storno_of_id`` gesetzt, Status ``Verbucht``), das Kind selbst
+    wird auf ``Storniert`` gesetzt. Header wird ebenfalls als storniert
+    markiert. Die Funktion committet nicht — Aufrufer ist für
+    ``db.session.commit()`` verantwortlich.
+
+    Eine verknüpfte Rechnung wird **nicht** automatisch storniert; das macht
+    der Aufrufer analog zur heutigen ``booking_stornieren``-Kaskade weiter.
+    """
+    if group.status == BookingGroup.STATUS_STORNIERT:
+        return []
+    storno_date = storno_date or date.today()
+
+    new_partners = []
+    for child in group.children:
+        if child.status == Booking.STATUS_STORNIERT:
+            continue
+        if child.storno_of_id is not None:
+            continue
+        partner = Booking(
+            date=storno_date,
+            account_id=child.account_id,
+            amount=-Decimal(str(child.amount)),
+            description=f"Storno: {child.description}",
+            reference=child.reference,
+            invoice_id=child.invoice_id,
+            open_item_id=child.open_item_id,
+            project_id=child.project_id,
+            real_account_id=child.real_account_id,
+            customer_id=child.customer_id,
+            tax_rate=child.tax_rate,
+            status=Booking.STATUS_VERBUCHT,
+            storno_of_id=child.id,
+            storno_reason=reason,
+            storno_date=storno_date,
+            group_id=child.group_id,
+            created_by_id=created_by_id,
+        )
+        db.session.add(partner)
+        child.status = Booking.STATUS_STORNIERT
+        child.storno_reason = reason
+        child.storno_date = storno_date
+        new_partners.append(partner)
+
+    group.status = BookingGroup.STATUS_STORNIERT
+    group.storno_reason = reason
+    group.storno_date = storno_date
+    db.session.flush()
+    recompute_group_total(group.id)
+    return new_partners
