@@ -70,12 +70,19 @@
           {% endif %}
         {% endfor %}
         {% if cur_dunning.level > 0 %}
+          {% if cur_dunning.color %}
           <a href="{{ url_for('dunning.notices', q=inv.invoice_number) }}"
-             class="badge text-decoration-none"
-             style="background-color:{{ cur_dunning.color or '#6c757d' }}">
+             class="badge bg-{{ cur_dunning.color }} text-{{ cur_dunning.color }}-fg text-decoration-none">
             {% if cur_dunning.icon %}<i class="fas {{ cur_dunning.icon }} me-1"></i>{% endif %}
-            {{ cur_dunning.name or ('Stufe ' ~ cur_dunning.level) }}
+            {{cur_dunning.level }}
           </a>
+          {% else %}
+          <a href="{{ url_for('dunning.notices', q=inv.invoice_number) }}"
+             class="badge bg-secondary text-decoration-none">
+            {% if cur_dunning.icon %}<i class="fas {{ cur_dunning.icon }} me-1"></i>{% endif %}
+            {{cur_dunning.level }}
+          </a>
+          {% endif %}
         {% else %}
           <span class="text-muted">–</span>
         {% endif %}

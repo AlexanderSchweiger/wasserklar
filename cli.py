@@ -101,16 +101,16 @@ def register_commands(app):
             stages = [
                 DunningStage(policy_id=policy.id, level=1, name="Freundliche Zahlungserinnerung",
                              days_after_due=14, fee_fixed=Decimal("0.00"), new_due_days=14,
-                             print_title="Zahlungserinnerung", color="#4299e1", icon="fa-envelope"),
+                             print_title="Zahlungserinnerung", color="blue", icon="fa-envelope"),
                 DunningStage(policy_id=policy.id, level=2, name="Zahlungserinnerung",
                              days_after_due=30, fee_fixed=Decimal("0.00"), new_due_days=14,
-                             print_title="Zahlungserinnerung", color="#ed8936", icon="fa-exclamation-circle"),
+                             print_title="Zahlungserinnerung", color="orange", icon="fa-exclamation-circle"),
                 DunningStage(policy_id=policy.id, level=3, name="1. Mahnung",
                              days_after_due=45, fee_fixed=Decimal("5.00"), new_due_days=14,
-                             print_title="1. Mahnung", color="#e53e3e", icon="fa-exclamation-triangle"),
+                             print_title="1. Mahnung", color="red", icon="fa-exclamation-triangle"),
                 DunningStage(policy_id=policy.id, level=4, name="2. Mahnung (letzte)",
                              days_after_due=60, fee_fixed=Decimal("10.00"), new_due_days=7,
-                             print_title="Letzte Mahnung", color="#9b2c2c", icon="fa-gavel"),
+                             print_title="Letzte Mahnung", color="pink", icon="fa-gavel"),
             ]
             db.session.add_all(stages)
             db.session.commit()
@@ -208,16 +208,16 @@ def register_commands(app):
             stages = [
                 DunningStage(policy_id=policy.id, level=1, name="Freundliche Zahlungserinnerung",
                              days_after_due=14, fee_fixed=Decimal("0.00"), new_due_days=14,
-                             print_title="Zahlungserinnerung", color="#4299e1", icon="fa-envelope"),
+                             print_title="Zahlungserinnerung", color="blue", icon="fa-envelope"),
                 DunningStage(policy_id=policy.id, level=2, name="Zahlungserinnerung",
                              days_after_due=30, fee_fixed=Decimal("0.00"), new_due_days=14,
-                             print_title="Zahlungserinnerung", color="#ed8936", icon="fa-exclamation-circle"),
+                             print_title="Zahlungserinnerung", color="orange", icon="fa-exclamation-circle"),
                 DunningStage(policy_id=policy.id, level=3, name="1. Mahnung",
                              days_after_due=45, fee_fixed=Decimal("5.00"), new_due_days=14,
-                             print_title="1. Mahnung", color="#e53e3e", icon="fa-exclamation-triangle"),
+                             print_title="1. Mahnung", color="red", icon="fa-exclamation-triangle"),
                 DunningStage(policy_id=policy.id, level=4, name="2. Mahnung (letzte)",
                              days_after_due=60, fee_fixed=Decimal("10.00"), new_due_days=7,
-                             print_title="Letzte Mahnung", color="#9b2c2c", icon="fa-gavel"),
+                             print_title="Letzte Mahnung", color="pink", icon="fa-gavel"),
             ]
             db.session.add_all(stages)
             db.session.commit()

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from '_macros.html' import color_select %}
 {% block title %}{{ 'Mahnvorlage bearbeiten' if policy else 'Neue Mahnvorlage' }}{% endblock %}
 
 {% block content %}
@@ -89,8 +90,7 @@
                                                value="{{ s.new_due_days }}" min="1"></td>
                                     <td><input type="text" name="stage_print_title" class="form-control form-control-sm"
                                                value="{{ s.print_title or '' }}"></td>
-                                    <td><input type="color" name="stage_color" class="form-control form-control-sm form-control-color"
-                                               value="{{ s.color or '#6c757d' }}" style="width:50px;padding:2px"></td>
+                                    <td>{{ color_select('stage_color', s.color) }}</td>
                                     <td><input type="text" name="stage_icon" class="form-control form-control-sm"
                                                value="{{ s.icon or '' }}" placeholder="fa-…"></td>
                                     <td>
@@ -160,8 +160,12 @@
             <td><input type="text" name="stage_fee_max" class="form-control form-control-sm" value=""></td>
             <td><input type="number" name="stage_new_due_days" class="form-control form-control-sm" value="14" min="1"></td>
             <td><input type="text" name="stage_print_title" class="form-control form-control-sm" value=""></td>
-            <td><input type="color" name="stage_color" class="form-control form-control-sm form-control-color"
-                       value="#6c757d" style="width:50px;padding:2px"></td>
+            <td>
+                <select name="stage_color" class="color-select">
+                    <option value="">\u2013</option>
+                    ${['blue','azure','indigo','purple','pink','red','orange','yellow','lime','green','teal','cyan'].map(c => '<option value="'+c+'">'+c.charAt(0).toUpperCase()+c.slice(1)+'</option>').join('')}
+                </select>
+            </td>
             <td><input type="text" name="stage_icon" class="form-control form-control-sm" value="" placeholder="fa-…"></td>
             <td>
                 <button type="button" class="btn btn-sm btn-outline-danger btn-remove-stage" title="Stufe entfernen">
@@ -169,6 +173,7 @@
                 </button>
             </td>`;
         tbody.appendChild(tr);
+        initColorSelects(tr);
         updateHint();
         tr.querySelector('[name="stage_name"]').focus();
     }

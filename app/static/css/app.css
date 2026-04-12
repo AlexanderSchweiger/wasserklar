@@ -80,6 +80,11 @@ tr.overdue { background-color: #fff3cd !important; }
   color: inherit;
 }
 
+/* Color-Select – kompakt in Tabellen, Suchfeld ausblenden */
+.color-select + .ts-wrapper { min-width: 70px; max-width: 90px; }
+.color-select + .ts-wrapper .ts-control { min-height: calc(1.4286em + 0.25rem + 2px); padding: 2px 6px; }
+.color-select + .ts-wrapper .ts-dropdown .option { padding: 4px 8px; }
+
 /* Globaler Lade-Spinner */
 #global-spinner {
   display: none;

@@ -1,0 +1,15 @@
+{#
+   Wiederverwendbare UI-Komponenten (Macros).
+   Einbinden: {% from '_macros.html' import color_select %}
+#}
+
+{# ── Farb-Auswahl (Tabler Badge-Farben) ─────────────────────────── #}
+{% macro color_select(name, value='', id='', class='') -%}
+<select name="{{ name }}" class="color-select {{ class }}"
+    {%- if id %} id="{{ id }}"{% endif %}>
+    <option value="">–</option>
+    {% for c in ['blue','azure','indigo','purple','pink','red','orange','yellow','lime','green','teal','cyan'] %}
+    <option value="{{ c }}" {{ 'selected' if value == c else '' }}>{{ c | capitalize }}</option>
+    {% endfor %}
+</select>
+{%- endmacro %}

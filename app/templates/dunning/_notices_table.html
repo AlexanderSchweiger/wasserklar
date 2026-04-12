@@ -22,7 +22,7 @@
             </td>
             <td class="text-center">
                 {% if n.stage and n.stage.color %}
-                <span class="badge" style="background-color:{{ n.stage.color }}">
+                <span class="badge bg-{{ n.stage.color }} text-{{ n.stage.color }}-fg">
                     {% if n.stage.icon %}<i class="fas {{ n.stage.icon }} me-1"></i>{% endif %}
                     {{ n.level_snapshot }}
                 </span>

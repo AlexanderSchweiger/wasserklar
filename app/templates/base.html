@@ -427,8 +427,32 @@
         });
       });
     }
-    document.addEventListener("DOMContentLoaded", function () { initTomSelects(); });
-    document.addEventListener("htmx:afterSwap", function (e) { initTomSelects(e.detail.target); });
+    function initColorSelects(root) {
+      (root || document).querySelectorAll("select.color-select").forEach(function (el) {
+        if (el.tomselect) return;
+        new TomSelect(el, {
+          allowEmptyOption: true,
+          selectOnTab: true,
+          controlInput: null,
+          render: {
+            option: function(data, escape) {
+              if (!data.value) return '<div class="py-1 px-2 text-muted">\u2013</div>';
+              return '<div class="d-flex align-items-center py-1 px-2">'
+                + '<span class="badge bg-' + escape(data.value) + ' text-' + escape(data.value) + '-fg" style="width:1.2rem;height:1.2rem;display:inline-block">&nbsp;</span>'
+                + '<span class="ms-2">' + escape(data.text) + '</span></div>';
+            },
+            item: function(data, escape) {
+              if (!data.value) return '<div class="text-muted">\u2013</div>';
+              return '<div class="d-flex align-items-center">'
+                + '<span class="badge bg-' + escape(data.value) + ' text-' + escape(data.value) + '-fg" style="width:1.2rem;height:1.2rem;display:inline-block">&nbsp;</span></div>';
+            }
+          }
+        });
+      });
+    }
+
+    document.addEventListener("DOMContentLoaded", function () { initTomSelects(); initColorSelects(); });
+    document.addEventListener("htmx:afterSwap", function (e) { initTomSelects(e.detail.target); initColorSelects(e.detail.target); });
 
     // Globaler Lade-Spinner (HTMX + fetch + Navigation + Formular)
     (function () {

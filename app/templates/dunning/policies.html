@@ -46,14 +46,14 @@
                         </td>
                         <td class="text-center">
                             {% if p.is_default %}
-                            <span class="badge bg-green">Standard</span>
+                            <span class="badge bg-green text-white">Standard</span>
                             {% endif %}
                         </td>
                         <td class="text-center">
                             {% if p.active %}
-                            <span class="badge bg-success">Aktiv</span>
+                            <span class="badge bg-success text-white">Aktiv</span>
                             {% else %}
-                            <span class="badge bg-secondary">Inaktiv</span>
+                            <span class="badge bg-secondary text-white">Inaktiv</span>
                             {% endif %}
                         </td>
                         <td class="text-end" style="white-space:nowrap">
@@ -115,7 +115,7 @@
                     <tr>
                         <td class="text-center">
                             {% if s.color %}
-                            <span class="badge" style="background-color:{{ s.color }}">
+                            <span class="badge bg-{{ s.color }} text-{{ s.color }}-fg">
                                 {% if s.icon %}<i class="fas {{ s.icon }} me-1"></i>{% endif %}
                                 {{ s.level }}
                             </span>

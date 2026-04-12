@@ -48,7 +48,6 @@
                     </thead>
                     <tbody>
                         {% for inv, stage in eligible %}
-                        {% set days_overdue = (today if today is defined else import_module('datetime').date.today()).__sub__(inv.due_date).days if inv.due_date else 0 %}
                         <tr>
                             <td class="text-center">
                                 <input type="checkbox" name="invoice_ids" value="{{ inv.id }}"
@@ -75,10 +74,17 @@
                                 {% endif %}
                             </td>
                             <td class="text-center">
-                                <span class="badge" style="background-color:{{ stage.color or '#6c757d' }}">
+                                {% if stage.color %}
+                                <span class="badge bg-{{ stage.color }} text-{{ stage.color }}-fg">
                                     {% if stage.icon %}<i class="fas {{ stage.icon }} me-1"></i>{% endif %}
                                     {{ stage.name }}
                                 </span>
+                                {% else %}
+                                <span class="badge bg-secondary">
+                                    {% if stage.icon %}<i class="fas {{ stage.icon }} me-1"></i>{% endif %}
+                                    {{ stage.name }}
+                                </span>
+                                {% endif %}
                             </td>
                             <td class="text-end">
                                 {% if stage.fee_fixed and stage.fee_fixed > 0 %}
