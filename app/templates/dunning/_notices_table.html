@@ -1,6 +1,9 @@
 <table class="table table-hover table-striped mb-0">
     <thead>
         <tr>
+            <th style="width:36px">
+                <input type="checkbox" id="dn-select-all" title="Alle auswählen">
+            </th>
             <th class="text-center" style="width:70px">Stufe</th>
             <th>Rechnung</th>
             <th>Kunde</th>
@@ -14,6 +17,9 @@
     <tbody>
         {% for n in notices %}
         <tr>
+            <td>
+                <input type="checkbox" name="notice_ids" value="{{ n.id }}" class="dn-cb">
+            </td>
             <td class="text-center">
                 {% if n.stage and n.stage.color %}
                 <span class="badge" style="background-color:{{ n.stage.color }}">
@@ -61,7 +67,7 @@
         </tr>
         {% else %}
         <tr>
-            <td colspan="8" class="text-center text-muted py-3">Keine Mahnungen gefunden.</td>
+            <td colspan="9" class="text-center text-muted py-3">Keine Mahnungen gefunden.</td>
         </tr>
         {% endfor %}
     </tbody>

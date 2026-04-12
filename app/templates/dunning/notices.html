@@ -11,6 +11,8 @@
         </div>
     </div>
 
+    <form method="post" id="notices-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="card">
         <div class="card-header">
             <h3 class="card-title">{{ notices | length }} Mahnung(en)</h3>
@@ -31,11 +33,34 @@
                        hx-trigger="input changed delay:300ms"
                        hx-target="#notices-table"
                        hx-include="[name='status'],[name='q']">
+                <div class="btn-group btn-group-sm ms-2">
+                    <button type="submit" formaction="{{ url_for('dunning.bulk_docx_merged') }}"
+                            class="btn btn-outline-primary btn-sm" title="Auswahl als DOCX">
+                        <i class="fas fa-file-word me-1"></i> DOCX
+                    </button>
+                    <button type="submit" formaction="{{ url_for('dunning.bulk_pdf_merged') }}"
+                            class="btn btn-outline-primary btn-sm" title="Auswahl als PDF">
+                        <i class="fas fa-file-pdf me-1"></i> PDF
+                    </button>
+                </div>
             </div>
         </div>
         <div class="card-body p-0" id="notices-table">
             {% include "dunning/_notices_table.html" %}
         </div>
     </div>
+    </form>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+    document.addEventListener('change', function(e) {
+        if (e.target && e.target.id === 'dn-select-all') {
+            document.querySelectorAll('.dn-cb').forEach(function(cb) { cb.checked = e.target.checked; });
+        }
+    });
+})();
+</script>
 {% endblock %}

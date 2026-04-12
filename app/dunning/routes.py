@@ -1,19 +1,39 @@
+import io
+import os
 from datetime import date, datetime
 
-from flask import render_template, request, redirect, url_for, flash
+from flask import (
+    current_app, jsonify, render_template, request, redirect,
+    send_file, url_for, flash,
+)
 from flask_login import login_required, current_user
 from sqlalchemy import or_
 
 from app.dunning import bp
 from app.extensions import db
 from app.models import (
-    Customer, DunningNotice, DunningPolicy, DunningStage, Invoice,
+    AppSetting, Customer, DunningNotice, DunningPolicy, DunningStage, Invoice,
 )
 from app.dunning.services import (
     cancel_dunnings_for_invoice, compute_fee, create_dunning_notice,
     current_dunning_level, defer_dunning_notice, dunning_summary,
     eligible_invoices_for_stage, reset_dunning_notice,
 )
+
+_DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+def _get_dunning_doc_dir(notice):
+    """Gibt den Unterordner für Mahn-Dokumente zurück: <PDF_DIR>/<Jahr>/dunning/"""
+    year = notice.issued_date.year if notice.issued_date else "misc"
+    doc_dir = os.path.join(current_app.config["PDF_DIR"], str(year), "dunning")
+    os.makedirs(doc_dir, exist_ok=True)
+    return doc_dir
+
+
+def _dunning_filename(notice, ext):
+    """Dateiname: <Rechnungsnr>_M<level>.<ext>"""
+    return f"{notice.invoice.invoice_number}_M{notice.level_snapshot}.{ext}"
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +217,242 @@ def notice_defer(notice_id):
     db.session.commit()
     flash(f"Nachfrist auf {new_due_date.strftime('%d.%m.%Y')} verlängert.", "success")
     return redirect(url_for("dunning.notice_detail", notice_id=notice_id))
+
+
+# ---------------------------------------------------------------------------
+# Dokument-Download (PDF / DOCX)
+# ---------------------------------------------------------------------------
+
+@bp.route("/notices/<int:notice_id>/pdf")
+@login_required
+def notice_pdf(notice_id):
+    """Mahn-Dokument als PDF oder DOCX herunterladen."""
+    notice = db.session.get(DunningNotice, notice_id)
+    if not notice:
+        flash("Mahnung nicht gefunden.", "danger")
+        return redirect(url_for("dunning.notices"))
+
+    from app.settings_service import wg_settings
+    wg = wg_settings()
+    summary = dunning_summary(notice.invoice)
+    fmt = request.args.get("fmt", AppSetting.get("invoice.document_format", "pdf"))
+
+    filename_base = _dunning_filename(notice, "")
+
+    if fmt == "docx":
+        # Cached?
+        if notice.doc_path and os.path.exists(notice.doc_path):
+            return send_file(notice.doc_path, as_attachment=True,
+                             download_name=_dunning_filename(notice, "docx"),
+                             mimetype=_DOCX_MIME)
+        from app.dunning.document_service import generate_dunning_docx
+        doc_data = generate_dunning_docx(notice, wg)
+        # Cache
+        doc_dir = _get_dunning_doc_dir(notice)
+        doc_path = os.path.join(doc_dir, _dunning_filename(notice, "docx"))
+        with open(doc_path, "wb") as f:
+            f.write(doc_data)
+        notice.doc_path = doc_path
+        db.session.commit()
+        return send_file(io.BytesIO(doc_data), as_attachment=True,
+                         download_name=_dunning_filename(notice, "docx"),
+                         mimetype=_DOCX_MIME)
+
+    # PDF (WeasyPrint)
+    if notice.pdf_path and os.path.exists(notice.pdf_path):
+        return send_file(notice.pdf_path, as_attachment=True,
+                         download_name=_dunning_filename(notice, "pdf"))
+
+    try:
+        import weasyprint
+    except ImportError:
+        flash("PDF-Erzeugung erfordert WeasyPrint (nur im Docker-Container verfügbar). "
+              "Verwenden Sie ?fmt=docx für Word-Download.", "warning")
+        return redirect(url_for("dunning.notice_detail", notice_id=notice_id))
+
+    html_str = render_template(
+        "dunning/pdf_template.html",
+        notice=notice, invoice=notice.invoice,
+        summary=summary, wg=wg,
+    )
+    doc_dir = _get_dunning_doc_dir(notice)
+    pdf_path = os.path.join(doc_dir, _dunning_filename(notice, "pdf"))
+    weasyprint.HTML(string=html_str).write_pdf(pdf_path)
+    notice.pdf_path = pdf_path
+    db.session.commit()
+    return send_file(pdf_path, as_attachment=True,
+                     download_name=_dunning_filename(notice, "pdf"))
+
+
+# ---------------------------------------------------------------------------
+# E-Mail-Versand
+# ---------------------------------------------------------------------------
+
+@bp.route("/notices/<int:notice_id>/send-email", methods=["POST"])
+@login_required
+def notice_send_email(notice_id):
+    """Mahnung per E-Mail versenden (JSON-Antwort für AJAX)."""
+    notice = db.session.get(DunningNotice, notice_id)
+    if not notice:
+        return jsonify(ok=False, error="Mahnung nicht gefunden."), 404
+
+    customer = notice.invoice.customer
+    if not customer.email:
+        return jsonify(ok=False, error="Kunde hat keine E-Mail-Adresse."), 400
+
+    from app.settings_service import wg_settings
+    from flask_mail import Message
+    from app.extensions import mail
+
+    wg = wg_settings()
+    summary = dunning_summary(notice.invoice)
+    fmt = AppSetting.get("invoice.document_format", "pdf")
+    title = notice.print_title_snapshot or notice.name_snapshot
+
+    subject = f"{title} – {notice.invoice.invoice_number}"
+    body = (
+        f"Sehr geehrte Damen und Herren,\n\n"
+        f"anbei erhalten Sie eine {title} zu unserer Rechnung "
+        f"{notice.invoice.invoice_number}.\n\n"
+        f"Bitte überweisen Sie den ausstehenden Betrag bis zum "
+        f"{notice.new_due_date.strftime('%d.%m.%Y') if notice.new_due_date else '—'}.\n\n"
+        f"Mit freundlichen Grüßen\n{wg.get('name', '')}"
+    )
+
+    msg = Message(subject=subject, recipients=[customer.email], body=body)
+
+    # Dokument anhängen
+    if fmt in ("docx", "both"):
+        from app.dunning.document_service import generate_dunning_docx
+        doc_data = generate_dunning_docx(notice, wg)
+        msg.attach(_dunning_filename(notice, "docx"), _DOCX_MIME, doc_data)
+        # Cache
+        doc_dir = _get_dunning_doc_dir(notice)
+        doc_path = os.path.join(doc_dir, _dunning_filename(notice, "docx"))
+        with open(doc_path, "wb") as f:
+            f.write(doc_data)
+        notice.doc_path = doc_path
+
+    if fmt in ("pdf", "both"):
+        try:
+            import weasyprint
+            html_str = render_template(
+                "dunning/pdf_template.html",
+                notice=notice, invoice=notice.invoice,
+                summary=summary, wg=wg,
+            )
+            pdf_data = weasyprint.HTML(string=html_str).write_pdf()
+            msg.attach(_dunning_filename(notice, "pdf"), "application/pdf", pdf_data)
+            doc_dir = _get_dunning_doc_dir(notice)
+            pdf_path = os.path.join(doc_dir, _dunning_filename(notice, "pdf"))
+            with open(pdf_path, "wb") as f:
+                f.write(pdf_data)
+            notice.pdf_path = pdf_path
+        except ImportError:
+            if fmt == "pdf":
+                return jsonify(ok=False, error="PDF-Erzeugung erfordert WeasyPrint."), 500
+
+    try:
+        mail.send(msg)
+    except Exception as e:
+        return jsonify(ok=False, error=f"E-Mail-Versand fehlgeschlagen: {e}"), 500
+
+    notice.sent_via = "email"
+    notice.sent_at = datetime.utcnow()
+    notice.sent_to = customer.email
+    db.session.commit()
+
+    return jsonify(ok=True, notice_id=notice.id, email=customer.email)
+
+
+# ---------------------------------------------------------------------------
+# Bulk-Dokumente
+# ---------------------------------------------------------------------------
+
+@bp.route("/bulk-docx-merged", methods=["POST"])
+@login_required
+def bulk_docx_merged():
+    """Alle markierten Mahnungen als ein zusammengeführtes .docx."""
+    notice_ids = request.form.getlist("notice_ids", type=int)
+    if not notice_ids:
+        flash("Keine Mahnungen ausgewählt.", "warning")
+        return redirect(url_for("dunning.notices"))
+
+    from app.dunning.document_service import generate_dunning_docx
+    from app.invoices.document_service import merge_docx_files
+    from app.settings_service import wg_settings
+
+    wg = wg_settings()
+    notices = DunningNotice.query.filter(DunningNotice.id.in_(notice_ids)).all()
+    sources = []
+
+    for notice in notices:
+        if notice.doc_path and os.path.exists(notice.doc_path):
+            sources.append(notice.doc_path)
+        else:
+            doc_data = generate_dunning_docx(notice, wg)
+            doc_dir = _get_dunning_doc_dir(notice)
+            doc_path = os.path.join(doc_dir, _dunning_filename(notice, "docx"))
+            with open(doc_path, "wb") as f:
+                f.write(doc_data)
+            notice.doc_path = doc_path
+            sources.append(doc_data)
+
+    db.session.commit()
+    merged = merge_docx_files(sources)
+    return send_file(
+        io.BytesIO(merged),
+        as_attachment=True,
+        download_name="Mahnungen_gesamt.docx",
+        mimetype=_DOCX_MIME,
+    )
+
+
+@bp.route("/bulk-pdf-merged", methods=["POST"])
+@login_required
+def bulk_pdf_merged():
+    """Alle markierten Mahnungen als zusammengeführtes PDF."""
+    notice_ids = request.form.getlist("notice_ids", type=int)
+    if not notice_ids:
+        flash("Keine Mahnungen ausgewählt.", "warning")
+        return redirect(url_for("dunning.notices"))
+
+    try:
+        import weasyprint
+    except ImportError:
+        flash("PDF-Erzeugung erfordert WeasyPrint (nur im Docker-Container). "
+              "Verwenden Sie den DOCX-Export.", "warning")
+        return redirect(url_for("dunning.notices"))
+
+    from app.settings_service import wg_settings
+    wg = wg_settings()
+    notices = DunningNotice.query.filter(DunningNotice.id.in_(notice_ids)).all()
+    rendered_docs = []
+
+    for notice in notices:
+        summary = dunning_summary(notice.invoice)
+        html_str = render_template(
+            "dunning/pdf_template.html",
+            notice=notice, invoice=notice.invoice,
+            summary=summary, wg=wg,
+        )
+        rendered_docs.append(weasyprint.HTML(string=html_str).render())
+
+    if not rendered_docs:
+        flash("Keine Dokumente erzeugt.", "warning")
+        return redirect(url_for("dunning.notices"))
+
+    all_pages = []
+    for doc in rendered_docs:
+        all_pages.extend(doc.pages)
+
+    doc_dir = os.path.join(current_app.config["PDF_DIR"], "_bulk")
+    os.makedirs(doc_dir, exist_ok=True)
+    merged_path = os.path.join(doc_dir, "Mahnungen_gesamt.pdf")
+    rendered_docs[0].copy(all_pages).write_pdf(merged_path)
+
+    return send_file(merged_path, as_attachment=True,
+                     download_name="Mahnungen_gesamt.pdf")
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; font-size: 11pt; color: #333; }
+  .header { display: flex; justify-content: space-between; margin-bottom: 2cm; }
+  .sender-info { font-size: 9pt; color: #666; }
+  .recipient { margin-top: 0.5cm; }
+  .invoice-meta { float: right; text-align: right; margin-bottom: 1cm; }
+  h1 { font-size: 18pt; margin: 1cm 0 0.5cm 0; clear: both; }
+  table { width: 100%; border-collapse: collapse; margin: 0.5cm 0; }
+  th { background: #f0f0f0; padding: 6px 8px; text-align: left; border-bottom: 2px solid #333; font-size: 10pt; }
+  td { padding: 5px 8px; border-bottom: 1px solid #ddd; font-size: 10pt; }
+  .text-right { text-align: right; }
+  .total-row td { font-weight: bold; border-top: 2px solid #333; border-bottom: none; }
+  .footer { margin-top: 2cm; font-size: 9pt; color: #666; border-top: 1px solid #ddd; padding-top: 0.5cm; }
+  .payment-info { margin-top: 1cm; padding: 0.5cm; background: #f9f9f9; border: 1px solid #ddd; }
+  .intro { margin: 0.5cm 0; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <strong>{{ wg.name }}</strong><br>
+    <span class="sender-info">{{ wg.address | replace('\n', '<br>') | replace('\\n', '<br>') | safe }}</span>
+  </div>
+  <div>
+    {% if wg.email %}<div>{{ wg.email }}</div>{% endif %}
+    {% if wg.phone %}<div>{{ wg.phone }}</div>{% endif %}
+  </div>
+</div>
+
+<div class="invoice-meta">
+  <strong>Rechnungsnummer:</strong> {{ invoice.invoice_number }}<br>
+  {% if invoice.customer.customer_number %}<strong>Kundennummer:</strong> {{ invoice.customer.customer_number }}<br>{% endif %}
+  <strong>Rechnungsdatum:</strong> {{ invoice.date.strftime('%d.%m.%Y') }}<br>
+  <strong>Mahndatum:</strong> {{ notice.issued_date.strftime('%d.%m.%Y') }}<br>
+  {% if notice.new_due_date %}<strong>Zahlbar bis:</strong> {{ notice.new_due_date.strftime('%d.%m.%Y') }}{% endif %}
+</div>
+
+<div class="recipient">
+  {{ invoice.customer.name }}<br>
+  {% set street = [invoice.customer.strasse, invoice.customer.hausnummer] | select | join(' ') %}
+  {% set city = [invoice.customer.plz, invoice.customer.ort] | select | join(' ') %}
+  {% if street %}{{ street }}<br>{% endif %}
+  {% if city %}{{ city }}<br>{% endif %}
+  {% if invoice.customer.land and invoice.customer.land != 'Österreich' %}{{ invoice.customer.land }}<br>{% endif %}
+</div>
+
+<h1>{{ notice.print_title_snapshot or notice.name_snapshot }}</h1>
+
+<p class="intro">Sehr geehrte Damen und Herren,</p>
+<p class="intro">
+  zu unserer Rechnung {{ invoice.invoice_number }} vom {{ invoice.date.strftime('%d.%m.%Y') }}
+  mit Fälligkeit am {{ invoice.due_date.strftime('%d.%m.%Y') if invoice.due_date else '—' }}
+  konnten wir bisher leider keinen Zahlungseingang feststellen.
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Position</th>
+      <th class="text-right">Betrag</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Rechnungsbetrag ({{ invoice.invoice_number }})</td>
+      <td class="text-right">{{ summary.principal|de_number(2) }} &euro;</td>
+    </tr>
+    {% for n in summary.notices %}
+    {% if n.fee_amount and n.fee_amount > 0 %}
+    <tr>
+      <td>Mahngebühr – {{ n.name_snapshot }}</td>
+      <td class="text-right">{{ n.fee_amount|de_number(2) }} &euro;</td>
+    </tr>
+    {% endif %}
+    {% endfor %}
+  </tbody>
+  <tfoot>
+    <tr class="total-row">
+      <td>Gesamtbetrag</td>
+      <td class="text-right">{{ summary.gross_total|de_number(2) }} &euro;</td>
+    </tr>
+  </tfoot>
+</table>
+
+<div class="payment-info">
+  <strong>Zahlungsinformationen</strong><br>
+  Bitte überweisen Sie den Betrag von <strong>{{ summary.gross_total|de_number(2) }} &euro;</strong>
+  bis zum {{ notice.new_due_date.strftime('%d.%m.%Y') if notice.new_due_date else '—' }}<br>
+  {% if wg.iban %}IBAN: <strong>{{ wg.iban }}</strong><br>{% endif %}
+  Empfänger: {{ wg.name }}<br>
+  Verwendungszweck: <strong>{{ invoice.invoice_number }} / Mahnung</strong>
+</div>
+
+<p style="margin-top:1cm">
+  {% if notice.level_snapshot <= 2 %}
+  Sollte sich Ihre Zahlung mit diesem Schreiben gekreuzt haben,
+  betrachten Sie dieses bitte als gegenstandslos.
+  {% else %}
+  Wir bitten Sie dringend, den ausstehenden Betrag innerhalb der
+  genannten Frist zu begleichen, um weitere Maßnahmen zu vermeiden.
+  {% endif %}
+</p>
+
+<div class="footer">
+  {{ wg.name }}
+  {% if wg.address %} &mdash; {{ wg.address | replace('\n', ' | ') | replace('\\n', ' | ') }}{% endif %}
+  {% if wg.email %} &mdash; {{ wg.email }}{% endif %}
+</div>
+
+</body>
+</html>
