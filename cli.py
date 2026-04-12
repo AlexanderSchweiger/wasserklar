@@ -8,7 +8,7 @@ Verwendung:
 
 def register_commands(app):
     from app.extensions import db
-    from app.models import User, Account, TaxRate
+    from app.models import User, Account, TaxRate, DunningPolicy, DunningStage
 
     @app.cli.command("init-db")
     def init_db():
@@ -72,6 +72,11 @@ def register_commands(app):
             _add_col_if_missing("bookings", "group_id INTEGER REFERENCES booking_groups(id)", "group_id")
             _add_col_if_missing("invoice_items", "account_id INTEGER REFERENCES accounts(id)", "account_id")
             _add_col_if_missing("invoice_items", "project_id INTEGER REFERENCES projects(id)", "project_id")
+            # ADR-003: Mahnwesen. Neue Tabellen dunning_policies / dunning_stages /
+            # dunning_notices werden durch db.create_all() angelegt; hier nur die
+            # ALTER-Spalten auf bestehenden Tabellen ergänzen.
+            _add_col_if_missing("invoice_items", "is_dunning_fee INTEGER NOT NULL DEFAULT 0", "is_dunning_fee")
+            _add_col_if_missing("invoice_items", "dunning_notice_id INTEGER REFERENCES dunning_notices(id)", "dunning_notice_id")
             conn.commit()
 
         # Standard-Steuersätze anlegen
@@ -86,6 +91,29 @@ def register_commands(app):
             if not TaxRate.query.filter_by(rate=Decimal(str(rate_val))).first():
                 db.session.add(TaxRate(rate=Decimal(str(rate_val)), label=label))
         db.session.commit()
+
+        # Standard-Mahnvorlage mit 4 Stufen anlegen (ADR-003)
+        if not DunningPolicy.query.first():
+            from decimal import Decimal
+            policy = DunningPolicy(name="Standard", description="Standard-Mahnvorlage", is_default=True)
+            db.session.add(policy)
+            db.session.flush()
+            stages = [
+                DunningStage(policy_id=policy.id, level=1, name="Freundliche Zahlungserinnerung",
+                             days_after_due=14, fee_fixed=Decimal("0.00"), new_due_days=14,
+                             print_title="Zahlungserinnerung", color="#4299e1", icon="fa-envelope"),
+                DunningStage(policy_id=policy.id, level=2, name="Zahlungserinnerung",
+                             days_after_due=30, fee_fixed=Decimal("0.00"), new_due_days=14,
+                             print_title="Zahlungserinnerung", color="#ed8936", icon="fa-exclamation-circle"),
+                DunningStage(policy_id=policy.id, level=3, name="1. Mahnung",
+                             days_after_due=45, fee_fixed=Decimal("5.00"), new_due_days=14,
+                             print_title="1. Mahnung", color="#e53e3e", icon="fa-exclamation-triangle"),
+                DunningStage(policy_id=policy.id, level=4, name="2. Mahnung (letzte)",
+                             days_after_due=60, fee_fixed=Decimal("10.00"), new_due_days=7,
+                             print_title="Letzte Mahnung", color="#9b2c2c", icon="fa-gavel"),
+            ]
+            db.session.add_all(stages)
+            db.session.commit()
 
     @app.cli.command("upgrade-db")
     def upgrade_db():
@@ -148,6 +176,11 @@ def register_commands(app):
             _add_col_if_missing("bookings", "group_id INTEGER REFERENCES booking_groups(id)", "group_id")
             _add_col_if_missing("invoice_items", "account_id INTEGER REFERENCES accounts(id)", "account_id")
             _add_col_if_missing("invoice_items", "project_id INTEGER REFERENCES projects(id)", "project_id")
+            # ADR-003: Mahnwesen. Neue Tabellen dunning_policies / dunning_stages /
+            # dunning_notices werden durch db.create_all() angelegt; hier nur die
+            # ALTER-Spalten auf bestehenden Tabellen ergänzen.
+            _add_col_if_missing("invoice_items", "is_dunning_fee INTEGER NOT NULL DEFAULT 0", "is_dunning_fee")
+            _add_col_if_missing("invoice_items", "dunning_notice_id INTEGER REFERENCES dunning_notices(id)", "dunning_notice_id")
             conn.commit()
 
         # Standard-Steuersätze anlegen
@@ -165,6 +198,32 @@ def register_commands(app):
             else:
                 print(f"  ✓ Steuersatz {rate_val}% bereits vorhanden.")
         db.session.commit()
+
+        # Standard-Mahnvorlage mit 4 Stufen anlegen (ADR-003)
+        if not DunningPolicy.query.first():
+            from decimal import Decimal
+            policy = DunningPolicy(name="Standard", description="Standard-Mahnvorlage", is_default=True)
+            db.session.add(policy)
+            db.session.flush()
+            stages = [
+                DunningStage(policy_id=policy.id, level=1, name="Freundliche Zahlungserinnerung",
+                             days_after_due=14, fee_fixed=Decimal("0.00"), new_due_days=14,
+                             print_title="Zahlungserinnerung", color="#4299e1", icon="fa-envelope"),
+                DunningStage(policy_id=policy.id, level=2, name="Zahlungserinnerung",
+                             days_after_due=30, fee_fixed=Decimal("0.00"), new_due_days=14,
+                             print_title="Zahlungserinnerung", color="#ed8936", icon="fa-exclamation-circle"),
+                DunningStage(policy_id=policy.id, level=3, name="1. Mahnung",
+                             days_after_due=45, fee_fixed=Decimal("5.00"), new_due_days=14,
+                             print_title="1. Mahnung", color="#e53e3e", icon="fa-exclamation-triangle"),
+                DunningStage(policy_id=policy.id, level=4, name="2. Mahnung (letzte)",
+                             days_after_due=60, fee_fixed=Decimal("10.00"), new_due_days=7,
+                             print_title="Letzte Mahnung", color="#9b2c2c", icon="fa-gavel"),
+            ]
+            db.session.add_all(stages)
+            db.session.commit()
+            print("  + Standard-Mahnvorlage mit 4 Stufen angelegt.")
+        else:
+            print("  ✓ Mahnvorlage bereits vorhanden.")
 
         # Datenmigration: Kundennummern für bestehende Kunden ohne Kundennummer vergeben
         from app.models import Customer

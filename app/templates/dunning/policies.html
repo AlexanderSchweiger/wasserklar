@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block title %}Mahnvorlagen{% endblock %}
+
+{% block content %}
+<div class="container-xl">
+    <div class="page-header d-print-none mb-3">
+        <div class="row align-items-center">
+            <div class="col-auto">
+                <h2 class="page-title">Mahnvorlagen</h2>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">Vorlagen</h3>
+            <div class="card-options d-flex align-items-center">
+                {% if current_user.is_admin %}
+                <a href="{{ url_for('dunning.policy_new') }}" class="btn btn-primary btn-sm">
+                    <i class="fas fa-plus me-1"></i> Neue Vorlage
+                </a>
+                {% endif %}
+            </div>
+        </div>
+        <div class="card-body p-0">
+            <table class="table table-hover table-striped mb-0">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Beschreibung</th>
+                        <th class="text-center">Stufen</th>
+                        <th class="text-center">Standard</th>
+                        <th class="text-center">Status</th>
+                        <th class="text-end">Aktionen</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for p in policies %}
+                    <tr>
+                        <td>
+                            <a href="{{ url_for('dunning.policy_edit', policy_id=p.id) }}">{{ p.name }}</a>
+                        </td>
+                        <td class="text-muted">{{ p.description or '–' }}</td>
+                        <td class="text-center">
+                            {{ p.stages | length }}
+                        </td>
+                        <td class="text-center">
+                            {% if p.is_default %}
+                            <span class="badge bg-green">Standard</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            {% if p.active %}
+                            <span class="badge bg-success">Aktiv</span>
+                            {% else %}
+                            <span class="badge bg-secondary">Inaktiv</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end" style="white-space:nowrap">
+                            {% if current_user.is_admin %}
+                            <a href="{{ url_for('dunning.policy_edit', policy_id=p.id) }}"
+                               class="btn btn-sm btn-outline-secondary">
+                                <i class="fas fa-pen"></i>
+                            </a>
+                            {% if not p.is_default %}
+                            <form method="post" action="{{ url_for('dunning.policy_set_default', policy_id=p.id) }}"
+                                  class="d-inline">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-sm btn-outline-info" title="Als Standard setzen">
+                                    <i class="fas fa-star"></i>
+                                </button>
+                            </form>
+                            <form method="post" action="{{ url_for('dunning.policy_delete', policy_id=p.id) }}"
+                                  class="d-inline"
+                                  onsubmit="return confirm('Mahnvorlage &quot;{{ p.name }}&quot; wirklich löschen?')">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-sm btn-outline-danger">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </form>
+                            {% endif %}
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="6" class="text-center text-muted py-3">Keine Mahnvorlagen vorhanden.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    {# Stufenübersicht der Standard-Policy #}
+    {% for p in policies if p.is_default and p.stages %}
+    <div class="card mt-3">
+        <div class="card-header">
+            <h3 class="card-title">Stufen – {{ p.name }}</h3>
+        </div>
+        <div class="card-body p-0">
+            <table class="table table-hover table-striped mb-0">
+                <thead>
+                    <tr>
+                        <th class="text-center" style="width:60px">Stufe</th>
+                        <th>Name</th>
+                        <th class="text-center">Tage nach Fälligkeit</th>
+                        <th class="text-end">Fixgebühr</th>
+                        <th class="text-end">%-Gebühr</th>
+                        <th class="text-center">Nachfrist</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for s in p.stages | sort(attribute='level') %}
+                    <tr>
+                        <td class="text-center">
+                            {% if s.color %}
+                            <span class="badge" style="background-color:{{ s.color }}">
+                                {% if s.icon %}<i class="fas {{ s.icon }} me-1"></i>{% endif %}
+                                {{ s.level }}
+                            </span>
+                            {% else %}
+                            {{ s.level }}
+                            {% endif %}
+                        </td>
+                        <td>{{ s.name }}</td>
+                        <td class="text-center">{{ s.days_after_due }} Tage</td>
+                        <td class="text-end">{{ s.fee_fixed | de_number }}</td>
+                        <td class="text-end">
+                            {% if s.fee_percent and s.fee_percent > 0 %}
+                            {{ s.fee_percent | de_number }}%
+                            {% else %}–{% endif %}
+                        </td>
+                        <td class="text-center">{{ s.new_due_days }} Tage</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}

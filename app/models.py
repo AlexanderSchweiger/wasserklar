@@ -306,10 +306,15 @@ class Invoice(db.Model):
 
         Positionen speichern den Nettobetrag. Ist für eine Position kein Steuersatz
         gesetzt, entspricht ihr Brutto- dem Nettobetrag (nicht umsatzsteuerpflichtig).
+
+        **ADR-003:** Items mit ``is_dunning_fee=True`` werden IGNORIERT –
+        ``total_amount`` enthält ausschließlich die Hauptforderung.
         """
         from decimal import Decimal
         gross = Decimal("0")
         for item in self.items:
+            if getattr(item, "is_dunning_fee", 0):
+                continue
             net = Decimal(str(item.amount or 0))
             gross += net
             if item.tax_rate and item.tax_rate > 0:
@@ -318,10 +323,40 @@ class Invoice(db.Model):
         self.total_amount = gross
 
     @property
+    def principal_total(self):
+        """Hauptforderung = Summe der Nicht-Fee-Items (brutto). Entspricht ``total_amount``."""
+        from decimal import Decimal
+        gross = Decimal("0")
+        for item in self.items:
+            if getattr(item, "is_dunning_fee", 0):
+                continue
+            net = Decimal(str(item.amount or 0))
+            gross += net
+            if item.tax_rate and item.tax_rate > 0:
+                rate = Decimal(str(item.tax_rate))
+                gross += (net * rate / Decimal("100")).quantize(Decimal("0.01"))
+        return gross
+
+    @property
+    def dunning_fee_total(self):
+        """Summe aller aktiven Mahngebühr-Items."""
+        from decimal import Decimal
+        return sum(
+            (Decimal(str(item.amount or 0)) for item in self.items if getattr(item, "is_dunning_fee", 0)),
+            Decimal("0"),
+        )
+
+    @property
+    def gross_total_with_fees(self):
+        """Hauptforderung + alle Mahngebühren (für Mahn-PDF)."""
+        return self.principal_total + self.dunning_fee_total
+
+    @property
     def net_total(self):
         """Nettosumme (Summe der Positionsbeträge ohne USt)."""
         from decimal import Decimal
-        return sum((Decimal(str(item.amount or 0)) for item in self.items), Decimal("0"))
+        return sum((Decimal(str(item.amount or 0)) for item in self.items
+                     if not getattr(item, "is_dunning_fee", 0)), Decimal("0"))
 
     @property
     def tax_breakdown(self):
@@ -330,6 +365,8 @@ class Invoice(db.Model):
         from decimal import Decimal
         summary = OrderedDict()
         for item in self.items:
+            if getattr(item, "is_dunning_fee", 0):
+                continue
             rate = item.tax_rate
             if not rate or rate <= 0:
                 continue
@@ -385,6 +422,10 @@ class InvoiceItem(db.Model):
     # OpenItem/BillingRun, leeres project_id bleibt NULL (siehe ADR-002).
     account_id = db.Column(db.Integer, db.ForeignKey("accounts.id"), nullable=True)
     project_id = db.Column(db.Integer, db.ForeignKey("projects.id"), nullable=True)
+
+    # Mahnwesen (ADR-003): Mahngebühr-Items
+    is_dunning_fee = db.Column(db.Integer, default=0, nullable=False)
+    dunning_notice_id = db.Column(db.Integer, db.ForeignKey("dunning_notices.id"), nullable=True)
 
     account = db.relationship("Account", foreign_keys=[account_id])
     project = db.relationship("Project", foreign_keys=[project_id])
@@ -718,3 +759,103 @@ class AppSetting(db.Model):
 
     def __repr__(self):
         return f"<AppSetting {self.key}>"
+
+
+# ---------------------------------------------------------------------------
+# Mahnwesen (ADR-003)
+# ---------------------------------------------------------------------------
+
+class DunningPolicy(db.Model):
+    """Mahnvorlage – definiert einen benannten Satz von Mahnstufen."""
+    __tablename__ = "dunning_policies"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    is_default = db.Column(db.Boolean, default=False, nullable=False)
+    active = db.Column(db.Boolean, default=True, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    stages = db.relationship("DunningStage", backref="policy", lazy="select",
+                             order_by="DunningStage.level",
+                             cascade="all, delete-orphan")
+
+    def __repr__(self):
+        return f"<DunningPolicy {self.name}>"
+
+
+class DunningStage(db.Model):
+    """Einzelne Mahnstufe innerhalb einer Policy."""
+    __tablename__ = "dunning_stages"
+
+    id = db.Column(db.Integer, primary_key=True)
+    policy_id = db.Column(db.Integer, db.ForeignKey("dunning_policies.id"), nullable=False)
+    level = db.Column(db.Integer, nullable=False)              # 1, 2, 3, …
+    name = db.Column(db.String(100), nullable=False)           # z.B. "1. Mahnung"
+    days_after_due = db.Column(db.Integer, nullable=False)     # Tage nach Fälligkeit
+    fee_fixed = db.Column(db.Numeric(10, 2), default=0)       # fixe Mahngebühr
+    fee_percent = db.Column(db.Numeric(5, 2), default=0)      # prozentuale Gebühr
+    fee_min = db.Column(db.Numeric(10, 2), nullable=True)     # Minimum bei %-Berechnung
+    fee_max = db.Column(db.Numeric(10, 2), nullable=True)     # Maximum bei %-Berechnung
+    new_due_days = db.Column(db.Integer, default=14)           # Nachfrist in Tagen
+    print_title = db.Column(db.String(200), nullable=True)     # Titel auf Mahn-PDF
+    email_subject = db.Column(db.String(200), nullable=True)
+    email_body = db.Column(db.Text, nullable=True)
+    color = db.Column(db.String(20), nullable=True)            # Badge-Farbe
+    icon = db.Column(db.String(50), nullable=True)             # Font Awesome Icon
+    active = db.Column(db.Boolean, default=True, nullable=False)
+
+    __table_args__ = (
+        db.UniqueConstraint("policy_id", "level", name="uq_policy_level"),
+    )
+
+    def __repr__(self):
+        return f"<DunningStage L{self.level} {self.name}>"
+
+
+class DunningNotice(db.Model):
+    """Einzelne Mahnung zu einer Rechnung."""
+    __tablename__ = "dunning_notices"
+
+    STATUS_AKTIV = "Aktiv"
+    STATUS_ZURUECKGESETZT = "Zurückgesetzt"
+    STATUS_STORNIERT = "Storniert"
+    ALL_STATUSES = [STATUS_AKTIV, STATUS_ZURUECKGESETZT, STATUS_STORNIERT]
+
+    id = db.Column(db.Integer, primary_key=True)
+    invoice_id = db.Column(db.Integer, db.ForeignKey("invoices.id"), nullable=False)
+    stage_id = db.Column(db.Integer, db.ForeignKey("dunning_stages.id"), nullable=True)
+
+    # Snapshot-Felder (werden bei Erzeugung aus Stage kopiert, nie über FK lesen)
+    level_snapshot = db.Column(db.Integer, nullable=False)
+    name_snapshot = db.Column(db.String(100), nullable=False)
+    print_title_snapshot = db.Column(db.String(200), nullable=True)
+
+    issued_date = db.Column(db.Date, default=date.today, nullable=False)
+    new_due_date = db.Column(db.Date, nullable=True)
+    fee_amount = db.Column(db.Numeric(10, 2), default=0, nullable=False)
+    fee_invoice_item_id = db.Column(db.Integer, db.ForeignKey("invoice_items.id"), nullable=True)
+
+    status = db.Column(db.String(20), default=STATUS_AKTIV, nullable=False)
+    sent_via = db.Column(db.String(20), nullable=True)        # "email", "post", "pdf"
+    sent_at = db.Column(db.DateTime, nullable=True)
+    sent_to = db.Column(db.String(200), nullable=True)        # E-Mail-Adresse oder "Post"
+    pdf_path = db.Column(db.String(500), nullable=True)
+    doc_path = db.Column(db.String(500), nullable=True)
+
+    reset_at = db.Column(db.DateTime, nullable=True)
+    reset_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    reset_reason = db.Column(db.String(500), nullable=True)
+
+    notes = db.Column(db.Text, nullable=True)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    invoice = db.relationship("Invoice", backref=db.backref("dunning_notices", lazy="dynamic"))
+    stage = db.relationship("DunningStage", foreign_keys=[stage_id])
+    fee_invoice_item = db.relationship("InvoiceItem", foreign_keys=[fee_invoice_item_id])
+    reset_by = db.relationship("User", foreign_keys=[reset_by_id])
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+
+    def __repr__(self):
+        return f"<DunningNotice invoice={self.invoice_id} L{self.level_snapshot}>"

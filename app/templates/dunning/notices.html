@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Mahnungen{% endblock %}
+
+{% block content %}
+<div class="container-xl">
+    <div class="page-header d-print-none mb-3">
+        <div class="row align-items-center">
+            <div class="col-auto">
+                <h2 class="page-title">Mahnungen</h2>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">{{ notices | length }} Mahnung(en)</h3>
+            <div class="card-options d-flex align-items-center gap-2">
+                <select name="status" class="form-select form-select-sm" style="width:auto"
+                        hx-get="{{ url_for('dunning.notices') }}"
+                        hx-trigger="change"
+                        hx-target="#notices-table"
+                        hx-include="[name='status'],[name='q']">
+                    <option value="">Alle Status</option>
+                    {% for s in statuses %}
+                    <option value="{{ s }}" {{ 'selected' if s == status_filter }}>{{ s }}</option>
+                    {% endfor %}
+                </select>
+                <input type="text" name="q" class="form-control form-control-sm" style="width:200px"
+                       placeholder="Suche…" value="{{ q }}"
+                       hx-get="{{ url_for('dunning.notices') }}"
+                       hx-trigger="input changed delay:300ms"
+                       hx-target="#notices-table"
+                       hx-include="[name='status'],[name='q']">
+            </div>
+        </div>
+        <div class="card-body p-0" id="notices-table">
+            {% include "dunning/_notices_table.html" %}
+        </div>
+    </div>
+</div>
+{% endblock %}

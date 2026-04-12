@@ -13,6 +13,7 @@
       <th class="text-end">Verbrauch</th>
       <th class="text-end">Betrag</th>
       <th>Status</th>
+      <th class="text-center">Mahnstufe</th>
       <th></th>
     </tr>
   </thead>
@@ -56,6 +57,29 @@
       </td>
       <td class="text-end"><strong>{{ inv.total_amount|de_number }} €</strong></td>
       <td>{% with invoice = inv %}{% include "invoices/_status_badge.html" %}{% endwith %}</td>
+      <td class="text-center">
+        {% set cur_dunning = namespace(level=0, color='', icon='', name='') %}
+        {% for n in inv.dunning_notices if n.status == 'Aktiv' %}
+          {% if n.level_snapshot > cur_dunning.level %}
+            {% set cur_dunning.level = n.level_snapshot %}
+            {% set cur_dunning.name = n.name_snapshot %}
+            {% if n.stage %}
+              {% set cur_dunning.color = n.stage.color or '' %}
+              {% set cur_dunning.icon = n.stage.icon or '' %}
+            {% endif %}
+          {% endif %}
+        {% endfor %}
+        {% if cur_dunning.level > 0 %}
+          <a href="{{ url_for('dunning.notices', q=inv.invoice_number) }}"
+             class="badge text-decoration-none"
+             style="background-color:{{ cur_dunning.color or '#6c757d' }}">
+            {% if cur_dunning.icon %}<i class="fas {{ cur_dunning.icon }} me-1"></i>{% endif %}
+            {{ cur_dunning.name or ('Stufe ' ~ cur_dunning.level) }}
+          </a>
+        {% else %}
+          <span class="text-muted">–</span>
+        {% endif %}
+      </td>
       <td class="text-end">
         <a href="{{ url_for('invoices.detail', invoice_id=inv.id) }}"
            class="btn btn-sm btn-outline-secondary">
@@ -65,7 +89,7 @@
     </tr>
     {% else %}
     <tr>
-      <td colspan="11" class="text-center text-muted py-3">Keine Rechnungen gefunden.</td>
+      <td colspan="12" class="text-center text-muted py-3">Keine Rechnungen gefunden.</td>
     </tr>
     {% endfor %}
   </tbody>

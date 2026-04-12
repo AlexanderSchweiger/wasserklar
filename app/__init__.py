@@ -53,6 +53,9 @@ def create_app(config_name=None):
     from app.settings import bp as settings_bp
     app.register_blueprint(settings_bp)
 
+    from app.dunning import bp as dunning_bp
+    app.register_blueprint(dunning_bp)
+
     # Jinja2-Filter für deutsche Zahlenformatierung
     def de_number(value, decimals=2, signed=False):
         """Formatiert eine Zahl im deutschen Format (z. B. 1.250,90).

@@ -1,0 +1,224 @@
+{% extends "base.html" %}
+{% block title %}Mahnung – {{ notice.invoice.invoice_number }} Stufe {{ notice.level_snapshot }}{% endblock %}
+
+{% block content %}
+<div class="container-xl">
+    <div class="page-header d-print-none mb-3">
+        <div class="row align-items-center">
+            <div class="col-auto">
+                <a href="{{ url_for('dunning.notices') }}" class="btn btn-outline-secondary btn-sm me-2">
+                    <i class="fas fa-arrow-left"></i>
+                </a>
+            </div>
+            <div class="col-auto">
+                <h2 class="page-title">
+                    {{ notice.name_snapshot }} – {{ notice.invoice.invoice_number }}
+                </h2>
+                <div class="text-muted mt-1">
+                    Stufe {{ notice.level_snapshot }} | Ausgestellt am {{ notice.issued_date.strftime('%d.%m.%Y') }}
+                </div>
+            </div>
+            <div class="col-auto ms-auto">
+                {% if notice.status == 'Aktiv' %}
+                    <span class="badge bg-warning text-dark fs-5">Aktiv</span>
+                {% elif notice.status == 'Zurückgesetzt' %}
+                    <span class="badge bg-secondary fs-5">Zurückgesetzt</span>
+                {% elif notice.status == 'Storniert' %}
+                    <span class="badge bg-danger fs-5">Storniert</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        {# Linke Spalte: Details #}
+        <div class="col-lg-8">
+            <div class="card mb-3">
+                <div class="card-header">
+                    <h3 class="card-title">Details</h3>
+                </div>
+                <div class="card-body">
+                    <div class="row mb-2">
+                        <div class="col-sm-4 text-muted">Rechnung</div>
+                        <div class="col-sm-8">
+                            <a href="{{ url_for('invoices.detail', invoice_id=notice.invoice_id) }}">
+                                {{ notice.invoice.invoice_number }}
+                            </a>
+                        </div>
+                    </div>
+                    <div class="row mb-2">
+                        <div class="col-sm-4 text-muted">Kunde</div>
+                        <div class="col-sm-8">
+                            <a href="{{ url_for('customers.detail', customer_id=notice.invoice.customer_id) }}">
+                                {{ notice.invoice.customer.name }}
+                            </a>
+                        </div>
+                    </div>
+                    <div class="row mb-2">
+                        <div class="col-sm-4 text-muted">Hauptforderung</div>
+                        <div class="col-sm-8">{{ summary.principal | de_number }}&nbsp;&euro;</div>
+                    </div>
+                    <div class="row mb-2">
+                        <div class="col-sm-4 text-muted">Mahngebühr (diese Stufe)</div>
+                        <div class="col-sm-8">
+                            {% if notice.fee_amount and notice.fee_amount > 0 %}
+                                {{ notice.fee_amount | de_number }}&nbsp;&euro;
+                            {% else %}keine{% endif %}
+                        </div>
+                    </div>
+                    <div class="row mb-2">
+                        <div class="col-sm-4 text-muted">Kumulierte Mahngebühren</div>
+                        <div class="col-sm-8">{{ summary.total_fees | de_number }}&nbsp;&euro;</div>
+                    </div>
+                    <div class="row mb-2">
+                        <div class="col-sm-4 text-muted">Gesamtbetrag inkl. Gebühren</div>
+                        <div class="col-sm-8 fw-bold">{{ summary.gross_total | de_number }}&nbsp;&euro;</div>
+                    </div>
+                    <div class="row mb-2">
+                        <div class="col-sm-4 text-muted">Nachfrist bis</div>
+                        <div class="col-sm-8">
+                            {% if notice.new_due_date %}
+                                {{ notice.new_due_date.strftime('%d.%m.%Y') }}
+                            {% else %}–{% endif %}
+                        </div>
+                    </div>
+                    <div class="row mb-2">
+                        <div class="col-sm-4 text-muted">Drucktitel</div>
+                        <div class="col-sm-8">{{ notice.print_title_snapshot or '–' }}</div>
+                    </div>
+                </div>
+            </div>
+
+            {# Versand-Info #}
+            <div class="card mb-3">
+                <div class="card-header">
+                    <h3 class="card-title">Versand</h3>
+                </div>
+                <div class="card-body">
+                    {% if notice.sent_at %}
+                    <div class="row mb-2">
+                        <div class="col-sm-4 text-muted">Versendet am</div>
+                        <div class="col-sm-8">{{ notice.sent_at.strftime('%d.%m.%Y %H:%M') }}</div>
+                    </div>
+                    <div class="row mb-2">
+                        <div class="col-sm-4 text-muted">Versandweg</div>
+                        <div class="col-sm-8">{{ notice.sent_via or '–' }}</div>
+                    </div>
+                    <div class="row mb-2">
+                        <div class="col-sm-4 text-muted">Versendet an</div>
+                        <div class="col-sm-8">{{ notice.sent_to or '–' }}</div>
+                    </div>
+                    {% else %}
+                    <p class="text-muted mb-0">Noch nicht versendet.</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            {# Audit / Notizen #}
+            {% if notice.notes or notice.reset_at %}
+            <div class="card mb-3">
+                <div class="card-header">
+                    <h3 class="card-title">Verlauf</h3>
+                </div>
+                <div class="card-body">
+                    {% if notice.reset_at %}
+                    <div class="row mb-2">
+                        <div class="col-sm-4 text-muted">Zurückgesetzt am</div>
+                        <div class="col-sm-8">
+                            {{ notice.reset_at.strftime('%d.%m.%Y %H:%M') }}
+                            {% if notice.reset_by %} durch {{ notice.reset_by.username }}{% endif %}
+                        </div>
+                    </div>
+                    {% if notice.reset_reason %}
+                    <div class="row mb-2">
+                        <div class="col-sm-4 text-muted">Begründung</div>
+                        <div class="col-sm-8">{{ notice.reset_reason }}</div>
+                    </div>
+                    {% endif %}
+                    {% endif %}
+                    {% if notice.notes %}
+                    <div class="row mb-2">
+                        <div class="col-sm-4 text-muted">Notizen</div>
+                        <div class="col-sm-8"><pre class="mb-0" style="white-space:pre-wrap">{{ notice.notes }}</pre></div>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        {# Rechte Spalte: Aktionen #}
+        <div class="col-lg-4">
+            {% if notice.status == 'Aktiv' %}
+            {# Nachfrist verlängern #}
+            <div class="card mb-3">
+                <div class="card-header">
+                    <h3 class="card-title">Nachfrist verlängern</h3>
+                </div>
+                <div class="card-body">
+                    <form method="post" action="{{ url_for('dunning.notice_defer', notice_id=notice.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="mb-3">
+                            <label class="form-label">Neues Fälligkeitsdatum</label>
+                            <input type="date" name="new_due_date" class="form-control"
+                                   value="{{ notice.new_due_date.isoformat() if notice.new_due_date else '' }}">
+                        </div>
+                        <button type="submit" class="btn btn-warning w-100">
+                            <i class="fas fa-clock me-1"></i> Verlängern
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            {# Zurücksetzen #}
+            <div class="card mb-3">
+                <div class="card-header">
+                    <h3 class="card-title">Stufe zurücksetzen</h3>
+                </div>
+                <div class="card-body">
+                    <form method="post" action="{{ url_for('dunning.notice_reset', notice_id=notice.id) }}"
+                          onsubmit="return confirm('Mahnung Stufe {{ notice.level_snapshot }} wirklich zurücksetzen?')">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="mb-3">
+                            <label class="form-label">Begründung (optional)</label>
+                            <textarea name="reason" class="form-control" rows="2"></textarea>
+                        </div>
+                        <button type="submit" class="btn btn-outline-danger w-100">
+                            <i class="fas fa-undo me-1"></i> Zurücksetzen
+                        </button>
+                    </form>
+                    {% if notice.fee_amount and notice.fee_amount > 0 %}
+                    <small class="form-hint text-muted mt-2 d-block">
+                        Die Mahngebühr von {{ notice.fee_amount | de_number }}&nbsp;&euro; wird entfernt.
+                    </small>
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
+
+            {# Meta-Info #}
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Info</h3>
+                </div>
+                <div class="card-body">
+                    <div class="row mb-2">
+                        <div class="col-sm-5 text-muted">Erstellt</div>
+                        <div class="col-sm-7">{{ notice.created_at.strftime('%d.%m.%Y %H:%M') }}</div>
+                    </div>
+                    {% if notice.created_by %}
+                    <div class="row mb-2">
+                        <div class="col-sm-5 text-muted">Erstellt von</div>
+                        <div class="col-sm-7">{{ notice.created_by.username }}</div>
+                    </div>
+                    {% endif %}
+                    <div class="row mb-2">
+                        <div class="col-sm-5 text-muted">ID</div>
+                        <div class="col-sm-7">#{{ notice.id }}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

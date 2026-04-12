@@ -1,0 +1,68 @@
+<table class="table table-hover table-striped mb-0">
+    <thead>
+        <tr>
+            <th class="text-center" style="width:70px">Stufe</th>
+            <th>Rechnung</th>
+            <th>Kunde</th>
+            <th class="text-center">Ausgestellt</th>
+            <th class="text-center">Nachfrist</th>
+            <th class="text-end">Gebühr</th>
+            <th class="text-center">Status</th>
+            <th class="text-end">Aktionen</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for n in notices %}
+        <tr>
+            <td class="text-center">
+                {% if n.stage and n.stage.color %}
+                <span class="badge" style="background-color:{{ n.stage.color }}">
+                    {% if n.stage.icon %}<i class="fas {{ n.stage.icon }} me-1"></i>{% endif %}
+                    {{ n.level_snapshot }}
+                </span>
+                {% else %}
+                <span class="badge bg-secondary">{{ n.level_snapshot }}</span>
+                {% endif %}
+            </td>
+            <td>
+                <a href="{{ url_for('invoices.detail', invoice_id=n.invoice_id) }}">
+                    {{ n.invoice.invoice_number }}
+                </a>
+            </td>
+            <td>{{ n.invoice.customer.name }}</td>
+            <td class="text-center">{{ n.issued_date.strftime('%d.%m.%Y') }}</td>
+            <td class="text-center">
+                {% if n.new_due_date %}
+                    {{ n.new_due_date.strftime('%d.%m.%Y') }}
+                {% else %}–{% endif %}
+            </td>
+            <td class="text-end">
+                {% if n.fee_amount and n.fee_amount > 0 %}
+                    {{ n.fee_amount | de_number }}&nbsp;&euro;
+                {% else %}–{% endif %}
+            </td>
+            <td class="text-center">
+                {% if n.status == 'Aktiv' %}
+                    <span class="badge bg-warning text-dark">Aktiv</span>
+                {% elif n.status == 'Zurückgesetzt' %}
+                    <span class="badge bg-secondary">Zurückgesetzt</span>
+                {% elif n.status == 'Storniert' %}
+                    <span class="badge bg-danger">Storniert</span>
+                {% else %}
+                    <span class="badge bg-secondary">{{ n.status }}</span>
+                {% endif %}
+            </td>
+            <td class="text-end" style="white-space:nowrap">
+                <a href="{{ url_for('dunning.notice_detail', notice_id=n.id) }}"
+                   class="btn btn-sm btn-outline-info">
+                    <i class="fas fa-eye"></i>
+                </a>
+            </td>
+        </tr>
+        {% else %}
+        <tr>
+            <td colspan="8" class="text-center text-muted py-3">Keine Mahnungen gefunden.</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>

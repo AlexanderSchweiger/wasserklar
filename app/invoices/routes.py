@@ -681,7 +681,10 @@ def items_save(invoice_id):
 
     # Alle bestehenden Positionen entfernen — der Editor liefert den kompletten
     # neuen Zustand inklusive der (als "free" gerenderten) bestehenden Items.
+    # ADR-003: Mahngebühr-Items bleiben erhalten (werden nur vom Dunning-Service verwaltet).
     for old_item in list(invoice.items):
+        if getattr(old_item, "is_dunning_fee", 0):
+            continue
         db.session.delete(old_item)
     db.session.flush()
 
@@ -752,8 +755,12 @@ def bulk_action():
                 if action == Invoice.STATUS_SENT:
                     account_id = _resolve_open_item_account_id(inv, bulk_account_id)
                     _create_or_update_open_item(inv, account_id=account_id)
-                elif action == Invoice.STATUS_CANCELLED and inv.open_item:
-                    inv.open_item.status = OpenItem.STATUS_PAID
+                elif action == Invoice.STATUS_CANCELLED:
+                    if inv.open_item:
+                        inv.open_item.status = OpenItem.STATUS_PAID
+                    # ADR-003: Storno → alle aktiven Mahnungen der Rechnung stornieren
+                    from app.dunning.services import cancel_dunnings_for_invoice
+                    cancel_dunnings_for_invoice(inv)
                 changed += 1
             db.session.commit()
         except Exception as e:
@@ -931,6 +938,10 @@ def set_status(invoice_id):
             invoice.status = new_status
             if new_status == Invoice.STATUS_CANCELLED and invoice.open_item:
                 invoice.open_item.status = OpenItem.STATUS_PAID
+            # ADR-003: Storno → alle aktiven Mahnungen der Rechnung stornieren
+            if new_status == Invoice.STATUS_CANCELLED:
+                from app.dunning.services import cancel_dunnings_for_invoice
+                cancel_dunnings_for_invoice(invoice)
 
         # Automatische Buchung bei Bezahlt-Markierung
         if new_status == Invoice.STATUS_PAID and old_status != Invoice.STATUS_PAID:

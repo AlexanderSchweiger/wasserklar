@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}Mahnwesen{% endblock %}
+
+{% block content %}
+<div class="container-xl">
+    <div class="page-header d-print-none mb-3">
+        <div class="row align-items-center">
+            <div class="col-auto">
+                <h2 class="page-title">Mahnwesen</h2>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mb-3">
+        {# Fällige Mahnungen #}
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-body">
+                    <div class="d-flex align-items-center">
+                        <div class="subheader">Fällige Mahnungen</div>
+                    </div>
+                    <div class="h1 mb-0 mt-2">{{ eligible | length }}</div>
+                    <div class="text-muted">
+                        {% if eligible %}
+                        <a href="{{ url_for('dunning.run') }}">Mahnlauf starten</a>
+                        {% else %}
+                        Keine Rechnungen sind aktuell mahnfällig.
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        {# Aktive Mahnungen #}
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-body">
+                    <div class="d-flex align-items-center">
+                        <div class="subheader">Aktive Mahnungen</div>
+                    </div>
+                    <div class="h1 mb-0 mt-2">{{ active_count }}</div>
+                    <div class="text-muted">
+                        {% if active_count %}
+                        <a href="{{ url_for('dunning.notices', status='Aktiv') }}">Anzeigen</a>
+                        {% else %}
+                        Keine aktiven Mahnungen.
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        {# Gesamt #}
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-body">
+                    <div class="d-flex align-items-center">
+                        <div class="subheader">Gesamt (alle Status)</div>
+                    </div>
+                    <div class="h1 mb-0 mt-2">{{ total_count }}</div>
+                    <div class="text-muted">
+                        {% if total_count %}
+                        <a href="{{ url_for('dunning.notices') }}">Alle anzeigen</a>
+                        {% else %}
+                        Noch keine Mahnungen erzeugt.
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {# Fällige Rechnungen (Vorschau) #}
+    {% if eligible %}
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">Rechnungen reif für Mahnung</h3>
+            <div class="card-options">
+                <a href="{{ url_for('dunning.run') }}" class="btn btn-primary btn-sm">
+                    <i class="fas fa-play me-1"></i> Mahnlauf starten
+                </a>
+            </div>
+        </div>
+        <div class="card-body p-0">
+            <table class="table table-hover table-striped mb-0">
+                <thead>
+                    <tr>
+                        <th>Rechnung</th>
+                        <th>Kunde</th>
+                        <th class="text-end">Betrag</th>
+                        <th class="text-center">Fällig seit</th>
+                        <th class="text-center">Vorgeschlagene Stufe</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for inv, stage in eligible[:10] %}
+                    <tr>
+                        <td>
+                            <a href="{{ url_for('invoices.detail', invoice_id=inv.id) }}">{{ inv.invoice_number }}</a>
+                        </td>
+                        <td>{{ inv.customer.name }}</td>
+                        <td class="text-end">{{ inv.total_amount | de_number }}&nbsp;&euro;</td>
+                        <td class="text-center">{{ inv.due_date.strftime('%d.%m.%Y') }}</td>
+                        <td class="text-center">
+                            <span class="badge" style="background-color:{{ stage.color or '#6c757d' }}">
+                                {% if stage.icon %}<i class="fas {{ stage.icon }} me-1"></i>{% endif %}
+                                {{ stage.name }}
+                            </span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% if eligible | length > 10 %}
+        <div class="card-footer text-muted">
+            … und {{ eligible | length - 10 }} weitere.
+            <a href="{{ url_for('dunning.run') }}">Alle anzeigen</a>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

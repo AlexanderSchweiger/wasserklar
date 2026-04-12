@@ -70,6 +70,13 @@
             {% set _nav_rechnungslaeufe = request.endpoint in ('invoices.billing_runs','invoices.billing_run_detail','invoices.billing_run_delete') %}
             {% set _nav_email_settings  = request.endpoint == 'invoices.email_settings' %}
 
+            {# Mahnwesen #}
+            {% set _nav_mahnwesen      = request.endpoint == 'dunning.index' %}
+            {% set _nav_mahnungen      = request.endpoint in ('dunning.notices','dunning.notice_detail','dunning.notice_reset','dunning.notice_defer') %}
+            {% set _nav_mahnlauf       = request.endpoint in ('dunning.run','dunning.run_execute') %}
+            {% set _nav_mahnvorlagen   = request.endpoint in ('dunning.policies','dunning.policy_new','dunning.policy_edit') %}
+            {% set dunning_active      = _nav_mahnwesen or _nav_mahnungen or _nav_mahnlauf or _nav_mahnvorlagen %}
+
             {# Auswertungen #}
             {% set _nav_jahresbericht  = request.endpoint == 'accounting.report' %}
             {% set _nav_ust            = request.endpoint in ('accounting.ust','accounting.export_ust_csv') %}
@@ -184,6 +191,44 @@
                     </a>
                   </li>
                   {% endif %}
+                </ul>
+              </div>
+            </li>
+
+            <li class="nav-item">
+              <a class="nav-link dropdown-toggle {% if dunning_active %}active{% endif %}" href="#navbar-dunning"
+                data-bs-toggle="collapse" role="button"
+                aria-expanded="{{ 'true' if dunning_active else 'false' }}"
+                aria-controls="navbar-dunning">
+                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-gavel"></i></span>
+                <span class="nav-link-title">Mahnwesen</span>
+              </a>
+              <div class="collapse {% if dunning_active %}show{% endif %}" id="navbar-dunning">
+                <ul class="nav nav-sm flex-column ps-3">
+                  <li class="nav-item">
+                    <a class="nav-link {% if _nav_mahnwesen %}active{% endif %}"
+                      href="{{ url_for('dunning.index') }}">
+                      <i class="fas fa-tachometer-alt me-2"></i>Übersicht
+                    </a>
+                  </li>
+                  <li class="nav-item">
+                    <a class="nav-link {% if _nav_mahnungen %}active{% endif %}"
+                      href="{{ url_for('dunning.notices') }}">
+                      <i class="fas fa-list me-2"></i>Mahnungen
+                    </a>
+                  </li>
+                  <li class="nav-item">
+                    <a class="nav-link {% if _nav_mahnlauf %}active{% endif %}"
+                      href="{{ url_for('dunning.run') }}">
+                      <i class="fas fa-play me-2"></i>Mahnlauf
+                    </a>
+                  </li>
+                  <li class="nav-item">
+                    <a class="nav-link {% if _nav_mahnvorlagen %}active{% endif %}"
+                      href="{{ url_for('dunning.policies') }}">
+                      <i class="fas fa-cogs me-2"></i>Vorlagen
+                    </a>
+                  </li>
                 </ul>
               </div>
             </li>
