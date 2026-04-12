@@ -1,4 +1,4 @@
-# Wassergenossenschaft Verwaltung
+# wasserklar — Wassergenossenschaft Verwaltung
 
 Flask + HTMX Verwaltungssystem für Wassergenossenschaften.
 Design: **AdminLTE 3** (Bootstrap 4 + Font Awesome)
@@ -11,9 +11,9 @@ Design: **AdminLTE 3** (Bootstrap 4 + Font Awesome)
 
 | Environment | FLASK_ENV     | Datenbank              | Deployment              |
 |-------------|---------------|------------------------|-------------------------|
-| dev         | `development` | `wgbuchhaltung_dev`    | lokal (Flask dev-server)|
-| test        | `testing`     | `wgbuchhaltung_test`   | Docker                  |
-| prod        | `production`  | `wgbuchhaltung_prod`   | Docker                  |
+| dev         | `development` | `wasserklar_dev`    | lokal (Flask dev-server)|
+| test        | `testing`     | `wasserklar_test`   | Docker                  |
+| prod        | `production`  | `wasserklar_prod`   | Docker                  |
 
 Jedes Environment hat eine eigene Konfigurationsdatei: `.env`, `.env.test`, `.env.prod`.
 
@@ -30,7 +30,7 @@ python -m venv .venv
 
 # 3. Konfiguration anlegen
 cp .env.example .env
-#    → .env anpassen: DATABASE_URL (wgbuchhaltung_dev), WG_NAME, IBAN, SECRET_KEY
+#    → .env anpassen: DATABASE_URL (wasserklar_dev), WG_NAME, IBAN, SECRET_KEY
 #    → FLASK_ENV=development bleibt gesetzt
 
 # 4. Datenbank + Standard-Konten erstellen
@@ -48,13 +48,13 @@ cp .env.example .env
 
 ## Test-Deployment (Docker)
 
-Verbindet sich mit `wgbuchhaltung_test`. Läuft als produktionsähnliche Umgebung (DEBUG=False).
+Verbindet sich mit `wasserklar_test`. Läuft als produktionsähnliche Umgebung (DEBUG=False).
 
 ```bash
 # 1. Konfiguration anlegen
 cp .env.example .env.test
 #    → FLASK_ENV=testing
-#    → DATABASE_URL auf wgbuchhaltung_test setzen
+#    → DATABASE_URL auf wasserklar_test setzen
 #    → SECRET_KEY, Mail-Daten anpassen
 
 # 2. Container bauen und starten
@@ -72,13 +72,13 @@ docker compose -f docker-compose.test.yml exec wg flask --app run create-admin
 
 ## Produktions-Deployment (Docker)
 
-Verbindet sich mit `wgbuchhaltung_prod`. Vollständige Produktionskonfiguration (DEBUG=False).
+Verbindet sich mit `wasserklar_prod`. Vollständige Produktionskonfiguration (DEBUG=False).
 
 ```bash
 # 1. Konfiguration anlegen
 cp .env.example .env.prod
 #    → FLASK_ENV=production
-#    → DATABASE_URL auf wgbuchhaltung_prod setzen
+#    → DATABASE_URL auf wasserklar_prod setzen
 #    → SECRET_KEY (langer, zufälliger Wert!), Mail-Daten anpassen
 
 # 2. Container bauen und starten
