@@ -4,7 +4,7 @@ Service-Layer für das Mahnwesen (ADR-003).
 Alle DB-Mutationen ausschließlich hier, Routen orchestrieren nur.
 """
 
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 from app.extensions import db
@@ -171,7 +171,7 @@ def reset_dunning_notice(notice, user, reason=None):
     Nur die *aktuelle* Notice — für Mehrfach-Reset mehrfach aufrufen.
     """
     notice.status = DunningNotice.STATUS_ZURUECKGESETZT
-    notice.reset_at = datetime.utcnow()
+    notice.reset_at = datetime.now(UTC)
     notice.reset_by_id = user.id
     notice.reset_reason = reason
 
@@ -197,7 +197,7 @@ def defer_dunning_notice(notice, new_due_date, user):
     notice.new_due_date = new_due_date
 
     audit = (
-        f"[{datetime.utcnow():%Y-%m-%d %H:%M}] "
+        f"[{datetime.now(UTC):%Y-%m-%d %H:%M}] "
         f"Nachfrist verlängert von {old_due} auf {new_due_date} "
         f"durch {user.username}"
     )
