@@ -1,7 +1,7 @@
-name: wg-test
+name: wkoss-stg
 
 services:
-  wg:
+  wkoss:
     build: .
     ports:
       - "5001:5000"
@@ -10,7 +10,7 @@ services:
     env_file:
       - .env.test
     # DATABASE_URL muss in .env.test gesetzt sein, z.B.:
-    # mysql+pymysql://wg:passwort@192.168.0.12:3307/wasserklar_test?charset=utf8mb4
+    # mysql+pymysql://wkoss:passwort@192.168.0.12:3307/wasserklar_test?charset=utf8mb4
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5001/auth/login"]

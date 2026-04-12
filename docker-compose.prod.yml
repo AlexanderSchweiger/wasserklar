@@ -1,7 +1,7 @@
-name: wg-prod
+name: wkoss-prod
 
 services:
-  wg:
+  wkoss:
     build: .
     ports:
       - "5000:5000"
@@ -10,7 +10,7 @@ services:
     env_file:
       - .env.prod
     # DATABASE_URL muss in .env.prod gesetzt sein, z.B.:
-    # mysql+pymysql://wg:passwort@192.168.0.12:3307/wasserklar_prod?charset=utf8mb4
+    # mysql+pymysql://wkoss:passwort@192.168.0.12:3307/wasserklar_prod?charset=utf8mb4
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/auth/login"]
@@ -23,5 +23,5 @@ services:
     command: ["/usr/local/bin/supercronic", "/app/scheduler/crontab"]
     env_file:
       - .env.prod
-    # Dieselbe DATABASE_URL wie der wg-Container
+    # Dieselbe DATABASE_URL wie der wkoss-Container
     restart: unless-stopped

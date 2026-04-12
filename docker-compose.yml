@@ -4,19 +4,19 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_DB: wasserklar
-      POSTGRES_USER: wg
+      POSTGRES_USER: wkoss
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U wg -d wasserklar"]
+      test: ["CMD-SHELL", "pg_isready -U wkoss -d wasserklar"]
       interval: 10s
       timeout: 5s
       retries: 5
     ports:
     - "5432:5432"
 
-  wg:
+  wkoss:
     build: .
     ports:
       - "5000:5000"
@@ -25,7 +25,7 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql://wg:${POSTGRES_PASSWORD}@postgres:5432/wasserklar
+      DATABASE_URL: postgresql://wkoss:${POSTGRES_PASSWORD}@postgres:5432/wasserklar
     depends_on:
       postgres:
         condition: service_healthy
@@ -42,7 +42,7 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql://wg:${POSTGRES_PASSWORD}@postgres:5432/wasserklar
+      DATABASE_URL: postgresql://wkoss:${POSTGRES_PASSWORD}@postgres:5432/wasserklar
     depends_on:
       postgres:
         condition: service_healthy

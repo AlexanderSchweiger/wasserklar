@@ -7,3 +7,5 @@ __pycache__/
 *.pdf
 .DS_Store
 .venv
+.claude/*
+.claude/settings.local.json
