@@ -201,6 +201,7 @@
                 <th class="ps-3">URL</th>
                 <td class="text-break"><code class="small">{{ db_info.url_masked }}</code></td>
               </tr>
+              {% block db_info_extra %}{% endblock %}
             </tbody>
           </table>
         </div>

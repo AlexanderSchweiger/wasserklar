@@ -5,6 +5,199 @@ Verwendung:
   flask --app run create-admin
 """
 
+import re as _re
+
+import sqlalchemy as sa
+
+
+# Spalten, die per ALTER TABLE ADD COLUMN nachgezogen werden muessen.
+# Reihenfolge wird respektiert (FKs koennen auf vorher ergaenzte Spalten zeigen).
+# Jeder Eintrag: (table, col_def, col_name)
+_SCHEMA_UPGRADE_COLUMNS = [
+    ("water_meters",  "installed_from DATE",                                          "installed_from"),
+    ("water_meters",  "installed_to DATE",                                            "installed_to"),
+    ("water_meters",  "initial_value NUMERIC(12,3)",                                  "initial_value"),
+    ("bookings",      "open_item_id INTEGER REFERENCES open_items(id)",               "open_item_id"),
+    ("bookings",      "project_id INTEGER REFERENCES projects(id)",                   "project_id"),
+    ("bookings",      "status VARCHAR(20) NOT NULL DEFAULT 'Offen'",                  "status"),
+    ("bookings",      "storno_of_id INTEGER REFERENCES bookings(id)",                 "storno_of_id"),
+    ("bookings",      "storno_reason VARCHAR(500)",                                   "storno_reason"),
+    ("bookings",      "storno_date DATE",                                             "storno_date"),
+    ("invoice_items", "tax_rate NUMERIC(5,2)",                                        "tax_rate"),
+    ("water_tariffs", "base_fee_label VARCHAR(100) DEFAULT 'Grundgebühr'",            "base_fee_label"),
+    ("water_tariffs", "additional_fee NUMERIC(10,2) DEFAULT 0",                       "additional_fee"),
+    ("water_tariffs", "additional_fee_label VARCHAR(100) DEFAULT 'Zusatzgebühr'",     "additional_fee_label"),
+    ("customers",     "base_fee_override NUMERIC(10,2)",                              "base_fee_override"),
+    ("customers",     "additional_fee_override NUMERIC(10,2)",                        "additional_fee_override"),
+    ("properties",    "base_fee_override NUMERIC(10,2)",                              "base_fee_override"),
+    ("properties",    "additional_fee_override NUMERIC(10,2)",                        "additional_fee_override"),
+    ("open_items",    "period_year INTEGER",                                          "period_year"),
+    ("water_meters",  "eichjahr INTEGER",                                             "eichjahr"),
+    ("customers",     "customer_number INTEGER",                                      "customer_number"),
+    ("customers",     "externe_kennung VARCHAR(100)",                                 "externe_kennung"),
+    ("bookings",      "real_account_id INTEGER REFERENCES real_accounts(id)",         "real_account_id"),
+    ("bookings",      "tax_rate NUMERIC(5,2)",                                        "tax_rate"),
+    ("bookings",      "customer_id INTEGER REFERENCES customers(id)",                 "customer_id"),
+    ("projects",      "color VARCHAR(20) DEFAULT '#3498db'",                          "color"),
+    ("real_accounts", "icon VARCHAR(50) DEFAULT 'fa-university'",                     "icon"),
+    ("real_accounts", "is_default INTEGER NOT NULL DEFAULT 0",                        "is_default"),
+    ("customers",     "rechnung_per_email INTEGER NOT NULL DEFAULT 0",                "rechnung_per_email"),
+    ("accounts",      "code VARCHAR(3)",                                              "code"),
+    ("projects",      "code VARCHAR(3)",                                              "code"),
+    ("invoices",      "doc_path VARCHAR(500)",                                        "doc_path"),
+    ("invoices",      "billing_run_id INTEGER REFERENCES billing_runs(id)",           "billing_run_id"),
+    ("fiscal_years",  "is_vat_liable INTEGER NOT NULL DEFAULT 0",                     "is_vat_liable"),
+    ("open_items",    "account_id INTEGER REFERENCES accounts(id)",                   "account_id"),
+    ("billing_runs",  "account_id INTEGER REFERENCES accounts(id)",                   "account_id"),
+    # ADR-002: Sammelbuchung. booking_groups kommt ueber db.create_all();
+    # hier nur die ALTER-Spalten auf bestehenden Tabellen ergaenzen.
+    ("bookings",      "group_id INTEGER REFERENCES booking_groups(id)",               "group_id"),
+    ("invoice_items", "account_id INTEGER REFERENCES accounts(id)",                   "account_id"),
+    ("invoice_items", "project_id INTEGER REFERENCES projects(id)",                   "project_id"),
+    # ADR-003: Mahnwesen. dunning_* kommen ueber db.create_all();
+    # hier nur die ALTER-Spalten auf bestehenden Tabellen ergaenzen.
+    ("invoice_items", "is_dunning_fee INTEGER NOT NULL DEFAULT 0",                    "is_dunning_fee"),
+    ("invoice_items", "dunning_notice_id INTEGER REFERENCES dunning_notices(id)",     "dunning_notice_id"),
+]
+
+
+def apply_schema_upgrades(conn, dialect, *, verbose=False):
+    """Idempotent fehlende Spalten per ALTER TABLE ADD COLUMN ergaenzen.
+
+    WICHTIG: Inspektion und DDL laufen ueber dieselbe Connection, damit
+    in Postgres der gesetzte search_path (fuer Multi-Tenant-Schemas) auch
+    die Spaltenabfrage steuert. Rein engine-basierte Inspektion wuerde
+    einen frischen Pool-Checkout ausloesen — in der SaaS-Schicht reicht der
+    'reset_on_checkout'-Listener dann den search_path auf public zurueck,
+    und Tabellen des tenant-Schemas waeren unsichtbar.
+    """
+    inspector = sa.inspect(conn)
+
+    def _add(table, col_def, col_name):
+        cols = [c["name"] for c in inspector.get_columns(table)]
+        if col_name in cols:
+            if verbose:
+                print(f"  ✓ {table}.{col_name} bereits vorhanden.")
+            return
+        # MariaDB/MySQL unterstuetzt kein inline REFERENCES in ALTER TABLE ADD COLUMN
+        effective_def = col_def
+        if dialect in ("mysql", "mariadb"):
+            effective_def = _re.sub(r"\s+REFERENCES\s+\S+", "", col_def, flags=_re.IGNORECASE)
+        conn.execute(sa.text(f"ALTER TABLE {table} ADD COLUMN {effective_def}"))
+        if verbose:
+            print(f"  + {table}.{col_name} hinzugefuegt.")
+
+    for table, col_def, col_name in _SCHEMA_UPGRADE_COLUMNS:
+        _add(table, col_def, col_name)
+
+
+def seed_default_tax_rates(db, *, verbose=False):
+    """Die vier Standard-Steuersaetze idempotent anlegen."""
+    from decimal import Decimal
+    from app.models import TaxRate
+
+    default_rates = [
+        (0,  "0 % – keine MwSt"),
+        (10, "10 %"),
+        (13, "13 %"),
+        (20, "20 %"),
+    ]
+    for rate_val, label in default_rates:
+        if not TaxRate.query.filter_by(rate=Decimal(str(rate_val))).first():
+            db.session.add(TaxRate(rate=Decimal(str(rate_val)), label=label))
+            if verbose:
+                print(f"  + Steuersatz {rate_val}% angelegt.")
+        elif verbose:
+            print(f"  ✓ Steuersatz {rate_val}% bereits vorhanden.")
+    db.session.commit()
+
+
+def seed_default_dunning_policy(db, *, verbose=False):
+    """Die Standard-Mahnvorlage mit 4 Stufen idempotent anlegen (ADR-003)."""
+    from decimal import Decimal
+    from app.models import DunningPolicy, DunningStage
+
+    if DunningPolicy.query.first():
+        if verbose:
+            print("  ✓ Mahnvorlage bereits vorhanden.")
+        return
+
+    policy = DunningPolicy(name="Standard", description="Standard-Mahnvorlage", is_default=True)
+    db.session.add(policy)
+    db.session.flush()
+    stages = [
+        DunningStage(policy_id=policy.id, level=1, name="Freundliche Zahlungserinnerung",
+                     days_after_due=14, fee_fixed=Decimal("0.00"), new_due_days=14,
+                     print_title="Zahlungserinnerung", color="blue", icon="fa-envelope"),
+        DunningStage(policy_id=policy.id, level=2, name="Zahlungserinnerung",
+                     days_after_due=30, fee_fixed=Decimal("0.00"), new_due_days=14,
+                     print_title="Zahlungserinnerung", color="orange", icon="fa-exclamation-circle"),
+        DunningStage(policy_id=policy.id, level=3, name="1. Mahnung",
+                     days_after_due=45, fee_fixed=Decimal("5.00"), new_due_days=14,
+                     print_title="1. Mahnung", color="red", icon="fa-exclamation-triangle"),
+        DunningStage(policy_id=policy.id, level=4, name="2. Mahnung (letzte)",
+                     days_after_due=60, fee_fixed=Decimal("10.00"), new_due_days=7,
+                     print_title="Letzte Mahnung", color="pink", icon="fa-gavel"),
+    ]
+    db.session.add_all(stages)
+    db.session.commit()
+    if verbose:
+        print("  + Standard-Mahnvorlage mit 4 Stufen angelegt.")
+
+
+def run_data_migrations(db, *, verbose=False):
+    """Datenmigrationen fuer bestehende DBs (Kundennummern, OpenItems aus versendeten Rechnungen).
+
+    Alle Aenderungen laufen in EINER Transaktion (ein Commit am Ende). Das ist
+    fuer die SaaS-Schicht wichtig: jeder Commit gibt die Connection in den Pool
+    zurueck, und der Pool-Checkout-Listener setzt den search_path wieder auf
+    public — eine Folge-Query landete sonst im falschen Schema.
+    """
+    from sqlalchemy import func
+    from app.models import Customer, Invoice, OpenItem
+
+    # Kundennummern fuer Altbestand vergeben
+    kunden_ohne_nr = (
+        Customer.query
+        .filter(Customer.customer_number == None)  # noqa: E711
+        .order_by(Customer.id)
+        .all()
+    )
+    if kunden_ohne_nr:
+        max_nr = db.session.query(func.max(Customer.customer_number)).scalar() or 0
+        for kunde in kunden_ohne_nr:
+            max_nr += 1
+            kunde.customer_number = max_nr
+
+    # Fuer versendete Rechnungen ohne OpenItem einen anlegen
+    sent_no_oi = (
+        Invoice.query
+        .filter(Invoice.status == Invoice.STATUS_SENT)
+        .filter(~Invoice.open_item.has())
+        .all()
+    )
+    for inv in sent_no_oi:
+        oi = OpenItem(
+            customer_id=inv.customer_id,
+            description=inv.invoice_number,
+            amount=inv.total_amount,
+            date=inv.date,
+            due_date=inv.due_date,
+            period_year=inv.period_year,
+            status=OpenItem.STATUS_OPEN,
+            invoice_id=inv.id,
+        )
+        db.session.add(oi)
+
+    if kunden_ohne_nr or sent_no_oi:
+        db.session.commit()
+
+    if verbose:
+        if kunden_ohne_nr:
+            print(f"  {len(kunden_ohne_nr)} Kunden mit Kundennummern versehen.")
+        if sent_no_oi:
+            print(f"  {len(sent_no_oi)} Rechnungen -> OpenItem migriert.")
+
 
 def register_commands(app):
     from app.extensions import db
@@ -16,255 +209,25 @@ def register_commands(app):
         db.create_all()
         print("Datenbanktabellen erstellt.")
 
-        # Fehlende Spalten ergänzen (SQLite unterstützt kein ALTER COLUMN,
-        # aber ADD COLUMN ist möglich – sicher für Re-Runs).
-        import sqlalchemy as sa
-        import re as _re
-        with db.engine.connect() as conn:
-            _dialect = db.engine.dialect.name
+        # Fehlende Spalten ergaenzen (SQLite unterstuetzt kein ALTER COLUMN,
+        # aber ADD COLUMN ist moeglich – sicher fuer Re-Runs).
+        with db.engine.begin() as conn:
+            apply_schema_upgrades(conn, db.engine.dialect.name)
 
-            def _add_col_if_missing(table, col_def, col_name):
-                cols = [c["name"] for c in sa.inspect(db.engine).get_columns(table)]
-                if col_name not in cols:
-                    # MariaDB/MySQL unterstützt kein inline REFERENCES in ALTER TABLE ADD COLUMN
-                    if _dialect in ('mysql', 'mariadb'):
-                        col_def = _re.sub(r'\s+REFERENCES\s+\S+', '', col_def, flags=_re.IGNORECASE)
-                    conn.execute(sa.text(f"ALTER TABLE {table} ADD COLUMN {col_def}"))
-
-            _add_col_if_missing("water_meters", "installed_from DATE", "installed_from")
-            _add_col_if_missing("water_meters", "installed_to DATE", "installed_to")
-            _add_col_if_missing("water_meters", "initial_value NUMERIC(12,3)", "initial_value")
-            _add_col_if_missing("bookings", "open_item_id INTEGER REFERENCES open_items(id)", "open_item_id")
-            _add_col_if_missing("bookings", "project_id INTEGER REFERENCES projects(id)", "project_id")
-            _add_col_if_missing("bookings", "status VARCHAR(20) NOT NULL DEFAULT 'Offen'", "status")
-            _add_col_if_missing("bookings", "storno_of_id INTEGER REFERENCES bookings(id)", "storno_of_id")
-            _add_col_if_missing("bookings", "storno_reason VARCHAR(500)", "storno_reason")
-            _add_col_if_missing("bookings", "storno_date DATE", "storno_date")
-            _add_col_if_missing("invoice_items", "tax_rate NUMERIC(5,2)", "tax_rate")
-            _add_col_if_missing("water_tariffs", "base_fee_label VARCHAR(100) DEFAULT 'Grundgebühr'", "base_fee_label")
-            _add_col_if_missing("water_tariffs", "additional_fee NUMERIC(10,2) DEFAULT 0", "additional_fee")
-            _add_col_if_missing("water_tariffs", "additional_fee_label VARCHAR(100) DEFAULT 'Zusatzgebühr'", "additional_fee_label")
-            _add_col_if_missing("customers", "base_fee_override NUMERIC(10,2)", "base_fee_override")
-            _add_col_if_missing("customers", "additional_fee_override NUMERIC(10,2)", "additional_fee_override")
-            _add_col_if_missing("properties", "base_fee_override NUMERIC(10,2)", "base_fee_override")
-            _add_col_if_missing("properties", "additional_fee_override NUMERIC(10,2)", "additional_fee_override")
-            _add_col_if_missing("open_items", "period_year INTEGER", "period_year")
-            _add_col_if_missing("water_meters", "eichjahr INTEGER", "eichjahr")
-            _add_col_if_missing("customers", "customer_number INTEGER", "customer_number")
-            _add_col_if_missing("customers", "externe_kennung VARCHAR(100)", "externe_kennung")
-            _add_col_if_missing("bookings", "real_account_id INTEGER REFERENCES real_accounts(id)", "real_account_id")
-            _add_col_if_missing("bookings", "tax_rate NUMERIC(5,2)", "tax_rate")
-            _add_col_if_missing("bookings", "customer_id INTEGER REFERENCES customers(id)", "customer_id")
-            _add_col_if_missing("projects", "color VARCHAR(20) DEFAULT '#3498db'", "color")
-            _add_col_if_missing("real_accounts", "icon VARCHAR(50) DEFAULT 'fa-university'", "icon")
-            _add_col_if_missing("real_accounts", "is_default INTEGER NOT NULL DEFAULT 0", "is_default")
-            _add_col_if_missing("customers", "rechnung_per_email INTEGER NOT NULL DEFAULT 0", "rechnung_per_email")
-            _add_col_if_missing("accounts", "code VARCHAR(3)", "code")
-            _add_col_if_missing("projects", "code VARCHAR(3)", "code")
-            _add_col_if_missing("invoices", "doc_path VARCHAR(500)", "doc_path")
-            _add_col_if_missing("invoices", "billing_run_id INTEGER REFERENCES billing_runs(id)", "billing_run_id")
-            _add_col_if_missing("fiscal_years", "is_vat_liable INTEGER NOT NULL DEFAULT 0", "is_vat_liable")
-            _add_col_if_missing("open_items", "account_id INTEGER REFERENCES accounts(id)", "account_id")
-            _add_col_if_missing("billing_runs", "account_id INTEGER REFERENCES accounts(id)", "account_id")
-            # ADR-002: Sammelbuchung. Neue Tabelle booking_groups wird durch
-            # db.create_all() angelegt; hier nur die ALTER-Spalten auf
-            # bestehenden Tabellen ergänzen.
-            _add_col_if_missing("bookings", "group_id INTEGER REFERENCES booking_groups(id)", "group_id")
-            _add_col_if_missing("invoice_items", "account_id INTEGER REFERENCES accounts(id)", "account_id")
-            _add_col_if_missing("invoice_items", "project_id INTEGER REFERENCES projects(id)", "project_id")
-            # ADR-003: Mahnwesen. Neue Tabellen dunning_policies / dunning_stages /
-            # dunning_notices werden durch db.create_all() angelegt; hier nur die
-            # ALTER-Spalten auf bestehenden Tabellen ergänzen.
-            _add_col_if_missing("invoice_items", "is_dunning_fee INTEGER NOT NULL DEFAULT 0", "is_dunning_fee")
-            _add_col_if_missing("invoice_items", "dunning_notice_id INTEGER REFERENCES dunning_notices(id)", "dunning_notice_id")
-            conn.commit()
-
-        # Standard-Steuersätze anlegen
-        default_rates = [
-            (0,  "0 % – keine MwSt"),
-            (10, "10 %"),
-            (13, "13 %"),
-            (20, "20 %"),
-        ]
-        for rate_val, label in default_rates:
-            from decimal import Decimal
-            if not TaxRate.query.filter_by(rate=Decimal(str(rate_val))).first():
-                db.session.add(TaxRate(rate=Decimal(str(rate_val)), label=label))
-        db.session.commit()
-
-        # Standard-Mahnvorlage mit 4 Stufen anlegen (ADR-003)
-        if not DunningPolicy.query.first():
-            from decimal import Decimal
-            policy = DunningPolicy(name="Standard", description="Standard-Mahnvorlage", is_default=True)
-            db.session.add(policy)
-            db.session.flush()
-            stages = [
-                DunningStage(policy_id=policy.id, level=1, name="Freundliche Zahlungserinnerung",
-                             days_after_due=14, fee_fixed=Decimal("0.00"), new_due_days=14,
-                             print_title="Zahlungserinnerung", color="blue", icon="fa-envelope"),
-                DunningStage(policy_id=policy.id, level=2, name="Zahlungserinnerung",
-                             days_after_due=30, fee_fixed=Decimal("0.00"), new_due_days=14,
-                             print_title="Zahlungserinnerung", color="orange", icon="fa-exclamation-circle"),
-                DunningStage(policy_id=policy.id, level=3, name="1. Mahnung",
-                             days_after_due=45, fee_fixed=Decimal("5.00"), new_due_days=14,
-                             print_title="1. Mahnung", color="red", icon="fa-exclamation-triangle"),
-                DunningStage(policy_id=policy.id, level=4, name="2. Mahnung (letzte)",
-                             days_after_due=60, fee_fixed=Decimal("10.00"), new_due_days=7,
-                             print_title="Letzte Mahnung", color="pink", icon="fa-gavel"),
-            ]
-            db.session.add_all(stages)
-            db.session.commit()
+        seed_default_tax_rates(db)
+        seed_default_dunning_policy(db)
 
     @app.cli.command("upgrade-db")
     def upgrade_db():
-        """Fehlende Spalten in bestehender Datenbank ergänzen (für Updates)."""
+        """Fehlende Spalten in bestehender Datenbank ergaenzen (fuer Updates)."""
         db.create_all()
-        import sqlalchemy as sa
-        import re as _re
-        with db.engine.connect() as conn:
-            _dialect = db.engine.dialect.name
 
-            def _add_col_if_missing(table, col_def, col_name):
-                cols = [c["name"] for c in sa.inspect(db.engine).get_columns(table)]
-                if col_name not in cols:
-                    # MariaDB/MySQL unterstützt kein inline REFERENCES in ALTER TABLE ADD COLUMN
-                    if _dialect in ('mysql', 'mariadb'):
-                        col_def = _re.sub(r'\s+REFERENCES\s+\S+', '', col_def, flags=_re.IGNORECASE)
-                    conn.execute(sa.text(f"ALTER TABLE {table} ADD COLUMN {col_def}"))
-                    print(f"  + {table}.{col_name} hinzugefügt.")
-                else:
-                    print(f"  ✓ {table}.{col_name} bereits vorhanden.")
+        with db.engine.begin() as conn:
+            apply_schema_upgrades(conn, db.engine.dialect.name, verbose=True)
 
-            _add_col_if_missing("water_meters", "installed_from DATE", "installed_from")
-            _add_col_if_missing("water_meters", "installed_to DATE", "installed_to")
-            _add_col_if_missing("water_meters", "initial_value NUMERIC(12,3)", "initial_value")
-            _add_col_if_missing("bookings", "open_item_id INTEGER REFERENCES open_items(id)", "open_item_id")
-            _add_col_if_missing("bookings", "project_id INTEGER REFERENCES projects(id)", "project_id")
-            _add_col_if_missing("bookings", "status VARCHAR(20) NOT NULL DEFAULT 'Offen'", "status")
-            _add_col_if_missing("bookings", "storno_of_id INTEGER REFERENCES bookings(id)", "storno_of_id")
-            _add_col_if_missing("bookings", "storno_reason VARCHAR(500)", "storno_reason")
-            _add_col_if_missing("bookings", "storno_date DATE", "storno_date")
-            _add_col_if_missing("invoice_items", "tax_rate NUMERIC(5,2)", "tax_rate")
-            _add_col_if_missing("water_tariffs", "base_fee_label VARCHAR(100) DEFAULT 'Grundgebühr'", "base_fee_label")
-            _add_col_if_missing("water_tariffs", "additional_fee NUMERIC(10,2) DEFAULT 0", "additional_fee")
-            _add_col_if_missing("water_tariffs", "additional_fee_label VARCHAR(100) DEFAULT 'Zusatzgebühr'", "additional_fee_label")
-            _add_col_if_missing("customers", "base_fee_override NUMERIC(10,2)", "base_fee_override")
-            _add_col_if_missing("customers", "additional_fee_override NUMERIC(10,2)", "additional_fee_override")
-            _add_col_if_missing("properties", "base_fee_override NUMERIC(10,2)", "base_fee_override")
-            _add_col_if_missing("properties", "additional_fee_override NUMERIC(10,2)", "additional_fee_override")
-            _add_col_if_missing("open_items", "period_year INTEGER", "period_year")
-            _add_col_if_missing("water_meters", "eichjahr INTEGER", "eichjahr")
-            _add_col_if_missing("customers", "customer_number INTEGER", "customer_number")
-            _add_col_if_missing("customers", "externe_kennung VARCHAR(100)", "externe_kennung")
-            _add_col_if_missing("bookings", "real_account_id INTEGER REFERENCES real_accounts(id)", "real_account_id")
-            _add_col_if_missing("bookings", "tax_rate NUMERIC(5,2)", "tax_rate")
-            _add_col_if_missing("bookings", "customer_id INTEGER REFERENCES customers(id)", "customer_id")
-            _add_col_if_missing("projects", "color VARCHAR(20) DEFAULT '#3498db'", "color")
-            _add_col_if_missing("real_accounts", "icon VARCHAR(50) DEFAULT 'fa-university'", "icon")
-            _add_col_if_missing("real_accounts", "is_default INTEGER NOT NULL DEFAULT 0", "is_default")
-            _add_col_if_missing("customers", "rechnung_per_email INTEGER NOT NULL DEFAULT 0", "rechnung_per_email")
-            _add_col_if_missing("accounts", "code VARCHAR(3)", "code")
-            _add_col_if_missing("projects", "code VARCHAR(3)", "code")
-            _add_col_if_missing("invoices", "doc_path VARCHAR(500)", "doc_path")
-            _add_col_if_missing("invoices", "billing_run_id INTEGER REFERENCES billing_runs(id)", "billing_run_id")
-            _add_col_if_missing("fiscal_years", "is_vat_liable INTEGER NOT NULL DEFAULT 0", "is_vat_liable")
-            _add_col_if_missing("open_items", "account_id INTEGER REFERENCES accounts(id)", "account_id")
-            _add_col_if_missing("billing_runs", "account_id INTEGER REFERENCES accounts(id)", "account_id")
-            # ADR-002: Sammelbuchung. Neue Tabelle booking_groups wird durch
-            # db.create_all() angelegt; hier nur die ALTER-Spalten auf
-            # bestehenden Tabellen ergänzen.
-            _add_col_if_missing("bookings", "group_id INTEGER REFERENCES booking_groups(id)", "group_id")
-            _add_col_if_missing("invoice_items", "account_id INTEGER REFERENCES accounts(id)", "account_id")
-            _add_col_if_missing("invoice_items", "project_id INTEGER REFERENCES projects(id)", "project_id")
-            # ADR-003: Mahnwesen. Neue Tabellen dunning_policies / dunning_stages /
-            # dunning_notices werden durch db.create_all() angelegt; hier nur die
-            # ALTER-Spalten auf bestehenden Tabellen ergänzen.
-            _add_col_if_missing("invoice_items", "is_dunning_fee INTEGER NOT NULL DEFAULT 0", "is_dunning_fee")
-            _add_col_if_missing("invoice_items", "dunning_notice_id INTEGER REFERENCES dunning_notices(id)", "dunning_notice_id")
-            conn.commit()
-
-        # Standard-Steuersätze anlegen
-        default_rates = [
-            (0,  "0 % – keine MwSt"),
-            (10, "10 %"),
-            (13, "13 %"),
-            (20, "20 %"),
-        ]
-        for rate_val, label in default_rates:
-            from decimal import Decimal
-            if not TaxRate.query.filter_by(rate=Decimal(str(rate_val))).first():
-                db.session.add(TaxRate(rate=Decimal(str(rate_val)), label=label))
-                print(f"  + Steuersatz {rate_val}% angelegt.")
-            else:
-                print(f"  ✓ Steuersatz {rate_val}% bereits vorhanden.")
-        db.session.commit()
-
-        # Standard-Mahnvorlage mit 4 Stufen anlegen (ADR-003)
-        if not DunningPolicy.query.first():
-            from decimal import Decimal
-            policy = DunningPolicy(name="Standard", description="Standard-Mahnvorlage", is_default=True)
-            db.session.add(policy)
-            db.session.flush()
-            stages = [
-                DunningStage(policy_id=policy.id, level=1, name="Freundliche Zahlungserinnerung",
-                             days_after_due=14, fee_fixed=Decimal("0.00"), new_due_days=14,
-                             print_title="Zahlungserinnerung", color="blue", icon="fa-envelope"),
-                DunningStage(policy_id=policy.id, level=2, name="Zahlungserinnerung",
-                             days_after_due=30, fee_fixed=Decimal("0.00"), new_due_days=14,
-                             print_title="Zahlungserinnerung", color="orange", icon="fa-exclamation-circle"),
-                DunningStage(policy_id=policy.id, level=3, name="1. Mahnung",
-                             days_after_due=45, fee_fixed=Decimal("5.00"), new_due_days=14,
-                             print_title="1. Mahnung", color="red", icon="fa-exclamation-triangle"),
-                DunningStage(policy_id=policy.id, level=4, name="2. Mahnung (letzte)",
-                             days_after_due=60, fee_fixed=Decimal("10.00"), new_due_days=7,
-                             print_title="Letzte Mahnung", color="pink", icon="fa-gavel"),
-            ]
-            db.session.add_all(stages)
-            db.session.commit()
-            print("  + Standard-Mahnvorlage mit 4 Stufen angelegt.")
-        else:
-            print("  ✓ Mahnvorlage bereits vorhanden.")
-
-        # Datenmigration: Kundennummern für bestehende Kunden ohne Kundennummer vergeben
-        from app.models import Customer
-        kunden_ohne_nr = (
-            Customer.query
-            .filter(Customer.customer_number == None)
-            .order_by(Customer.id)
-            .all()
-        )
-        if kunden_ohne_nr:
-            from sqlalchemy import func
-            max_nr = db.session.query(func.max(Customer.customer_number)).scalar() or 0
-            for kunde in kunden_ohne_nr:
-                max_nr += 1
-                kunde.customer_number = max_nr
-            db.session.commit()
-            print(f"  {len(kunden_ohne_nr)} Kunden mit Kundennummern versehen.")
-
-        # Datenmigration: für alle bereits versendeten Rechnungen ohne OpenItem einen anlegen
-        from app.models import Invoice, OpenItem
-        sent_no_oi = (
-            Invoice.query
-            .filter(Invoice.status == Invoice.STATUS_SENT)
-            .filter(~Invoice.open_item.has())
-            .all()
-        )
-        for inv in sent_no_oi:
-            oi = OpenItem(
-                customer_id=inv.customer_id,
-                description=inv.invoice_number,
-                amount=inv.total_amount,
-                date=inv.date,
-                due_date=inv.due_date,
-                period_year=inv.period_year,
-                status=OpenItem.STATUS_OPEN,
-                invoice_id=inv.id,
-            )
-            db.session.add(oi)
-        db.session.commit()
-        if sent_no_oi:
-            print(f"  {len(sent_no_oi)} Rechnungen → OpenItem migriert.")
+        seed_default_tax_rates(db, verbose=True)
+        seed_default_dunning_policy(db, verbose=True)
+        run_data_migrations(db, verbose=True)
 
         print("Datenbank aktualisiert.")
 
