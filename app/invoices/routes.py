@@ -13,6 +13,21 @@ from app.extensions import db
 from app.models import Invoice, InvoiceItem, Customer, WaterMeter, MeterReading, WaterTariff, Booking, Account, Property, OpenItem, Project, RealAccount, InvoiceCounter, AppSetting, BillingRun
 from app.utils import next_invoice_number as _next_invoice_number
 from app.settings_service import get_wg, send_mail, wg_settings
+from app.invoices.design import get_design
+
+
+def _current_design():
+    """Liest das aktuell konfigurierte Rechnungsdesign aus den AppSettings."""
+    return get_design(AppSetting.get("invoice.design", "classic"))
+
+
+def _render_pdf_html(invoice):
+    """Rendert die HTML-Vorlage für WeasyPrint mit aktuellem Design."""
+    return render_template(
+        "invoices/pdf_template.html",
+        invoice=invoice,
+        design=_current_design(),
+    )
 
 
 def _resolve_open_item_account_id(invoice, form_account_id=None):
@@ -793,7 +808,7 @@ def bulk_pdf_merged():
     invoices = Invoice.query.filter(Invoice.id.in_(invoice_ids)).order_by(Invoice.invoice_number).all()
     rendered_docs = []
     for invoice in invoices:
-        html_content = render_template("invoices/pdf_template.html", invoice=invoice)
+        html_content = _render_pdf_html(invoice)
         rendered_docs.append(HTML(string=html_content).render())
         if _invoice_is_locked(invoice):
             pdf_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "pdf")
@@ -831,7 +846,7 @@ def bulk_pdf_zip():
                 zf.write(invoice.pdf_path, f"{invoice.invoice_number}.pdf")
             else:
                 pdf_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "pdf")
-                html_content = render_template("invoices/pdf_template.html", invoice=invoice)
+                html_content = _render_pdf_html(invoice)
                 HTML(string=html_content).write_pdf(pdf_path)
                 if _invoice_is_locked(invoice):
                     invoice.pdf_path = pdf_path
@@ -860,7 +875,7 @@ def bulk_docx_zip():
             if _invoice_is_locked(invoice) and invoice.doc_path and os.path.exists(invoice.doc_path):
                 zf.write(invoice.doc_path, f"{invoice.invoice_number}.docx")
             else:
-                doc_data = generate_docx(invoice, wg_settings())
+                doc_data = generate_docx(invoice, wg_settings(), design=_current_design())
                 if _invoice_is_locked(invoice):
                     doc_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "docx")
                     with open(doc_path, "wb") as f:
@@ -889,7 +904,7 @@ def bulk_docx_merged():
         if _invoice_is_locked(invoice) and invoice.doc_path and os.path.exists(invoice.doc_path):
             sources.append(invoice.doc_path)
         else:
-            doc_data = generate_docx(invoice, wg_settings())
+            doc_data = generate_docx(invoice, wg_settings(), design=_current_design())
             if _invoice_is_locked(invoice):
                 doc_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "docx")
                 with open(doc_path, "wb") as f:
@@ -1079,7 +1094,7 @@ def pdf(invoice_id):
                              download_name=f"{invoice.invoice_number}.docx",
                              mimetype=_DOCX_MIME)
         from app.invoices.document_service import generate_docx
-        doc_data = generate_docx(invoice, wg_settings())
+        doc_data = generate_docx(invoice, wg_settings(), design=_current_design())
         if _invoice_is_locked(invoice):
             doc_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "docx")
             with open(doc_path, "wb") as f:
@@ -1100,7 +1115,7 @@ def pdf(invoice_id):
     except ImportError:
         flash("WeasyPrint ist nicht installiert. PDF-Export nur im Docker-Container verfügbar.", "danger")
         return redirect(url_for("invoices.detail", invoice_id=invoice.id))
-    html_content = render_template("invoices/pdf_template.html", invoice=invoice)
+    html_content = _render_pdf_html(invoice)
     pdf_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "pdf")
     HTML(string=html_content).write_pdf(pdf_path)
     # Nur für Nicht-Entwürfe persistieren
@@ -1135,13 +1150,13 @@ def send_email(invoice_id):
 
     if fmt in ("docx", "both"):
         from app.invoices.document_service import generate_docx
-        doc_data = generate_docx(invoice, wg_settings())
+        doc_data = generate_docx(invoice, wg_settings(), design=_current_design())
         msg.attach(f"{invoice.invoice_number}.docx", _DOCX_MIME, doc_data)
 
     if fmt in ("pdf", "both"):
         try:
             import weasyprint
-            html_content = render_template("invoices/pdf_template.html", invoice=invoice)
+            html_content = _render_pdf_html(invoice)
             pdf_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "pdf")
             weasyprint.HTML(string=html_content).write_pdf(pdf_path)
             with open(pdf_path, "rb") as fp:
@@ -1214,13 +1229,13 @@ def send_email_ajax(invoice_id):
 
         if fmt in ("docx", "both"):
             from app.invoices.document_service import generate_docx
-            doc_data = generate_docx(invoice, wg_settings())
+            doc_data = generate_docx(invoice, wg_settings(), design=_current_design())
             msg.attach(f"{invoice.invoice_number}.docx", _DOCX_MIME, doc_data)
 
         if fmt in ("pdf", "both"):
             try:
                 import weasyprint
-                html_content = render_template("invoices/pdf_template.html", invoice=invoice)
+                html_content = _render_pdf_html(invoice)
                 pdf_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "pdf")
                 weasyprint.HTML(string=html_content).write_pdf(pdf_path)
                 with open(pdf_path, "rb") as fp:

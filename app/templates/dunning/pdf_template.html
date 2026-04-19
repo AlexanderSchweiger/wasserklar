@@ -4,19 +4,60 @@
 <meta charset="UTF-8">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: Arial, sans-serif; font-size: 11pt; color: #333; }
+  body {
+    font-family: {{ design.font_family }};
+    font-size: 11pt;
+    color: {{ design.text_color }};
+  }
   .header { display: flex; justify-content: space-between; margin-bottom: 2cm; }
-  .sender-info { font-size: 9pt; color: #666; }
+  .sender-name { color: {{ design.heading_color }}; }
+  .sender-info { font-size: 9pt; color: {{ design.muted_color }}; }
+  .contact-info { color: {{ design.accent_color }}; }
   .recipient { margin-top: 0.5cm; }
   .invoice-meta { float: right; text-align: right; margin-bottom: 1cm; }
-  h1 { font-size: 18pt; margin: 1cm 0 0.5cm 0; clear: both; }
+  .invoice-meta strong { color: {{ design.meta_label_color }}; }
+  h1 {
+    font-size: 18pt;
+    margin: 1cm 0 0.5cm 0;
+    clear: both;
+    color: {{ design.heading_color }};
+  }
   table { width: 100%; border-collapse: collapse; margin: 0.5cm 0; }
-  th { background: #f0f0f0; padding: 6px 8px; text-align: left; border-bottom: 2px solid #333; font-size: 10pt; }
-  td { padding: 5px 8px; border-bottom: 1px solid #ddd; font-size: 10pt; }
+  th {
+    background: {{ design.header_bg }};
+    color: {{ design.header_text }};
+    padding: 6px 8px;
+    text-align: left;
+    border-bottom: 2px solid {{ design.rule_color }};
+    font-size: 10pt;
+  }
+  td {
+    padding: 5px 8px;
+    border-bottom: 1px solid {{ design.border_color }};
+    font-size: 10pt;
+  }
   .text-right { text-align: right; }
-  .total-row td { font-weight: bold; border-top: 2px solid #333; border-bottom: none; }
-  .footer { margin-top: 2cm; font-size: 9pt; color: #666; border-top: 1px solid #ddd; padding-top: 0.5cm; }
-  .payment-info { margin-top: 1cm; padding: 0.5cm; background: #f9f9f9; border: 1px solid #ddd; }
+  .total-row td {
+    font-weight: bold;
+    border-top: 2px solid {{ design.rule_color }};
+    border-bottom: none;
+    color: {{ design.heading_color }};
+  }
+  .footer {
+    margin-top: 2cm;
+    font-size: 9pt;
+    color: {{ design.muted_color }};
+    border-top: 1px solid {{ design.border_color }};
+    padding-top: 0.5cm;
+  }
+  .payment-info {
+    margin-top: 1cm;
+    padding: 0.5cm;
+    background: {{ design.payment_bg }};
+    border: 1px solid {{ design.payment_border }};
+    color: {{ design.payment_text }};
+  }
+  .payment-info strong { color: {{ design.heading_color }}; }
   .intro { margin: 0.5cm 0; }
 </style>
 </head>
@@ -24,10 +65,10 @@
 
 <div class="header">
   <div>
-    <strong>{{ wg.name }}</strong><br>
+    <strong class="sender-name">{{ wg.name }}</strong><br>
     <span class="sender-info">{{ wg.address | replace('\n', '<br>') | replace('\\n', '<br>') | safe }}</span>
   </div>
-  <div>
+  <div class="contact-info">
     {% if wg.email %}<div>{{ wg.email }}</div>{% endif %}
     {% if wg.phone %}<div>{{ wg.phone }}</div>{% endif %}
   </div>

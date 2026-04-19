@@ -177,7 +177,7 @@
             <tr>
               <th>Beschreibung</th>
               <th class="text-end">Menge</th>
-              <th>Einheit</th>
+              <th class="text-end">Einheit</th>
               <th class="text-end">Einzelpreis</th>
               {% if fy_vat_liable %}<th class="text-end">USt</th>{% endif %}
               <th class="text-end">Betrag</th>
@@ -188,7 +188,7 @@
             <tr>
               <td>{{ item.description }}</td>
               <td class="text-end">{{ item.quantity|de_number(0) }}</td>
-              <td>{{ item.unit }}</td>
+              <td class="text-end">{{ item.unit }}</td>
               <td class="text-end">{{ item.unit_price|de_number }} €</td>
               {% if fy_vat_liable %}
               <td class="text-end">{% if item.tax_rate %}{{ item.tax_rate|de_number(0) }} %{% else %}—{% endif %}</td>

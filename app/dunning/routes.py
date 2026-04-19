@@ -19,8 +19,13 @@ from app.dunning.services import (
     current_dunning_level, defer_dunning_notice, dunning_summary,
     eligible_invoices_for_stage, reset_dunning_notice,
 )
+from app.invoices.design import get_design
 
 _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+def _current_design():
+    return get_design(AppSetting.get("invoice.design", "classic"))
 
 
 def _get_dunning_doc_dir(notice):
@@ -246,7 +251,7 @@ def notice_pdf(notice_id):
                              download_name=_dunning_filename(notice, "docx"),
                              mimetype=_DOCX_MIME)
         from app.dunning.document_service import generate_dunning_docx
-        doc_data = generate_dunning_docx(notice, wg)
+        doc_data = generate_dunning_docx(notice, wg, design=_current_design())
         # Cache
         doc_dir = _get_dunning_doc_dir(notice)
         doc_path = os.path.join(doc_dir, _dunning_filename(notice, "docx"))
@@ -273,7 +278,7 @@ def notice_pdf(notice_id):
     html_str = render_template(
         "dunning/pdf_template.html",
         notice=notice, invoice=notice.invoice,
-        summary=summary, wg=wg,
+        summary=summary, wg=wg, design=_current_design(),
     )
     doc_dir = _get_dunning_doc_dir(notice)
     pdf_path = os.path.join(doc_dir, _dunning_filename(notice, "pdf"))
@@ -324,7 +329,7 @@ def notice_send_email(notice_id):
     # Dokument anhängen
     if fmt in ("docx", "both"):
         from app.dunning.document_service import generate_dunning_docx
-        doc_data = generate_dunning_docx(notice, wg)
+        doc_data = generate_dunning_docx(notice, wg, design=_current_design())
         msg.attach(_dunning_filename(notice, "docx"), _DOCX_MIME, doc_data)
         # Cache
         doc_dir = _get_dunning_doc_dir(notice)
@@ -339,7 +344,7 @@ def notice_send_email(notice_id):
             html_str = render_template(
                 "dunning/pdf_template.html",
                 notice=notice, invoice=notice.invoice,
-                summary=summary, wg=wg,
+                summary=summary, wg=wg, design=_current_design(),
             )
             pdf_data = weasyprint.HTML(string=html_str).write_pdf()
             msg.attach(_dunning_filename(notice, "pdf"), "application/pdf", pdf_data)
@@ -383,6 +388,7 @@ def bulk_docx_merged():
     from app.settings_service import wg_settings
 
     wg = wg_settings()
+    design = _current_design()
     notices = DunningNotice.query.filter(DunningNotice.id.in_(notice_ids)).all()
     sources = []
 
@@ -390,7 +396,7 @@ def bulk_docx_merged():
         if notice.doc_path and os.path.exists(notice.doc_path):
             sources.append(notice.doc_path)
         else:
-            doc_data = generate_dunning_docx(notice, wg)
+            doc_data = generate_dunning_docx(notice, wg, design=design)
             doc_dir = _get_dunning_doc_dir(notice)
             doc_path = os.path.join(doc_dir, _dunning_filename(notice, "docx"))
             with open(doc_path, "wb") as f:
@@ -429,12 +435,13 @@ def bulk_pdf_merged():
     notices = DunningNotice.query.filter(DunningNotice.id.in_(notice_ids)).all()
     rendered_docs = []
 
+    design = _current_design()
     for notice in notices:
         summary = dunning_summary(notice.invoice)
         html_str = render_template(
             "dunning/pdf_template.html",
             notice=notice, invoice=notice.invoice,
-            summary=summary, wg=wg,
+            summary=summary, wg=wg, design=design,
         )
         rendered_docs.append(weasyprint.HTML(string=html_str).render())
 

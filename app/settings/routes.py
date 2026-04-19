@@ -5,6 +5,7 @@ from app.settings import bp
 from app.extensions import db
 from app.models import AppSetting
 from app.settings_service import _WG_MAP, _MAIL_MAP, send_mail, encrypt_password, apply_mail_settings
+from app.invoices.design import INVOICE_DESIGNS, available_designs
 
 
 @bp.route('/', methods=['GET', 'POST'])
@@ -39,6 +40,12 @@ def index():
         # Rechnungsformat
         fmt = request.form.get('invoice_document_format', 'pdf')
         AppSetting.set('invoice.document_format', fmt if fmt in ('pdf', 'docx', 'both') else 'pdf')
+
+        # Rechnungsdesign (nur gültige Keys akzeptieren)
+        design_key = request.form.get('invoice_design', 'classic')
+        if design_key not in INVOICE_DESIGNS:
+            design_key = 'classic'
+        AppSetting.set('invoice.design', design_key)
 
         db.session.commit()
         apply_mail_settings()
@@ -96,8 +103,13 @@ def index():
                    'database': raw_url or '–', 'username': '–', 'url_masked': raw_url}
 
     doc_format = AppSetting.get('invoice.document_format', 'pdf')
+    invoice_design = AppSetting.get('invoice.design', 'classic')
+    if invoice_design not in INVOICE_DESIGNS:
+        invoice_design = 'classic'
     return render_template('settings/index.html', wg=wg, mail=mail_cfg, db_info=db_info,
-                           doc_format=doc_format)
+                           doc_format=doc_format,
+                           invoice_design=invoice_design,
+                           invoice_designs=available_designs())
 
 
 @bp.route('/test-mail', methods=['POST'])
