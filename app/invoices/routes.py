@@ -168,8 +168,9 @@ def index():
     invoices = query.all()
     projects_for_filter = Project.query.order_by(Project.name).all()
     accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
+    doc_format = AppSetting.get("invoice.document_format", "pdf")
     if request.headers.get("HX-Request"):
-        return render_template("invoices/_table.html", invoices=invoices)
+        return render_template("invoices/_table.html", invoices=invoices, doc_format=doc_format)
     return render_template(
         "invoices/index.html",
         invoices=invoices,
@@ -181,7 +182,7 @@ def index():
         projects_for_filter=projects_for_filter,
         project_id_filter=project_id_filter,
         nur_email=nur_email,
-        doc_format=AppSetting.get("invoice.document_format", "pdf"),
+        doc_format=doc_format,
         accounts=accounts,
     )
 

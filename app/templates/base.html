@@ -88,11 +88,22 @@
             {% set _nav_zaehler        = request.blueprint == 'meters' %}
             {% set _nav_import         = request.blueprint == 'import_csv' %}
 
+            {# Buchhaltung – SaaS-Erweiterungen (aktiv-Flag via is_saas-Guard, url_for im SaaS-Block) #}
+            {% set _nav_bankimport     = is_saas is defined and is_saas and request.blueprint == 'bank_import' %}
+
+            {# Verwaltung #}
+            {% set _nav_benutzer       = request.blueprint == 'auth' and request.endpoint != 'auth.login' %}
+            {% set _nav_einstellungen  = request.blueprint == 'settings' %}
+            {% set _nav_dokumente      = is_saas is defined and is_saas and request.blueprint == 'files' %}
+            {% set _nav_export         = is_saas is defined and is_saas and request.blueprint == 'export' %}
+            {% set _nav_backups        = is_saas is defined and is_saas and request.blueprint == 'backups' %}
+
             {# Eltern-Aktiv aus Kinder-OR ableiten #}
-            {% set accounting_active   = _nav_buchungen or _nav_umbuchungen or _nav_buchungsjahre or _nav_bankkonten or _nav_kontenplan or  _nav_projekte %}
+            {% set accounting_active   = _nav_buchungen or _nav_umbuchungen or _nav_buchungsjahre or _nav_bankkonten or _nav_kontenplan or _nav_projekte or _nav_bankimport %}
             {% set invoices_active     = _nav_neue_rechnung or _nav_alle_rechnungen or _nav_offene_posten or _nav_rechnungslauf or _nav_rechnungslaeufe or _nav_email_settings or _nav_tarife %}
             {% set auswertungen_active = _nav_jahresbericht or _nav_ust %}
             {% set stammdaten_active   = _nav_kunden or _nav_objekte or _nav_zaehler or _nav_import %}
+            {% set verwaltung_active   = _nav_benutzer or _nav_einstellungen or _nav_dokumente or _nav_export or _nav_backups %}
 
             <li class="nav-item">
               <a class="nav-link dropdown-toggle {% if accounting_active %}active{% endif %}" href="#navbar-accounting"
@@ -140,6 +151,7 @@
                       <i class="fas fa-project-diagram me-2"></i>Projekte
                     </a>
                   </li>
+                  {% block saas_buchhaltung_extra %}{% endblock %}
                 </ul>
               </div>
             </li>
@@ -304,18 +316,30 @@
 
             {% if current_user.is_admin %}
             <li class="nav-item">
-              <a class="nav-link {% if request.blueprint == 'auth' and request.endpoint != 'auth.login' %}active{% endif %}"
-                href="{{ url_for('auth.users') }}">
-                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-user-cog"></i></span>
-                <span class="nav-link-title">Benutzer</span>
+              <a class="nav-link dropdown-toggle {% if verwaltung_active %}active{% endif %}" href="#navbar-verwaltung"
+                data-bs-toggle="collapse" role="button"
+                aria-expanded="{{ 'true' if verwaltung_active else 'false' }}"
+                aria-controls="navbar-verwaltung">
+                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-tools"></i></span>
+                <span class="nav-link-title">Verwaltung</span>
               </a>
-            </li>
-            <li class="nav-item">
-              <a class="nav-link {% if request.blueprint == 'settings' %}active{% endif %}"
-                href="{{ url_for('settings.index') }}">
-                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-cog"></i></span>
-                <span class="nav-link-title">Einstellungen</span>
-              </a>
+              <div class="collapse {% if verwaltung_active %}show{% endif %}" id="navbar-verwaltung">
+                <ul class="nav nav-sm flex-column ps-3">
+                  <li class="nav-item">
+                    <a class="nav-link {% if _nav_benutzer %}active{% endif %}"
+                      href="{{ url_for('auth.users') }}">
+                      <i class="fas fa-user-cog me-2"></i>Benutzer
+                    </a>
+                  </li>
+                  <li class="nav-item">
+                    <a class="nav-link {% if _nav_einstellungen %}active{% endif %}"
+                      href="{{ url_for('settings.index') }}">
+                      <i class="fas fa-cog me-2"></i>Einstellungen
+                    </a>
+                  </li>
+                  {% block saas_verwaltung_extra %}{% endblock %}
+                </ul>
+              </div>
             </li>
             {% endif %}
             {% block saas_sidebar_extra %}{% endblock %}

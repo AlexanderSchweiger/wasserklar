@@ -87,9 +87,21 @@
           <span class="text-muted">–</span>
         {% endif %}
       </td>
-      <td class="text-end">
+      <td class="text-end text-nowrap">
+        {% if doc_format in ('pdf', 'both') %}
+        <a href="{{ url_for('invoices.pdf', invoice_id=inv.id) }}?fmt=pdf"
+           class="btn btn-sm btn-outline-danger" target="_blank" title="PDF">
+          <i class="fas fa-file-pdf"></i>
+        </a>
+        {% endif %}
+        {% if doc_format in ('docx', 'both') %}
+        <a href="{{ url_for('invoices.pdf', invoice_id=inv.id) }}?fmt=docx"
+           class="btn btn-sm btn-outline-secondary ms-1" target="_blank" title="Word">
+          <i class="fas fa-file-word"></i>
+        </a>
+        {% endif %}
         <a href="{{ url_for('invoices.detail', invoice_id=inv.id) }}"
-           class="btn btn-sm btn-outline-secondary">
+           class="btn btn-sm btn-outline-secondary ms-1" title="Details">
           <i class="fas fa-eye"></i>
         </a>
       </td>
