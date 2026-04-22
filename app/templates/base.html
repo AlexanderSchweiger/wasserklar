@@ -14,10 +14,23 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/css/tom-select.bootstrap5.min.css" />
   <!-- Custom -->
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}" />
+
+  <!-- Libraries + App-Skript im <head> mit defer:
+       Laufen genau einmal pro Browser-Tab. hx-boost tauscht nur den <body>,
+       daher registrieren wir Listener hier oben, um doppelte Bindings beim
+       Seitenwechsel zu vermeiden. Ausfuehrungsreihenfolge folgt der
+       Dokumentreihenfolge (defer-Kontrakt). -->
+  <script defer src="https://cdn.jsdelivr.net/npm/@tabler/core@1.0.0/dist/js/tabler.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/js/tom-select.complete.min.js"></script>
+  <script defer src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <script defer src="{{ url_for('static', filename='js/app.js') }}"></script>
+
   {% block saas_head_extra %}{% endblock %}
 </head>
 
-<body class="antialiased">
+<body class="antialiased"
+      hx-boost="true"
+      hx-swap="innerHTML show:window:top transition:true">
   <!-- Globaler Lade-Spinner -->
   <div id="global-spinner" aria-hidden="true">
     <div class="spinner-border" role="status">
@@ -432,137 +445,9 @@
   </div>
   <!-- /wrapper -->
 
-  <!-- Scripts -->
-  <script src="https://cdn.jsdelivr.net/npm/@tabler/core@1.0.0/dist/js/tabler.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/js/tom-select.complete.min.js"></script>
-  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
-  <script>
-    function initTomSelects(root) {
-      (root || document).querySelectorAll("select.tom-select").forEach(function (el) {
-        if (el.tomselect) return; // bereits initialisiert
-        new TomSelect(el, {
-          allowEmptyOption: true,
-          selectOnTab: true,
-          score: function(query) {
-            var q = query.toLowerCase();
-            return function(item) {
-              var text = (item.text || '').toLowerCase();
-              if (text.startsWith(q)) return 2;
-              if (text.indexOf(q) >= 0) return 1;
-              return 0;
-            };
-          }
-        });
-      });
-    }
-    function initColorSelects(root) {
-      (root || document).querySelectorAll("select.color-select").forEach(function (el) {
-        if (el.tomselect) return;
-        new TomSelect(el, {
-          allowEmptyOption: true,
-          selectOnTab: true,
-          controlInput: null,
-          render: {
-            option: function(data, escape) {
-              if (!data.value) return '<div class="py-1 px-2 text-muted">\u2013</div>';
-              return '<div class="d-flex align-items-center py-1 px-2">'
-                + '<span class="badge bg-' + escape(data.value) + ' text-' + escape(data.value) + '-fg" style="width:1.2rem;height:1.2rem;display:inline-block">&nbsp;</span>'
-                + '<span class="ms-2">' + escape(data.text) + '</span></div>';
-            },
-            item: function(data, escape) {
-              if (!data.value) return '<div class="text-muted">\u2013</div>';
-              return '<div class="d-flex align-items-center">'
-                + '<span class="badge bg-' + escape(data.value) + ' text-' + escape(data.value) + '-fg" style="width:1.2rem;height:1.2rem;display:inline-block">&nbsp;</span></div>';
-            }
-          }
-        });
-      });
-    }
-
-    document.addEventListener("DOMContentLoaded", function () { initTomSelects(); initColorSelects(); });
-    document.addEventListener("htmx:afterSwap", function (e) { initTomSelects(e.detail.target); initColorSelects(e.detail.target); });
-
-    // Globaler Lade-Spinner (HTMX + fetch + Navigation + Formular)
-    (function () {
-      var pending = 0;
-      var timer = null;
-
-      function show() {
-        if (timer) return;
-        timer = setTimeout(function () {
-          document.getElementById('global-spinner').classList.add('active');
-        }, 300);
-      }
-
-      function hide() {
-        clearTimeout(timer);
-        timer = null;
-        document.getElementById('global-spinner').classList.remove('active');
-      }
-
-      function start() { if (++pending === 1) show(); }
-      function end()   { if (--pending <= 0) { pending = 0; hide(); } }
-
-      // HTMX-Events
-      document.addEventListener('htmx:beforeRequest', start);
-      document.addEventListener('htmx:afterRequest',  end);
-
-      // fetch()-Monkey-Patch (für E-Mail-Versand, Test-Mail etc.)
-      var _fetch = window.fetch;
-      window.fetch = function () {
-        start();
-        return _fetch.apply(this, arguments).finally(end);
-      };
-
-      // Normale Link-Navigation (Seitenwechsel)
-      document.addEventListener('click', function (e) {
-        var link = e.target.closest('a[href]');
-        if (!link) return;
-        var href = link.getAttribute('href') || '';
-        if (href.startsWith('#') || href.startsWith('javascript:')) return;
-        if (link.target === '_blank') return;
-        if (link.hasAttribute('data-bs-toggle')) return;
-        if (link.hasAttribute('hx-get') || link.hasAttribute('hx-post')) return;
-        start();
-        // Fallback: Spinner nach 30 s ausblenden (bei Datei-Downloads bleibt die Seite geladen)
-        setTimeout(end, 30000);
-      });
-
-      // Programmatisches form.submit() (z. B. Massenaktionen wie Word/PDF-Download)
-      var _formSubmit = HTMLFormElement.prototype.submit;
-      HTMLFormElement.prototype.submit = function () {
-        start();
-        // Fallback: Spinner nach 30 s ausblenden (bei Datei-Downloads bleibt die Seite geladen)
-        setTimeout(end, 30000);
-        _formSubmit.call(this);
-      };
-
-      // Natives Form-Submit via Submit-Button / Enter (erzeugt einen Seitenwechsel).
-      // HTMX-Formulare werden ueber htmx:beforeRequest bereits abgedeckt und hier
-      // ausgeschlossen.
-      document.addEventListener('submit', function (e) {
-        var form = e.target;
-        if (!form || form.tagName !== 'FORM') return;
-        if (e.defaultPrevented) return;
-        if (form.hasAttribute('hx-post') || form.hasAttribute('hx-put')
-            || form.hasAttribute('hx-delete') || form.hasAttribute('hx-patch')
-            || form.hasAttribute('hx-get')) return;
-        start();
-        // Fallback: Spinner nach 30 s ausblenden (bei Datei-Downloads bleibt die Seite geladen)
-        setTimeout(end, 30000);
-      });
-
-      // Zurück/Vorwärts-Navigation: Seite aus bfcache wiederhergestellt → Spinner zurücksetzen
-      window.addEventListener('pageshow', function (e) {
-        if (e.persisted) {
-          pending = 0;
-          clearTimeout(timer);
-          timer = null;
-          document.getElementById('global-spinner').classList.remove('active');
-        }
-      });
-    })();
-  </script>
+  {# Seiten-spezifische Skripte: werden bei hx-boost-Swaps bewusst neu
+     ausgefuehrt (per-Seite-Logik). Basis-Listener liegen im <head>
+     und bleiben ueber den Swap hinweg bestehen. #}
   {% block scripts %}{% endblock %}
 </body>
 

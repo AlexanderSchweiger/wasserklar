@@ -56,6 +56,21 @@ def create_app(config_name=None):
     from app.dunning import bp as dunning_bp
     app.register_blueprint(dunning_bp)
 
+    # hx-boost-Navigationen (base.html: <body hx-boost="true">) senden
+    # sowohl "HX-Request: true" als auch "HX-Boosted: true". Unsere Routen
+    # verwenden "HX-Request" als Signal fuer Partial-Fragment-Antworten
+    # (z.B. _table.html bei Filter-Input). Bei geboosteten Voll-Navigationen
+    # muss aber die komplette Seite inkl. base.html-Layout zurueckkommen,
+    # sonst verschwindet das Sidebar-Menu. Daher "HX-Request" entfernen,
+    # wenn "HX-Boosted" gesetzt ist — existierende Route-Checks sehen dann
+    # einen normalen GET und rendern das volle Template.
+    from flask import request as _request
+
+    @app.before_request
+    def _strip_hx_request_on_boost():
+        if _request.headers.get("HX-Boosted"):
+            _request.environ.pop("HTTP_HX_REQUEST", None)
+
     # Jinja2-Filter für deutsche Zahlenformatierung
     def de_number(value, decimals=2, signed=False):
         """Formatiert eine Zahl im deutschen Format (z. B. 1.250,90).

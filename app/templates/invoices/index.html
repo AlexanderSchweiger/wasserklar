@@ -260,12 +260,16 @@
 
   bindCheckboxes();
 
-  document.addEventListener('htmx:afterSwap', function (e) {
-    if (e.detail.target && e.detail.target.id === 'invoices-table') {
+  // Listener direkt am swap-Ziel statt an document: verhindert doppelte
+  // Bindings bei wiederholten hx-boost-Navigationen zu dieser Seite
+  // (document-Listener ueberleben den Body-Swap, element-Listener nicht).
+  var invoicesTable = document.getElementById('invoices-table');
+  if (invoicesTable) {
+    invoicesTable.addEventListener('htmx:afterSwap', function () {
       bindCheckboxes();
       updateToolbar();
-    }
-  });
+    });
+  }
 })();
 
 function toggleBulkBuchungskonto(val) {

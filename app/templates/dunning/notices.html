@@ -55,7 +55,14 @@
 
 {% block scripts %}
 <script>
+// Select-All-Handler einmalig an document binden (dokumentlevel-Listener
+// ueberleben hx-boost-Swaps; ohne Guard wuerde sich der Handler bei jedem
+// erneuten Seitenbesuch vermehren und jeder Click-auf-Select-All wuerde
+// dieselben Checkboxen N-fach toggeln). Der Handler delegiert ueber die
+// stabile #dn-select-all-ID und funktioniert damit auch nach Body-Swap.
 (function() {
+    if (window.__dunningSelectAllBound) return;
+    window.__dunningSelectAllBound = true;
     document.addEventListener('change', function(e) {
         if (e.target && e.target.id === 'dn-select-all') {
             document.querySelectorAll('.dn-cb').forEach(function(cb) { cb.checked = e.target.checked; });

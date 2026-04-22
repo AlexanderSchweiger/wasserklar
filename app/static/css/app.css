@@ -115,3 +115,51 @@ tr.overdue { background-color: #fff3cd !important; }
 .filter-bar .mb-3 { margin-bottom: 0 !important; }
 .filter-bar select,
 .filter-bar input { margin-bottom: 0; }
+
+/* Seiten-Transitions
+   Greifen in zwei Faellen:
+   - Cross-Document-Navigation via @view-transition (voller Reload, z.B. Login-Redirect).
+   - Same-Document-Swap via hx-boost (hx-swap="... transition:true" am <body>).
+   Ohne Browser-Support (aktuell: Firefox < Cross-Doc) passiert nichts — kein Fallback noetig. */
+@view-transition {
+  navigation: auto;
+}
+
+/* Sidebar und Hauptbereich bekommen eigene view-transition-names.
+   Dadurch werden sie waehrend des Wechsels als separate Layer behandelt:
+   die Sidebar ist zwischen Seiten identisch, faded gegen sich selbst und
+   bleibt visuell stehen; nur der Inhaltsbereich .page-wrapper cross-faded. */
+.navbar-vertical { view-transition-name: app-sidebar; }
+.page-wrapper    { view-transition-name: app-content; }
+
+/* Standard-Cross-Fade fuer alle Transitions mit plus-lighter-Compositing:
+   bei 50/50-Mix unveraenderter Pixel addieren sich die RGB-Werte additiv
+   auf volle Helligkeit — sonst schlaegt der weisse <html>-Hintergrund durch
+   und dunkle Flaechen (Sidebar, Tabellen-Header) wirken waehrend des Fades
+   aufgehellt ("weisses Blitzen"). */
+::view-transition-old(root),
+::view-transition-new(root),
+::view-transition-old(app-content),
+::view-transition-new(app-content) {
+  animation-duration: 180ms;
+  animation-timing-function: cubic-bezier(0.2, 0, 0.2, 1);
+  mix-blend-mode: plus-lighter;
+}
+
+/* Sidebar-Layer: unveraendert zwischen Seiten, daher ueberspringen wir die
+   Animation ganz. Sie wird einfach stehen gelassen und sofort durch das neue
+   (identische) Bild ersetzt. */
+::view-transition-old(app-sidebar),
+::view-transition-new(app-sidebar) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root),
+  ::view-transition-old(app-content),
+  ::view-transition-new(app-content),
+  ::view-transition-old(app-sidebar),
+  ::view-transition-new(app-sidebar) { animation: none !important; }
+}

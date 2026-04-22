@@ -210,12 +210,20 @@
     var form = document.getElementById('booking-form');
     if (form.dataset.new === 'true') {
       var focusable = 'input:not([type=hidden]):not([readonly]), select, textarea, button';
-      var abbrechenHref = document.getElementById('btn-abbrechen').href;
-      document.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape') {
-          window.location.href = abbrechenHref;
-        }
-      });
+      // ESC-Handler: einmal global registrieren (Dokument-Listener ueberleben
+      // hx-boost-Swaps; ohne Guard wuerde sich der Listener bei jedem erneuten
+      // Besuch dieser Seite vermehren). Aktuelles btn-abbrechen wird pro
+      // Tastendruck aus dem DOM geholt, nicht per Closure eingefroren.
+      if (!window.__bookingFormEscBound) {
+        window.__bookingFormEscBound = true;
+        document.addEventListener('keydown', function (e) {
+          if (e.key !== 'Escape') return;
+          var f = document.getElementById('booking-form');
+          if (!f || f.dataset.new !== 'true') return;
+          var btn = document.getElementById('btn-abbrechen');
+          if (btn && btn.href) window.location.href = btn.href;
+        });
+      }
       form.addEventListener('keydown', function (e) {
         if (e.key === 'Enter' && e.ctrlKey) {
           e.preventDefault();

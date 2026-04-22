@@ -139,24 +139,31 @@ invRecalcFromDate();
 <script>
 // Nach erfolgreicher Kundenanlage im Modal: neuen Eintrag in TomSelect
 // hinzufügen und direkt auswählen.
-window.addEventListener('customer:created', function (e) {
-  const data = e.detail || {};
-  if (!data.id) return;
-  const selectEl = document.getElementById('customer_id');
-  if (!selectEl) return;
-  // TomSelect-Instanz ist in der Tabler-Init an dem Element hinterlegt.
-  const ts = selectEl.tomselect;
-  if (ts) {
-    ts.addOption({value: String(data.id), text: data.label || data.name});
-    ts.addItem(String(data.id));
-  } else {
-    // Fallback: native select
-    const opt = document.createElement('option');
-    opt.value = String(data.id);
-    opt.textContent = data.label || data.name;
-    opt.selected = true;
-    selectEl.appendChild(opt);
-  }
-});
+// Idempotenz-Guard: window-Listener ueberleben hx-boost-Swaps; ohne Guard
+// wuerde jeder erneute Besuch dieser Seite einen zusaetzlichen Listener
+// registrieren. Der Handler liest #customer_id pro Event frisch aus dem
+// DOM, funktioniert daher auch nach Body-Swaps mit frischem Select.
+if (!window.__invoicesNewCustomerCreatedBound) {
+  window.__invoicesNewCustomerCreatedBound = true;
+  window.addEventListener('customer:created', function (e) {
+    const data = e.detail || {};
+    if (!data.id) return;
+    const selectEl = document.getElementById('customer_id');
+    if (!selectEl) return;
+    // TomSelect-Instanz ist in der Tabler-Init an dem Element hinterlegt.
+    const ts = selectEl.tomselect;
+    if (ts) {
+      ts.addOption({value: String(data.id), text: data.label || data.name});
+      ts.addItem(String(data.id));
+    } else {
+      // Fallback: native select
+      const opt = document.createElement('option');
+      opt.value = String(data.id);
+      opt.textContent = data.label || data.name;
+      opt.selected = true;
+      selectEl.appendChild(opt);
+    }
+  });
+}
 </script>
 {% endblock %}
