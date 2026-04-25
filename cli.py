@@ -61,7 +61,7 @@ _SCHEMA_UPGRADE_COLUMNS = [
 ]
 
 
-def apply_schema_upgrades(conn, dialect, *, verbose=False):
+def apply_schema_upgrades(conn, dialect, *, verbose=False, schema=None):
     """Idempotent fehlende Spalten per ALTER TABLE ADD COLUMN ergaenzen.
 
     WICHTIG: Inspektion und DDL laufen ueber dieselbe Connection, damit
@@ -70,11 +70,26 @@ def apply_schema_upgrades(conn, dialect, *, verbose=False):
     einen frischen Pool-Checkout ausloesen — in der SaaS-Schicht reicht der
     'reset_on_checkout'-Listener dann den search_path auf public zurueck,
     und Tabellen des tenant-Schemas waeren unsichtbar.
+
+    Multi-Tenant: Wer in einem Tenant-Schema arbeitet, muss ``schema`` explizit
+    setzen. SQLAlchemy 2.x cached den ``default_schema_name`` beim ersten Connect
+    der Engine — der ist dann 'public', auch wenn die Connection danach ihren
+    search_path auf 'tenant_xyz, public' setzt. ``inspector.get_columns(...)``
+    ohne expliziten ``schema`` sucht dann im falschen Schema und liefert
+    NoSuchTableError. Mit ``schema=tenant_xyz`` wird das umgangen.
+
+    NoSuchTableError wird auch sonst toleriert, damit alte _SCHEMA_UPGRADE_COLUMNS-
+    Eintraege auf inzwischen entfernte Tabellen den Lauf nicht crashen.
     """
     inspector = sa.inspect(conn)
 
     def _add(table, col_def, col_name):
-        cols = [c["name"] for c in inspector.get_columns(table)]
+        try:
+            cols = [c["name"] for c in inspector.get_columns(table, schema=schema)]
+        except sa.exc.NoSuchTableError:
+            if verbose:
+                print(f"  ⏭ {table}: Tabelle nicht im Schema — uebersprungen.")
+            return
         if col_name in cols:
             if verbose:
                 print(f"  ✓ {table}.{col_name} bereits vorhanden.")
@@ -83,6 +98,9 @@ def apply_schema_upgrades(conn, dialect, *, verbose=False):
         effective_def = col_def
         if dialect in ("mysql", "mariadb"):
             effective_def = _re.sub(r"\s+REFERENCES\s+\S+", "", col_def, flags=_re.IGNORECASE)
+        # ALTER TABLE bleibt unqualifiziert — search_path entscheidet, in welchem
+        # Schema die DDL landet. Inspector ist die einzige Stelle, die ein
+        # explizites schema= braucht.
         conn.execute(sa.text(f"ALTER TABLE {table} ADD COLUMN {effective_def}"))
         if verbose:
             print(f"  + {table}.{col_name} hinzugefuegt.")
