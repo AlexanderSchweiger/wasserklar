@@ -84,7 +84,7 @@
 <!-- Letzte Buchungen -->
 <div class="card">
   <div class="card-header">
-    <h3 class="card-title"><i class="fas fa-clock me-1"></i> Letzte Buchungen</h3>
+    <h3 class="card-title"><i class="fas fa-clock me-1"></i> Letzte Buchungen {{ current_year }}</h3>
     <div class="card-options">
       <a href="{{ url_for('accounting.bookings') }}" class="btn btn-sm btn-outline-secondary">
         Alle anzeigen
@@ -108,7 +108,7 @@
         </tr>
         {% else %}
         <tr>
-          <td colspan="4" class="text-center text-muted py-3">Noch keine Buchungen.</td>
+          <td colspan="4" class="text-center text-muted py-3">Noch keine Buchungen im Wirtschaftsjahr {{ current_year }}.</td>
         </tr>
         {% endfor %}
       </tbody>

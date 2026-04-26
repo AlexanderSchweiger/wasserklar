@@ -1,5 +1,6 @@
 from flask import render_template, redirect, url_for, flash, request, current_app
 from flask_login import login_required, current_user
+from sqlalchemy import extract
 from app.main import bp
 from app.extensions import db
 from app.models import Invoice, Booking, WaterMeter, MeterReading
@@ -33,8 +34,14 @@ def dashboard():
     # Saldo laufendes Jahr (Stornopaare werden über den Service ausgeschlossen)
     _, _, year_income, year_expense, year_balance = acc_svc.year_income_expense(current_year)
 
-    # Letzte Buchungen
-    recent_bookings = Booking.query.order_by(Booking.created_at.desc()).limit(5).all()
+    # Letzte Buchungen des aktuellen Wirtschaftsjahres
+    recent_bookings = (
+        Booking.query
+        .filter(extract("year", Booking.date) == current_year)
+        .order_by(Booking.created_at.desc())
+        .limit(5)
+        .all()
+    )
 
     return render_template(
         "main/dashboard.html",
