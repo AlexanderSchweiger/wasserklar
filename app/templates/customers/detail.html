@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 {% block title %}{{ customer.name }}{% endblock %}
-{% block page_title %}<i class="fas fa-user me-2"></i> {{ customer.name }}{% if customer.customer_number %} <small class="text-muted">#{{ customer.customer_number }}</small>{% endif %}{% endblock %}
+{% block page_title %}<i class="fas fa-user me-2"></i> {{ customer.name }}{% if customer.customer_number %} <small class="text-muted">#{{ customer.customer_number }}</small>{% endif %}
+  {% if customer.is_customer %}<span class="badge bg-primary text-white ms-2"><i class="fas fa-user me-1"></i>Kunde</span>{% endif %}
+  {% if customer.is_supplier %}<span class="badge bg-info text-white ms-1"><i class="fas fa-truck me-1"></i>Lieferant</span>{% endif %}
+{% endblock %}
 {% block content %}
 <div class="row">
   <!-- Kontaktdaten -->
@@ -63,6 +66,7 @@
       </div>
     </div>
 
+    {% if customer.is_customer %}
     <!-- Objekte -->
     <div class="card">
       <div class="card-header">
@@ -90,8 +94,10 @@
         </ul>
       </div>
     </div>
+    {% endif %}
   </div>
 
+  {% if customer.is_customer %}
   <!-- Rechnungen -->
   <div class="col-md-8">
     <div class="card">
@@ -135,5 +141,6 @@
       </div>
     </div>
   </div>
+  {% endif %}
 </div>
 {% endblock %}

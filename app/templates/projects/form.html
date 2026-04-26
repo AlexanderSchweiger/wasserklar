@@ -11,6 +11,7 @@
       </div>
       <form method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="from" value="{{ from_view if from_view is defined else 'detail' }}">
         <input type="hidden" name="color" id="color-input" value="{{ project.color if project and project.color else '#3498db' }}">
         <div class="card-body">
           <div class="mb-3">
@@ -84,7 +85,7 @@
           <button type="submit" class="btn btn-primary">
             <i class="fas fa-save me-1"></i> Speichern
           </button>
-          {% if project %}
+          {% if project and (from_view is not defined or from_view != 'list') %}
           <a href="{{ url_for('projects.detail', project_id=project.id) }}" class="btn btn-secondary ms-2">Abbrechen</a>
           {% else %}
           <a href="{{ url_for('projects.index') }}" class="btn btn-secondary ms-2">Abbrechen</a>

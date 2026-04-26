@@ -65,9 +65,11 @@ class Customer(db.Model):
     __tablename__ = "customers"
 
     id = db.Column(db.Integer, primary_key=True)
-    customer_number = db.Column(db.Integer, unique=True, nullable=True)    # fortlaufende Kundennummer
+    customer_number = db.Column(db.Integer, unique=True, nullable=True)    # fortlaufende Kundennummer (nur fuer Kunden vergeben)
     externe_kennung = db.Column(db.String(100), nullable=True)             # optionale externe Kennung
     name = db.Column(db.String(200), nullable=False)
+    is_customer = db.Column(db.Boolean, default=True, nullable=False)
+    is_supplier = db.Column(db.Boolean, default=False, nullable=False)
     strasse = db.Column(db.String(200))
     hausnummer = db.Column(db.String(20))
     plz = db.Column(db.String(10))
@@ -703,6 +705,17 @@ class InvoiceCounter(db.Model):
 
     def __repr__(self):
         return f"<InvoiceCounter {self.year} next={self.next_seq}>"
+
+
+class CustomerCounter(db.Model):
+    """Laufender Kundennummer-Zähler (Singleton-Row, id=1)."""
+    __tablename__ = "customer_counters"
+
+    id = db.Column(db.Integer, primary_key=True, default=1)
+    next_seq = db.Column(db.Integer, nullable=False, default=1)
+
+    def __repr__(self):
+        return f"<CustomerCounter next={self.next_seq}>"
 
 
 class OpenItem(db.Model):

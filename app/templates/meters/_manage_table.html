@@ -1,0 +1,90 @@
+{% from "_pagination.html" import render_pagination %}
+<div class="card-body p-0">
+<table class="table table-hover table-striped mb-0">
+  <thead>
+    <tr>
+      <th>Status</th>
+      <th>Zählernummer</th>
+      <th>Objekt</th>
+      <th>Besitzer</th>
+      <th>Standort</th>
+      <th>Eichjahr</th>
+      <th>Eingebaut</th>
+      <th class="text-end">Ablesungen</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for meter in meters %}
+    {% set readings_count = readings_count_map.get(meter.id, 0) %}
+    <tr {% if not meter.active %}class="text-muted"{% endif %}>
+      <td>
+        {% if meter.active %}
+          <span class="badge bg-success text-white">Aktiv</span>
+        {% else %}
+          <span class="badge bg-secondary text-white">Ausgebaut</span>
+        {% endif %}
+      </td>
+      <td><code class="fw-bold">{{ meter.meter_number }}</code></td>
+      <td>
+        <a href="{{ url_for('properties.detail', property_id=meter.property_id) }}">
+          {{ meter.property.label() }}
+        </a>
+      </td>
+      <td class="text-nowrap">{{ owners_map.get(meter.property_id) or '—' }}</td>
+      <td>{{ meter.location or '—' }}</td>
+      <td>{{ meter.eichjahr or '—' }}</td>
+      <td class="text-nowrap">
+        {% if meter.installed_from %}
+          {{ meter.installed_from.strftime('%d.%m.%Y') }}
+          {% if meter.installed_to %}
+            <i class="fas fa-arrow-right mx-1 text-muted"></i>
+            {{ meter.installed_to.strftime('%d.%m.%Y') }}
+          {% endif %}
+        {% else %}—{% endif %}
+      </td>
+      <td class="text-end">
+        {% if readings_count > 0 %}
+          <span class="badge bg-light text-dark">{{ readings_count }}</span>
+        {% else %}
+          <span class="text-muted">0</span>
+        {% endif %}
+      </td>
+      <td class="text-end" style="white-space:nowrap">
+        <a href="{{ url_for('meters.meter_edit', meter_id=meter.id) }}"
+           class="btn btn-sm btn-outline-secondary"
+           title="Bearbeiten">
+          <i class="fas fa-edit"></i>
+        </a>
+        {% if meter.active %}
+        <a href="{{ url_for('meters.meter_replace', meter_id=meter.id, **{'from': 'list'}) }}"
+           class="btn btn-sm btn-outline-warning"
+           title="Zähler tauschen">
+          <i class="fas fa-exchange-alt"></i>
+        </a>
+        {% endif %}
+        {% if readings_count == 0 %}
+        <form method="post"
+              action="{{ url_for('meters.meter_delete', meter_id=meter.id) }}"
+              style="display:inline"
+              onsubmit="return confirm('Zähler „{{ meter.meter_number }}" wirklich löschen?')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-sm btn-outline-danger" title="Löschen">
+            <i class="fas fa-trash"></i>
+          </button>
+        </form>
+        {% else %}
+        <button type="button" class="btn btn-sm btn-outline-danger" disabled
+                title="Löschen nicht möglich – Ablesungen vorhanden">
+          <i class="fas fa-trash"></i>
+        </button>
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="9" class="text-center text-muted py-3">Keine Zähler gefunden.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{{ render_pagination(pagination) }}

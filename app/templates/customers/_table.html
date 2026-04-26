@@ -5,6 +5,7 @@
     <tr>
       <th style="width:80px">Kd.-Nr.</th>
       <th>Name</th>
+      <th>Typ</th>
       <th>Rechnungsadresse</th>
       <th>Objekt</th>
       <th>E-Mail</th>
@@ -15,33 +16,56 @@
   <tbody>
     {% for c in customers %}
     {% set prop = property_map.get(c.id) if property_map is defined else none %}
-    <tr{% if not prop %} class="table-warning"{% endif %}>
+    {# Warn-Markierung nur fuer Kunden ohne Objekt — fuer Lieferanten irrelevant. #}
+    <tr{% if c.is_customer and not prop %} class="table-warning"{% endif %}>
       <td class="text-muted">{{ c.customer_number or '—' }}</td>
       <td>
         <a href="{{ url_for('customers.detail', customer_id=c.id) }}">
           <strong>{{ c.name }}</strong>
         </a>
       </td>
+      <td>
+        {% if c.is_customer %}
+        <span class="badge bg-primary text-white"><i class="fas fa-user me-1"></i>Kunde</span>
+        {% endif %}
+        {% if c.is_supplier %}
+        <span class="badge bg-info text-white"><i class="fas fa-truck me-1"></i>Lieferant</span>
+        {% endif %}
+      </td>
       <td>{{ c.address_display() or '—' }}</td>
       <td>
-        {% if prop %}
-          {{ prop.object_number or prop.address_display() or '—' }}
+        {% if c.is_customer %}
+          {% if prop %}
+            {{ prop.object_number or prop.address_display() or '—' }}
+          {% else %}
+            <span class="text-muted"><em>kein Objekt</em></span>
+          {% endif %}
         {% else %}
-          <span class="text-muted"><em>kein Objekt</em></span>
+          <span class="text-muted">—</span>
         {% endif %}
       </td>
       <td>{{ c.email or '—' }}</td>
       <td>{{ c.phone or '—' }}</td>
-      <td class="text-end">
+      <td class="text-end text-nowrap">
         <a href="{{ url_for('customers.edit', customer_id=c.id) }}"
-           class="btn btn-sm btn-outline-secondary">
+           class="btn btn-sm btn-outline-secondary me-1" title="Bearbeiten">
           <i class="fas fa-edit"></i>
         </a>
+        <form method="post"
+              action="{{ url_for('customers.delete', customer_id=c.id) }}"
+              class="d-inline"
+              onsubmit="return confirm('Kontakt {{ c.name|e }} wirklich löschen? Nur möglich, wenn keine Rechnungen, Buchungen oder Eigentümerverhältnisse verknüpft sind.');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="next" value="{{ url_for('customers.index', type=type_filter or none, q=q or none) }}">
+          <button type="submit" class="btn btn-sm btn-outline-danger" title="Löschen">
+            <i class="fas fa-trash"></i>
+          </button>
+        </form>
       </td>
     </tr>
     {% else %}
     <tr>
-      <td colspan="7" class="text-center text-muted py-3">Keine Kunden gefunden.</td>
+      <td colspan="8" class="text-center text-muted py-3">Keine Kontakte gefunden.</td>
     </tr>
     {% endfor %}
   </tbody>

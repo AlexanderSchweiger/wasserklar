@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}{{ 'Kunde bearbeiten' if customer else 'Neuer Kunde' }}{% endblock %}
+{% block title %}{{ 'Kontakt bearbeiten' if customer else 'Neuer Kontakt' }}{% endblock %}
 {% block page_title %}
-  <i class="fas fa-user me-2"></i> {{ 'Kunde bearbeiten' if customer else 'Neuer Kunde' }}
+  <i class="fas fa-user me-2"></i> {{ 'Kontakt bearbeiten' if customer else 'Neuer Kontakt' }}
 {% endblock %}
 {% block content %}
 {# Wenn form_data gesetzt ist (nach Validierungsfehler), werden dessen Werte
@@ -12,20 +12,73 @@
   {%- else -%}{{ default }}
   {%- endif -%}
 {%- endmacro %}
+{# Kontakttyp-Defaults: bei Neuanlage ist_customer=True, is_supplier=False;
+   nach Form-Fehler wird der zuletzt eingegebene Wert wiederverwendet. #}
+{% if form_data is defined and form_data %}
+  {% set is_cust_checked = form_data.get('is_customer') == '1' %}
+  {% set is_supp_checked = form_data.get('is_supplier') == '1' %}
+{% elif customer %}
+  {% set is_cust_checked = customer.is_customer %}
+  {% set is_supp_checked = customer.is_supplier %}
+{% else %}
+  {% set is_cust_checked = true %}
+  {% set is_supp_checked = false %}
+{% endif %}
+{% if form_data is defined and form_data %}
+  {% set kdnr_value = form_data.get('customer_number', '') %}
+{% elif customer and customer.customer_number is not none %}
+  {% set kdnr_value = customer.customer_number %}
+{% elif suggested_nr is defined and suggested_nr is not none %}
+  {% set kdnr_value = suggested_nr %}
+{% else %}
+  {% set kdnr_value = '' %}
+{% endif %}
 <div class="card">
       <div class="card-header">
-        <h3 class="card-title">{{ customer.name if customer else 'Neuer Kunde' }}</h3>
+        <h3 class="card-title">{{ customer.name if customer else 'Neuer Kontakt' }}</h3>
       </div>
       <form method="post" id="customerForm">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="card-body">
           <div class="row">
+            <div class="col-md-12">
+              <div class="mb-3">
+                <label class="form-label d-block">Kontakttyp <span class="text-danger">*</span></label>
+                <div class="form-check form-check-inline">
+                  <input type="checkbox" class="form-check-input" id="is_customer"
+                         name="is_customer" value="1"
+                         {% if is_cust_checked %}checked{% endif %}>
+                  <label class="form-check-label" for="is_customer">
+                    <i class="fas fa-user me-1 text-primary"></i> Ist Kunde
+                  </label>
+                </div>
+                <div class="form-check form-check-inline">
+                  <input type="checkbox" class="form-check-input" id="is_supplier"
+                         name="is_supplier" value="1"
+                         {% if is_supp_checked %}checked{% endif %}>
+                  <label class="form-check-label" for="is_supplier">
+                    <i class="fas fa-truck me-1 text-info"></i> Ist Lieferant
+                  </label>
+                </div>
+                <small class="text-muted d-block mt-1">
+                  Mindestens ein Typ erforderlich. Beide möglich, wenn ein Kontakt
+                  gleichzeitig Kunde und Lieferant ist.
+                </small>
+              </div>
+            </div>
+          </div>
+          <div class="row">
             <div class="col-md-2">
               <div class="mb-3">
-                <label class="form-label">Kundennr.</label>
-                <input type="text" class="form-control" readonly
-                  value="{{ customer.customer_number if customer and customer.customer_number else 'wird vergeben' }}"
-                  style="background:#f8f9fa;">
+                <label class="form-label" for="customer_number">Kundennr.</label>
+                <input type="number" name="customer_number" id="customer_number"
+                  class="form-control" min="1" step="1"
+                  value="{{ kdnr_value }}"
+                  {% if not is_cust_checked %}disabled{% endif %}>
+                <small class="text-muted" id="kdnr-hint"
+                  {% if customer %}style="display:none"{% endif %}>
+                  Vorgeschlagen — überschreibbar.
+                </small>
               </div>
             </div>
             <div class="col-md-6">
@@ -63,32 +116,32 @@
           <div class="row">
             <div class="col-md-8">
               <div class="mb-3">
-                <label class="form-label">Straße <span class="text-danger">*</span></label>
+                <label class="form-label">Straße</label>
                 <input type="text" name="strasse" class="form-control"
-                  value="{{ fval('strasse') }}" required>
+                  value="{{ fval('strasse') }}">
               </div>
             </div>
             <div class="col-md-4">
               <div class="mb-3">
-                <label class="form-label">Hausnummer <span class="text-danger">*</span></label>
+                <label class="form-label">Hausnummer</label>
                 <input type="text" name="hausnummer" class="form-control"
-                  value="{{ fval('hausnummer') }}" required>
+                  value="{{ fval('hausnummer') }}">
               </div>
             </div>
           </div>
           <div class="row">
             <div class="col-md-3">
               <div class="mb-3">
-                <label class="form-label">PLZ <span class="text-danger">*</span></label>
+                <label class="form-label">PLZ</label>
                 <input type="text" name="plz" id="cust-plz" class="form-control"
-                  value="{{ fval('plz') }}" required>
+                  value="{{ fval('plz') }}">
               </div>
             </div>
             <div class="col-md-5">
               <div class="mb-3">
-                <label class="form-label">Ort / Stadt <span class="text-danger">*</span></label>
+                <label class="form-label">Ort / Stadt</label>
                 <input type="text" name="ort" id="cust-ort" class="form-control"
-                  value="{{ fval('ort') }}" required>
+                  value="{{ fval('ort') }}">
               </div>
             </div>
             <div class="col-md-4">
@@ -173,4 +226,18 @@
         </div>
       </form>
     </div>
+<script>
+(function () {
+  var custCb = document.getElementById('is_customer');
+  var nrInput = document.getElementById('customer_number');
+  if (!custCb || !nrInput) return;
+  function sync() {
+    nrInput.disabled = !custCb.checked;
+    if (!custCb.checked) {
+      nrInput.value = '';
+    }
+  }
+  custCb.addEventListener('change', sync);
+})();
+</script>
 {% endblock %}

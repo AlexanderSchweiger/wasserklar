@@ -1,83 +1,46 @@
 {% extends "base.html" %}
-{% block title %}Zählerablesungen{% endblock %}
-{% block page_title %}<i class="fas fa-tachometer-alt me-2"></i> Zählerablesungen{% endblock %}
+{% block title %}Zähler-Verwaltung{% endblock %}
+{% block page_title %}<i class="fas fa-tachometer-alt me-2"></i> Zähler{% endblock %}
 {% block content %}
-<input type="hidden" name="mode" id="mode-input" value="{{ mode }}">
 <div class="card">
   <div class="card-header">
     <div class="filter-bar">
-      <div class="mb-3">
-        <label class="form-label mb-0 me-1">Jahr</label>
-        <input type="number" id="year-select" name="year" value="{{ year }}"
-          min="2000" max="2100" class="form-control form-control-sm" style="width:90px"
-          hx-get="{{ url_for('meters.index') }}"
-          hx-trigger="change"
-          hx-target="#meters-table"
-          hx-include="[name='q'],[id='year-select'],[name='mode']">
-      </div>
-      <div class="input-group input-group-sm" style="width:240px">
+      <div class="input-group input-group-sm" style="width:280px">
         <input type="search" name="q" value="{{ q }}" class="form-control"
-          placeholder="Objekt oder Besitzer suchen…"
+          placeholder="Zählernr., Objekt, Besitzer, Standort…"
           hx-get="{{ url_for('meters.index') }}"
           hx-trigger="input changed delay:300ms"
           hx-target="#meters-table"
-          hx-include="[name='q'],[id='year-select'],[name='mode']">
+          hx-include="[name='q'],[name='show_inactive']">
         <span class="input-group-text"><i class="fas fa-search"></i></span>
       </div>
-      <div class="mb-3 d-flex gap-2 align-items-center">
-        <button type="button" class="btn btn-sm btn-primary"
+      <div class="form-check form-switch ms-3 mb-0">
+        <input type="checkbox" class="form-check-input" id="show_inactive"
+          name="show_inactive" value="1"
+          {{ 'checked' if show_inactive }}
           hx-get="{{ url_for('meters.index') }}"
-          hx-trigger="click"
+          hx-trigger="change"
           hx-target="#meters-table"
-          hx-include="[name='q'],[id='year-select'],[name='mode']">
-          <i class="fas fa-search me-1"></i> Anzeigen
-        </button>
+          hx-include="[name='q'],[name='show_inactive']">
+        <label class="form-check-label" for="show_inactive">Ausgebaute anzeigen</label>
+      </div>
+      <div class="ms-auto d-flex gap-2 align-items-center">
         <a href="{{ url_for('meters.index') }}" class="btn btn-sm btn-outline-secondary">
           <i class="fas fa-times me-1"></i> Zurücksetzen
         </a>
       </div>
     </div>
     <div class="card-options">
-      <button type="button" id="btn-toggle-mode"
-          class="btn btn-sm {{ 'btn-secondary' if mode == 'quick' else 'btn-info' }} me-1"
-          hx-get="{{ url_for('meters.index') }}"
-          hx-target="#meters-table"
-          hx-include="[name='q'],[id='year-select'],[name='mode']"
-          onclick="toggleQuickMode(this)">
-        {% if mode == 'quick' %}
-          <i class="fas fa-list me-1"></i> Normale Ansicht
-        {% else %}
-          <i class="fas fa-bolt me-1"></i> Schnelleingabe
-        {% endif %}
-      </button>
-      <a href="{{ url_for('meters.meter_new') }}" class="btn btn-secondary btn-sm">
-        <i class="fas fa-plus me-1"></i> Zähler
+      <a href="{{ url_for('meters.meter_new') }}" class="btn btn-primary btn-sm">
+        <i class="fas fa-plus me-1"></i> Neuer Zähler
       </a>
-      <a href="{{ url_for('meters.import_readings') }}" class="btn btn-outline-secondary btn-sm ms-1">
-        <i class="fas fa-file-import me-1"></i> Import
+      <a href="{{ url_for('meters.readings') }}" class="btn btn-outline-secondary btn-sm ms-1">
+        <i class="fas fa-bolt me-1"></i> Zur Ablesung
       </a>
     </div>
   </div>
   <div id="meters-table">
-    {% if mode == 'quick' %}
-      {% include "meters/_table_quick.html" %}
-    {% else %}
-      {% include "meters/_table.html" %}
-    {% endif %}
+    {% include "meters/_manage_table.html" %}
   </div>
 </div>
-<script>
-function toggleQuickMode(btn) {
-  const inp = document.getElementById('mode-input');
-  if (inp.value === 'normal') {
-    inp.value = 'quick';
-    btn.innerHTML = '<i class="fas fa-list me-1"></i> Normale Ansicht';
-    btn.classList.replace('btn-info', 'btn-secondary');
-  } else {
-    inp.value = 'normal';
-    btn.innerHTML = '<i class="fas fa-bolt me-1"></i> Schnelleingabe';
-    btn.classList.replace('btn-secondary', 'btn-info');
-  }
-}
-</script>
 {% endblock %}

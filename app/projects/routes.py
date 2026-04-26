@@ -69,27 +69,31 @@ def new():
 def edit(project_id):
     project = db.session.get(Project, project_id) or abort(404)
     if request.method == "POST":
+        from_view = request.form.get("from", "detail")
         name = request.form.get("name", "").strip()
         description = request.form.get("description", "").strip() or None
         if not name:
             flash("Projektname ist erforderlich.", "danger")
-            return render_template("projects/form.html", project=project)
+            return render_template("projects/form.html", project=project, from_view=from_view)
         existing = Project.query.filter_by(name=name).first()
         if existing and existing.id != project.id:
             flash("Ein Projekt mit diesem Namen existiert bereits.", "danger")
-            return render_template("projects/form.html", project=project)
+            return render_template("projects/form.html", project=project, from_view=from_view)
         code, err = _validate_code(request.form.get("code", ""), exclude_id=project.id)
         if err:
             flash(err, "danger")
-            return render_template("projects/form.html", project=project)
+            return render_template("projects/form.html", project=project, from_view=from_view)
         project.name = name
         project.description = description
         project.color = request.form.get("color", "#3498db").strip() or "#3498db"
         project.code = code
         db.session.commit()
         flash(f'Projekt "{project.name}" wurde gespeichert.', "success")
+        if from_view == "list":
+            return redirect(url_for("projects.index"))
         return redirect(url_for("projects.detail", project_id=project.id))
-    return render_template("projects/form.html", project=project)
+    from_view = request.args.get("from", "detail")
+    return render_template("projects/form.html", project=project, from_view=from_view)
 
 
 @bp.route("/<int:project_id>")
@@ -133,6 +137,8 @@ def toggle_closed(project_id):
     db.session.commit()
     status = "abgeschlossen" if project.closed else "wieder geöffnet"
     flash(f'Projekt "{project.name}" wurde {status}.', "success")
+    if request.form.get("from") == "list":
+        return redirect(url_for("projects.index", show_closed=request.form.get("show_closed", "0")))
     return redirect(url_for("projects.detail", project_id=project.id))
 
 

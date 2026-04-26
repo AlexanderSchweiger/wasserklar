@@ -23,6 +23,7 @@
     <table class="table table-hover table-striped mb-0">
       <thead>
         <tr>
+          <th style="width:32px"></th>
           <th>Kürzel</th>
           <th>Name</th>
           <th>Beschreibung</th>
@@ -33,6 +34,12 @@
       <tbody>
         {% for p in projects %}
         <tr>
+          <td>
+            <span title="{{ p.color or '#3498db' }}"
+                  style="display:inline-block; width:18px; height:18px; border-radius:50%;
+                         background:{{ p.color or '#3498db' }};
+                         border:1px solid rgba(0,0,0,0.15); vertical-align:middle;"></span>
+          </td>
           <td>
             {% if p.code %}
             <code class="fw-bold">{{ p.code }}</code>
@@ -55,18 +62,31 @@
           </td>
           <td class="text-end" style="white-space:nowrap">
             <a href="{{ url_for('projects.detail', project_id=p.id) }}"
-               class="btn btn-sm btn-outline-info">
+               class="btn btn-sm btn-outline-info"
+               title="Ansicht">
               <i class="fas fa-eye"></i>
             </a>
-            <a href="{{ url_for('projects.edit', project_id=p.id) }}"
-               class="btn btn-sm btn-outline-secondary">
+            <a href="{{ url_for('projects.edit', project_id=p.id, **{'from': 'list'}) }}"
+               class="btn btn-sm btn-outline-secondary"
+               title="Bearbeiten">
               <i class="fas fa-edit"></i>
             </a>
+            <form method="post" action="{{ url_for('projects.toggle_closed', project_id=p.id) }}"
+                  style="display:inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="from" value="list">
+              <input type="hidden" name="show_closed" value="{{ '1' if show_closed else '0' }}">
+              <button type="submit"
+                      class="btn btn-sm {{ 'btn-outline-success' if p.closed else 'btn-outline-secondary' }}"
+                      title="{{ 'Wiedereröffnen' if p.closed else 'Abschließen' }}">
+                <i class="fas {{ 'fa-folder-open' if p.closed else 'fa-check' }}"></i>
+              </button>
+            </form>
           </td>
         </tr>
         {% else %}
         <tr>
-          <td colspan="5" class="text-center text-muted py-3">Keine Projekte vorhanden.</td>
+          <td colspan="6" class="text-center text-muted py-3">Keine Projekte vorhanden.</td>
         </tr>
         {% endfor %}
       </tbody>

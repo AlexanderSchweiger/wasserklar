@@ -8,16 +8,26 @@
 <!-- Projekt-Infobox -->
 <div class="row">
   <div class="col-md-8">
-    <div class="card">
+    <div class="card" style="border-left:6px solid {{ project.color or '#3498db' }}">
       <div class="card-header">
-        <h3 class="card-title fw-bold">{{ project.name }}</h3>
+        <h3 class="card-title fw-bold d-flex align-items-center">
+          <span title="{{ project.color or '#3498db' }}"
+                style="display:inline-block; width:18px; height:18px; border-radius:50%;
+                       background:{{ project.color or '#3498db' }};
+                       border:1px solid rgba(0,0,0,0.15); margin-right:8px;"></span>
+          {{ project.name }}
+        </h3>
         <div class="card-options">
+          <a href="{{ url_for('projects.index') }}"
+             class="btn btn-sm btn-outline-secondary me-2">
+            <i class="fas fa-arrow-left me-1"></i> Zurück zur Übersicht
+          </a>
           {% if project.closed %}
           <span class="badge bg-secondary text-white me-2">Abgeschlossen</span>
           {% else %}
           <span class="badge bg-success text-white me-2">Aktiv</span>
           {% endif %}
-          <a href="{{ url_for('projects.edit', project_id=project.id) }}"
+          <a href="{{ url_for('projects.edit', project_id=project.id, **{'from': 'detail'}) }}"
              class="btn btn-sm btn-outline-secondary">
             <i class="fas fa-edit me-1"></i> Bearbeiten
           </a>

@@ -113,12 +113,19 @@
         </div>
       </div>
 
-      <!-- Zeile 5: Kunde | Bankkonto -->
+      <!-- Zeile 5: Kunde/Lieferant | Bankkonto -->
       <div class="row g-3 mt-1">
         <div class="col-12 col-sm-6">
-          <label class="form-label">Kunde</label>
-          <select name="customer_id" class="form-select tom-select">
-            <option value="">– kein Kunde –</option>
+          <div class="d-flex justify-content-between align-items-center mb-1">
+            <label class="form-label mb-0">Kontakt (Kunde/Lieferant)</label>
+            <button type="button" class="btn btn-sm btn-outline-primary py-0 px-2"
+                    data-bs-toggle="modal" data-bs-target="#customerQuickCreateModal"
+                    title="Neuen Kontakt anlegen">
+              <i class="fas fa-user-plus me-1"></i>Neu
+            </button>
+          </div>
+          <select name="customer_id" id="booking-customer-select" class="form-select tom-select">
+            <option value="">– kein Kontakt –</option>
             {% for c in customers %}
             <option value="{{ c.id }}" {{ 'selected' if (booking and booking.customer_id==c.id) or (not booking and
               form_data is defined and form_data.get('customer_id')==c.id|string) }}>
@@ -252,4 +259,62 @@
     }
   })();
 </script>
+
+<script>
+// Im Buchungs-Kontext ist der haeufigere Fall ein neuer Lieferant — wir
+// belegen die Modal-Checkboxen entsprechend vor. Wir hooken auf shown.bs.modal,
+// damit unser Override garantiert nach dem form.reset()-Listener im Modal
+// laeuft (Reihenfolge ist sonst von Skript-Ladereihenfolge abhaengig).
+(function () {
+  var modalEl = document.getElementById('customerQuickCreateModal');
+  if (!modalEl) return;
+  modalEl.addEventListener('shown.bs.modal', function () {
+    var custCb = document.getElementById('cqc-is-customer');
+    var suppCb = document.getElementById('cqc-is-supplier');
+    if (custCb) custCb.checked = false;
+    if (suppCb) suppCb.checked = true;
+  });
+})();
+
+// Nach erfolgreicher Kontaktanlage im Modal: neuen Eintrag in TomSelect
+// hinzufuegen und direkt auswaehlen. Idempotenz-Guard wie in invoices/new.html
+// — window-Listener ueberleben hx-boost-Swaps.
+if (!window.__bookingFormCustomerCreatedBound) {
+  window.__bookingFormCustomerCreatedBound = true;
+  window.addEventListener('customer:created', function (e) {
+    var data = e.detail || {};
+    if (!data.id) return;
+    // Warten bis Bootstrap-Modal komplett geschlossen ist — sonst kollidieren
+    // Bootstrap-Focus-Trap und TomSelect-Live-Filter und das Suchfeld
+    // funktioniert beim naechsten Klick nicht mehr.
+    function apply() {
+      var selectEl = document.getElementById('booking-customer-select');
+      if (!selectEl) return;
+      var ts = selectEl.tomselect;
+      if (ts) {
+        ts.addOption({value: String(data.id), text: data.label || data.name});
+        ts.addItem(String(data.id));
+        ts.blur();
+      } else {
+        var opt = document.createElement('option');
+        opt.value = String(data.id);
+        opt.textContent = data.label || data.name;
+        opt.selected = true;
+        selectEl.appendChild(opt);
+      }
+    }
+    var modalEl = document.getElementById('customerQuickCreateModal');
+    if (modalEl && modalEl.classList.contains('show')) {
+      modalEl.addEventListener('hidden.bs.modal', apply, {once: true});
+    } else {
+      apply();
+    }
+  });
+}
+</script>
+{% endblock %}
+
+{% block modals %}
+{{ super() }}
+{% include "customers/_customer_quick_create_modal.html" %}
 {% endblock %}

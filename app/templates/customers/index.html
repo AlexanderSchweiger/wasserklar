@@ -1,31 +1,45 @@
 {% extends "base.html" %}
-{% block title %}Kunden{% endblock %}
-{% block page_title %}<i class="fas fa-users me-2"></i> Kunden{% endblock %}
+{% block title %}Kontakte{% endblock %}
+{% block page_title %}<i class="fas fa-users me-2"></i> Kontakte{% endblock %}
 {% block content %}
 <div class="card">
   <div class="card-header d-flex align-items-center flex-wrap" style="gap:.5rem">
+    <ul class="nav nav-pills" role="tablist">
+      <li class="nav-item">
+        <a class="nav-link btn-sm {% if type_filter == 'customer' %}active{% endif %}"
+           href="{{ url_for('customers.index', type='customer', q=q) }}">
+          <i class="fas fa-user me-1"></i> Kunden
+        </a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link btn-sm {% if type_filter == 'supplier' %}active{% endif %}"
+           href="{{ url_for('customers.index', type='supplier', q=q) }}">
+          <i class="fas fa-truck me-1"></i> Lieferanten
+        </a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link btn-sm {% if type_filter == 'all' %}active{% endif %}"
+           href="{{ url_for('customers.index', type='all', q=q) }}">
+          <i class="fas fa-list me-1"></i> Alle
+        </a>
+      </li>
+    </ul>
     <div class="input-group input-group-sm" style="width:280px">
       <input type="search" name="q" value="{{ q }}" class="form-control"
-        placeholder="Kunden suchen…"
+        placeholder="Kontakte suchen…"
         hx-get="{{ url_for('customers.index') }}"
         hx-trigger="input changed delay:300ms, search"
         hx-target="#customer-table"
-        hx-include="[name='q']">
+        hx-include="[name='q'], [name='type']">
       <span class="input-group-text"><i class="fas fa-search"></i></span>
     </div>
-    <button type="button" class="btn btn-sm btn-primary"
-      hx-get="{{ url_for('customers.index') }}"
-      hx-trigger="click"
-      hx-target="#customer-table"
-      hx-include="[name='q']">
-      <i class="fas fa-search me-1"></i> Anzeigen
-    </button>
-    <a href="{{ url_for('customers.index') }}" class="btn btn-sm btn-outline-secondary">
+    <input type="hidden" name="type" value="{{ type_filter }}">
+    <a href="{{ url_for('customers.index', type=type_filter) }}" class="btn btn-sm btn-outline-secondary">
       <i class="fas fa-times me-1"></i> Zurücksetzen
     </a>
     <div class="ms-auto">
       <a href="{{ url_for('customers.new') }}" class="btn btn-primary btn-sm">
-        <i class="fas fa-plus me-1"></i> Neuer Kunde
+        <i class="fas fa-plus me-1"></i> Neuer Kontakt
       </a>
     </div>
   </div>

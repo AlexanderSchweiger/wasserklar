@@ -90,8 +90,6 @@
   </div>
 </div>
 
-{% include "customers/_customer_quick_create_modal.html" %}
-
 <script>
 // Bidirektionale Berechnung Fälligkeitsdatum ↔ Fällig-in-Tagen
 function invRecalcFromDate() {
@@ -166,4 +164,9 @@ if (!window.__invoicesNewCustomerCreatedBound) {
   });
 }
 </script>
+{% endblock %}
+
+{% block modals %}
+{{ super() }}
+{% include "customers/_customer_quick_create_modal.html" %}
 {% endblock %}

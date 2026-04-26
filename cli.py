@@ -58,6 +58,10 @@ _SCHEMA_UPGRADE_COLUMNS = [
     # hier nur die ALTER-Spalten auf bestehenden Tabellen ergaenzen.
     ("invoice_items", "is_dunning_fee INTEGER NOT NULL DEFAULT 0",                    "is_dunning_fee"),
     ("invoice_items", "dunning_notice_id INTEGER REFERENCES dunning_notices(id)",     "dunning_notice_id"),
+    # Kontakttypen: ein Kontakt kann gleichzeitig Kunde und/oder Lieferant sein.
+    # customer_counters kommt ueber db.create_all().
+    ("customers",     "is_customer INTEGER NOT NULL DEFAULT 1",                       "is_customer"),
+    ("customers",     "is_supplier INTEGER NOT NULL DEFAULT 0",                       "is_supplier"),
 ]
 
 

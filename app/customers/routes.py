@@ -1,31 +1,39 @@
 from flask import render_template, redirect, url_for, flash, request, jsonify
 from flask_login import login_required
-from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 
 from app.customers import bp
 from app.customers.duplicate_check import find_similar_customers
 from app.extensions import db
 from app.models import Customer, PropertyOwnership
 from app.pagination import paginate_query
+from app.utils import bump_customer_counter_to, next_customer_number
 
 
-# Pflichtfelder auf Formular-Ebene (Schema bleibt NULLable, Bestandsdaten mit
-# Leerstring bleiben erhalten — siehe ADR-001).
+# Pflichtfelder auf Formular-Ebene. Adressfelder sind seit dem
+# Lieferanten-Rollout bewusst alle optional — der Name reicht (z.B. Behoerden,
+# Online-Dienste, ad-hoc-Lieferanten ohne vollstaendige Adresse).
 REQUIRED_ADDRESS_FIELDS = [
     ("name", "Name"),
-    ("strasse", "Straße"),
-    ("hausnummer", "Hausnummer"),
-    ("plz", "PLZ"),
-    ("ort", "Ort"),
 ]
+
+# Erlaubte Werte des type-Filters in der Liste.
+_TYPE_FILTERS = {"customer", "supplier", "all"}
 
 
 @bp.route("/")
 @login_required
 def index():
     q = request.args.get("q", "").strip()
+    type_filter = request.args.get("type", "all")
+    if type_filter not in _TYPE_FILTERS:
+        type_filter = "all"
 
     query = Customer.query.filter_by(active=True).order_by(Customer.name)
+    if type_filter == "customer":
+        query = query.filter(Customer.is_customer.is_(True))
+    elif type_filter == "supplier":
+        query = query.filter(Customer.is_supplier.is_(True))
     if q:
         query = query.filter(Customer.name.ilike(f"%{q}%"))
 
@@ -42,11 +50,17 @@ def index():
         ownerships = []
     property_map = {o.customer_id: o.property for o in ownerships}
 
-    ctx = dict(customers=customers, property_map=property_map, pagination=pagination)
+    ctx = dict(
+        customers=customers,
+        property_map=property_map,
+        pagination=pagination,
+        type_filter=type_filter,
+        q=q,
+    )
     # HTMX: nur Tabellen-Fragment zurueckgeben
     if request.headers.get("HX-Request"):
         return render_template("customers/_table.html", **ctx)
-    return render_template("customers/index.html", q=q, **ctx)
+    return render_template("customers/index.html", **ctx)
 
 
 @bp.route("/new", methods=["GET", "POST"])
@@ -60,13 +74,18 @@ def new():
                 "Bitte folgende Pflichtfelder ausfüllen: " + ", ".join(missing),
                 "danger",
             )
-            return render_template(
-                "customers/form.html",
-                customer=None,
-                form_data=request.form,
-            )
+            return _render_new_form(request.form)
 
-        # 2) Dubletten-Gate (außer der Nutzer hat "trotzdem anlegen" bestätigt)
+        # 2) Mindestens ein Kontakttyp
+        is_customer = request.form.get("is_customer") == "1"
+        is_supplier = request.form.get("is_supplier") == "1"
+        if not (is_customer or is_supplier):
+            flash("Bitte mindestens einen Kontakttyp wählen (Kunde oder Lieferant).", "danger")
+            return _render_new_form(request.form)
+
+        # 3) Dubletten-Gate (außer der Nutzer hat "trotzdem anlegen" bestätigt).
+        # Dubletten-Suche ueber alle Kontakttypen (auch Lieferanten), damit
+        # gleiche Adressen nicht doppelt angelegt werden.
         force = request.form.get("force") == "1"
         if not force:
             similar = find_similar_customers(
@@ -82,15 +101,27 @@ def new():
                     form_data=request.form,
                 )
 
-        # 3) Anlage
-        c = _customer_from_form(Customer())
-        max_nr = db.session.query(func.max(Customer.customer_number)).scalar() or 0
-        c.customer_number = max_nr + 1
+        # 4) Anlage
+        c = Customer()
+        nr_error = _apply_customer_fields(c, request.form, is_new=True)
+        if nr_error:
+            flash(nr_error, "danger")
+            return _render_new_form(request.form)
         db.session.add(c)
-        db.session.commit()
-        flash(f"Kunde '{c.name}' angelegt.", "success")
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            flash(
+                "Die Kundennummer wurde gerade von einem anderen Vorgang vergeben. "
+                "Bitte erneut speichern.",
+                "danger",
+            )
+            return _render_new_form(request.form)
+        flash(f"Kontakt '{c.name}' angelegt.", "success")
         return redirect(url_for("customers.index"))
-    return render_template("customers/form.html", customer=None, form_data=None)
+    suggested_nr = next_customer_number(peek=True)
+    return _render_new_form(form_data=None, suggested_nr=suggested_nr)
 
 
 @bp.route("/<int:customer_id>")
@@ -120,9 +151,38 @@ def edit(customer_id):
                 customer=customer,
                 form_data=request.form,
             )
-        _customer_from_form(customer)
-        db.session.commit()
-        flash("Kunde aktualisiert.", "success")
+        is_customer = request.form.get("is_customer") == "1"
+        is_supplier = request.form.get("is_supplier") == "1"
+        if not (is_customer or is_supplier):
+            flash("Bitte mindestens einen Kontakttyp wählen (Kunde oder Lieferant).", "danger")
+            return render_template(
+                "customers/form.html",
+                customer=customer,
+                form_data=request.form,
+            )
+        nr_error = _apply_customer_fields(customer, request.form, is_new=False)
+        if nr_error:
+            flash(nr_error, "danger")
+            return render_template(
+                "customers/form.html",
+                customer=customer,
+                form_data=request.form,
+            )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            flash(
+                "Die Kundennummer wurde gerade von einem anderen Vorgang vergeben. "
+                "Bitte erneut speichern.",
+                "danger",
+            )
+            return render_template(
+                "customers/form.html",
+                customer=customer,
+                form_data=request.form,
+            )
+        flash("Kontakt aktualisiert.", "success")
         return redirect(url_for("customers.detail", customer_id=customer.id))
     return render_template("customers/form.html", customer=customer, form_data=None)
 
@@ -133,7 +193,50 @@ def deactivate(customer_id):
     customer = db.get_or_404(Customer, customer_id)
     customer.active = False
     db.session.commit()
-    flash(f"Kunde '{customer.name}' archiviert.", "info")
+    flash(f"Kontakt '{customer.name}' archiviert.", "info")
+    return redirect(url_for("customers.index"))
+
+
+@bp.route("/<int:customer_id>/delete", methods=["POST"])
+@login_required
+def delete(customer_id):
+    """Hartes Loeschen — nur wenn keine Referenzen bestehen.
+
+    Bei vorhandenen Referenzen schlagen wir das Archivieren als Alternative vor.
+    """
+    from app.models import Booking, BookingGroup, Invoice, OpenItem
+
+    customer = db.get_or_404(Customer, customer_id)
+
+    blockers = []
+    if PropertyOwnership.query.filter_by(customer_id=customer_id).first():
+        blockers.append("Eigentümerverhältnisse")
+    if Invoice.query.filter_by(customer_id=customer_id).first():
+        blockers.append("Rechnungen")
+    if Booking.query.filter_by(customer_id=customer_id).first():
+        blockers.append("Buchungen")
+    if BookingGroup.query.filter_by(customer_id=customer_id).first():
+        blockers.append("Sammelbuchungen")
+    if OpenItem.query.filter_by(customer_id=customer_id).first():
+        blockers.append("Offene Posten")
+
+    if blockers:
+        flash(
+            f"Kontakt '{customer.name}' kann nicht gelöscht werden, da noch "
+            f"verknüpft: {', '.join(blockers)}. Bitte stattdessen archivieren.",
+            "danger",
+        )
+        return redirect(url_for("customers.detail", customer_id=customer_id))
+
+    name = customer.name
+    db.session.delete(customer)
+    db.session.commit()
+    flash(f"Kontakt '{name}' gelöscht.", "info")
+    # Filter-Erhalt: Kontaktliste-URL kommt als hidden ``next`` aus dem Form.
+    # Open-Redirect-Schutz: nur Pfade unterhalb /customers erlauben.
+    next_url = request.form.get("next", "")
+    if next_url.startswith("/customers"):
+        return redirect(next_url)
     return redirect(url_for("customers.index"))
 
 
@@ -164,12 +267,11 @@ def check_duplicates():
 @bp.route("/quick-create", methods=["POST"])
 @login_required
 def quick_create():
-    """Quick-Create-Endpoint für das Rechnungs-Anlage-Modal.
+    """Quick-Create-Endpoint für das Kontakt-Anlage-Modal.
 
-    Legt einen Kunden mit den Pflichtfeldern an und liefert JSON
-    ``{id, name, label}`` zurück, damit das TomSelect im Rechnungsformular
-    den neuen Kunden sofort übernehmen kann. Dubletten-Prüfung wird
-    durchgeführt, sofern ``force=1`` nicht gesetzt ist.
+    Wird vom Rechnungs- und Buchungs-Anlageform aus aufgerufen. Liefert JSON
+    ``{ok, id, name, label, is_customer, is_supplier}`` zurück, damit das
+    aufrufende TomSelect den neuen Kontakt sofort übernehmen kann.
     """
     missing = _missing_required_fields(request.form)
     if missing:
@@ -177,6 +279,14 @@ def quick_create():
             "ok": False,
             "error": "missing_fields",
             "missing": missing,
+        }), 400
+
+    is_customer = request.form.get("is_customer") == "1"
+    is_supplier = request.form.get("is_supplier") == "1"
+    if not (is_customer or is_supplier):
+        return jsonify({
+            "ok": False,
+            "error": "type_required",
         }), 400
 
     force = request.form.get("force") == "1"
@@ -205,6 +315,8 @@ def quick_create():
 
     c = Customer(
         name=request.form.get("name", "").strip(),
+        is_customer=is_customer,
+        is_supplier=is_supplier,
         strasse=request.form.get("strasse", "").strip(),
         hausnummer=request.form.get("hausnummer", "").strip(),
         plz=request.form.get("plz", "").strip(),
@@ -213,16 +325,25 @@ def quick_create():
         email=request.form.get("email", "").strip(),
         active=True,
     )
-    max_nr = db.session.query(func.max(Customer.customer_number)).scalar() or 0
-    c.customer_number = max_nr + 1
+    if is_customer:
+        c.customer_number = next_customer_number()
     db.session.add(c)
-    db.session.commit()
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({
+            "ok": False,
+            "error": "number_conflict",
+        }), 409
 
     return jsonify({
         "ok": True,
         "id": c.id,
         "name": c.name,
-        "label": f"{c.name} – {c.address_display()}",
+        "label": f"{c.name} – {c.address_display()}" if c.address_display() else c.name,
+        "is_customer": bool(c.is_customer),
+        "is_supplier": bool(c.is_supplier),
     })
 
 
@@ -235,26 +356,79 @@ def _missing_required_fields(form) -> list[str]:
     return missing
 
 
-def _customer_from_form(customer):
-    from datetime import date
-    from decimal import Decimal
-    customer.name = request.form.get("name", "").strip()
-    customer.strasse = request.form.get("strasse", "").strip()
-    customer.hausnummer = request.form.get("hausnummer", "").strip()
-    customer.plz = request.form.get("plz", "").strip()
-    customer.ort = request.form.get("ort", "").strip()
-    customer.land = request.form.get("land", "Österreich").strip()
-    customer.email = request.form.get("email", "").strip()
-    customer.rechnung_per_email = request.form.get("rechnung_per_email") == "1"
-    customer.phone = request.form.get("phone", "").strip()
-    customer.notes = request.form.get("notes", "").strip()
-    ms = request.form.get("member_since", "")
+def _render_new_form(form_data, suggested_nr=None):
+    return render_template(
+        "customers/form.html",
+        customer=None,
+        form_data=form_data,
+        suggested_nr=suggested_nr,
+    )
+
+
+def _apply_customer_fields(customer, form, *, is_new: bool) -> str | None:
+    """Setzt alle Felder am Customer aus dem Formular.
+
+    Gibt eine Fehlermeldung als String zurueck, wenn die manuell vergebene
+    Kundennummer bereits anderweitig vergeben ist; sonst None.
+    """
+    from datetime import datetime
+    from decimal import Decimal, InvalidOperation
+
+    customer.name = form.get("name", "").strip()
+    customer.is_customer = form.get("is_customer") == "1"
+    customer.is_supplier = form.get("is_supplier") == "1"
+    customer.strasse = form.get("strasse", "").strip()
+    customer.hausnummer = form.get("hausnummer", "").strip()
+    customer.plz = form.get("plz", "").strip()
+    customer.ort = form.get("ort", "").strip()
+    customer.land = form.get("land", "Österreich").strip() or "Österreich"
+    customer.email = form.get("email", "").strip()
+    customer.rechnung_per_email = form.get("rechnung_per_email") == "1"
+    customer.phone = form.get("phone", "").strip()
+    customer.notes = form.get("notes", "").strip()
+    if is_new:
+        customer.active = True
+    ms = form.get("member_since", "")
     if ms:
-        from datetime import datetime
         customer.member_since = datetime.strptime(ms, "%Y-%m-%d").date()
-    customer.externe_kennung = request.form.get("externe_kennung", "").strip() or None
-    raw_base = request.form.get("base_fee_override", "").strip().replace(",", ".")
-    customer.base_fee_override = Decimal(raw_base) if raw_base else None
-    raw_add = request.form.get("additional_fee_override", "").strip().replace(",", ".")
-    customer.additional_fee_override = Decimal(raw_add) if raw_add else None
-    return customer
+    else:
+        customer.member_since = None
+    customer.externe_kennung = form.get("externe_kennung", "").strip() or None
+
+    raw_base = form.get("base_fee_override", "").strip().replace(",", ".")
+    try:
+        customer.base_fee_override = Decimal(raw_base) if raw_base else None
+    except InvalidOperation:
+        return f"Ungültiger Wert für Grundgebühr: {raw_base}"
+    raw_add = form.get("additional_fee_override", "").strip().replace(",", ".")
+    try:
+        customer.additional_fee_override = Decimal(raw_add) if raw_add else None
+    except InvalidOperation:
+        return f"Ungültiger Wert für Zusatzgebühr: {raw_add}"
+
+    # Kundennummer: nur fuer Kunden vergeben.
+    if not customer.is_customer:
+        customer.customer_number = None
+        return None
+
+    raw_nr = form.get("customer_number", "").strip()
+    if raw_nr:
+        try:
+            requested = int(raw_nr)
+        except ValueError:
+            return f"Kundennummer muss eine Zahl sein: {raw_nr}"
+        if requested < 1:
+            return "Kundennummer muss positiv sein."
+        # Konflikt-Check (eigene id ausschliessen)
+        existing_q = Customer.query.filter(Customer.customer_number == requested)
+        if customer.id is not None:
+            existing_q = existing_q.filter(Customer.id != customer.id)
+        if db.session.query(existing_q.exists()).scalar():
+            return f"Kundennummer {requested} ist bereits vergeben."
+        customer.customer_number = requested
+        bump_customer_counter_to(requested)
+    else:
+        # Feld leer: bei Neuanlage Counter ziehen, beim Bearbeiten bestehende behalten.
+        if is_new or customer.customer_number is None:
+            customer.customer_number = next_customer_number()
+    return None

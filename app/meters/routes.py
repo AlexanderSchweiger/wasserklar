@@ -46,11 +46,76 @@ def _build_owners_map():
 @bp.route("/")
 @login_required
 def index():
+    """Zähler-Verwaltung: Stammdaten anlegen/bearbeiten/tauschen/löschen."""
+    q = request.args.get("q", "").strip()
+    show_inactive = request.args.get("show_inactive", "0") == "1"
+
+    meters_query = (
+        WaterMeter.query
+        .join(Property)
+        .outerjoin(
+            PropertyOwnership,
+            db.and_(
+                PropertyOwnership.property_id == Property.id,
+                PropertyOwnership.valid_to == None,
+            ),
+        )
+        .outerjoin(Customer, Customer.id == PropertyOwnership.customer_id)
+        .filter(Property.active == True)
+        .order_by(Property.object_number, Property.ort)
+    )
+    if not show_inactive:
+        meters_query = meters_query.filter(WaterMeter.active == True)
+    if q:
+        meters_query = meters_query.filter(
+            db.or_(
+                Property.object_number.ilike(f"%{q}%"),
+                Property.strasse.ilike(f"%{q}%"),
+                Property.ort.ilike(f"%{q}%"),
+                Customer.name.ilike(f"%{q}%"),
+                WaterMeter.meter_number.ilike(f"%{q}%"),
+                WaterMeter.location.ilike(f"%{q}%"),
+            )
+        )
+
+    pagination = paginate_query(meters_query, page_key="meters")
+    meters = pagination.items
+
+    # Ablesungs-Counts pro Zähler — informativ in der Verwaltungstabelle
+    readings_count_map = {}
+    visible_ids = [m.id for m in meters]
+    if visible_ids:
+        rows = (
+            db.session.query(MeterReading.meter_id, db.func.count(MeterReading.id))
+            .filter(MeterReading.meter_id.in_(visible_ids))
+            .group_by(MeterReading.meter_id)
+            .all()
+        )
+        readings_count_map = {row[0]: row[1] for row in rows}
+
+    owners_map = _build_owners_map()
+
+    ctx = dict(
+        meters=meters,
+        readings_count_map=readings_count_map,
+        owners_map=owners_map,
+        pagination=pagination,
+        q=q,
+        show_inactive=show_inactive,
+    )
+    if request.headers.get("HX-Request"):
+        return render_template("meters/_manage_table.html", **ctx)
+    return render_template("meters/index.html", **ctx)
+
+
+@bp.route("/ablesungen")
+@login_required
+def readings():
+    """Zählerablesung: Schnelleingabe, Ablesen pro Zeile, Import."""
     year = request.args.get("year", date.today().year, type=int)
     q = request.args.get("q", "").strip()
     mode = request.args.get("mode", "normal")
 
-    # Objekt + Zähler-Join + aktueller Eigentümer (für Suche), nach Objektnummer / Ort sortiert
     meters_query = (
         WaterMeter.query
         .join(Property)
@@ -78,7 +143,6 @@ def index():
     pagination = paginate_query(meters_query, page_key="meters")
     meters = pagination.items
 
-    # Ablesungen fuer gewaehltes Jahr vorladen — nur fuer die sichtbaren Zaehler.
     visible_ids = [m.id for m in meters]
     readings_map = {}
     if visible_ids:
@@ -88,7 +152,6 @@ def index():
         ).all():
             readings_map[r.meter_id] = r
 
-    # Vorjahresablesungen vorladen
     prev_readings_map = {}
     if visible_ids:
         for r in MeterReading.query.filter(
@@ -97,10 +160,7 @@ def index():
         ).all():
             prev_readings_map[r.meter_id] = r
 
-    # Zaehlertausch-Info: Zaehler die in diesem Jahr eingebaut wurden
     replacement_map = _build_replacement_map(meters, year)
-
-    # Eigentuemer-Map fuer Anzeige
     owners_map = _build_owners_map()
 
     ctx = dict(
@@ -112,7 +172,7 @@ def index():
     if request.headers.get("HX-Request"):
         template = "meters/_table_quick.html" if mode == "quick" else "meters/_table.html"
         return render_template(template, **ctx)
-    return render_template("meters/index.html", q=q, mode=mode, **ctx)
+    return render_template("meters/readings.html", q=q, mode=mode, **ctx)
 
 
 @bp.route("/bulk_read", methods=["POST"])
@@ -160,7 +220,7 @@ def bulk_read():
 
     db.session.commit()
     flash(f"{saved} Ablesung(en) gespeichert.", "success")
-    return redirect(url_for("meters.index", year=year))
+    return redirect(url_for("meters.readings", year=year))
 
 
 @bp.route("/<int:meter_id>/read", methods=["GET", "POST"])
@@ -220,7 +280,7 @@ def add_reading(meter_id):
                 replacement_map=repl_map,
                 owners_map={meter.property_id: owner} if owner else {},
             )
-        return redirect(url_for("meters.index", year=year))
+        return redirect(url_for("meters.readings", year=year))
 
     # Vorjahreswert oder Anfangsstand als Basis
     prev = MeterReading.query.filter_by(meter_id=meter_id, year=year - 1).first()
@@ -409,7 +469,7 @@ def import_readings():
         if results["errors"]:
             for err in results["errors"][:10]:
                 flash(err, "warning")
-        return redirect(url_for("meters.index"))
+        return redirect(url_for("meters.readings"))
 
     return render_template("meters/import.html")
 
@@ -422,8 +482,14 @@ def import_readings():
 @login_required
 def meter_replace(meter_id):
     old_meter = db.get_or_404(WaterMeter, meter_id)
+    from_view = (
+        request.form.get("from") if request.method == "POST"
+        else request.args.get("from", "property")
+    )
     if not old_meter.active:
         flash("Dieser Zähler ist bereits ausgebaut.", "warning")
+        if from_view == "list":
+            return redirect(url_for("meters.index"))
         return redirect(url_for("properties.detail", property_id=old_meter.property_id))
 
     if request.method == "POST":
@@ -491,6 +557,30 @@ def meter_replace(meter_id):
             f"neuer Zähler '{new_meter_number}' eingebaut.",
             "success",
         )
+        if from_view == "list":
+            return redirect(url_for("meters.index"))
         return redirect(url_for("properties.detail", property_id=old_meter.property_id))
 
-    return render_template("meters/replace_form.html", meter=old_meter, today=date.today())
+    return render_template(
+        "meters/replace_form.html",
+        meter=old_meter, today=date.today(), from_view=from_view,
+    )
+
+
+@bp.route("/<int:meter_id>/delete", methods=["POST"])
+@login_required
+def meter_delete(meter_id):
+    meter = db.get_or_404(WaterMeter, meter_id)
+    if MeterReading.query.filter_by(meter_id=meter.id).count() > 0:
+        flash(
+            f"Zähler '{meter.meter_number}' kann nicht gelöscht werden — "
+            "es existieren bereits Ablesungen. Stattdessen Zählertausch verwenden "
+            "oder den Zähler manuell ausbauen.",
+            "danger",
+        )
+        return redirect(url_for("meters.index"))
+    number = meter.meter_number
+    db.session.delete(meter)
+    db.session.commit()
+    flash(f"Zähler '{number}' wurde gelöscht.", "success")
+    return redirect(url_for("meters.index"))

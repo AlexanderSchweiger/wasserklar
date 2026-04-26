@@ -38,3 +38,42 @@ def next_invoice_number(year=None):
     seq = counter.next_seq
     counter.next_seq = seq + 1
     return f"{year}-{seq:05d}"
+
+
+def _customer_counter():
+    """Singleton-Counter holen oder seedweise anlegen (aus max(customer_number)+1)."""
+    from app.extensions import db
+    from app.models import Customer, CustomerCounter
+    from sqlalchemy import func
+
+    counter = db.session.get(CustomerCounter, 1)
+    if counter is None:
+        seed = (db.session.query(func.max(Customer.customer_number)).scalar() or 0) + 1
+        counter = CustomerCounter(id=1, next_seq=seed)
+        db.session.add(counter)
+        db.session.flush()
+    return counter
+
+
+def next_customer_number(peek: bool = False) -> int:
+    """Nächste freie Kundennummer.
+
+    peek=True liefert den aktuellen Vorschlag, ohne den Counter zu inkrementieren —
+    dafuer ist auch ``db.session.rollback()`` direkt danach unkritisch.
+    """
+    counter = _customer_counter()
+    nr = counter.next_seq
+    if not peek:
+        counter.next_seq = nr + 1
+    return nr
+
+
+def bump_customer_counter_to(value: int) -> None:
+    """Counter auf value+1 anheben, falls value >= aktueller next_seq.
+
+    Wird nach manueller Vergabe einer Nummer aufgerufen, damit Folge-Vorschlaege
+    nicht denselben Wert nochmal liefern.
+    """
+    counter = _customer_counter()
+    if value >= counter.next_seq:
+        counter.next_seq = value + 1

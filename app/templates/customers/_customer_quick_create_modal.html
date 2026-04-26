@@ -1,13 +1,17 @@
-{# Quick-Create-Modal für Kunden. Wird aus Rechnungs- und ähnlichen Flows
-   eingebunden. Verwendet das Window-Event „customer:created" um den
-   Parent-Kontext (z.B. ein TomSelect) darüber zu informieren, dass ein
-   neuer Kunde verfügbar ist. #}
+{# Quick-Create-Modal für Kontakte. Wird aus Rechnungs-, Buchungs- und
+   ähnlichen Flows eingebunden. Verwendet das Window-Event „customer:created"
+   um den Parent-Kontext (z.B. ein TomSelect) darüber zu informieren, dass ein
+   neuer Kontakt verfügbar ist.
+
+   Aufrufer können vor dem Öffnen des Modals die Default-Checkboxen
+   ueberschreiben, indem sie nach dem `show.bs.modal`-Event die DOM-Properties
+   `cqc-is-customer` / `cqc-is-supplier` setzen. #}
 <div class="modal fade" id="customerQuickCreateModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title">
-          <i class="fas fa-user-plus me-2"></i> Neuen Kunden anlegen
+          <i class="fas fa-user-plus me-2"></i> Neuen Kontakt anlegen
         </h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
       </div>
@@ -17,13 +21,35 @@
           <div id="cqc-error" class="alert alert-danger d-none" role="alert"></div>
 
           <div class="row">
+            <div class="col-md-12">
+              <div class="mb-3">
+                <label class="form-label d-block">Kontakttyp <span class="text-danger">*</span></label>
+                <div class="form-check form-check-inline">
+                  <input type="checkbox" class="form-check-input" id="cqc-is-customer"
+                         name="is_customer" value="1" checked>
+                  <label class="form-check-label" for="cqc-is-customer">
+                    <i class="fas fa-user me-1 text-primary"></i> Ist Kunde
+                  </label>
+                </div>
+                <div class="form-check form-check-inline">
+                  <input type="checkbox" class="form-check-input" id="cqc-is-supplier"
+                         name="is_supplier" value="1">
+                  <label class="form-check-label" for="cqc-is-supplier">
+                    <i class="fas fa-truck me-1 text-info"></i> Ist Lieferant
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="row">
             <div class="col-md-8">
               <div class="mb-3">
                 <label class="form-label">Name <span class="text-danger">*</span></label>
                 <input type="text" name="name" id="cqc-name" class="form-control" required
                        hx-get="{{ url_for('customers.check_duplicates') }}"
-                       hx-trigger="keyup changed delay:500ms, change"
+                       hx-trigger="keyup changed delay:500ms"
                        hx-target="#cqc-duplicates"
+                       hx-swap="innerHTML transition:false"
                        hx-include="#cqc-plz, #cqc-ort">
               </div>
             </div>
@@ -37,28 +63,28 @@
           <div class="row">
             <div class="col-md-8">
               <div class="mb-3">
-                <label class="form-label">Straße <span class="text-danger">*</span></label>
-                <input type="text" name="strasse" class="form-control" required>
+                <label class="form-label">Straße</label>
+                <input type="text" name="strasse" class="form-control">
               </div>
             </div>
             <div class="col-md-4">
               <div class="mb-3">
-                <label class="form-label">Hausnummer <span class="text-danger">*</span></label>
-                <input type="text" name="hausnummer" class="form-control" required>
+                <label class="form-label">Hausnummer</label>
+                <input type="text" name="hausnummer" class="form-control">
               </div>
             </div>
           </div>
           <div class="row">
             <div class="col-md-3">
               <div class="mb-3">
-                <label class="form-label">PLZ <span class="text-danger">*</span></label>
-                <input type="text" name="plz" id="cqc-plz" class="form-control" required>
+                <label class="form-label">PLZ</label>
+                <input type="text" name="plz" id="cqc-plz" class="form-control">
               </div>
             </div>
             <div class="col-md-9">
               <div class="mb-3">
-                <label class="form-label">Ort / Stadt <span class="text-danger">*</span></label>
-                <input type="text" name="ort" id="cqc-ort" class="form-control" required>
+                <label class="form-label">Ort / Stadt</label>
+                <input type="text" name="ort" id="cqc-ort" class="form-control">
               </div>
             </div>
           </div>
@@ -82,6 +108,7 @@
 <script>
 (function () {
   const modalEl = document.getElementById('customerQuickCreateModal');
+  if (!modalEl) return;
   const form = document.getElementById('customerQuickCreateForm');
   const errBox = document.getElementById('cqc-error');
   const serverDupsBox = document.getElementById('cqc-server-duplicates');
@@ -124,6 +151,18 @@
 
       if (data.error === 'missing_fields') {
         errBox.textContent = 'Bitte folgende Pflichtfelder ausfüllen: ' + (data.missing || []).join(', ');
+        errBox.classList.remove('d-none');
+        return;
+      }
+
+      if (data.error === 'type_required') {
+        errBox.textContent = 'Bitte mindestens einen Kontakttyp wählen (Kunde oder Lieferant).';
+        errBox.classList.remove('d-none');
+        return;
+      }
+
+      if (data.error === 'number_conflict') {
+        errBox.textContent = 'Die Kundennummer wurde gerade von einem anderen Vorgang vergeben. Bitte erneut versuchen.';
         errBox.classList.remove('d-none');
         return;
       }
