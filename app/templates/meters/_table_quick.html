@@ -1,3 +1,4 @@
+{% from "_pagination.html" import render_pagination %}
 <form method="post" action="{{ url_for('meters.bulk_read') }}">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <input type="hidden" name="year" value="{{ year }}">
@@ -72,6 +73,7 @@
     </tbody>
   </table>
 </form>
+{{ render_pagination(pagination) }}
 <script>
 function calcConsumption(input) {
   const prev = input.dataset.prev !== '' ? parseFloat(input.dataset.prev) : NaN;

@@ -6,6 +6,7 @@ from app.customers import bp
 from app.customers.duplicate_check import find_similar_customers
 from app.extensions import db
 from app.models import Customer, PropertyOwnership
+from app.pagination import paginate_query
 
 
 # Pflichtfelder auf Formular-Ebene (Schema bleibt NULLable, Bestandsdaten mit
@@ -23,23 +24,15 @@ REQUIRED_ADDRESS_FIELDS = [
 @login_required
 def index():
     q = request.args.get("q", "").strip()
-    ohne_objekt = request.args.get("ohne_objekt", "0") == "1"
-
-    # Subquery: Kunden-IDs mit laufender Eigentumsbeziehung
-    owned_ids = db.session.query(PropertyOwnership.customer_id).filter(
-        PropertyOwnership.valid_to.is_(None)
-    ).subquery()
 
     query = Customer.query.filter_by(active=True).order_by(Customer.name)
     if q:
         query = query.filter(Customer.name.ilike(f"%{q}%"))
-    if ohne_objekt:
-        query = query.filter(~Customer.id.in_(owned_ids))
-    else:
-        query = query.filter(Customer.id.in_(owned_ids))
-    customers = query.all()
 
-    # Property-Map für Anzeige aufbauen
+    pagination = paginate_query(query, page_key="customers")
+    customers = pagination.items
+
+    # Property-Map fuer Anzeige aufbauen — nur fuer die aktuell sichtbaren Kunden.
     if customers:
         ownerships = PropertyOwnership.query.filter(
             PropertyOwnership.valid_to.is_(None),
@@ -49,12 +42,11 @@ def index():
         ownerships = []
     property_map = {o.customer_id: o.property for o in ownerships}
 
-    # HTMX: nur Tabellen-Fragment zurückgeben
+    ctx = dict(customers=customers, property_map=property_map, pagination=pagination)
+    # HTMX: nur Tabellen-Fragment zurueckgeben
     if request.headers.get("HX-Request"):
-        return render_template("customers/_table.html", customers=customers,
-                               property_map=property_map, ohne_objekt=ohne_objekt)
-    return render_template("customers/index.html", customers=customers, q=q,
-                           property_map=property_map, ohne_objekt=ohne_objekt)
+        return render_template("customers/_table.html", **ctx)
+    return render_template("customers/index.html", q=q, **ctx)
 
 
 @bp.route("/new", methods=["GET", "POST"])

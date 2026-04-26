@@ -14,6 +14,7 @@ from app.models import Invoice, InvoiceItem, Customer, WaterMeter, MeterReading,
 from app.utils import next_invoice_number as _next_invoice_number
 from app.settings_service import get_wg, send_mail, wg_settings
 from app.invoices.design import get_design
+from app.pagination import paginate_query
 
 
 def _current_design():
@@ -180,12 +181,16 @@ def index():
     if nur_email:
         query = query.filter(Customer.rechnung_per_email == True)
 
-    invoices = query.all()
+    pagination = paginate_query(query, page_key="invoices")
+    invoices = pagination.items
     projects_for_filter = Project.query.order_by(Project.name).all()
     accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
     doc_format = AppSetting.get("invoice.document_format", "pdf")
     if request.headers.get("HX-Request"):
-        return render_template("invoices/_table.html", invoices=invoices, doc_format=doc_format)
+        return render_template(
+            "invoices/_table.html",
+            invoices=invoices, doc_format=doc_format, pagination=pagination,
+        )
     return render_template(
         "invoices/index.html",
         invoices=invoices,
@@ -199,6 +204,7 @@ def index():
         nur_email=nur_email,
         doc_format=doc_format,
         accounts=accounts,
+        pagination=pagination,
     )
 
 

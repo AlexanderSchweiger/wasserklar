@@ -38,6 +38,25 @@ def load_user(user_id):
     return db.session.get(User, int(user_id))
 
 
+class UserPreference(db.Model):
+    """Pro Benutzer gespeicherte Key/Value-Einstellung (z.B. per_page pro Listenseite)."""
+    __tablename__ = "user_preferences"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    key = db.Column(db.String(80), nullable=False)
+    value = db.Column(db.Text, nullable=True)
+
+    __table_args__ = (
+        db.UniqueConstraint("user_id", "key", name="uq_user_preferences_user_key"),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Kunden
 # ---------------------------------------------------------------------------

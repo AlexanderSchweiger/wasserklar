@@ -1,0 +1,74 @@
+{# ------------------------------------------------------------------------ #}
+{# Generisches Pagination-Macro im Tabler/Bootstrap-Stil.                    #}
+{#                                                                          #}
+{# Aufruf:                                                                  #}
+{#   {% from "_pagination.html" import render_pagination %}                 #}
+{#   {{ render_pagination(pagination) }}                                    #}
+{#                                                                          #}
+{# Erwartet ein ``app.pagination.Pagination``-Objekt. Die Per-Page-Auswahl  #}
+{# und die Seitenlinks bauen sich ueber ``page_url(...)`` (registriert in   #}
+{# app/__init__.py) auf, damit alle aktuellen Filter-Parameter automatisch  #}
+{# erhalten bleiben.                                                        #}
+{# ------------------------------------------------------------------------ #}
+
+{% macro render_pagination(pagination) %}
+{% if pagination.total > 0 %}
+<div class="card-footer d-flex flex-wrap align-items-center justify-content-between gap-2">
+  <div class="d-flex flex-wrap align-items-center gap-2 small text-secondary">
+    <span class="m-0">
+      Zeige <strong>{{ pagination.first_index }}</strong>–<strong>{{ pagination.last_index }}</strong>
+      von <strong>{{ pagination.total }}</strong>
+    </span>
+    <span class="d-flex align-items-center gap-1 ms-2">
+      <label class="m-0" for="per-page-{{ pagination.page_key }}">Pro Seite</label>
+      <select id="per-page-{{ pagination.page_key }}"
+              class="form-select form-select-sm"
+              style="width:auto"
+              onchange="window.location.href = this.options[this.selectedIndex].dataset.url">
+        {% for opt in pagination.options %}
+        <option value="{{ opt }}"
+                data-url="{{ page_url(per_page=opt, page=1) }}"
+                {{ 'selected' if pagination.per_page == opt }}>
+          {% if opt == 0 %}Alle{% else %}{{ opt }}{% endif %}
+        </option>
+        {% endfor %}
+      </select>
+    </span>
+  </div>
+
+  {% if pagination.pages > 1 %}
+  <ul class="pagination m-0">
+    <li class="page-item {{ 'disabled' if not pagination.has_prev }}">
+      {% if pagination.has_prev %}
+      <a class="page-link" href="{{ page_url(page=pagination.prev_page) }}" aria-label="Zurueck">
+        <i class="fas fa-chevron-left"></i>
+      </a>
+      {% else %}
+      <span class="page-link" aria-disabled="true"><i class="fas fa-chevron-left"></i></span>
+      {% endif %}
+    </li>
+    {% for p in pagination.iter_pages() %}
+      {% if p is none %}
+      <li class="page-item disabled"><span class="page-link">…</span></li>
+      {% elif p == pagination.page %}
+      <li class="page-item active"><span class="page-link">{{ p }}</span></li>
+      {% else %}
+      <li class="page-item">
+        <a class="page-link" href="{{ page_url(page=p) }}">{{ p }}</a>
+      </li>
+      {% endif %}
+    {% endfor %}
+    <li class="page-item {{ 'disabled' if not pagination.has_next }}">
+      {% if pagination.has_next %}
+      <a class="page-link" href="{{ page_url(page=pagination.next_page) }}" aria-label="Weiter">
+        <i class="fas fa-chevron-right"></i>
+      </a>
+      {% else %}
+      <span class="page-link" aria-disabled="true"><i class="fas fa-chevron-right"></i></span>
+      {% endif %}
+    </li>
+  </ul>
+  {% endif %}
+</div>
+{% endif %}
+{% endmacro %}

@@ -90,6 +90,11 @@ def create_app(config_name=None):
 
     app.jinja_env.filters["de_number"] = de_number
 
+    # Jinja-Global fuer Pagination: erzeugt URLs mit ueberlagerten Query-Args
+    # (siehe app/pagination.py + templates/_pagination.html).
+    from app.pagination import page_url as _page_url
+    app.jinja_env.globals["page_url"] = _page_url
+
     # Context Processor: WG-Einstellungen in alle Templates injizieren
     @app.context_processor
     def inject_wg_settings():

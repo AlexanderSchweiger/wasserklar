@@ -6,6 +6,7 @@ from flask_login import login_required
 from app.properties import bp
 from app.extensions import db
 from app.models import Property, PropertyOwnership, Customer
+from app.pagination import paginate_query
 
 
 @bp.route("/")
@@ -21,10 +22,12 @@ def index():
                 Property.ort.ilike(f"%{q}%"),
             )
         )
-    properties = query.all()
+    pagination = paginate_query(query, page_key="properties")
+    properties = pagination.items
+    ctx = dict(properties=properties, pagination=pagination)
     if request.headers.get("HX-Request"):
-        return render_template("properties/_table.html", properties=properties)
-    return render_template("properties/index.html", properties=properties, q=q)
+        return render_template("properties/_table.html", **ctx)
+    return render_template("properties/index.html", q=q, **ctx)
 
 
 @bp.route("/new", methods=["GET", "POST"])

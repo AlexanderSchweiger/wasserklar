@@ -18,6 +18,7 @@ from app.accounting import services as acc_svc
 from app.extensions import db
 from app.models import Account, Booking, BookingGroup, Invoice, OpenItem, WaterTariff, Customer, Project, RealAccount, RealAccountYearBalance, FiscalYear, FiscalYearReopenLog, TaxRate, Transfer
 from app.utils import next_invoice_number
+from app.pagination import paginate_list, paginate_query
 
 
 @bp.route("/")
@@ -223,13 +224,16 @@ def bookings():
         Decimal("0"),
     )
 
+    pagination = paginate_list(rows, page_key="bookings")
+
     table_ctx = dict(
-        rows=rows, year=year,
+        rows=pagination.items, year=year,
         now_year=date.today().year,
         total_amount=total_amount,
         total_vorsteuer=total_vorsteuer,
         total_ust=total_ust,
         locked_booking_ids=locked_booking_ids,
+        pagination=pagination,
     )
 
     if request.headers.get("HX-Request"):
@@ -992,12 +996,15 @@ def open_items():
         except Exception:
             pass
 
-    items = item_q.order_by(OpenItem.due_date).all()
-    total_open = sum(item.open_balance for item in items)
+    # Total ueber ALLE gefilterten Posten — unabhaengig von der Pagination.
+    all_items = item_q.order_by(OpenItem.due_date).all()
+    total_open = sum(item.open_balance for item in all_items)
+
+    pagination = paginate_list(all_items, page_key="open_items")
 
     return render_template(
         "accounting/open_items.html",
-        items=items,
+        items=pagination.items,
         total_open=total_open,
         today=date.today(),
         show_closed=show_closed,
@@ -1006,6 +1013,7 @@ def open_items():
         f_year=year_q,
         f_amount_min=amount_min_raw,
         f_amount_max=amount_max_raw,
+        pagination=pagination,
     )
 
 

@@ -1,3 +1,4 @@
+{% from "_pagination.html" import render_pagination %}
 <div class="px-3 py-2 bg-light border-bottom d-flex justify-content-end">
   <div class="text-end">
     <div class="fw-bold">Summe:
@@ -11,6 +12,7 @@
     {% endif %}
   </div>
 </div>
+<div class="card-body p-0">
 <table class="table table-hover mb-0">
   <thead>
     <tr>
@@ -390,3 +392,5 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
+{{ render_pagination(pagination) }}

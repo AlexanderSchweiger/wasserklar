@@ -10,24 +10,14 @@
         hx-get="{{ url_for('customers.index') }}"
         hx-trigger="input changed delay:300ms, search"
         hx-target="#customer-table"
-        hx-include="[name='q'],[name='ohne_objekt']">
+        hx-include="[name='q']">
       <span class="input-group-text"><i class="fas fa-search"></i></span>
     </div>
-    <input type="hidden" name="ohne_objekt" value="{{ '1' if ohne_objekt else '0' }}">
-    {% if ohne_objekt %}
-    <a href="{{ url_for('customers.index', q=q) }}" class="btn btn-sm btn-warning">
-      <i class="fas fa-filter me-1"></i> Ohne Objekt <i class="fas fa-times ms-1"></i>
-    </a>
-    {% else %}
-    <a href="{{ url_for('customers.index', q=q, ohne_objekt=1) }}" class="btn btn-sm btn-outline-secondary">
-      <i class="fas fa-filter me-1"></i> Ohne Objekt anzeigen
-    </a>
-    {% endif %}
     <button type="button" class="btn btn-sm btn-primary"
       hx-get="{{ url_for('customers.index') }}"
       hx-trigger="click"
       hx-target="#customer-table"
-      hx-include="[name='q'],[name='ohne_objekt']">
+      hx-include="[name='q']">
       <i class="fas fa-search me-1"></i> Anzeigen
     </button>
     <a href="{{ url_for('customers.index') }}" class="btn btn-sm btn-outline-secondary">
@@ -39,7 +29,7 @@
       </a>
     </div>
   </div>
-  <div class="card-body p-0" id="customer-table">
+  <div id="customer-table">
     {% include "customers/_table.html" %}
   </div>
 </div>

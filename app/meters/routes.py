@@ -8,6 +8,7 @@ from flask_login import login_required, current_user
 from app.meters import bp
 from app.extensions import db
 from app.models import WaterMeter, MeterReading, Property, PropertyOwnership, Customer
+from app.pagination import paginate_query
 
 
 def _build_replacement_map(meters, year):
@@ -74,39 +75,44 @@ def index():
             )
         )
 
-    meters = meters_query.all()
+    pagination = paginate_query(meters_query, page_key="meters")
+    meters = pagination.items
 
-    # Ablesungen für gewähltes Jahr vorladen
+    # Ablesungen fuer gewaehltes Jahr vorladen — nur fuer die sichtbaren Zaehler.
+    visible_ids = [m.id for m in meters]
     readings_map = {}
-    for r in MeterReading.query.filter_by(year=year).all():
-        readings_map[r.meter_id] = r
+    if visible_ids:
+        for r in MeterReading.query.filter(
+            MeterReading.year == year,
+            MeterReading.meter_id.in_(visible_ids),
+        ).all():
+            readings_map[r.meter_id] = r
 
     # Vorjahresablesungen vorladen
     prev_readings_map = {}
-    for r in MeterReading.query.filter_by(year=year - 1).all():
-        prev_readings_map[r.meter_id] = r
+    if visible_ids:
+        for r in MeterReading.query.filter(
+            MeterReading.year == year - 1,
+            MeterReading.meter_id.in_(visible_ids),
+        ).all():
+            prev_readings_map[r.meter_id] = r
 
-    # Zählertausch-Info: Zähler die in diesem Jahr eingebaut wurden
+    # Zaehlertausch-Info: Zaehler die in diesem Jahr eingebaut wurden
     replacement_map = _build_replacement_map(meters, year)
 
-    # Eigentümer-Map für Anzeige
+    # Eigentuemer-Map fuer Anzeige
     owners_map = _build_owners_map()
 
+    ctx = dict(
+        meters=meters, readings_map=readings_map,
+        prev_readings_map=prev_readings_map, year=year,
+        replacement_map=replacement_map, owners_map=owners_map,
+        pagination=pagination,
+    )
     if request.headers.get("HX-Request"):
         template = "meters/_table_quick.html" if mode == "quick" else "meters/_table.html"
-        return render_template(
-            template,
-            meters=meters, readings_map=readings_map,
-            prev_readings_map=prev_readings_map, year=year,
-            replacement_map=replacement_map, owners_map=owners_map,
-        )
-    return render_template(
-        "meters/index.html",
-        meters=meters, readings_map=readings_map,
-        prev_readings_map=prev_readings_map, year=year, q=q,
-        replacement_map=replacement_map, owners_map=owners_map,
-        mode=mode,
-    )
+        return render_template(template, **ctx)
+    return render_template("meters/index.html", q=q, mode=mode, **ctx)
 
 
 @bp.route("/bulk_read", methods=["POST"])

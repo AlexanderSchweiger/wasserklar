@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_pagination.html" import render_pagination %}
 {% block title %}Offene Posten{% endblock %}
 {% block page_title %}<i class="fas fa-exclamation-circle me-2"></i> Offene Posten{% endblock %}
 {% block content %}
@@ -186,6 +187,7 @@
       </tbody>
     </table>
   </div>
+  {{ render_pagination(pagination) }}
 </div>
 
 {% endblock %}
