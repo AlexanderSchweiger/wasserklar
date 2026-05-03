@@ -28,7 +28,7 @@
   {% set kdnr_value = form_data.get('customer_number', '') %}
 {% elif customer and customer.customer_number is not none %}
   {% set kdnr_value = customer.customer_number %}
-{% elif suggested_nr is defined and suggested_nr is not none %}
+{% elif is_cust_checked and suggested_nr is defined and suggested_nr is not none %}
   {% set kdnr_value = suggested_nr %}
 {% else %}
   {% set kdnr_value = '' %}
@@ -39,6 +39,11 @@
       </div>
       <form method="post" id="customerForm">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        {# Back-URL nach Speichern: aus Form-Re-Render oder GET-Kwarg uebernehmen. #}
+        {% set _next = form_data.get('next', '') if (form_data is defined and form_data) else (next_url if next_url is defined else '') %}
+        {% if _next %}
+        <input type="hidden" name="next" value="{{ _next }}">
+        {% endif %}
         <div class="card-body">
           <div class="row">
             <div class="col-md-12">
@@ -74,9 +79,9 @@
                 <input type="number" name="customer_number" id="customer_number"
                   class="form-control" min="1" step="1"
                   value="{{ kdnr_value }}"
-                  {% if not is_cust_checked %}disabled{% endif %}>
+                  {% if suggested_nr is defined and suggested_nr is not none %}data-suggested="{{ suggested_nr }}"{% endif %}>
                 <small class="text-muted" id="kdnr-hint"
-                  {% if customer %}style="display:none"{% endif %}>
+                  {% if customer or not is_cust_checked %}style="display:none"{% endif %}>
                   Vorgeschlagen — überschreibbar.
                 </small>
               </div>
@@ -230,11 +235,15 @@
 (function () {
   var custCb = document.getElementById('is_customer');
   var nrInput = document.getElementById('customer_number');
+  var hint = document.getElementById('kdnr-hint');
   if (!custCb || !nrInput) return;
+  var suggested = nrInput.dataset.suggested || '';
   function sync() {
-    nrInput.disabled = !custCb.checked;
-    if (!custCb.checked) {
+    if (hint) hint.style.display = custCb.checked ? '' : 'none';
+    if (!custCb.checked && suggested && nrInput.value === suggested) {
       nrInput.value = '';
+    } else if (custCb.checked && nrInput.value === '' && suggested) {
+      nrInput.value = suggested;
     }
   }
   custCb.addEventListener('change', sync);

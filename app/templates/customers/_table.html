@@ -1,14 +1,28 @@
 {% from "_pagination.html" import render_pagination %}
+{# Sortier-Header: klickbarer Link mit Toggle asc<->desc, falls bereits aktiv. #}
+{% macro sort_header(key, label) %}
+  {% set active = sort == key %}
+  {% set new_dir = 'desc' if (active and dir == 'asc') else 'asc' %}
+  <a href="{{ url_for('customers.index', type=type_filter, q=q or none, sort=key, dir=new_dir) }}"
+     class="text-reset text-decoration-none d-inline-flex align-items-center gap-1">
+    {{ label }}
+    {% if active %}
+      <i class="fas fa-sort-{{ 'down' if dir == 'desc' else 'up' }}"></i>
+    {% else %}
+      <i class="fas fa-sort text-muted"></i>
+    {% endif %}
+  </a>
+{% endmacro %}
 <div class="card-body p-0">
 <table class="table table-hover table-striped mb-0">
   <thead>
     <tr>
-      <th style="width:80px">Kd.-Nr.</th>
-      <th>Name</th>
-      <th>Typ</th>
-      <th>Rechnungsadresse</th>
-      <th>Objekt</th>
-      <th>E-Mail</th>
+      <th style="width:80px">{{ sort_header('nr', 'Kd.-Nr.') }}</th>
+      <th>{{ sort_header('name', 'Name') }}</th>
+      <th>{{ sort_header('type', 'Typ') }}</th>
+      <th>{{ sort_header('address', 'Rechnungsadresse') }}</th>
+      <th>{{ sort_header('object', 'Objekt') }}</th>
+      <th>{{ sort_header('email', 'E-Mail') }}</th>
       <th>Telefon</th>
       <th></th>
     </tr>
@@ -47,7 +61,7 @@
       <td>{{ c.email or '—' }}</td>
       <td>{{ c.phone or '—' }}</td>
       <td class="text-end text-nowrap">
-        <a href="{{ url_for('customers.edit', customer_id=c.id) }}"
+        <a href="{{ url_for('customers.edit', customer_id=c.id, next=back_url) }}"
            class="btn btn-sm btn-outline-secondary me-1" title="Bearbeiten">
           <i class="fas fa-edit"></i>
         </a>
@@ -56,7 +70,7 @@
               class="d-inline"
               onsubmit="return confirm('Kontakt {{ c.name|e }} wirklich löschen? Nur möglich, wenn keine Rechnungen, Buchungen oder Eigentümerverhältnisse verknüpft sind.');">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <input type="hidden" name="next" value="{{ url_for('customers.index', type=type_filter or none, q=q or none) }}">
+          <input type="hidden" name="next" value="{{ url_for('customers.index', type=type_filter or none, q=q or none, sort=sort, dir=dir) }}">
           <button type="submit" class="btn btn-sm btn-outline-danger" title="Löschen">
             <i class="fas fa-trash"></i>
           </button>

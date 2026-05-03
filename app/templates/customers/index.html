@@ -7,19 +7,19 @@
     <ul class="nav nav-pills" role="tablist">
       <li class="nav-item">
         <a class="nav-link btn-sm {% if type_filter == 'customer' %}active{% endif %}"
-           href="{{ url_for('customers.index', type='customer', q=q) }}">
+           href="{{ url_for('customers.index', type='customer', q=q or none, sort=sort, dir=dir) }}">
           <i class="fas fa-user me-1"></i> Kunden
         </a>
       </li>
       <li class="nav-item">
         <a class="nav-link btn-sm {% if type_filter == 'supplier' %}active{% endif %}"
-           href="{{ url_for('customers.index', type='supplier', q=q) }}">
+           href="{{ url_for('customers.index', type='supplier', q=q or none, sort=sort, dir=dir) }}">
           <i class="fas fa-truck me-1"></i> Lieferanten
         </a>
       </li>
       <li class="nav-item">
         <a class="nav-link btn-sm {% if type_filter == 'all' %}active{% endif %}"
-           href="{{ url_for('customers.index', type='all', q=q) }}">
+           href="{{ url_for('customers.index', type='all', q=q or none, sort=sort, dir=dir) }}">
           <i class="fas fa-list me-1"></i> Alle
         </a>
       </li>
@@ -30,11 +30,13 @@
         hx-get="{{ url_for('customers.index') }}"
         hx-trigger="input changed delay:300ms, search"
         hx-target="#customer-table"
-        hx-include="[name='q'], [name='type']">
+        hx-include="[name='q'], [name='type'], [name='sort'], [name='dir']">
       <span class="input-group-text"><i class="fas fa-search"></i></span>
     </div>
     <input type="hidden" name="type" value="{{ type_filter }}">
-    <a href="{{ url_for('customers.index', type=type_filter) }}" class="btn btn-sm btn-outline-secondary">
+    <input type="hidden" name="sort" value="{{ sort }}">
+    <input type="hidden" name="dir" value="{{ dir }}">
+    <a href="{{ url_for('customers.index', type=type_filter, sort=sort, dir=dir) }}" class="btn btn-sm btn-outline-secondary">
       <i class="fas fa-times me-1"></i> Zurücksetzen
     </a>
     <div class="ms-auto">

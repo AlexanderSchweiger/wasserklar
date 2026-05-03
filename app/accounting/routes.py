@@ -118,6 +118,10 @@ def bookings():
     account_id = request.args.get("account_id", "", type=str)
     project_id = request.args.get("project_id", "", type=str)
     real_account_id = request.args.get("real_account_id", "", type=str)
+    # kind: "" / "income" / "expense" — schränkt auf Einnahmen oder Ausgaben ein
+    kind = request.args.get("kind", "", type=str)
+    if kind not in ("income", "expense"):
+        kind = ""
 
     query = (
         Booking.query
@@ -133,6 +137,10 @@ def bookings():
         query = query.filter(Booking.project_id == int(project_id))
     if real_account_id:
         query = query.filter(Booking.real_account_id == int(real_account_id))
+    if kind == "income":
+        query = query.filter(Booking.amount > 0)
+    elif kind == "expense":
+        query = query.filter(Booking.amount < 0)
 
     bkgs = query.all()
     accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
@@ -153,14 +161,16 @@ def bookings():
                 Transfer.to_real_account_id == ra_id,
             )
         )
-    # account_id/project_id gelten nur für Buchungen, nicht für Umbuchungen
-    transfers = [] if (account_id or project_id) else transfer_query.all()
+    # account_id/project_id/kind gelten nur für Buchungen, nicht für Umbuchungen.
+    # Bei aktivem Einnahmen-/Ausgaben-Filter werden Umbuchungen ebenfalls
+    # ausgeblendet, da sie weder echte Einnahmen noch Ausgaben sind.
+    transfers = [] if (account_id or project_id or kind) else transfer_query.all()
 
     # Grouping-Modus: Sammelbuchungen werden nur im ungefilterten Jahresview
     # gruppiert. Sobald Konto-/Projekt-/Bankkonto-Filter aktiv sind, fällt die
     # Ansicht auf eine flache Zeilenliste zurück (ADR-002), damit Filter
     # innerhalb einer Sammelbuchung konsistent wirken.
-    group_mode = not (account_id or project_id or real_account_id)
+    group_mode = not (account_id or project_id or real_account_id or kind)
 
     rows = []
     seen_groups = OrderedDict()  # group_id → row-dict (für In-Place-Update)
@@ -244,6 +254,7 @@ def bookings():
         accounts=accounts, projects=projects,
         account_id=account_id, project_id=project_id,
         real_accounts=real_accounts, real_account_id=real_account_id,
+        kind=kind,
         **table_ctx,
     )
 
@@ -1249,6 +1260,7 @@ def report():
         dec31 = acc_svc.year_end_balance(ra, year)
         bewegung = acc_svc.year_booking_total(ra.id, year)
         konten_list.append({
+            "id": ra.id,
             "name": ra.name,
             "iban": ra.iban or "",
             "jan1": jan1,
@@ -1405,12 +1417,12 @@ def report_export_excel():
     ws2 = wb.create_sheet("Einnahmen & Ausgaben")
     _hdr(ws2, 1, ["Konto", "Typ", "Betrag"])
     r2 = 2
-    for name, amt in income_rows:
+    for _acc_id, name, amt in income_rows:
         ws2.cell(row=r2, column=1, value=name)
         ws2.cell(row=r2, column=2, value="Einnahme")
         _eur(ws2, r2, 3, amt); r2 += 1
     _total_row(ws2, r2, "Einnahmen gesamt", total_income, 3); r2 += 2
-    for name, amt in expense_rows:
+    for _acc_id, name, amt in expense_rows:
         ws2.cell(row=r2, column=1, value=name)
         ws2.cell(row=r2, column=2, value="Ausgabe")
         _eur(ws2, r2, 3, amt); r2 += 1
@@ -1485,13 +1497,13 @@ def report_export_excel():
     r5 = 2
     for ps in project_list:
         start_r = r5
-        for acc_name, amt in ps["accounts"]:
+        for _acc_id, acc_name, inc_amt, exp_amt in ps["accounts"]:
             ws5.cell(row=r5, column=1, value=ps["name"])
             ws5.cell(row=r5, column=2, value=acc_name)
-            if amt >= 0:
-                _eur(ws5, r5, 3, amt)
-            else:
-                _eur(ws5, r5, 4, abs(amt))
+            if inc_amt > 0:
+                _eur(ws5, r5, 3, inc_amt)
+            if exp_amt > 0:
+                _eur(ws5, r5, 4, exp_amt)
             r5 += 1
         # Projektsumme
         ws5.cell(row=r5, column=1, value=ps["name"]).font = TOTAL_FONT

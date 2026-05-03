@@ -1,15 +1,29 @@
 {% from "_pagination.html" import render_pagination %}
+{# Sortier-Header: klickbarer Link mit Toggle asc<->desc, falls bereits aktiv. #}
+{% macro sort_header(key, label) %}
+  {% set active = sort == key %}
+  {% set new_dir = 'desc' if (active and dir == 'asc') else 'asc' %}
+  <a href="{{ url_for('meters.index', q=q or none, show_inactive=1 if show_inactive else none, sort=key, dir=new_dir) }}"
+     class="text-reset text-decoration-none d-inline-flex align-items-center gap-1">
+    {{ label }}
+    {% if active %}
+      <i class="fas fa-sort-{{ 'down' if dir == 'desc' else 'up' }}"></i>
+    {% else %}
+      <i class="fas fa-sort text-muted"></i>
+    {% endif %}
+  </a>
+{% endmacro %}
 <div class="card-body p-0">
 <table class="table table-hover table-striped mb-0">
   <thead>
     <tr>
       <th>Status</th>
-      <th>Zählernummer</th>
-      <th>Objekt</th>
-      <th>Besitzer</th>
+      <th>{{ sort_header('nr', 'Zählernummer') }}</th>
+      <th>{{ sort_header('object', 'Objekt') }}</th>
+      <th>{{ sort_header('owner', 'Besitzer') }}</th>
       <th>Standort</th>
-      <th>Eichjahr</th>
-      <th>Eingebaut</th>
+      <th>{{ sort_header('eichjahr', 'Eichjahr') }}</th>
+      <th>{{ sort_header('installed', 'Eingebaut') }}</th>
       <th class="text-end">Ablesungen</th>
       <th></th>
     </tr>

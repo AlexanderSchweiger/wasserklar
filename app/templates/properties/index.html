@@ -10,9 +10,11 @@
         hx-get="{{ url_for('properties.index') }}"
         hx-trigger="input changed delay:300ms, search"
         hx-target="#property-table"
-        hx-include="[name='q']">
+        hx-include="[name='q'], [name='sort'], [name='dir']">
       <span class="input-group-text"><i class="fas fa-search"></i></span>
     </div>
+    <input type="hidden" name="sort" value="{{ sort }}">
+    <input type="hidden" name="dir" value="{{ dir }}">
     <div class="card-options">
       <a href="{{ url_for('properties.new') }}" class="btn btn-primary btn-sm">
         <i class="fas fa-plus me-1"></i> Neues Objekt

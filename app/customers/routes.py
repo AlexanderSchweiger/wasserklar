@@ -1,11 +1,12 @@
 from flask import render_template, redirect, url_for, flash, request, jsonify
 from flask_login import login_required
+from sqlalchemy import case as sa_case, func as sa_func
 from sqlalchemy.exc import IntegrityError
 
 from app.customers import bp
 from app.customers.duplicate_check import find_similar_customers
 from app.extensions import db
-from app.models import Customer, PropertyOwnership
+from app.models import Customer, Property, PropertyOwnership
 from app.pagination import paginate_query
 from app.utils import bump_customer_counter_to, next_customer_number
 
@@ -20,6 +21,11 @@ REQUIRED_ADDRESS_FIELDS = [
 # Erlaubte Werte des type-Filters in der Liste.
 _TYPE_FILTERS = {"customer", "supplier", "all"}
 
+# Erlaubte Sort-Keys der Kontaktliste (Mapping URL-Param -> ORDER-BY-Logik
+# in ``_apply_customer_sort``).
+_SORT_KEYS = {"nr", "name", "type", "address", "object", "email"}
+_DEFAULT_SORT = "name"
+
 
 @bp.route("/")
 @login_required
@@ -28,14 +34,22 @@ def index():
     type_filter = request.args.get("type", "all")
     if type_filter not in _TYPE_FILTERS:
         type_filter = "all"
+    sort = request.args.get("sort", _DEFAULT_SORT)
+    if sort not in _SORT_KEYS:
+        sort = _DEFAULT_SORT
+    direction = request.args.get("dir", "asc")
+    if direction not in ("asc", "desc"):
+        direction = "asc"
 
-    query = Customer.query.filter_by(active=True).order_by(Customer.name)
+    query = Customer.query.filter_by(active=True)
     if type_filter == "customer":
         query = query.filter(Customer.is_customer.is_(True))
     elif type_filter == "supplier":
         query = query.filter(Customer.is_supplier.is_(True))
     if q:
         query = query.filter(Customer.name.ilike(f"%{q}%"))
+
+    query = _apply_customer_sort(query, sort, direction)
 
     pagination = paginate_query(query, page_key="customers")
     customers = pagination.items
@@ -50,12 +64,22 @@ def index():
         ownerships = []
     property_map = {o.customer_id: o.property for o in ownerships}
 
+    # Back-URL fuer Edit-/Delete-Links: erhaelt alle aktuellen Filter, Such-
+    # und Pagination-Parameter, damit der User nach dem Speichern wieder auf
+    # derselben Liste landet.
+    back_url = request.full_path
+    if back_url.endswith("?"):
+        back_url = back_url[:-1]
+
     ctx = dict(
         customers=customers,
         property_map=property_map,
         pagination=pagination,
         type_filter=type_filter,
         q=q,
+        sort=sort,
+        dir=direction,
+        back_url=back_url,
     )
     # HTMX: nur Tabellen-Fragment zurueckgeben
     if request.headers.get("HX-Request"):
@@ -183,8 +207,20 @@ def edit(customer_id):
                 form_data=request.form,
             )
         flash("Kontakt aktualisiert.", "success")
-        return redirect(url_for("customers.detail", customer_id=customer.id))
-    return render_template("customers/form.html", customer=customer, form_data=None)
+        # Redirect zurueck zur Uebersicht — bevorzugt zur exakten URL,
+        # von der der User kam (mit Filter, Suche, Pagination). Open-Redirect-
+        # Schutz: nur Pfade unterhalb /customers erlauben.
+        next_url = request.form.get("next", "")
+        if next_url.startswith("/customers"):
+            return redirect(next_url)
+        return redirect(url_for("customers.index"))
+    next_url = request.args.get("next", "")
+    return render_template(
+        "customers/form.html",
+        customer=customer,
+        form_data=None,
+        next_url=next_url,
+    )
 
 
 @bp.route("/<int:customer_id>/deactivate", methods=["POST"])
@@ -347,6 +383,71 @@ def quick_create():
     })
 
 
+def _apply_customer_sort(query, sort: str, direction: str):
+    """Haengt die ORDER-BY-Klausel passend zum gewaehlten Spalten-Sort an.
+
+    Sekundaer immer nach Name, damit gleiche Werte stabil sortiert sind.
+    NULL-Werte (z.B. fehlende Kundennummer bei reinen Lieferanten oder leere
+    E-Mails) wandern in beiden Richtungen ans Ende — portabel ueber SQLite,
+    MySQL/MariaDB und Postgres via "is null"-CASE-Sortier-Praefix (ANSI
+    ``NULLS LAST`` wird von MySQL nicht unterstuetzt).
+    """
+    desc = direction == "desc"
+
+    def order(col):
+        return [
+            sa_case((col.is_(None), 1), else_=0).asc(),
+            col.desc() if desc else col.asc(),
+        ]
+
+    if sort == "nr":
+        return query.order_by(*order(Customer.customer_number), Customer.name.asc())
+    if sort == "type":
+        # asc: Kunden zuerst (inkl. Doppelrolle), dann reine Lieferanten.
+        # desc: reine Lieferanten zuerst.
+        if desc:
+            return query.order_by(
+                Customer.is_supplier.desc(),
+                Customer.is_customer.desc(),
+                Customer.name.asc(),
+            )
+        return query.order_by(
+            Customer.is_customer.desc(),
+            Customer.is_supplier.desc(),
+            Customer.name.asc(),
+        )
+    if sort == "address":
+        return query.order_by(
+            *order(Customer.ort),
+            *order(Customer.strasse),
+            *order(Customer.hausnummer),
+            Customer.name.asc(),
+        )
+    if sort == "object":
+        # Pro Kunde nur eine Repraesentations-Objektnummer fuer den Sort
+        # (kleinste object_number aller aktiven Eigentuemer-Verhaeltnisse).
+        # LEFT JOIN, damit Kunden ohne Objekt (z.B. Lieferanten) nicht
+        # rausfallen — sie landen via NULLS-LAST-CASE am Ende.
+        sub = (
+            db.session.query(
+                PropertyOwnership.customer_id.label("cid"),
+                sa_func.min(Property.object_number).label("obj_nr"),
+            )
+            .join(Property, Property.id == PropertyOwnership.property_id)
+            .filter(PropertyOwnership.valid_to.is_(None))
+            .group_by(PropertyOwnership.customer_id)
+            .subquery()
+        )
+        return (
+            query.outerjoin(sub, sub.c.cid == Customer.id)
+            .order_by(*order(sub.c.obj_nr), Customer.name.asc())
+        )
+    if sort == "email":
+        return query.order_by(*order(Customer.email), Customer.name.asc())
+    # Default und sort == "name"
+    return query.order_by(Customer.name.desc() if desc else Customer.name.asc())
+
+
 def _missing_required_fields(form) -> list[str]:
     """Gibt die Labels der leeren Pflichtfelder zurück."""
     missing = []
@@ -406,11 +507,9 @@ def _apply_customer_fields(customer, form, *, is_new: bool) -> str | None:
     except InvalidOperation:
         return f"Ungültiger Wert für Zusatzgebühr: {raw_add}"
 
-    # Kundennummer: nur fuer Kunden vergeben.
-    if not customer.is_customer:
-        customer.customer_number = None
-        return None
-
+    # Kundennummer ist optional und unique. Auch reine Lieferanten duerfen
+    # eine Nummer haben — nur die Auto-Vergabe bei leerem Feld bleibt Kunden
+    # vorbehalten, damit Lieferanten nicht ungewollt Counter-Werte ziehen.
     raw_nr = form.get("customer_number", "").strip()
     if raw_nr:
         try:
@@ -428,7 +527,8 @@ def _apply_customer_fields(customer, form, *, is_new: bool) -> str | None:
         customer.customer_number = requested
         bump_customer_counter_to(requested)
     else:
-        # Feld leer: bei Neuanlage Counter ziehen, beim Bearbeiten bestehende behalten.
-        if is_new or customer.customer_number is None:
+        # Feld leer: bei Neuanlage als Kunde Counter ziehen; beim Bearbeiten
+        # oder bei reinen Lieferanten bestehenden Wert (oft None) belassen.
+        if is_new and customer.is_customer:
             customer.customer_number = next_customer_number()
     return None

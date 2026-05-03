@@ -43,10 +43,16 @@
   </div>
 </div>
 
+{# Hilfs-Argumente: real_account_id wird durchgereicht, falls der Bericht
+   bereits gefiltert ist — sonst sieht der Klick-Drilldown andere Zahlen als
+   die Tile. #}
+{% set ra_arg = {'real_account_id': real_account_id} if real_account_id else {} %}
+
 <!-- Saldo-Kacheln -->
 <div class="row row-deck row-cards mb-3">
   <div class="col-md-4">
-    <div class="card bg-success text-white h-100">
+    <a href="{{ url_for('accounting.bookings', year=year, kind='income', **ra_arg) }}"
+       class="card card-link bg-success text-white h-100 text-decoration-none">
       <div class="card-body d-flex flex-column">
         <div class="small text-uppercase fw-semibold mb-2" style="color: rgba(255,255,255,0.7)">
           Einnahmen {{ year }}
@@ -56,10 +62,11 @@
           <i class="fas fa-arrow-up me-1"></i> Einnahmen
         </div>
       </div>
-    </div>
+    </a>
   </div>
   <div class="col-md-4">
-    <div class="card bg-danger text-white h-100">
+    <a href="{{ url_for('accounting.bookings', year=year, kind='expense', **ra_arg) }}"
+       class="card card-link bg-danger text-white h-100 text-decoration-none">
       <div class="card-body d-flex flex-column">
         <div class="small text-uppercase fw-semibold mb-2" style="color: rgba(255,255,255,0.7)">
           Ausgaben {{ year }}
@@ -69,7 +76,7 @@
           <i class="fas fa-arrow-down me-1"></i> Ausgaben
         </div>
       </div>
-    </div>
+    </a>
   </div>
   <div class="col-md-4">
     <div class="card {{ 'bg-success' if balance >= 0 else 'bg-danger' }} text-white h-100">
@@ -111,7 +118,11 @@
             {% set ns.sum_jan1 = ns.sum_jan1 + k.jan1 %}
             {% set ns.sum_dec31 = ns.sum_dec31 + k.dec31 %}
             <tr>
-              <td><strong>{{ k.name }}</strong></td>
+              <td>
+                <a href="{{ url_for('accounting.bookings', year=year, real_account_id=k.id) }}"
+                   class="text-reset text-decoration-none fw-bold"
+                   title="Buchungen für dieses Bankkonto anzeigen">{{ k.name }}</a>
+              </td>
               <td class="text-muted" style="font-size:.85em">{{ k.iban }}</td>
               <td class="text-end">{{ k.jan1|de_number }} €</td>
               <td class="text-end {{ 'text-success' if k.bewegung >= 0 else 'text-danger' }}">
@@ -155,11 +166,16 @@
       <div class="card-body p-0">
         <table class="table table-hover mb-0">
           <tbody>
-            {% for name, total in income_rows %}
+            {% for acc_id, name, total in income_rows %}
             <tr>
-              <td>{{ name }}</td>
+              <td>
+                <a href="{{ url_for('accounting.bookings', year=year, account_id=acc_id, kind='income', **ra_arg) }}"
+                   class="text-reset text-decoration-none"
+                   title="Einnahmen-Buchungen für dieses Konto anzeigen">{{ name }}</a>
+              </td>
               <td class="text-end text-success fw-bold">
-                {{ total|de_number }} €
+                <a href="{{ url_for('accounting.bookings', year=year, account_id=acc_id, kind='income', **ra_arg) }}"
+                   class="text-success text-decoration-none">{{ total|de_number }} €</a>
               </td>
             </tr>
             {% else %}
@@ -181,11 +197,16 @@
       <div class="card-body p-0">
         <table class="table table-hover mb-0">
           <tbody>
-            {% for name, total in expense_rows %}
+            {% for acc_id, name, total in expense_rows %}
             <tr>
-              <td>{{ name }}</td>
+              <td>
+                <a href="{{ url_for('accounting.bookings', year=year, account_id=acc_id, kind='expense', **ra_arg) }}"
+                   class="text-reset text-decoration-none"
+                   title="Ausgaben-Buchungen für dieses Konto anzeigen">{{ name }}</a>
+              </td>
               <td class="text-end text-danger fw-bold">
-                {{ total|de_number }} €
+                <a href="{{ url_for('accounting.bookings', year=year, account_id=acc_id, kind='expense', **ra_arg) }}"
+                   class="text-danger text-decoration-none">{{ total|de_number }} €</a>
               </td>
             </tr>
             {% else %}
@@ -210,19 +231,51 @@
   <div class="col-md-6 col-lg-4">
     <div class="card">
       <div class="card-header">
-        <h3 class="card-title fw-bold">{{ ps.name }}</h3>
+        <h3 class="card-title fw-bold">
+          {% if ps.id %}
+          <a href="{{ url_for('accounting.bookings', year=year, project_id=ps.id, **ra_arg) }}"
+             class="text-reset text-decoration-none"
+             title="Buchungen für dieses Projekt anzeigen">{{ ps.name }}</a>
+          {% else %}
+          {{ ps.name }}
+          {% endif %}
+        </h3>
       </div>
       <div class="card-body p-0">
         <table class="table table-sm mb-0">
           <tbody>
-            {% for acc_name, total in ps.accounts %}
+            {% set ps_extra = dict(ra_arg, **({'project_id': ps.id} if ps.id else {})) %}
+            {% for acc_id, acc_name, inc_amt, exp_amt in ps.accounts %}
+            {% if inc_amt > 0 %}
             <tr>
-              <td class="text-muted" style="font-size:.85em">{{ acc_name }}</td>
-              <td class="text-end {{ 'text-success' if total >= 0 else 'text-danger' }}"
-                  style="font-size:.85em">
-                {{ total|abs|de_number }} €
+              <td class="text-muted" style="font-size:.85em">
+                <a href="{{ url_for('accounting.bookings', year=year, account_id=acc_id, kind='income', **ps_extra) }}"
+                   class="text-reset text-decoration-none"
+                   title="Einnahmen-Buchungen anzeigen">{{ acc_name }}</a>
+              </td>
+              <td class="text-end text-success" style="font-size:.85em">
+                <a href="{{ url_for('accounting.bookings', year=year, account_id=acc_id, kind='income', **ps_extra) }}"
+                   class="text-decoration-none text-success">
+                  {{ inc_amt|de_number }} €
+                </a>
               </td>
             </tr>
+            {% endif %}
+            {% if exp_amt > 0 %}
+            <tr>
+              <td class="text-muted" style="font-size:.85em">
+                <a href="{{ url_for('accounting.bookings', year=year, account_id=acc_id, kind='expense', **ps_extra) }}"
+                   class="text-reset text-decoration-none"
+                   title="Ausgaben-Buchungen anzeigen">{{ acc_name }}</a>
+              </td>
+              <td class="text-end text-danger" style="font-size:.85em">
+                <a href="{{ url_for('accounting.bookings', year=year, account_id=acc_id, kind='expense', **ps_extra) }}"
+                   class="text-decoration-none text-danger">
+                  {{ exp_amt|de_number }} €
+                </a>
+              </td>
+            </tr>
+            {% endif %}
             {% endfor %}
           </tbody>
           <tfoot class="table-light">

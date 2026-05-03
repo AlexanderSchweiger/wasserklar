@@ -13,7 +13,7 @@
           hx-get="{{ url_for('accounting.bookings') }}"
           hx-trigger="change"
           hx-target="#bookings-table"
-          hx-include="[name='year'],[name='account_id'],[name='project_id'],[name='real_account_id']">
+          hx-include="[name='year'],[name='account_id'],[name='project_id'],[name='real_account_id'],[name='kind']">
       </div>
       <div class="mb-3">
         {# Versteckter Select – HTMX hört darauf #}
@@ -21,7 +21,7 @@
           hx-get="{{ url_for('accounting.bookings') }}"
           hx-trigger="change"
           hx-target="#bookings-table"
-          hx-include="[name='year'],[name='account_id'],[name='project_id'],[name='real_account_id']">
+          hx-include="[name='year'],[name='account_id'],[name='project_id'],[name='real_account_id'],[name='kind']">
           <option value=""></option>
           {% for ra in real_accounts %}
           <option value="{{ ra.id }}" {{ 'selected' if real_account_id|string == ra.id|string }}
@@ -51,12 +51,24 @@
         </div>
       </div>
       <div class="mb-3">
+        <label class="form-label mb-0 me-1">Typ</label>
+        <select name="kind" class="form-select form-select-sm"
+          hx-get="{{ url_for('accounting.bookings') }}"
+          hx-trigger="change"
+          hx-target="#bookings-table"
+          hx-include="[name='year'],[name='account_id'],[name='project_id'],[name='real_account_id'],[name='kind']">
+          <option value="" {{ 'selected' if not kind }}>Alle</option>
+          <option value="income" {{ 'selected' if kind == 'income' }}>Einnahmen</option>
+          <option value="expense" {{ 'selected' if kind == 'expense' }}>Ausgaben</option>
+        </select>
+      </div>
+      <div class="mb-3">
         <label class="form-label mb-0 me-1">Konto</label>
         <select name="account_id" class="form-select form-select-sm tom-select"
           hx-get="{{ url_for('accounting.bookings') }}"
           hx-trigger="change"
           hx-target="#bookings-table"
-          hx-include="[name='year'],[name='account_id'],[name='project_id'],[name='real_account_id']">
+          hx-include="[name='year'],[name='account_id'],[name='project_id'],[name='real_account_id'],[name='kind']">
           <option value="">Alle Konten</option>
           {% for a in accounts %}
           <option value="{{ a.id }}" {{ 'selected' if account_id|string == a.id|string }}>
@@ -71,7 +83,7 @@
           hx-get="{{ url_for('accounting.bookings') }}"
           hx-trigger="change"
           hx-target="#bookings-table"
-          hx-include="[name='year'],[name='account_id'],[name='project_id'],[name='real_account_id']">
+          hx-include="[name='year'],[name='account_id'],[name='project_id'],[name='real_account_id'],[name='kind']">
           <option value="">Alle Projekte</option>
           {% for p in projects %}
           <option value="{{ p.id }}" {{ 'selected' if project_id|string == p.id|string }}>
@@ -85,7 +97,7 @@
           hx-get="{{ url_for('accounting.bookings') }}"
           hx-trigger="click"
           hx-target="#bookings-table"
-          hx-include="[name='year'],[name='account_id'],[name='project_id'],[name='real_account_id']">
+          hx-include="[name='year'],[name='account_id'],[name='project_id'],[name='real_account_id'],[name='kind']">
           <i class="fas fa-search me-1"></i> Anzeigen
         </button>
         <a href="{{ url_for('accounting.bookings') }}" class="btn btn-sm btn-outline-secondary">

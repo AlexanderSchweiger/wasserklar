@@ -178,10 +178,11 @@ def run_data_migrations(db, *, verbose=False):
     from sqlalchemy import func
     from app.models import Customer, Invoice, OpenItem
 
-    # Kundennummern fuer Altbestand vergeben
+    # Kundennummern fuer Altbestand vergeben — nur fuer echte Kunden,
+    # reine Lieferanten (is_customer=False) bleiben ohne Nummer.
     kunden_ohne_nr = (
         Customer.query
-        .filter(Customer.customer_number == None)  # noqa: E711
+        .filter(Customer.customer_number == None, Customer.is_customer == True)  # noqa: E711, E712
         .order_by(Customer.id)
         .all()
     )

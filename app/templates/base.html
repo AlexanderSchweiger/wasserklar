@@ -261,34 +261,6 @@
             </li>
 
             <li class="nav-item">
-              <a class="nav-link dropdown-toggle {% if auswertungen_active %}active{% endif %}" href="#navbar-auswertungen"
-                data-bs-toggle="collapse" role="button"
-                aria-expanded="{{ 'true' if auswertungen_active else 'false' }}"
-                aria-controls="navbar-auswertungen">
-                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-chart-line"></i></span>
-                <span class="nav-link-title">Auswertungen</span>
-              </a>
-              <div class="collapse {% if auswertungen_active %}show{% endif %}" id="navbar-auswertungen">
-                <ul class="nav nav-sm flex-column ps-3">
-                  <li class="nav-item">
-                    <a class="nav-link {% if _nav_jahresbericht %}active{% endif %}"
-                      href="{{ url_for('accounting.report') }}">
-                      <i class="fas fa-chart-bar me-2"></i>Jahresbericht
-                    </a>
-                  </li>
-                  {% if has_vat_fiscal_year %}
-                  <li class="nav-item">
-                    <a class="nav-link {% if _nav_ust %}active{% endif %}"
-                      href="{{ url_for('accounting.ust') }}">
-                      <i class="fas fa-percentage me-2"></i>USt-Voranmeldung
-                    </a>
-                  </li>
-                  {% endif %}
-                </ul>
-              </div>
-            </li>
-
-            <li class="nav-item">
               <a class="nav-link dropdown-toggle {% if stammdaten_active %}active{% endif %}" href="#navbar-stammdaten"
                 data-bs-toggle="collapse" role="button"
                 aria-expanded="{{ 'true' if stammdaten_active else 'false' }}"
@@ -327,6 +299,34 @@
                     <a class="nav-link {% if _nav_import %}active{% endif %}"
                       href="{{ url_for('import_csv.upload') }}">
                       <i class="fas fa-file-import me-2"></i>Stammdaten importieren
+                    </a>
+                  </li>
+                  {% endif %}
+                </ul>
+              </div>
+            </li>
+
+            <li class="nav-item">
+              <a class="nav-link dropdown-toggle {% if auswertungen_active %}active{% endif %}" href="#navbar-auswertungen"
+                data-bs-toggle="collapse" role="button"
+                aria-expanded="{{ 'true' if auswertungen_active else 'false' }}"
+                aria-controls="navbar-auswertungen">
+                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-chart-line"></i></span>
+                <span class="nav-link-title">Auswertungen</span>
+              </a>
+              <div class="collapse {% if auswertungen_active %}show{% endif %}" id="navbar-auswertungen">
+                <ul class="nav nav-sm flex-column ps-3">
+                  <li class="nav-item">
+                    <a class="nav-link {% if _nav_jahresbericht %}active{% endif %}"
+                      href="{{ url_for('accounting.report') }}">
+                      <i class="fas fa-chart-bar me-2"></i>Jahresbericht
+                    </a>
+                  </li>
+                  {% if has_vat_fiscal_year %}
+                  <li class="nav-item">
+                    <a class="nav-link {% if _nav_ust %}active{% endif %}"
+                      href="{{ url_for('accounting.ust') }}">
+                      <i class="fas fa-percentage me-2"></i>USt-Voranmeldung
                     </a>
                   </li>
                   {% endif %}

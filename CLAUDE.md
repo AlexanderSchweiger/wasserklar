@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Wassergenossenschaft Verwaltung — a Flask web app for Austrian water cooperative management. All UI text, flash messages, and documentation are in **German**.
 
-Stack: Flask 3.1, SQLAlchemy, Flask-Login, Flask-Mail, Flask-Migrate, WeasyPrint (PDF), pandas (CSV/Excel import), **Tabler 1.0.0 (Bootstrap 5)**, TomSelect 2.3.1, HTMX 2.0.4, SQLite.
+Stack: Flask 3.1, SQLAlchemy 2.x, Flask-Login, Flask-Mail, Flask-Migrate, WeasyPrint (PDF), pandas (CSV/Excel import), **Tabler 1.0.0 (Bootstrap 5)**, TomSelect 2.3.1, HTMX 2.0.4. DB ist dialekt-portabel (SQLite / MySQL-MariaDB / Postgres) — siehe "Datenbank" unten.
 
 ## Common Commands
 
@@ -116,9 +116,32 @@ All form handling uses raw `request.form` — no WTForms form classes, though Fl
 - Enhanced `<select>` elements need `class="form-select tom-select"` (or `form-control tom-select`) to activate TomSelect
 - **UI size convention**: filter bars use `form-control-sm` / `form-select-sm` / `btn-sm`; card-header action buttons use `btn-sm`; main form submit buttons and inputs use the default (non-sm) size
 
+## Datenbank
+
+**Default ist SQLite** (`sqlite:///instance/wg.db`, siehe [config.py](config.py)) — wer ohne `.env`-Override startet, bekommt eine lokale Datei-DB. Die App ist aber **dialekt-portabel** und laeuft auch auf **MySQL/MariaDB** und **Postgres**: einfach `DATABASE_URL` in der `.env` setzen, z.B.:
+
+```env
+DATABASE_URL=mysql+pymysql://user:pass@host:3307/dbname?charset=utf8mb4
+DATABASE_URL=postgresql://user:pass@host:5432/dbname
+```
+
+Lokal laeuft typischerweise **MariaDB** (Netzwerk-Host) — entsprechend muss neuer Query-/Migrations-Code auf allen drei Dialekten kompilieren.
+
+**Portabilitaets-Stolperer**, die in der Vergangenheit zugeschlagen haben:
+
+- **`NULLS LAST` / `NULLS FIRST`**: ANSI-SQL, von Postgres/SQLite (≥ 3.30) unterstuetzt, **nicht** von MySQL/MariaDB. SQLAlchemy's `col.asc().nulls_last()` rendert direkt zu `NULLS LAST` und kracht auf MySQL. Portable Loesung: ein CASE-Praefix, z.B. in [app/customers/routes.py](app/customers/routes.py:`_apply_customer_sort`):
+  ```python
+  sa_case((col.is_(None), 1), else_=0).asc(),  # NULLs ans Ende
+  col.asc(),                                    # eigentlicher Sort
+  ```
+- **`ilike`**: Postgres-spezifisch. SQLAlchemy mappt das auf MySQL implizit zu `LIKE` (das dort by default case-insensitive ist) und auf SQLite zu `LIKE` mit case-insensitive collation — funktioniert in allen drei, aber nicht aus demselben Grund. OK so lange man ASCII-Strings vergleicht.
+- **Boolean-Spalten**: SQLite hat keinen nativen Bool-Typ (Integer 0/1), MySQL hat `TINYINT(1)`, Postgres hat `BOOLEAN`. SQLAlchemy abstrahiert das — `Column.is_(True)` ist robust, `== 1`/`== True` funktioniert je nach Dialekt unterschiedlich.
+- **`upgrade-db` / `_add_col_if_missing`** in [cli.py](cli.py) geht ueber `PRAGMA table_info` (SQLite-only). Auf MySQL/Postgres muss eine andere Spaltenpruefung her — wer dort eine Migration nachzieht, sollte `inspect(db.engine).get_columns(...)` aus `sqlalchemy` nutzen statt PRAGMA.
+
+`instance/wg.db` und `instance/pdfs/` sind weiterhin die SQLite-Default-Pfade; bei MySQL/Postgres ist nur `instance/pdfs/` relevant.
+
 ## Key Constraints
 
 - **WeasyPrint** (PDF generation, email with PDF) requires GTK3 and only works inside the Docker container. `requirements-dev.txt` excludes it. Routes handle `ImportError` gracefully.
 - **Templates** use Tabler 1.0.0 layout (`templates/base.html`) with all assets loaded from CDNs (Font Awesome 5, Tabler, TomSelect).
-- **SQLite** database lives at `instance/wg.db`; generated PDFs go to `instance/pdfs/`.
 - **Cooperative identity** (name, address, IBAN, etc.) is configured via `AppSetting` (DB) with `.env` fallback (`WG_NAME`, `WG_ADDRESS`, etc.) and appears on invoices and in all templates.

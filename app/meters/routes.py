@@ -4,11 +4,62 @@ from decimal import Decimal
 
 from flask import render_template, redirect, url_for, flash, request, jsonify
 from flask_login import login_required, current_user
+from sqlalchemy import case as sa_case
 
 from app.meters import bp
 from app.extensions import db
 from app.models import WaterMeter, MeterReading, Property, PropertyOwnership, Customer
 from app.pagination import paginate_query
+
+
+# Erlaubte Sort-Keys der Zaehler-Verwaltungstabelle (Mapping URL-Param ->
+# ORDER-BY-Logik in ``_apply_meter_sort``).
+_SORT_KEYS = {"nr", "object", "owner", "eichjahr", "installed"}
+_DEFAULT_SORT = "object"
+
+
+def _apply_meter_sort(query, sort: str, direction: str):
+    """Haengt die ORDER-BY-Klausel passend zum gewaehlten Spalten-Sort an.
+
+    Sekundaer immer nach Property.object_number, Property.ort, damit gleiche
+    Werte stabil sortiert sind. NULL-Werte (z.B. fehlender Besitzer, leeres
+    Eichjahr) wandern in beiden Richtungen ans Ende — portabel ueber SQLite,
+    MySQL/MariaDB und Postgres via "is null"-CASE-Sortier-Praefix (ANSI
+    ``NULLS LAST`` wird von MySQL nicht unterstuetzt).
+    """
+    desc = direction == "desc"
+
+    def order(col):
+        return [
+            sa_case((col.is_(None), 1), else_=0).asc(),
+            col.desc() if desc else col.asc(),
+        ]
+
+    if sort == "nr":
+        return query.order_by(
+            *order(WaterMeter.meter_number),
+            Property.object_number.asc(), Property.ort.asc(),
+        )
+    if sort == "owner":
+        return query.order_by(
+            *order(Customer.name),
+            Property.object_number.asc(), Property.ort.asc(),
+        )
+    if sort == "eichjahr":
+        return query.order_by(
+            *order(WaterMeter.eichjahr),
+            Property.object_number.asc(), Property.ort.asc(),
+        )
+    if sort == "installed":
+        return query.order_by(
+            *order(WaterMeter.installed_from),
+            Property.object_number.asc(), Property.ort.asc(),
+        )
+    # Default und sort == "object"
+    return query.order_by(
+        *order(Property.object_number),
+        *order(Property.ort),
+    )
 
 
 def _build_replacement_map(meters, year):
@@ -49,6 +100,12 @@ def index():
     """Zähler-Verwaltung: Stammdaten anlegen/bearbeiten/tauschen/löschen."""
     q = request.args.get("q", "").strip()
     show_inactive = request.args.get("show_inactive", "0") == "1"
+    sort = request.args.get("sort", _DEFAULT_SORT)
+    if sort not in _SORT_KEYS:
+        sort = _DEFAULT_SORT
+    direction = request.args.get("dir", "asc")
+    if direction not in ("asc", "desc"):
+        direction = "asc"
 
     meters_query = (
         WaterMeter.query
@@ -62,7 +119,6 @@ def index():
         )
         .outerjoin(Customer, Customer.id == PropertyOwnership.customer_id)
         .filter(Property.active == True)
-        .order_by(Property.object_number, Property.ort)
     )
     if not show_inactive:
         meters_query = meters_query.filter(WaterMeter.active == True)
@@ -77,6 +133,8 @@ def index():
                 WaterMeter.location.ilike(f"%{q}%"),
             )
         )
+
+    meters_query = _apply_meter_sort(meters_query, sort, direction)
 
     pagination = paginate_query(meters_query, page_key="meters")
     meters = pagination.items
@@ -102,6 +160,8 @@ def index():
         pagination=pagination,
         q=q,
         show_inactive=show_inactive,
+        sort=sort,
+        dir=direction,
     )
     if request.headers.get("HX-Request"):
         return render_template("meters/_manage_table.html", **ctx)

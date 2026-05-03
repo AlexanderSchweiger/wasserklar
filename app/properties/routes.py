@@ -2,6 +2,7 @@ from datetime import date, timedelta
 
 from flask import render_template, redirect, url_for, flash, request
 from flask_login import login_required
+from sqlalchemy import case as sa_case, func as sa_func
 
 from app.properties import bp
 from app.extensions import db
@@ -9,11 +10,24 @@ from app.models import Property, PropertyOwnership, Customer
 from app.pagination import paginate_query
 
 
+# Erlaubte Sort-Keys der Objektliste (Mapping URL-Param -> ORDER-BY-Logik
+# in ``_apply_property_sort``).
+_SORT_KEYS = {"nr", "type", "address", "owner"}
+_DEFAULT_SORT = "nr"
+
+
 @bp.route("/")
 @login_required
 def index():
     q = request.args.get("q", "").strip()
-    query = Property.query.filter_by(active=True).order_by(Property.object_number, Property.ort)
+    sort = request.args.get("sort", _DEFAULT_SORT)
+    if sort not in _SORT_KEYS:
+        sort = _DEFAULT_SORT
+    direction = request.args.get("dir", "asc")
+    if direction not in ("asc", "desc"):
+        direction = "asc"
+
+    query = Property.query.filter_by(active=True)
     if q:
         query = query.filter(
             db.or_(
@@ -22,12 +36,20 @@ def index():
                 Property.ort.ilike(f"%{q}%"),
             )
         )
+    query = _apply_property_sort(query, sort, direction)
+
     pagination = paginate_query(query, page_key="properties")
     properties = pagination.items
-    ctx = dict(properties=properties, pagination=pagination)
+    ctx = dict(
+        properties=properties,
+        pagination=pagination,
+        q=q,
+        sort=sort,
+        dir=direction,
+    )
     if request.headers.get("HX-Request"):
         return render_template("properties/_table.html", **ctx)
-    return render_template("properties/index.html", q=q, **ctx)
+    return render_template("properties/index.html", **ctx)
 
 
 @bp.route("/new", methods=["GET", "POST"])
@@ -127,6 +149,59 @@ def ownership_end(property_id, ownership_id):
     db.session.commit()
     flash("Besitzverhältnis beendet.", "info")
     return redirect(url_for("properties.detail", property_id=property_id))
+
+
+def _apply_property_sort(query, sort: str, direction: str):
+    """Haengt die ORDER-BY-Klausel passend zum gewaehlten Spalten-Sort an.
+
+    Sekundaer immer nach object_number, damit gleiche Werte stabil sortiert
+    sind. NULL-Werte (z.B. fehlende Objektnummer oder Objekte ohne aktuellen
+    Besitzer) wandern in beiden Richtungen ans Ende — portabel ueber SQLite,
+    MySQL/MariaDB und Postgres via ``IS NULL``-CASE-Sortier-Praefix (ANSI
+    ``NULLS LAST`` wird von MySQL nicht unterstuetzt).
+    """
+    desc = direction == "desc"
+
+    def order(col):
+        return [
+            sa_case((col.is_(None), 1), else_=0).asc(),
+            col.desc() if desc else col.asc(),
+        ]
+
+    if sort == "type":
+        return query.order_by(
+            *order(Property.object_type),
+            *order(Property.object_number),
+        )
+    if sort == "address":
+        return query.order_by(
+            *order(Property.ort),
+            *order(Property.strasse),
+            *order(Property.hausnummer),
+            *order(Property.object_number),
+        )
+    if sort == "owner":
+        # Pro Objekt nur ein Besitzer-Name fuer den Sort (min(name) als
+        # Aggregat — pro Property gibt's per Datenmodell ohnehin nur einen
+        # aktiven Eigentuemer, das min ist nur Schutz gegen Datenanomalien).
+        # LEFT JOIN, damit Objekte ohne Besitzer nicht rausfallen — sie landen
+        # via NULLS-LAST-CASE am Ende.
+        sub = (
+            db.session.query(
+                PropertyOwnership.property_id.label("pid"),
+                sa_func.min(Customer.name).label("owner_name"),
+            )
+            .join(Customer, Customer.id == PropertyOwnership.customer_id)
+            .filter(PropertyOwnership.valid_to.is_(None))
+            .group_by(PropertyOwnership.property_id)
+            .subquery()
+        )
+        return (
+            query.outerjoin(sub, sub.c.pid == Property.id)
+            .order_by(*order(sub.c.owner_name), Property.object_number.asc())
+        )
+    # Default und sort == "nr"
+    return query.order_by(*order(Property.object_number), Property.ort.asc())
 
 
 def _property_from_form(prop):

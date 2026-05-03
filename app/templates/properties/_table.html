@@ -1,12 +1,26 @@
 {% from "_pagination.html" import render_pagination %}
+{# Sortier-Header: klickbarer Link mit Toggle asc<->desc, falls bereits aktiv. #}
+{% macro sort_header(key, label) %}
+  {% set active = sort == key %}
+  {% set new_dir = 'desc' if (active and dir == 'asc') else 'asc' %}
+  <a href="{{ url_for('properties.index', q=q or none, sort=key, dir=new_dir) }}"
+     class="text-reset text-decoration-none d-inline-flex align-items-center gap-1">
+    {{ label }}
+    {% if active %}
+      <i class="fas fa-sort-{{ 'down' if dir == 'desc' else 'up' }}"></i>
+    {% else %}
+      <i class="fas fa-sort text-muted"></i>
+    {% endif %}
+  </a>
+{% endmacro %}
 <div class="card-body p-0">
 <table class="table table-hover table-striped mb-0">
   <thead>
     <tr>
-      <th>Nummer</th>
-      <th>Typ</th>
-      <th>Adresse</th>
-      <th>Aktueller Besitzer</th>
+      <th>{{ sort_header('nr', 'Nummer') }}</th>
+      <th>{{ sort_header('type', 'Typ') }}</th>
+      <th>{{ sort_header('address', 'Adresse') }}</th>
+      <th>{{ sort_header('owner', 'Aktueller Besitzer') }}</th>
       <th></th>
     </tr>
   </thead>

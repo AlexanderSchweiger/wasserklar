@@ -11,7 +11,7 @@
           hx-get="{{ url_for('meters.index') }}"
           hx-trigger="input changed delay:300ms"
           hx-target="#meters-table"
-          hx-include="[name='q'],[name='show_inactive']">
+          hx-include="[name='q'],[name='show_inactive'],[name='sort'],[name='dir']">
         <span class="input-group-text"><i class="fas fa-search"></i></span>
       </div>
       <div class="form-check form-switch ms-3 mb-0">
@@ -21,11 +21,13 @@
           hx-get="{{ url_for('meters.index') }}"
           hx-trigger="change"
           hx-target="#meters-table"
-          hx-include="[name='q'],[name='show_inactive']">
+          hx-include="[name='q'],[name='show_inactive'],[name='sort'],[name='dir']">
         <label class="form-check-label" for="show_inactive">Ausgebaute anzeigen</label>
       </div>
+      <input type="hidden" name="sort" value="{{ sort }}">
+      <input type="hidden" name="dir" value="{{ dir }}">
       <div class="ms-auto d-flex gap-2 align-items-center">
-        <a href="{{ url_for('meters.index') }}" class="btn btn-sm btn-outline-secondary">
+        <a href="{{ url_for('meters.index', sort=sort, dir=dir) }}" class="btn btn-sm btn-outline-secondary">
           <i class="fas fa-times me-1"></i> Zurücksetzen
         </a>
       </div>

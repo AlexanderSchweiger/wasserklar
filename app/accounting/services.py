@@ -295,13 +295,33 @@ def year_booking_total(ra_id, year):
 # ---------------------------------------------------------------------------
 
 def year_account_totals(year, real_account_id=None):
-    """Liefert ``[(account_name, total), ...]`` gruppiert je Erfolgskonto."""
+    """Liefert pro Erfolgskonto getrennte Summen für Einnahmen und Ausgaben.
+
+    Jeder Eintrag hat ``id``, ``name``, ``income`` (Summe aller positiven
+    Buchungsbeträge) und ``expense`` (Summe der Beträge aller negativen
+    Buchungen, als positiver Wert). Damit summieren sich die Konto-Werte
+    buchungsweise auf — identisch zum ``kind=income/expense``-Filter in der
+    Buchungsübersicht. Konten mit gemischten Buchungen (z. B. Erstattung auf
+    einem Ausgabenkonto) erscheinen daher in beiden Listen.
+    """
+    from sqlalchemy import case
     from app.models import Account
+
+    income_expr = func.coalesce(
+        func.sum(case((Booking.amount > 0, Booking.amount), else_=0)),
+        0,
+    )
+    expense_expr = func.coalesce(
+        func.sum(case((Booking.amount < 0, -Booking.amount), else_=0)),
+        0,
+    )
 
     q = (
         db.session.query(
+            Account.id.label("id"),
             Account.name.label("name"),
-            func.sum(Booking.amount).label("total"),
+            income_expr.label("income"),
+            expense_expr.label("expense"),
         )
         .join(Booking, Booking.account_id == Account.id)
         .filter(extract("year", Booking.date) == year)
@@ -313,27 +333,65 @@ def year_account_totals(year, real_account_id=None):
 
 
 def year_income_expense(year, real_account_id=None):
-    """Liefert ``(income_rows, expense_rows, total_income, total_expense, balance)``."""
+    """Liefert ``(income_rows, expense_rows, total_income, total_expense, balance)``.
+
+    ``income_rows`` und ``expense_rows`` sind Listen von Tripeln
+    ``(account_id, account_name, betrag)``. Beträge sind buchungsweise
+    aggregiert (siehe :func:`year_account_totals`), daher matchen
+    ``total_income`` / ``total_expense`` exakt die Summen der Buchungs-
+    übersicht mit ``kind=income`` bzw. ``kind=expense``.
+    """
     rows = year_account_totals(year, real_account_id=real_account_id)
-    income_rows = [(r.name, Decimal(str(r.total))) for r in rows if r.total is not None and r.total > 0]
-    expense_rows = [(r.name, abs(Decimal(str(r.total)))) for r in rows if r.total is not None and r.total < 0]
-    total_income = sum((r[1] for r in income_rows), Decimal("0"))
-    total_expense = sum((r[1] for r in expense_rows), Decimal("0"))
+    income_rows = []
+    expense_rows = []
+    for r in rows:
+        inc = Decimal(str(r.income or 0))
+        exp = Decimal(str(r.expense or 0))
+        if inc > 0:
+            income_rows.append((r.id, r.name, inc))
+        if exp > 0:
+            expense_rows.append((r.id, r.name, exp))
+    total_income = sum((r[2] for r in income_rows), Decimal("0"))
+    total_expense = sum((r[2] for r in expense_rows), Decimal("0"))
     balance = total_income - total_expense
     return income_rows, expense_rows, total_income, total_expense, balance
 
 
 def year_project_summary(year, real_account_id=None):
-    """Projektübersicht: Einnahmen/Ausgaben pro Projekt+Konto."""
+    """Projektübersicht: Einnahmen/Ausgaben pro Projekt+Konto.
+
+    Pro Projekt+Konto werden Einnahmen (Summe positiver Buchungsbeträge) und
+    Ausgaben (Summe der Beträge negativer Buchungen, positiv dargestellt)
+    getrennt aufsummiert — analog zu :func:`year_account_totals`. Die
+    Projektsummen ``income`` / ``expense`` matchen dadurch exakt die
+    Buchungsübersicht mit aktivem Projekt-Filter und ``kind=income`` bzw.
+    ``kind=expense``.
+
+    Jeder Account-Eintrag ist ein Quadrupel
+    ``(account_id, account_name, income, expense)``; ``income`` oder
+    ``expense`` können 0 sein, beide gleichzeitig nur wenn das Projekt+Konto
+    keine Buchungen hat (passiert in dieser Query nicht, da gejoined wird).
+    """
     from sqlalchemy import case
     from app.models import Account, Project
+
+    income_expr = func.coalesce(
+        func.sum(case((Booking.amount > 0, Booking.amount), else_=0)),
+        0,
+    )
+    expense_expr = func.coalesce(
+        func.sum(case((Booking.amount < 0, -Booking.amount), else_=0)),
+        0,
+    )
 
     q = (
         db.session.query(
             Project.id.label("project_id"),
             Project.name.label("project_name"),
+            Account.id.label("account_id"),
             Account.name.label("account_name"),
-            func.sum(Booking.amount).label("total"),
+            income_expr.label("income"),
+            expense_expr.label("expense"),
         )
         .select_from(Booking)
         .outerjoin(Project, Booking.project_id == Project.id)
@@ -354,17 +412,17 @@ def year_project_summary(year, real_account_id=None):
         key = row.project_id
         if key not in summary:
             summary[key] = {
+                "id": row.project_id,
                 "name": row.project_name or "Ohne Projekt",
                 "accounts": [],
                 "income": Decimal("0"),
                 "expense": Decimal("0"),
             }
-        rt = row.total or Decimal("0")
-        summary[key]["accounts"].append((row.account_name, rt))
-        if rt >= 0:
-            summary[key]["income"] += rt
-        else:
-            summary[key]["expense"] += abs(rt)
+        inc = Decimal(str(row.income or 0))
+        exp = Decimal(str(row.expense or 0))
+        summary[key]["accounts"].append((row.account_id, row.account_name, inc, exp))
+        summary[key]["income"] += inc
+        summary[key]["expense"] += exp
 
     return [v for k, v in sorted(summary.items(), key=lambda x: (x[0] is None, x[1]["name"]))]
 
