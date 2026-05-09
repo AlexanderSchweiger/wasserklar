@@ -36,17 +36,30 @@ docker compose exec wg flask --app run create-admin
 
 **No tests, linting, or formatter are configured.**
 
-## Schema-Änderungen (neue Spalten)
+## Schema-Änderungen (Alembic)
 
-Neue Datenbankspalten werden **ausschließlich** über den `upgrade-db`-Befehl in [`cli.py`](cli.py) verwaltet. Bei jeder Modelländerung, die eine neue Spalte hinzufügt:
+Schema-Migrationen werden ueber **Alembic / Flask-Migrate** verwaltet. Die Migrations-History liegt in [`migrations/versions/`](migrations/versions/), `init-db` und `upgrade-db` rufen intern `flask db upgrade` auf.
 
-1. Eintrag in `_add_col_if_missing(...)` **sowohl** im `init-db`- als auch im `upgrade-db`-Block ergänzen.
-2. Beide Blöcke müssen identisch sein — `upgrade-db` ist der primäre Ort, `init-db` übernimmt dieselben Einträge damit Neuinstallationen ebenfalls funktionieren.
-3. Die Funktion ist idempotent (bereits vorhandene Spalten werden übersprungen) — kein manuelles SQL nötig.
+Neue Spalte hinzufuegen:
 
-```python
-_add_col_if_missing("tabelle", "spalte TYP DEFAULT wert", "spalte")
+```bash
+# 1. Model in app/models.py aendern
+# 2. Migration generieren (IMMER gegen leeres Postgres oder leeres SQLite —
+#    nicht gegen die laufende Dev-DB, sonst greift der Diff nur Teilstuecke):
+DATABASE_URL=sqlite:///temp_migration.db \
+  flask --app run db migrate -m "[oss-v1.X.0] add column foo to bar"
+# 3. Generierte Datei in migrations/versions/ pruefen — Alembic-Autogenerate
+#    ist nicht perfekt, manchmal muessen Defaults / FK-Reihenfolge nachgezogen
+#    werden.
+# 4. Im Dev-Setup nachziehen: flask --app run upgrade-db
+# 5. Temp-DB loeschen
 ```
+
+**Dialect-Stolperer**: Erste Migration immer auf Postgres oder leerem SQLite generieren — niemals aus einer existierenden MariaDB-DB. Autogenerate erkennt dort einige Postgres-spezifische Typen (z.B. `Numeric(10,2)`) als Diff, weil MariaDB sie anders rendert. `render_as_batch` ist in `migrations/env.py` automatisch aktiv fuer SQLite (Pflicht fuer ALTER COLUMN).
+
+**Multi-Tenant**: SaaS-Schicht setzt vor dem Subprocess `ALEMBIC_TENANT_SCHEMA=tenant_xxx` — `env.py` legt dann die `alembic_version`-Tabelle im Tenant-Schema ab statt in `public`. Pro Tenant eine Version-Zeile, partielle Rollouts moeglich.
+
+Der alte `_SCHEMA_UPGRADE_COLUMNS`-Mechanismus in [cli.py](cli.py) ist deprecated — Funktion bleibt importable fuer eventuelle Bestandskunden-Migrations, wird aber nicht mehr aufgerufen. **Nicht mehr erweitern.**
 
 ## Architecture
 

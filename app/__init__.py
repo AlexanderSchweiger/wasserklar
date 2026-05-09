@@ -104,6 +104,13 @@ def create_app(config_name=None):
         except Exception:
             return dict(wg={})
 
+    # Context Processor: OSS-Version fuer Footer/About — SaaS-Layer
+    # ueberschreibt den Footer-Block selbst und kombiniert mit saas_version.
+    @app.context_processor
+    def inject_oss_version():
+        from app.__version__ import __version__
+        return dict(oss_version=__version__)
+
     # Context Processor: flag setzen, wenn mindestens ein USt-pflichtiges Jahr existiert
     @app.context_processor
     def inject_vat_flag():
@@ -113,6 +120,14 @@ def create_app(config_name=None):
             return dict(has_vat_fiscal_year=has_vat)
         except Exception:
             return dict(has_vat_fiscal_year=False)
+
+    # Context Processor: kontextuelle Hilfe-URL fuer den Help-Button im Header.
+    # Mapping in app/help_links.py; Default-Base-URL via HELP_BASE_URL-Config.
+    @app.context_processor
+    def inject_help_url():
+        from flask import request
+        from app.help_links import help_url_for
+        return dict(help_url=help_url_for(request.endpoint, app.config.get("HELP_BASE_URL", "")))
 
     # Mail-Einstellungen aus DB laden (überschreibt .env-Werte)
     with app.app_context():

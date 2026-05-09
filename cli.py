@@ -228,25 +228,54 @@ def register_commands(app):
 
     @app.cli.command("init-db")
     def init_db():
-        """Datenbanktabellen erstellen und Standard-Konten anlegen."""
-        db.create_all()
-        print("Datenbanktabellen erstellt.")
-
-        # Fehlende Spalten ergaenzen (SQLite unterstuetzt kein ALTER COLUMN,
-        # aber ADD COLUMN ist moeglich – sicher fuer Re-Runs).
-        with db.engine.begin() as conn:
-            apply_schema_upgrades(conn, db.engine.dialect.name)
+        """Datenbanktabellen via Alembic anlegen und Defaults seeden."""
+        from flask_migrate import upgrade as alembic_upgrade
+        alembic_upgrade()
+        print("Datenbankschema auf head migriert.")
 
         seed_default_tax_rates(db)
         seed_default_dunning_policy(db)
 
     @app.cli.command("upgrade-db")
     def upgrade_db():
-        """Fehlende Spalten in bestehender Datenbank ergaenzen (fuer Updates)."""
-        db.create_all()
+        """Datenbankschema auf head bringen und Defaults/Datenmigrationen nachziehen.
 
-        with db.engine.begin() as conn:
-            apply_schema_upgrades(conn, db.engine.dialect.name, verbose=True)
+        Erkennt automatisch DBs, die Tabellen aber keine eingetragene Alembic-
+        Revision haben (entweder pre-Alembic oder ein abgebrochener init-Lauf
+        hat eine leere ``alembic_version`` hinterlassen): zieht fehlende
+        Spalten via altem ``apply_schema_upgrades`` nach und setzt den
+        Alembic-Marker auf head, ohne bestehende Tabellen anzufassen.
+        """
+        from flask_migrate import upgrade as alembic_upgrade, stamp as alembic_stamp
+
+        inspector = sa.inspect(db.engine)
+        existing_tables = set(inspector.get_table_names())
+        non_alembic_tables = existing_tables - {"alembic_version"}
+
+        # Hat die DB schon Inhalts-Tabellen UND keine eingetragene Revision?
+        # Dann ist sie pre-Alembic (oder halb-initialisiert) und Alembic
+        # darf NICHT von Anfang upgraden — das wuerde versuchen, alle
+        # Tabellen erneut anzulegen.
+        current_revision = None
+        if "alembic_version" in existing_tables:
+            try:
+                with db.engine.connect() as conn:
+                    row = conn.execute(
+                        sa.text("SELECT version_num FROM alembic_version LIMIT 1")
+                    ).first()
+                    current_revision = row[0] if row else None
+            except Exception:
+                current_revision = None
+
+        if non_alembic_tables and current_revision is None:
+            print("Pre-Alembic / un-stamped DB erkannt — zieh fehlende Spalten nach...")
+            with db.engine.begin() as conn:
+                apply_schema_upgrades(conn, db.engine.dialect.name, verbose=True)
+            alembic_stamp(revision="head")
+            print("Alembic-Marker auf head gesetzt. Ab jetzt laeuft das Schema-Mgmt ueber Alembic.")
+        else:
+            alembic_upgrade()
+            print("Datenbankschema auf head migriert.")
 
         seed_default_tax_rates(db, verbose=True)
         seed_default_dunning_policy(db, verbose=True)

@@ -32,6 +32,11 @@ class Config:
     WG_EMAIL = os.environ.get("WG_EMAIL", "")
     WG_PHONE = os.environ.get("WG_PHONE", "")
 
+    # Hilfe-Link im App-Header. Default: oeffentliche Doku auf wasserklar.at.
+    # Self-hosted Installationen koennen via .env auf eine eigene Doku zeigen
+    # (oder leer setzen, dann ist der Help-Button im Template versteckt).
+    HELP_BASE_URL = os.environ.get("HELP_BASE_URL", "https://wasserklar.at/docs")
+
 
 class DevelopmentConfig(Config):
     DEBUG = True
