@@ -419,6 +419,7 @@
       <!-- Page Body -->
       <div class="page-body">
         <div class="container-xl">
+          {% block saas_banner %}{% endblock %}
           {% with messages = get_flashed_messages(with_categories=true) %} {%
           for category, message in messages %}
           <div
