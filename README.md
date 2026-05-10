@@ -61,10 +61,10 @@ cp .env.example .env.test
 docker compose -f docker-compose.test.yml up -d --build
 
 # 3. Datenbank initialisieren (einmalig)
-docker compose -f docker-compose.test.yml exec wg flask --app run init-db
+docker compose -f docker-compose.test.yml exec wkoss flask --app run init-db
 
 # 4. Admin-Benutzer anlegen (einmalig)
-docker compose -f docker-compose.test.yml exec wg flask --app run create-admin
+docker compose -f docker-compose.test.yml exec wkoss flask --app run create-admin
 #    → http://SERVER-IP:5000
 ```
 
@@ -85,15 +85,36 @@ cp .env.example .env.prod
 docker compose -f docker-compose.prod.yml up -d --build
 
 # 3. Datenbank initialisieren (einmalig bei Erstinstallation)
-docker compose -f docker-compose.prod.yml exec wg flask --app run init-db
+docker compose -f docker-compose.prod.yml exec wkoss flask --app run init-db
 
 # 4. Admin-Benutzer anlegen (einmalig bei Erstinstallation)
-docker compose -f docker-compose.prod.yml exec wg flask --app run create-admin
+docker compose -f docker-compose.prod.yml exec wkoss flask --app run create-admin
 #    → https://deine-domain.at  (oder http://SERVER-IP:5000)
 
-# Update (ohne Datenverlust):
-docker compose -f docker-compose.prod.yml up -d --build
-docker compose -f docker-compose.prod.yml exec wg flask --app run upgrade-db
+# Update auf eine neue Version (ohne Datenverlust):
+git pull                                                                            # 1. neuen Code holen
+docker compose -f docker-compose.prod.yml up -d --build                             # 2. Image neu bauen + Container neu starten
+docker compose -f docker-compose.prod.yml exec wkoss flask --app run upgrade-db     # 3. Schema-Migrations + Daten-Seeds nachziehen
+```
+
+`upgrade-db` ist **idempotent** und deckt alle Faelle ab:
+
+- **Frisch installiert (Alembic-stamped)** → laeuft `flask db upgrade` und zieht alle neuen Migrations.
+- **Pre-Alembic-Bestand** (z.B. erste Installation vor v1.0.0) → ergaenzt fehlende v1.0.0-Spalten via internem Fallback, stempelt auf die Initial-Revision und zieht danach alle nachfolgenden Migrations regulaer durch.
+
+Wenn `upgrade-db` mit `Unknown column …` o.ae. crashed, ist der Alembic-Stempel inkonsistent zur DB (Bug aus aelteren Versionen). Diagnose und manueller Fix:
+
+```bash
+# Zeigt aktuell gestempelte Revision
+docker compose -f docker-compose.prod.yml exec wkoss flask --app run db current
+
+# Migrationsverlauf (Reihenfolge der Revisions)
+docker compose -f docker-compose.prod.yml exec wkoss flask --app run db history
+
+# Wenn der Stempel "lueft" (Alembic sagt head, DB hat fehlende Spalten):
+# Auf eine Vorrevision zuruecksetzen und nur die fehlenden Migrations ziehen.
+docker compose -f docker-compose.prod.yml exec wkoss flask --app run db stamp <vor-revision>
+docker compose -f docker-compose.prod.yml exec wkoss flask --app run db upgrade <ziel-revision>
 ```
 
 ---
@@ -130,8 +151,8 @@ Die Tests laufen mit **pytest** gegen eine SQLite-In-Memory-Datenbank — kein l
 
 | Befehl | Beschreibung |
 |--------|-------------|
-| `flask --app run init-db` | Tabellen erstellen + Standard-Konten anlegen |
-| `flask --app run upgrade-db` | Neue Spalten hinzufügen (idempotent, für Updates) |
+| `flask --app run init-db` | Tabellen erstellen + Standard-Konten anlegen (einmalig bei Erstinstallation) |
+| `flask --app run upgrade-db` | Schema-Migrations + Seeds nachziehen (idempotent, einziges Update-Kommando) |
 | `flask --app run create-admin` | Admin-Benutzer interaktiv anlegen |
 | `flask --app run run` | Entwicklungsserver starten |
 

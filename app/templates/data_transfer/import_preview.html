@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block title %}Daten-Import — Vorschau{% endblock %}
+{% block page_title %}<i class="fas fa-file-import me-2"></i> Daten-Import — Vorschau{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="col-md-10">
+    <div class="card mb-3">
+      <div class="card-header">
+        <h3 class="card-title">Schritt 2 von 2 — Vorschau und Bestaetigung</h3>
+      </div>
+      <div class="card-body">
+        <h4>Manifest</h4>
+        <table class="table table-vcenter table-sm">
+          <tbody>
+            <tr><th>Quellsystem</th><td>{{ manifest.source_variant | upper }} (App-Version {{ manifest.source_app_version }})</td></tr>
+            <tr><th>Quell-Dialekt</th><td>{{ manifest.source_dialect }}</td></tr>
+            <tr><th>Schema-Revision</th>
+              <td>
+                <code>{{ manifest.alembic_revision or 'unbekannt' }}</code>
+                {% if validation.schema_status == 'ok' %}
+                  <span class="badge bg-success ms-2">passt</span>
+                {% elif validation.schema_status == 'older' %}
+                  <span class="badge bg-warning ms-2">aelter als Ziel</span>
+                {% elif validation.schema_status == 'unknown' %}
+                  <span class="badge bg-danger ms-2">unbekannt</span>
+                {% elif validation.schema_status == 'newer' %}
+                  <span class="badge bg-danger ms-2">neuer als Ziel</span>
+                {% endif %}
+              </td>
+            </tr>
+            <tr><th>Erstellt am</th><td>{{ manifest.exported_at }}</td></tr>
+            <tr><th>Erstellt von</th><td>{{ manifest.exported_by_user }}</td></tr>
+            <tr><th>Modus</th>
+              <td>
+                {% if mode == 'replace' %}
+                  <strong>Vollersatz</strong> — Tabellen werden geleert
+                {% else %}
+                  <strong>Merge</strong>
+                  {% if update_existing %}(bestehende Records werden aktualisiert){% endif %}
+                {% endif %}
+              </td>
+            </tr>
+            <tr><th>Auswahl</th>
+              <td>
+                {% set sel = manifest.selection %}
+                {% if sel.stammdaten %}<span class="badge bg-blue-lt me-1">Stammdaten</span>{% endif %}
+                {% if sel.buchungen %}
+                  <span class="badge bg-blue-lt me-1">
+                    Buchungen{% if sel.buchungen_years %} ({{ sel.buchungen_years|join(', ') }}){% endif %}
+                  </span>
+                {% endif %}
+                {% if sel.mahnwesen %}<span class="badge bg-blue-lt me-1">Mahnwesen</span>{% endif %}
+                {% if sel.einstellungen %}<span class="badge bg-blue-lt me-1">Einstellungen</span>{% endif %}
+                {% if sel.include_pdfs %}<span class="badge bg-azure-lt ms-1">+ PDFs</span>{% endif %}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {% if validation.errors %}
+    <div class="alert alert-danger">
+      <h4 class="alert-title"><i class="fas fa-times-circle me-1"></i>Import blockiert</h4>
+      <ul class="mb-0">
+        {% for err in validation.errors %}<li>{{ err }}</li>{% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    {% if validation.warnings %}
+    <div class="alert alert-warning">
+      <h4 class="alert-title"><i class="fas fa-exclamation-triangle me-1"></i>Hinweise</h4>
+      <ul class="mb-0">
+        {% for warn in validation.warnings %}<li>{{ warn }}</li>{% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    <div class="card mb-3">
+      <div class="card-header">
+        <h3 class="card-title">Tabellen-Uebersicht</h3>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-vcenter table-sm">
+          <thead>
+            <tr>
+              <th>Tabelle</th>
+              <th class="text-end">Im Export</th>
+              <th class="text-end">Aktuell in DB</th>
+              <th>Aktion</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in validation.tables_overview %}
+            <tr>
+              <td><code>{{ row.name }}</code></td>
+              <td class="text-end">{{ row.rows }}</td>
+              <td class="text-end">{{ row.current_count }}</td>
+              <td>
+                {% if mode == 'replace' %}
+                  {% if row.current_count > 0 %}
+                    <span class="text-danger">DELETE {{ row.current_count }} + INSERT {{ row.rows }}</span>
+                  {% else %}
+                    INSERT {{ row.rows }}
+                  {% endif %}
+                {% else %}
+                  MERGE {{ row.rows }} (Duplikat-Check)
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="d-flex">
+      <form method="post" action="{{ url_for('data_transfer.import_confirm', token=token) }}" class="me-2">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="mode" value="{{ mode }}">
+        {% if update_existing %}<input type="hidden" name="update_existing" value="1">{% endif %}
+        {% if validation.schema_status in ('older',) and not validation.errors %}
+          <label class="form-check d-inline-block me-2">
+            <input type="checkbox" class="form-check-input" name="accept_schema_warning" value="1" required>
+            <span class="form-check-label small">Ich akzeptiere moegliche Schema-Inkompatibilitaet</span>
+          </label>
+        {% endif %}
+        <button type="submit" class="btn btn-danger" {% if validation.errors %}disabled{% endif %}>
+          <i class="fas fa-check me-1"></i> Import jetzt anwenden
+        </button>
+      </form>
+      <form method="post" action="{{ url_for('data_transfer.import_cancel', token=token) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-secondary">
+          <i class="fas fa-times me-1"></i> Abbrechen
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

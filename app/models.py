@@ -191,17 +191,48 @@ class WaterMeter(db.Model):
     installed_to = db.Column(db.Date, nullable=True)     # Ausbaudatum
     initial_value = db.Column(db.Numeric(12, 3), nullable=True)  # Stand bei Einbau
     eichjahr = db.Column(db.Integer, nullable=True)              # Eichjahr des Zählers
+    # Klassifizierung Hauptzaehler ("main") vs. Subzaehler ("sub").
+    # Subzaehler koennen optional auf einen Hauptzaehler via parent_meter_id
+    # zeigen (max. eine Ebene; parent muss meter_type='main' sein -- wird in
+    # der Route validiert, kein DB-Constraint, weil portabel ueber drei Dialekte).
+    meter_type = db.Column(
+        db.String(10), nullable=False,
+        default="main", server_default=db.text("'main'"),
+    )
+    parent_meter_id = db.Column(
+        db.Integer,
+        db.ForeignKey("water_meters.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     readings = db.relationship("MeterReading", backref="meter", lazy="dynamic",
                                cascade="all, delete-orphan",
                                order_by="MeterReading.year.desc()")
 
+    parent_meter = db.relationship(
+        "WaterMeter", remote_side="WaterMeter.id",
+        backref=db.backref("sub_meters", lazy="dynamic"),
+        foreign_keys=[parent_meter_id],
+    )
+
     def last_reading(self):
         return self.readings.order_by(MeterReading.year.desc()).first()
 
     def reading_for_year(self, year):
         return self.readings.filter_by(year=year).first()
+
+    def is_main(self):
+        return self.meter_type == "main"
+
+    def is_sub(self):
+        return self.meter_type == "sub"
+
+    def type_label(self):
+        return "Subzähler" if self.is_sub() else "Hauptzähler"
+
+    def type_badge_class(self):
+        return "bg-info text-white" if self.is_sub() else "bg-secondary text-white"
 
     def __repr__(self):
         return f"<WaterMeter {self.meter_number}>"

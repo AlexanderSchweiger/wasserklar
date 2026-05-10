@@ -56,6 +56,9 @@ def create_app(config_name=None):
     from app.dunning import bp as dunning_bp
     app.register_blueprint(dunning_bp)
 
+    from app.data_transfer import bp as data_transfer_bp
+    app.register_blueprint(data_transfer_bp)
+
     # hx-boost-Navigationen (base.html: <body hx-boost="true">) senden
     # sowohl "HX-Request: true" als auch "HX-Boosted: true". Unsere Routen
     # verwenden "HX-Request" als Signal fuer Partial-Fragment-Antworten

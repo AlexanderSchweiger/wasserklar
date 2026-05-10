@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Import-Ergebnis{% endblock %}
+{% block page_title %}<i class="fas fa-check-circle me-2"></i> Ablesungen-Import: Ergebnis{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="col-md-6">
+    <div class="card {% if stats.errors %}border-danger{% elif stats.skipped_unmapped or stats.skipped_dup %}border-warning{% else %}border-success{% endif %}">
+      <div class="card-header">
+        <h3 class="card-title">Import abgeschlossen</h3>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-sm mb-0">
+          <tbody>
+            <tr>
+              <td><i class="fas fa-plus-circle me-1 text-success"></i> Neu angelegt</td>
+              <td class="text-end"><strong>{{ stats.created }}</strong></td>
+            </tr>
+            <tr>
+              <td><i class="fas fa-edit me-1 text-info"></i> Aktualisiert</td>
+              <td class="text-end"><strong>{{ stats.updated }}</strong></td>
+            </tr>
+            <tr class="table-secondary">
+              <td><i class="fas fa-forward me-1"></i> Übersprungen (Skip-Häkchen)</td>
+              <td class="text-end"><strong>{{ stats.skipped }}</strong></td>
+            </tr>
+            <tr class="{% if stats.skipped_dup %}table-warning{% endif %}">
+              <td><i class="fas fa-copy me-1"></i> Übersprungen (Duplikat)</td>
+              <td class="text-end"><strong>{{ stats.skipped_dup }}</strong></td>
+            </tr>
+            <tr class="{% if stats.skipped_unmapped %}table-warning{% endif %}">
+              <td><i class="fas fa-question-circle me-1"></i> Übersprungen (nicht gemappt)</td>
+              <td class="text-end"><strong>{{ stats.skipped_unmapped }}</strong></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card-footer">
+        <a href="{{ url_for('meters.readings') }}" class="btn btn-primary">
+          <i class="fas fa-list me-1"></i> Ablesungen ansehen
+        </a>
+        <a href="{{ url_for('meters.import_upload') }}" class="btn btn-secondary ms-2">
+          <i class="fas fa-file-upload me-1"></i> Neuer Import
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if stats.errors %}
+<div class="row mt-2">
+  <div class="col-md-10">
+    <div class="alert alert-danger">
+      <h6 class="alert-title"><i class="fas fa-times-circle me-1"></i>
+        Fehler ({{ stats.errors|length }})
+      </h6>
+      <ul class="mb-0" style="font-size:.875rem">
+        {% for e in stats.errors[:50] %}
+        <li>{{ e }}</li>
+        {% endfor %}
+        {% if stats.errors|length > 50 %}
+        <li><em>… und {{ stats.errors|length - 50 }} weitere Fehler.</em></li>
+        {% endif %}
+      </ul>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

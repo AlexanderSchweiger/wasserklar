@@ -2,11 +2,21 @@
 {% block title %}Ablesungen importieren{% endblock %}
 {% block page_title %}<i class="fas fa-file-import me-2"></i> Ablesungen importieren{% endblock %}
 {% block content %}
+{# Mode-Labels lokal -- so dass im Routes-Code keine Label-Strings stehen muessen. #}
+{% set mode_labels = {
+  'meter_number': 'Zählernummer',
+  'customer_number': 'Kundennummer',
+  'customer_name': 'Kundenname',
+} %}
+{% set duplicate_labels = {
+  'update': 'Bestehende Ablesungen aktualisieren',
+  'skip': 'Bestehende Ablesungen überspringen',
+} %}
 <div class="row">
-  <div class="col-md-6">
+  <div class="col-lg-8">
     <div class="card">
       <div class="card-header">
-        <h3 class="card-title">CSV / Excel hochladen</h3>
+        <h3 class="card-title">Schritt 1: Datei und Zuordnung wählen</h3>
       </div>
       <form method="post" enctype="multipart/form-data">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -16,25 +26,76 @@
             <ul class="mb-2">
               <li><strong>CSV:</strong> beliebiges Trennzeichen (Komma, Semikolon, Tab), Zeichensatz UTF-8</li>
               <li><strong>Excel:</strong> <code>.xlsx</code> oder <code>.xls</code></li>
-              <li>Zahlen im <strong>österreichischen Format</strong> (Komma als Dezimaltrennzeichen, z.&nbsp;B. <code>1.139,00</code> oder <code>1139,00</code>)</li>
-              <li>Im nächsten Schritt können Sie die Spalten den Programmfeldern zuordnen.</li>
+              <li>Zahlen- und Datumsformate werden im nächsten Schritt automatisch erkannt (DE/AT, US, ISO).</li>
+              <li>In der Vorschau können Sie pro Zeile den Ziel-Zähler, Wert, Datum und Jahr noch korrigieren.</li>
             </ul>
             <strong>Beispiel CSV:</strong>
-            <pre class="mb-0" style="font-size:.8rem;background:#f8f9fa;padding:.5rem;border-radius:4px">Zählernummer;Stand;Jahr;Datum
-Z-00123;1.412,00;2024;2024-12-31
-Z-00124;612,50;2024;2024-12-31
-Z-00125;987;2024;</pre>
-            <small class="text-muted">Spalten <em>Jahr</em> und <em>Datum</em> sind optional.</small>
+            <pre class="mb-0" style="font-size:.8rem;background:#f8f9fa;padding:.5rem;border-radius:4px">Kundennummer;Stand;Jahr;Datum;Verbrauch
+1042;1.412,00;2024;31.12.2024;125,00
+1043;612,50;2024;31.12.2024;
+1044;987;2024;;</pre>
+            <small class="text-muted">
+              Spalten <em>Jahr</em>, <em>Datum</em> und <em>Verbrauch</em> sind optional — wird kein Datum angegeben, nimmt das System den 31.12. des Jahres.
+              Die Spalte <em>Verbrauch</em> dient nur als Vergleichswert: er wird in der Vorschau neben dem berechneten Verbrauch angezeigt und bei Abweichung markiert, aber nicht gespeichert.
+            </small>
           </div>
+
           <div class="mb-3">
-            <label class="form-label">Datei auswählen</label>
+            <label class="form-label">Zuordnungsmodus <span class="text-danger">*</span></label>
+            <div>
+              {% for m in modes %}
+              <div class="form-check form-check-inline">
+                <input class="form-check-input" type="radio" name="mode" id="mode_{{ m }}"
+                       value="{{ m }}" {{ 'checked' if loop.first }}>
+                <label class="form-check-label" for="mode_{{ m }}">
+                  Nach <strong>{{ mode_labels[m] }}</strong>
+                </label>
+              </div>
+              {% endfor %}
+            </div>
+            <small class="text-muted">
+              Bestimmt, wie eine Zeile aus der Datei dem Zähler zugeordnet wird.
+              <em>Zählernummer</em> ist eindeutig; <em>Kundennummer</em>/<em>Kundenname</em>
+              kann mehrdeutig werden, wenn ein Kunde mehrere Zähler hat — Sie können das
+              dann in der Vorschau auflösen.
+            </small>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">Bei bestehender Ablesung (gleicher Zähler + gleiches Jahr)</label>
+            <div>
+              {% for d in duplicate_modes %}
+              <div class="form-check">
+                <input class="form-check-input" type="radio" name="duplicate_mode" id="dup_{{ d }}"
+                       value="{{ d }}" {{ 'checked' if loop.first }}>
+                <label class="form-check-label" for="dup_{{ d }}">
+                  {{ duplicate_labels[d] }}
+                </label>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+
+          <div class="row g-2">
+            <div class="col-md-6">
+              <div class="mb-3">
+                <label class="form-label">Standard-Jahr</label>
+                <input type="number" name="default_year" class="form-control"
+                       value="{{ default_year }}" min="2000" max="2100">
+                <small class="text-muted">Wird verwendet, wenn die Datei keine Jahr-Spalte hat.</small>
+              </div>
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">Datei auswählen <span class="text-danger">*</span></label>
             <input type="file" name="file" class="form-control"
-              id="importFile" accept=".csv,.xlsx,.xls" required>
+                   id="importFile" accept=".csv,.xlsx,.xls" required>
           </div>
         </div>
         <div class="card-footer">
           <button type="submit" class="btn btn-primary">
-            <i class="fas fa-arrow-right me-1"></i> Weiter
+            <i class="fas fa-arrow-right me-1"></i> Weiter zur Vorschau
           </button>
           <a href="{{ url_for('meters.readings') }}" class="btn btn-secondary ms-2">Abbrechen</a>
         </div>

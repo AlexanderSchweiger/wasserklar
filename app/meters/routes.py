@@ -2,11 +2,14 @@ import io
 from datetime import date, datetime
 from decimal import Decimal
 
-from flask import render_template, redirect, url_for, flash, request, jsonify
+from flask import (
+    render_template, redirect, url_for, flash, request, jsonify, session,
+)
 from flask_login import login_required, current_user
 from sqlalchemy import case as sa_case
 
 from app.meters import bp
+from app.meters import import_service
 from app.meters.services import save_reading
 from app.extensions import db
 from app.models import WaterMeter, MeterReading, Property, PropertyOwnership, Customer
@@ -352,6 +355,47 @@ def add_reading(meter_id):
     )
 
 
+def _read_type_and_parent(meter_id: int | None) -> tuple[str, int | None]:
+    """Liest meter_type und parent_meter_id aus dem Form, validiert und gibt
+    ein bereinigtes Tupel zurueck.
+
+    Regeln:
+      - meter_type defaulted auf 'main' (akzeptiert nur 'main'|'sub')
+      - bei meter_type='main' wird parent_meter_id zwingend auf NULL gesetzt
+      - Self-Reference (parent == eigener id) wird gekappt + flash-Warnung
+      - parent muss meter_type='main' sein (sonst gekappt + flash-Warnung)
+    """
+    mt = (request.form.get("meter_type") or "main").strip()
+    if mt not in ("main", "sub"):
+        mt = "main"
+    pid_raw = (request.form.get("parent_meter_id") or "").strip()
+    pid: int | None = None
+    if mt == "sub" and pid_raw:
+        try:
+            pid = int(pid_raw)
+        except ValueError:
+            pid = None
+        if pid and meter_id and pid == meter_id:
+            flash("Ein Zähler kann nicht sein eigener Hauptzähler sein.", "warning")
+            pid = None
+        if pid:
+            parent = db.session.get(WaterMeter, pid)
+            if not parent or parent.meter_type != "main":
+                flash("Übergeordneter Zähler muss ein Hauptzähler sein.", "warning")
+                pid = None
+    return mt, pid
+
+
+def _active_main_meters_excluding(exclude_id: int | None = None) -> list[WaterMeter]:
+    q = WaterMeter.query.filter(
+        WaterMeter.active.is_(True),
+        WaterMeter.meter_type == "main",
+    )
+    if exclude_id:
+        q = q.filter(WaterMeter.id != exclude_id)
+    return q.order_by(WaterMeter.meter_number.asc()).all()
+
+
 @bp.route("/new", methods=["GET", "POST"])
 @login_required
 def meter_new():
@@ -362,6 +406,7 @@ def meter_new():
         installed_from_str = request.form.get("installed_from", "")
         initial_value_str = request.form.get("initial_value", "").replace(",", ".")
         eichjahr_str = request.form.get("eichjahr", "").strip()
+        meter_type, parent_id = _read_type_and_parent(meter_id=None)
         m = WaterMeter(
             property_id=int(request.form["property_id"]),
             meter_number=request.form.get("meter_number", "").strip(),
@@ -373,6 +418,8 @@ def meter_new():
             ),
             initial_value=Decimal(initial_value_str) if initial_value_str else None,
             eichjahr=int(eichjahr_str) if eichjahr_str else None,
+            meter_type=meter_type,
+            parent_meter_id=parent_id,
         )
         db.session.add(m)
         db.session.commit()
@@ -383,6 +430,7 @@ def meter_new():
         "meters/meter_form.html",
         meter=None, properties=properties,
         selected_property_id=selected_property_id,
+        main_meters=_active_main_meters_excluding(),
     )
 
 
@@ -397,6 +445,7 @@ def meter_edit(meter_id):
         installed_from_str = request.form.get("installed_from", "")
         initial_value_str = request.form.get("initial_value", "").replace(",", ".")
         eichjahr_str = request.form.get("eichjahr", "").strip()
+        meter_type, parent_id = _read_type_and_parent(meter_id=meter.id)
         meter.property_id = int(request.form["property_id"])
         meter.meter_number = request.form.get("meter_number", "").strip()
         meter.location = request.form.get("location", "").strip()
@@ -407,113 +456,285 @@ def meter_edit(meter_id):
         )
         meter.initial_value = Decimal(initial_value_str) if initial_value_str else None
         meter.eichjahr = int(eichjahr_str) if eichjahr_str else None
+        meter.meter_type = meter_type
+        meter.parent_meter_id = parent_id
         db.session.commit()
         flash("Zähler aktualisiert.", "success")
         return redirect(url_for("meters.index"))
     return render_template(
         "meters/meter_form.html", meter=meter, properties=properties,
         selected_property_id=None,
+        main_meters=_active_main_meters_excluding(exclude_id=meter.id),
     )
 
 
 # ---------------------------------------------------------------------------
-# CSV / Excel Import
+# CSV / Excel Import — 3-stufiger Wizard
 # ---------------------------------------------------------------------------
+#
+# Architektur (siehe import_service.py fuer das Heavy Lifting):
+#   /meters/import           GET = Upload-Form, POST = Datei -> Pickle -> /preview
+#   /meters/import/preview   GET = Resolve + Vorschau-Editor
+#                            POST mit action=refresh -> Mapping aendern, neu rendern
+#                            POST mit action=confirm  -> User-Edits einlesen,
+#                                                       commit_import, /result
+#   /meters/import/result    GET = Stats anzeigen
+#
+# Persistenz: hochgeladenes DataFrame liegt als Pickle in instance/, der
+# Session-Cookie haelt nur den Dateipfad und die Mapping-Config -- die
+# resolved-Liste wird bei jedem GET frisch aus DataFrame+Config aufgebaut.
+
+_SESSION_FILE_KEY = "meter_import_file"
+_SESSION_CFG_KEY = "meter_import_cfg"
+_SESSION_RESULT_KEY = "meter_import_result"
+
+
+def _abort_to_upload(reason: str = "Sitzung abgelaufen — bitte erneut hochladen.",
+                    category: str = "warning"):
+    flash(reason, category)
+    # Pickle aufraeumen, falls Pfad noch in Session
+    path = session.pop(_SESSION_FILE_KEY, None)
+    if path:
+        import_service.delete_dataframe(path)
+    session.pop(_SESSION_CFG_KEY, None)
+    return redirect(url_for("meters.import_upload"))
+
 
 @bp.route("/import", methods=["GET", "POST"])
 @login_required
-def import_readings():
-    if request.method == "POST" and "file" in request.files:
+def import_upload():
+    """Step 1: Datei + Mapping-Modus + Spalten + Duplikat-Strategie."""
+    if request.method == "POST":
         import pandas as pd
-        f = request.files["file"]
+
+        f = request.files.get("file")
+        if not f or not f.filename:
+            flash("Bitte eine Datei auswählen.", "warning")
+            return redirect(url_for("meters.import_upload"))
+
         filename = f.filename.lower()
         try:
             if filename.endswith(".csv"):
-                df = pd.read_csv(f, dtype=str)
-            else:
+                df = pd.read_csv(f, dtype=str, sep=None, engine="python")
+            elif filename.endswith((".xlsx", ".xls")):
                 df = pd.read_excel(f, dtype=str)
+            else:
+                flash("Nicht unterstütztes Dateiformat. Bitte CSV oder Excel.", "danger")
+                return redirect(url_for("meters.import_upload"))
         except Exception as e:
             flash(f"Fehler beim Lesen der Datei: {e}", "danger")
-            return redirect(url_for("meters.import_readings"))
+            return redirect(url_for("meters.import_upload"))
 
-        # Spaltennamen für Mapping-Dialog zurückgeben
-        if "confirm" not in request.form:
-            return render_template(
-                "meters/import_mapping.html",
-                columns=list(df.columns),
-                preview=df.head(5).to_dict(orient="records"),
-                year=date.today().year,
-            )
+        # Alten Pickle-Stand bereinigen, falls noch einer rumliegt
+        old_path = session.pop(_SESSION_FILE_KEY, None)
+        if old_path:
+            import_service.delete_dataframe(old_path)
 
-        # Mapping anwenden
-        col_meter = request.form.get("col_meter")
-        col_value = request.form.get("col_value")
-        col_year = request.form.get("col_year")
-        col_date = request.form.get("col_date", "")
-        default_year = int(request.form.get("default_year", date.today().year))
+        path = import_service.save_dataframe(df)
+        session[_SESSION_FILE_KEY] = path
 
-        results = {"ok": 0, "skip": 0, "errors": []}
-        for _, row in df.iterrows():
-            meter_num = str(row.get(col_meter, "")).strip()
-            val_raw = str(row.get(col_value, "")).strip()
-            year = int(row[col_year]) if col_year and row.get(col_year) else default_year
-
-            meter = WaterMeter.query.filter_by(meter_number=meter_num).first()
-            if not meter:
-                results["errors"].append(f"Zähler '{meter_num}' nicht gefunden")
-                results["skip"] += 1
-                continue
-            # Österreichisches Zahlenformat: Komma = Dezimal, Punkt = Tausender
-            val_raw_at = val_raw
-            if "," in val_raw_at and "." in val_raw_at:
-                val_raw_at = val_raw_at.replace(".", "")
-            val_raw_at = val_raw_at.replace(",", ".")
-            try:
-                value = Decimal(val_raw_at)
-            except Exception:
-                results["errors"].append(f"Ungültiger Wert '{val_raw}' für {meter_num}")
-                results["skip"] += 1
-                continue
-
-            reading_date = date.today()
-            if col_date and row.get(col_date):
-                try:
-                    reading_date = pd.to_datetime(row[col_date]).date()
-                except Exception:
-                    pass
-
-            existing = MeterReading.query.filter_by(meter_id=meter.id, year=year).first()
-            if existing:
-                existing.value = value
-                existing.reading_date = reading_date
-            else:
-                r = MeterReading(
-                    meter_id=meter.id, year=year, value=value,
-                    reading_date=reading_date, created_by_id=current_user.id,
-                )
-                db.session.add(r)
-
-            # Verbrauch
-            prev = MeterReading.query.filter_by(meter_id=meter.id, year=year - 1).first()
-            if existing:
-                existing.consumption = value - prev.value if prev else None
-            else:
-                r.consumption = value - prev.value if prev else None
-
-            results["ok"] += 1
-
-        db.session.commit()
-        flash(
-            f"Import abgeschlossen: {results['ok']} gespeichert, "
-            f"{results['skip']} übersprungen.",
-            "success" if not results["errors"] else "warning",
+        # Mapping-Konfig: nimm was im Form steht; spaeter im /preview
+        # nochmal anpassbar.
+        cfg = import_service.MappingConfig.from_form(
+            request.form, default_year_fallback=date.today().year,
         )
-        if results["errors"]:
-            for err in results["errors"][:10]:
-                flash(err, "warning")
-        return redirect(url_for("meters.readings"))
+        session[_SESSION_CFG_KEY] = cfg.to_dict()
 
-    return render_template("meters/import.html")
+        return redirect(url_for("meters.import_preview"))
+
+    return render_template(
+        "meters/import.html",
+        modes=import_service.MAPPING_MODES,
+        duplicate_modes=import_service.DUPLICATE_MODES,
+        default_year=date.today().year,
+    )
+
+
+@bp.route("/import/preview", methods=["GET", "POST"])
+@login_required
+def import_preview():
+    """Step 2: Vorschau-Editor.
+
+    GET = Vorschau rendern.
+    POST mit action=refresh = Mapping-Config aktualisieren, neu rendern
+        (User-Edits gehen verloren -- wird im Template kommuniziert).
+    POST mit action=confirm  = wird an import_confirm() weitergeleitet.
+    """
+    path = session.get(_SESSION_FILE_KEY)
+    df = import_service.load_dataframe(path) if path else None
+    if df is None:
+        return _abort_to_upload()
+
+    cfg = import_service.MappingConfig.from_dict(session.get(_SESSION_CFG_KEY))
+    columns = list(df.columns)
+
+    # Auto-suggest col_lookup beim ersten Aufruf, falls leer.
+    if not cfg.col_lookup:
+        cfg.col_lookup = _suggest_lookup_column(columns, cfg.mode)
+    if not cfg.col_value:
+        cfg.col_value = _suggest_value_column(columns)
+    if not cfg.col_date:
+        cfg.col_date = _suggest_date_column(columns)
+    if not cfg.col_year:
+        cfg.col_year = _suggest_year_column(columns)
+    if not cfg.col_consumption:
+        cfg.col_consumption = _suggest_consumption_column(columns)
+
+    if request.method == "POST":
+        # Beide Aktionen (refresh + confirm) muessen die Mapping-Config aus dem
+        # Form uebernehmen. Sonst geht der State der Spalten-Selects verloren,
+        # wenn der User direkt auf "Import ausfuehren" klickt ohne vorher
+        # "Vorschau aktualisieren" gedrueckt zu haben.
+        cfg = import_service.MappingConfig.from_form(
+            request.form, default_year_fallback=cfg.default_year or date.today().year,
+        )
+        session[_SESSION_CFG_KEY] = cfg.to_dict()
+        if request.form.get("action") == "confirm":
+            return _do_confirm(df, cfg)
+
+    rows = import_service.build_resolved_rows(df, cfg)
+    detected_value_fmt, detected_date_fmt = import_service.detect_formats_for_config(df, cfg)
+
+    counts = {"ok": 0, "warn": 0, "err": 0}
+    for r in rows:
+        if r.status in (import_service.STATUS_OK,
+                        import_service.STATUS_OK_PREFERRED_MAIN):
+            counts["ok"] += 1
+        elif r.status == import_service.STATUS_AMBIGUOUS:
+            counts["warn"] += 1
+        else:
+            counts["err"] += 1
+
+    # Meter-Pool fuer Dropdowns: alle aktiven Meter (fuer not_found-Faelle).
+    # Pro Zeile mit candidate_meter_ids wird das Dropdown im Template
+    # entsprechend gefiltert -- meters_by_id ist das O(1)-Lookup dafuer.
+    all_meters = import_service.all_active_meters()
+    meters_by_id = {m.id: m for m in all_meters}
+    owners_by_meter = {m.id: import_service.owner_name_for(m) for m in all_meters}
+
+    return render_template(
+        "meters/import_preview.html",
+        cfg=cfg,
+        columns=columns,
+        rows=rows,
+        counts=counts,
+        all_meters=all_meters,
+        meters_by_id=meters_by_id,
+        owners_by_meter=owners_by_meter,
+        modes=import_service.MAPPING_MODES,
+        duplicate_modes=import_service.DUPLICATE_MODES,
+        detected_value_fmt=detected_value_fmt,
+        detected_date_fmt=detected_date_fmt,
+        format_value_de=import_service.format_value_de,
+        status_row_class=import_service.status_row_class,
+        status_badge=import_service.status_badge,
+        STATUS_OK=import_service.STATUS_OK,
+        STATUS_OK_PREFERRED_MAIN=import_service.STATUS_OK_PREFERRED_MAIN,
+        STATUS_AMBIGUOUS=import_service.STATUS_AMBIGUOUS,
+        STATUS_NOT_FOUND=import_service.STATUS_NOT_FOUND,
+        STATUS_PARSE_ERROR=import_service.STATUS_PARSE_ERROR,
+    )
+
+
+def _do_confirm(df, cfg):
+    """Hilfsfunktion: User-Edits aus dem Form lesen, committen, weiterleiten."""
+    baseline = import_service.build_resolved_rows(df, cfg)
+    merged = import_service.parse_form_edits(request.form, baseline)
+    stats = import_service.commit_import(
+        merged, user_id=current_user.id, duplicate_mode=cfg.duplicate_mode,
+    )
+
+    # Pickle aufraeumen
+    path = session.pop(_SESSION_FILE_KEY, None)
+    if path:
+        import_service.delete_dataframe(path)
+    session.pop(_SESSION_CFG_KEY, None)
+    session[_SESSION_RESULT_KEY] = stats.to_dict()
+
+    # User-feedback ueber flash, Detail in Result-Page
+    total = stats.created + stats.updated
+    if stats.errors:
+        category = "warning"
+    elif total == 0:
+        category = "warning"
+    else:
+        category = "success"
+    flash(
+        f"Import abgeschlossen: {stats.created} angelegt, {stats.updated} aktualisiert, "
+        f"{stats.skipped} übersprungen, {stats.skipped_dup} Duplikate, "
+        f"{stats.skipped_unmapped} nicht gemappt.",
+        category,
+    )
+    return redirect(url_for("meters.import_result"))
+
+
+@bp.route("/import/result")
+@login_required
+def import_result():
+    stats = session.pop(_SESSION_RESULT_KEY, None)
+    if not stats:
+        return redirect(url_for("meters.readings"))
+    return render_template("meters/import_result.html", stats=stats)
+
+
+# ---- Spalten-Auto-Suggestion -------------------------------------------------
+
+def _norm(s: str) -> str:
+    return (s or "").strip().lower()
+
+
+def _suggest_lookup_column(columns: list[str], mode: str) -> str:
+    hints_by_mode = {
+        "meter_number": ["zählernummer", "zaehlernummer", "zähler-nr", "zähler nr", "zaehler"],
+        "customer_number": ["kunden-nr", "kundennr", "kundennummer", "kunden nr", "kunden_nr"],
+        "customer_name": ["kombinierter name", "kunde", "name", "kundenname"],
+    }
+    hints = hints_by_mode.get(mode, [])
+    for col in columns:
+        n = _norm(col)
+        for h in hints:
+            if h in n:
+                return col
+    return ""
+
+
+def _suggest_value_column(columns: list[str]) -> str:
+    hints = ["stand", "zählerstand", "zaehlerstand", "wert", "value"]
+    for col in columns:
+        n = _norm(col)
+        for h in hints:
+            if h in n:
+                return col
+    return ""
+
+
+def _suggest_date_column(columns: list[str]) -> str:
+    hints = ["datum", "ablesedatum", "date"]
+    for col in columns:
+        n = _norm(col)
+        for h in hints:
+            if h in n:
+                return col
+    return ""
+
+
+def _suggest_year_column(columns: list[str]) -> str:
+    hints = ["jahr", "year"]
+    for col in columns:
+        n = _norm(col)
+        if n in hints:
+            return col
+    return ""
+
+
+def _suggest_consumption_column(columns: list[str]) -> str:
+    hints = ["verbrauch", "konsum", "consumption"]
+    for col in columns:
+        n = _norm(col)
+        for h in hints:
+            if h in n:
+                return col
+    return ""
 
 
 # ---------------------------------------------------------------------------

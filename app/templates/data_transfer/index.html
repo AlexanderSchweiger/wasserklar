@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Daten-Export/Import{% endblock %}
+{% block page_title %}<i class="fas fa-exchange-alt me-2"></i> Daten-Export/Import{% endblock %}
+{% block content %}
+<div class="row row-cards">
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title"><i class="fas fa-file-export me-2"></i>Export</h3>
+      </div>
+      <div class="card-body">
+        <p class="text-muted">
+          Erstellt eine ZIP-Datei mit allen ausgewaehlten Tabellen im
+          dialektneutralen JSON-Format. Die Datei kann spaeter auf einem
+          anderen Wasserklar-System (OSS oder SaaS-Tenant) importiert werden.
+        </p>
+        <ul class="list-unstyled small text-muted mb-3">
+          <li><i class="fas fa-check text-success me-1"></i> Stammdaten</li>
+          <li><i class="fas fa-check text-success me-1"></i> Buchungen (mit Jahresfilter)</li>
+          <li><i class="fas fa-check text-success me-1"></i> Mahnwesen</li>
+          <li><i class="fas fa-check text-success me-1"></i> Einstellungen</li>
+          <li><i class="fas fa-check text-success me-1"></i> Optional: PDF-Anhaenge</li>
+        </ul>
+      </div>
+      <div class="card-footer">
+        <a href="{{ url_for('data_transfer.export_form') }}" class="btn btn-primary">
+          <i class="fas fa-download me-1"></i> Export starten
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title"><i class="fas fa-file-import me-2"></i>Import</h3>
+      </div>
+      <div class="card-body">
+        <p class="text-muted">
+          Liest eine zuvor erstellte Wasserklar-Export-Datei (.zip) ein. Vor
+          dem endgueltigen Anwenden wird eine Vorschau angezeigt — der Import
+          laeuft transaktional, bei einem Fehler bleiben die Daten unangetastet.
+        </p>
+        <div class="alert alert-warning" role="alert">
+          <strong>Achtung:</strong> Im Vollersatz-Modus werden die Tabellen
+          der gewaehlten Kategorien <strong>vor dem Import geleert</strong>.
+          Vorher unbedingt eine Sicherung anlegen.
+        </div>
+      </div>
+      <div class="card-footer">
+        <a href="{{ url_for('data_transfer.import_form') }}" class="btn btn-primary">
+          <i class="fas fa-upload me-1"></i> Import starten
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

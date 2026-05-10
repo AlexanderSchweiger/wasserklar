@@ -99,7 +99,7 @@
             {% set _nav_kunden         = request.blueprint == 'customers' %}
             {% set _nav_objekte        = request.blueprint == 'properties' %}
             {% set _nav_zaehler        = request.endpoint in ('meters.index','meters.meter_new','meters.meter_edit','meters.meter_replace','meters.meter_delete') %}
-            {% set _nav_ablesungen     = request.endpoint in ('meters.readings','meters.add_reading','meters.bulk_read','meters.import_readings') %}
+            {% set _nav_ablesungen     = request.endpoint in ('meters.readings','meters.add_reading','meters.bulk_read','meters.import_upload','meters.import_preview','meters.import_result') %}
             {% set _nav_import         = request.blueprint == 'import_csv' %}
 
             {# Buchhaltung – SaaS-Erweiterungen (aktiv-Flag via is_saas-Guard, url_for im SaaS-Block) #}
@@ -108,6 +108,7 @@
             {# Verwaltung #}
             {% set _nav_benutzer       = request.blueprint == 'auth' and request.endpoint != 'auth.login' %}
             {% set _nav_einstellungen  = request.blueprint == 'settings' %}
+            {% set _nav_data_transfer  = request.blueprint == 'data_transfer' %}
             {% set _nav_dokumente      = is_saas is defined and is_saas and request.blueprint == 'files' %}
             {% set _nav_export         = is_saas is defined and is_saas and request.blueprint == 'export' %}
             {% set _nav_backups        = is_saas is defined and is_saas and request.blueprint == 'backups' %}
@@ -117,7 +118,7 @@
             {% set invoices_active     = _nav_neue_rechnung or _nav_alle_rechnungen or _nav_offene_posten or _nav_rechnungslauf or _nav_rechnungslaeufe or _nav_email_settings or _nav_tarife %}
             {% set auswertungen_active = _nav_jahresbericht or _nav_ust %}
             {% set stammdaten_active   = _nav_kunden or _nav_objekte or _nav_zaehler or _nav_ablesungen or _nav_import %}
-            {% set verwaltung_active   = _nav_benutzer or _nav_einstellungen or _nav_dokumente or _nav_export or _nav_backups %}
+            {% set verwaltung_active   = _nav_benutzer or _nav_einstellungen or _nav_data_transfer or _nav_dokumente or _nav_export or _nav_backups %}
 
             <li class="nav-item">
               <a class="nav-link dropdown-toggle {% if accounting_active %}active{% endif %}" href="#navbar-accounting"
@@ -355,6 +356,12 @@
                     <a class="nav-link {% if _nav_einstellungen %}active{% endif %}"
                       href="{{ url_for('settings.index') }}">
                       <i class="fas fa-cog me-2"></i>Einstellungen
+                    </a>
+                  </li>
+                  <li class="nav-item">
+                    <a class="nav-link {% if _nav_data_transfer %}active{% endif %}"
+                      href="{{ url_for('data_transfer.index') }}">
+                      <i class="fas fa-exchange-alt me-2"></i>Daten-Export/Import
                     </a>
                   </li>
                   {% block saas_verwaltung_extra %}{% endblock %}

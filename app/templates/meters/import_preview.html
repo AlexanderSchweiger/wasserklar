@@ -1,0 +1,309 @@
+{% extends "base.html" %}
+{% block title %}Ablesungen-Vorschau{% endblock %}
+{% block page_title %}<i class="fas fa-eye me-2"></i> Ablesungen-Import: Vorschau{% endblock %}
+{% block content %}
+{% set mode_labels = {
+  'meter_number': 'Zählernummer',
+  'customer_number': 'Kundennummer',
+  'customer_name': 'Kundenname',
+} %}
+{% set duplicate_labels = {
+  'update': 'Bestehende aktualisieren',
+  'skip': 'Bestehende überspringen',
+} %}
+{% set value_format_labels = {
+  'auto': 'Automatisch',
+  'at_de': 'DE/AT (1.234,56)',
+  'us': 'US/UK (1,234.56)',
+  'plain': 'Einfach (1234 / 1234.56)',
+} %}
+{% set date_format_labels = {
+  'auto': 'Automatisch',
+  'iso': 'ISO (2024-12-31)',
+  'de': 'DE/AT (31.12.2024)',
+  'us': 'US (12/31/2024)',
+  'excel_ts': 'Excel-Datum',
+} %}
+
+<form method="post" id="preview-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  {# Buttons setzen action= -- der Server unterscheidet refresh vs. confirm #}
+  <input type="hidden" name="action" id="action-input" value="confirm">
+
+  <div class="card mb-3">
+    <div class="card-header">
+      <h3 class="card-title">Schritt 2: Spalten zuordnen und Vorschau prüfen</h3>
+    </div>
+    <div class="card-body">
+
+      <div class="row g-3">
+        <div class="col-md-3">
+          <label class="form-label">Zuordnungsmodus</label>
+          <select name="mode" class="form-select">
+            {% for m in modes %}
+            <option value="{{ m }}" {{ 'selected' if cfg.mode == m }}>Nach {{ mode_labels[m] }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Spalte: Lookup-Wert</label>
+          <select name="col_lookup" class="form-select">
+            <option value="">— wählen —</option>
+            {% for c in columns %}<option value="{{ c }}" {{ 'selected' if cfg.col_lookup == c }}>{{ c }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Spalte: Zählerstand</label>
+          <select name="col_value" class="form-select">
+            <option value="">— wählen —</option>
+            {% for c in columns %}<option value="{{ c }}" {{ 'selected' if cfg.col_value == c }}>{{ c }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Bei Duplikat</label>
+          <select name="duplicate_mode" class="form-select">
+            {% for d in duplicate_modes %}
+            <option value="{{ d }}" {{ 'selected' if cfg.duplicate_mode == d }}>{{ duplicate_labels[d] }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div class="row g-3 mt-1">
+        <div class="col-md-3">
+          <label class="form-label">Spalte: Datum <small class="text-muted">(optional)</small></label>
+          <select name="col_date" class="form-select">
+            <option value="">— kein Datum —</option>
+            {% for c in columns %}<option value="{{ c }}" {{ 'selected' if cfg.col_date == c }}>{{ c }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Spalte: Jahr <small class="text-muted">(optional)</small></label>
+          <select name="col_year" class="form-select">
+            <option value="">— Standard-Jahr —</option>
+            {% for c in columns %}<option value="{{ c }}" {{ 'selected' if cfg.col_year == c }}>{{ c }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Spalte: Verbrauch <small class="text-muted">(optional, nur Vergleich)</small></label>
+          <select name="col_consumption" class="form-select">
+            <option value="">— kein Vergleich —</option>
+            {% for c in columns %}<option value="{{ c }}" {{ 'selected' if cfg.col_consumption == c }}>{{ c }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Standard-Jahr</label>
+          <input type="number" name="default_year" class="form-control" min="2000" max="2100"
+                 value="{{ cfg.default_year }}">
+        </div>
+      </div>
+
+      <div class="row g-3 mt-1">
+        <div class="col-md-3">
+          <label class="form-label">Zahlenformat
+            <small class="text-muted" title="Erkanntes Format">({{ value_format_labels.get(detected_value_fmt, detected_value_fmt) }})</small>
+          </label>
+          <select name="value_format" class="form-select">
+            {% for f in ['auto','at_de','us','plain'] %}
+            <option value="{{ f }}" {{ 'selected' if cfg.value_format == f }}>{{ value_format_labels[f] }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Datumsformat
+            <small class="text-muted" title="Erkanntes Format">({{ date_format_labels.get(detected_date_fmt, detected_date_fmt) }})</small>
+          </label>
+          <select name="date_format" class="form-select">
+            {% for f in ['auto','iso','de','us','excel_ts'] %}
+            <option value="{{ f }}" {{ 'selected' if cfg.date_format == f }}>{{ date_format_labels[f] }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div class="mt-3">
+        <button type="submit" class="btn btn-outline-secondary btn-sm"
+                onclick="document.getElementById('action-input').value='refresh'">
+          <i class="fas fa-sync me-1"></i> Vorschau aktualisieren
+        </button>
+        <small class="text-muted ms-2">
+          Hinweis: Manuelle Änderungen in der Tabelle gehen beim Aktualisieren verloren.
+        </small>
+      </div>
+    </div>
+  </div>
+
+  {# Statistik-Banner #}
+  <div class="row g-2 mb-2">
+    <div class="col-md-4">
+      <div class="card">
+        <div class="card-body py-2">
+          <span class="badge bg-success me-1">{{ counts.ok }}</span>
+          eindeutig zugeordnet
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card">
+        <div class="card-body py-2">
+          <span class="badge bg-warning text-dark me-1">{{ counts.warn }}</span>
+          mehrdeutig (Auswahl nötig)
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card">
+        <div class="card-body py-2">
+          <span class="badge bg-danger me-1">{{ counts.err }}</span>
+          nicht gemappt / Parse-Fehler
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0 align-middle">
+          <thead>
+            <tr>
+              <th style="width:40px">#</th>
+              <th style="width:50px">Skip</th>
+              <th style="width:140px">Lookup-Wert</th>
+              <th style="min-width:240px">Ziel-Zähler</th>
+              <th style="min-width:120px">Eigentümer</th>
+              <th style="width:120px">Wert (m³)</th>
+              <th style="width:120px">Vorjahres&shy;stand</th>
+              <th style="width:120px">
+                Verbrauch
+                <small class="text-muted d-block">berechnet{% if cfg.col_consumption %} / Import{% endif %}</small>
+              </th>
+              <th style="width:160px">Datum</th>
+              <th style="width:90px">Jahr</th>
+              <th style="min-width:160px">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in rows %}
+            {% set badge_label, badge_cls = status_badge(r.status) %}
+            <tr class="{{ status_row_class(r.status) }}">
+              <td class="text-muted">{{ r.idx + 2 }}</td>
+              <td>
+                <input type="checkbox" class="form-check-input"
+                       name="rows[{{ r.idx }}][skip]" value="on"
+                       {{ 'checked' if r.skip }}>
+              </td>
+              <td>
+                <code title="{{ r.raw_data | tojson }}">{{ r.lookup_value or '—' }}</code>
+              </td>
+              <td>
+                {# Bei OK/Mehrdeutig nur die Kandidaten dieses Customers anbieten;
+                   bei not_found / parse_error auf alle aktiven Meter ausweichen. #}
+                {% set use_all = r.status in (STATUS_NOT_FOUND, STATUS_PARSE_ERROR) and not r.candidate_meter_ids %}
+                <select name="rows[{{ r.idx }}][meter_id]" class="form-select form-select-sm">
+                  <option value="">— kein Zähler —</option>
+                  {% if use_all %}
+                    {% for m in all_meters %}
+                    <option value="{{ m.id }}" {{ 'selected' if r.chosen_meter_id == m.id }}>
+                      {{ m.meter_number }} — {{ owners_by_meter.get(m.id) or '—' }} ({{ m.type_label() }})
+                    </option>
+                    {% endfor %}
+                  {% else %}
+                    {% for mid in r.candidate_meter_ids %}
+                      {% set m = meters_by_id.get(mid) %}
+                      {% if m %}
+                      <option value="{{ m.id }}" {{ 'selected' if r.chosen_meter_id == m.id }}>
+                        {{ m.meter_number }} — {{ owners_by_meter.get(m.id) or '—' }} ({{ m.type_label() }})
+                      </option>
+                      {% endif %}
+                    {% endfor %}
+                  {% endif %}
+                </select>
+              </td>
+              <td>
+                {% if r.chosen_meter_id and meters_by_id.get(r.chosen_meter_id) %}
+                  {{ owners_by_meter.get(r.chosen_meter_id) or '—' }}
+                {% else %}
+                  <span class="text-muted">—</span>
+                {% endif %}
+              </td>
+              <td>
+                <input type="text" name="rows[{{ r.idx }}][value]"
+                       class="form-control form-control-sm text-end"
+                       value="{{ format_value_de(r.value) }}"
+                       placeholder="0,000">
+              </td>
+              <td class="text-end">
+                {% if r.prior_value is not none %}
+                  <span title="{{ r.prior_label }}">{{ format_value_de(r.prior_value) }}</span>
+                  <small class="text-muted d-block">{{ r.prior_label }}</small>
+                {% else %}
+                  <span class="text-muted">—</span>
+                {% endif %}
+              </td>
+              <td class="text-end">
+                {% if r.computed_consumption is not none %}
+                  <span class="fw-bold">{{ format_value_de(r.computed_consumption) }}</span>
+                {% else %}
+                  <span class="text-muted">—</span>
+                {% endif %}
+                {% if cfg.col_consumption %}
+                  {# Importierter Verbrauch (read-only) zum Vergleich #}
+                  <div class="{{ 'text-danger fw-bold' if r.consumption_mismatch else 'text-muted' }}"
+                       title="{{ 'Abweichung vom berechneten Verbrauch' if r.consumption_mismatch else 'Vom Excel mitgelieferter Verbrauch' }}">
+                    {% if r.imported_consumption is not none %}
+                      <small>
+                        Import: {{ format_value_de(r.imported_consumption) }}
+                        {% if r.consumption_mismatch %}<i class="fas fa-exclamation-triangle ms-1"></i>{% endif %}
+                      </small>
+                    {% else %}
+                      <small>Import: —</small>
+                    {% endif %}
+                  </div>
+                {% endif %}
+                {% if r.replacement_info %}
+                  <small class="text-info d-block" title="{{ r.replacement_info }}">
+                    <i class="fas fa-exchange-alt"></i> Wechsel
+                  </small>
+                {% endif %}
+              </td>
+              <td>
+                <input type="date" name="rows[{{ r.idx }}][date]"
+                       class="form-control form-control-sm"
+                       value="{{ r.reading_date.strftime('%Y-%m-%d') if r.reading_date else '' }}">
+              </td>
+              <td>
+                <input type="number" name="rows[{{ r.idx }}][year]"
+                       class="form-control form-control-sm" min="2000" max="2100"
+                       value="{{ r.year or '' }}">
+              </td>
+              <td>
+                <span class="badge {{ badge_cls }}" title="{{ r.message }}">{{ badge_label }}</span>
+                {% if r.message %}
+                <div><small class="text-muted">{{ r.message }}</small></div>
+                {% endif %}
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="11" class="text-center text-muted py-4">
+              Keine Zeilen — bitte Spalten <em>Lookup-Wert</em> und <em>Zählerstand</em> auswählen
+              und auf „Vorschau aktualisieren" klicken.
+            </td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card-footer">
+      <button type="submit" class="btn btn-primary"
+              onclick="document.getElementById('action-input').value='confirm'"
+              {{ 'disabled' if rows | length == 0 }}>
+        <i class="fas fa-check me-1"></i> Import ausführen ({{ counts.ok + counts.warn }} Zeile{{ '' if (counts.ok+counts.warn)==1 else 'n' }})
+      </button>
+      <a href="{{ url_for('meters.import_upload') }}" class="btn btn-secondary ms-2">
+        <i class="fas fa-arrow-left me-1"></i> Zurück
+      </a>
+    </div>
+  </div>
+</form>
+{% endblock %}

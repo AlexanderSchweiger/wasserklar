@@ -242,11 +242,20 @@ def register_commands(app):
 
         Erkennt automatisch DBs, die Tabellen aber keine eingetragene Alembic-
         Revision haben (entweder pre-Alembic oder ein abgebrochener init-Lauf
-        hat eine leere ``alembic_version`` hinterlassen): zieht fehlende
-        Spalten via altem ``apply_schema_upgrades`` nach und setzt den
-        Alembic-Marker auf head, ohne bestehende Tabellen anzufassen.
+        hat eine leere ``alembic_version`` hinterlassen): zieht fehlende v1.0.0-
+        Spalten via altem ``apply_schema_upgrades`` nach, stempelt auf die
+        Initial-Revision (NICHT auf head -- sonst werden alle nachfolgenden
+        Migrations als "schon gelaufen" verbucht und nie tatsaechlich ausgefuehrt)
+        und laesst danach ``alembic_upgrade`` regulaer alle weiteren Migrations
+        anwenden.
         """
         from flask_migrate import upgrade as alembic_upgrade, stamp as alembic_stamp
+
+        # Initial-Revision der Alembic-History. ``apply_schema_upgrades`` deckt
+        # genau die Spalten dieser Initial-Migration ab -- nach dem Nachzug ist
+        # die DB also aequivalent zu "frisch via 7c7f225282c9 angelegt".
+        # Spaetere Migrations laufen dann via alembic_upgrade() ganz normal.
+        _INITIAL_REVISION = "7c7f225282c9"
 
         inspector = sa.inspect(db.engine)
         existing_tables = set(inspector.get_table_names())
@@ -268,14 +277,14 @@ def register_commands(app):
                 current_revision = None
 
         if non_alembic_tables and current_revision is None:
-            print("Pre-Alembic / un-stamped DB erkannt — zieh fehlende Spalten nach...")
+            print("Pre-Alembic / un-stamped DB erkannt — zieh fehlende v1.0.0-Spalten nach...")
             with db.engine.begin() as conn:
                 apply_schema_upgrades(conn, db.engine.dialect.name, verbose=True)
-            alembic_stamp(revision="head")
-            print("Alembic-Marker auf head gesetzt. Ab jetzt laeuft das Schema-Mgmt ueber Alembic.")
-        else:
-            alembic_upgrade()
-            print("Datenbankschema auf head migriert.")
+            alembic_stamp(revision=_INITIAL_REVISION)
+            print(f"Alembic-Marker auf {_INITIAL_REVISION} (initial v1.0.0) gesetzt.")
+
+        alembic_upgrade()
+        print("Datenbankschema auf head migriert.")
 
         seed_default_tax_rates(db, verbose=True)
         seed_default_dunning_policy(db, verbose=True)
@@ -639,3 +648,89 @@ def register_commands(app):
         db.session.add(user)
         db.session.commit()
         print(f"Admin '{username}' angelegt.")
+
+    # -----------------------------------------------------------------------
+    # Daten-Export/Import (kompatibel zum UI-Feature unter /data-transfer)
+    # -----------------------------------------------------------------------
+    import click
+
+    @app.cli.command("export-data")
+    @click.option("--out", "out_path", required=True,
+                  help="Pfad fuer die ZIP-Ausgabedatei.")
+    @click.option("--include", "include_str", default="stammdaten,buchungen,mahnwesen,einstellungen",
+                  help="Komma-separierte Kategorien (stammdaten,buchungen,mahnwesen,einstellungen).")
+    @click.option("--years", "years_str", default="",
+                  help="Komma-separierte Jahre (nur fuer Buchungen). Leer = alle Jahre.")
+    @click.option("--no-pdfs", "no_pdfs", is_flag=True, default=False,
+                  help="PDF-Anhaenge NICHT mit-bundlen.")
+    def export_data(out_path, include_str, years_str, no_pdfs):
+        """Exportiert alle Tabellen in eine ZIP-Datei (gleiches Format wie UI)."""
+        from app.data_transfer.services import export_to_zip
+        cats = {c.strip() for c in include_str.split(",") if c.strip()}
+        years = [int(y) for y in years_str.split(",") if y.strip().isdigit()]
+        selection = {
+            "stammdaten": "stammdaten" in cats,
+            "buchungen": "buchungen" in cats,
+            "mahnwesen": "mahnwesen" in cats,
+            "einstellungen": "einstellungen" in cats,
+            "include_pdfs": not no_pdfs,
+            "years": years,
+        }
+        with open(out_path, "wb") as fh:
+            manifest = export_to_zip(selection, fh, exported_by="cli")
+        rows = sum(t["rows"] for t in manifest["tables"])
+        print(f"Export geschrieben: {out_path}")
+        print(f"  {len(manifest['tables'])} Tabellen, {rows} Records.")
+
+    @app.cli.command("import-data")
+    @click.option("--in", "in_path", required=True,
+                  help="Pfad zur ZIP-Importdatei.")
+    @click.option("--mode", "mode", default="replace",
+                  type=click.Choice(["replace", "merge"]),
+                  help="Vollersatz oder Merge.")
+    @click.option("--update-existing", is_flag=True, default=False,
+                  help="Im Merge-Modus: bestehende Records aktualisieren.")
+    @click.option("--yes", "skip_confirm", is_flag=True, default=False,
+                  help="Bestaetigungs-Prompt ueberspringen.")
+    def import_data(in_path, mode, update_existing, skip_confirm):
+        """Importiert eine zuvor exportierte ZIP-Datei."""
+        from pathlib import Path
+        from app.data_transfer.services import (
+            extract_to_temp, import_from_zip, validate_manifest, ImportError_,
+        )
+        with open(in_path, "rb") as fh:
+            extract_dir, manifest = extract_to_temp(fh, app.instance_path)
+        validation = validate_manifest(manifest, extract_dir)
+        if validation["errors"]:
+            print("Import blockiert:")
+            for err in validation["errors"]:
+                print(f"  - {err}")
+            return
+        for warn in validation["warnings"]:
+            print(f"WARNUNG: {warn}")
+        print(f"Modus: {mode}{', update_existing' if update_existing else ''}")
+        for row in validation["tables_overview"]:
+            print(f"  {row['name']}: import={row['rows']}, current={row['current_count']}")
+        if not skip_confirm:
+            answer = input("Anwenden? [yes/NO]: ").strip().lower()
+            if answer != "yes":
+                print("Abgebrochen.")
+                import shutil
+                shutil.rmtree(extract_dir, ignore_errors=True)
+                return
+        try:
+            stats = import_from_zip(
+                extract_dir, manifest,
+                mode=mode, update_existing=update_existing,
+                instance_path=app.instance_path,
+            )
+        except ImportError_ as exc:
+            print(f"FEHLER: {exc}")
+            return
+        finally:
+            import shutil
+            shutil.rmtree(extract_dir, ignore_errors=True)
+        total_i = sum(s["inserted"] for s in stats.values())
+        total_u = sum(s["updated"] for s in stats.values())
+        total_s = sum(s["skipped"] for s in stats.values())
+        print(f"Import fertig: {total_i} neu, {total_u} aktualisiert, {total_s} uebersprungen.")

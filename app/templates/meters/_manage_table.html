@@ -39,7 +39,15 @@
           <span class="badge bg-secondary text-white">Ausgebaut</span>
         {% endif %}
       </td>
-      <td><code class="fw-bold">{{ meter.meter_number }}</code></td>
+      <td>
+        <code class="fw-bold">{{ meter.meter_number }}</code>
+        <span class="badge {{ meter.type_badge_class() }} ms-1">{{ meter.type_label() }}</span>
+        {% if meter.parent_meter %}
+          <small class="text-muted d-block">
+            <i class="fas fa-level-up-alt fa-rotate-90 me-1"></i>{{ meter.parent_meter.meter_number }}
+          </small>
+        {% endif %}
+      </td>
       <td>
         <a href="{{ url_for('properties.detail', property_id=meter.property_id) }}">
           {{ meter.property.label() }}

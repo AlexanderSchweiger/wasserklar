@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Daten-Export{% endblock %}
+{% block page_title %}<i class="fas fa-file-export me-2"></i> Daten-Export{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="col-md-8">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Was soll exportiert werden?</h3>
+      </div>
+      <form method="post" action="{{ url_for('data_transfer.export_run') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="card-body">
+          <div class="mb-4">
+            <h4 class="mb-2">Kategorien</h4>
+            <label class="form-check">
+              <input type="checkbox" class="form-check-input" name="stammdaten" value="1" checked>
+              <span class="form-check-label">
+                <strong>Stammdaten</strong>
+                <span class="text-muted d-block small">Kontakte, Objekte, Zaehler, Tarife, Steuersaetze, Konten, Bankkonten, Projekte, Buchungsjahre</span>
+              </span>
+            </label>
+            <label class="form-check">
+              <input type="checkbox" class="form-check-input" name="buchungen" value="1" checked>
+              <span class="form-check-label">
+                <strong>Buchungen</strong>
+                <span class="text-muted d-block small">Rechnungen, Buchungssaetze, Offene Posten, Umbuchungen, Zaehlerablesungen, Rechnungslaeufe</span>
+              </span>
+            </label>
+            <label class="form-check">
+              <input type="checkbox" class="form-check-input" name="mahnwesen" value="1" checked>
+              <span class="form-check-label">
+                <strong>Mahnwesen</strong>
+                <span class="text-muted d-block small">Mahnvorlagen, Mahnstufen, Mahnungen</span>
+              </span>
+            </label>
+            <label class="form-check">
+              <input type="checkbox" class="form-check-input" name="einstellungen" value="1">
+              <span class="form-check-label">
+                <strong>Einstellungen</strong>
+                <span class="text-muted d-block small">WG-Stammdaten, E-Mail-Konfiguration (ohne Passwort — das ist instance-spezifisch verschluesselt)</span>
+              </span>
+            </label>
+          </div>
+
+          <div class="mb-4">
+            <h4 class="mb-2">Jahresauswahl (nur Buchungen)</h4>
+            <p class="text-muted small">
+              Leer lassen, um <strong>alle Jahre</strong> zu exportieren. Sonst nur Daten der gewaehlten Jahre.
+              Stammdaten/Mahnwesen/Einstellungen werden vom Filter nicht beeinflusst.
+            </p>
+            <select name="years" class="form-select tom-select" multiple>
+              {% for y in years %}
+                <option value="{{ y }}">{{ y }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="mb-3">
+            <h4 class="mb-2">Optionen</h4>
+            <label class="form-check">
+              <input type="checkbox" class="form-check-input" name="include_pdfs" value="1" checked>
+              <span class="form-check-label">
+                <strong>PDF-Anhaenge mit-exportieren</strong>
+                <span class="text-muted d-block small">Bestehende Rechnungs- und Mahn-PDFs werden ins ZIP gepackt. Macht die Datei groesser, vermeidet aber Neugenerierung beim Import.</span>
+              </span>
+            </label>
+          </div>
+        </div>
+        <div class="card-footer">
+          <button type="submit" class="btn btn-primary">
+            <i class="fas fa-download me-1"></i> Export herunterladen
+          </button>
+          <a href="{{ url_for('data_transfer.index') }}" class="btn btn-secondary ms-2">Abbrechen</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

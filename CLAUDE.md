@@ -34,7 +34,33 @@ docker compose exec wg flask --app run init-db
 docker compose exec wg flask --app run create-admin
 ```
 
-**No tests, linting, or formatter are configured.**
+## Tests
+
+Test-Stack: **pytest 9 + pytest-flask 1.3**, Konfig in [pytest.ini](pytest.ini). Struktur:
+
+- `tests/conftest.py` — `app` (session-scoped, `create_app("testing")`), `client` (function-scoped), `clean_db` (autouse, leert alle Tabellen NACH jedem Test).
+- `tests/integration/conftest.py` — gemeinsame Fixtures fuer Integration-Tests (`user`, `customer`, `account`, `real_account`).
+- `tests/unit/` — pure Funktionen ohne DB.
+- `tests/integration/` — DB-beruehrend (Models, Services).
+- `tests/http/` — Flask-test_client mit Login-Helper `_login(client, username, password)`.
+
+`TestingConfig` in [config.py](config.py) setzt `SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"` + `WTF_CSRF_ENABLED = False`. Schema kommt aus `db.create_all()` (kein Alembic im Test-Loop), die SQLite-In-Memory-DB lebt nur fuer die Session.
+
+```bash
+# Alle Tests
+.venv/Scripts/python -m pytest
+
+# Nur eine Datei oder Klasse oder Test
+.venv/Scripts/python -m pytest tests/http/test_meters_import_wizard.py
+.venv/Scripts/python -m pytest tests/integration/test_meters_import_service.py::TestCommitImport
+.venv/Scripts/python -m pytest -k "import and not preview" -v
+```
+
+**Stolperer**:
+
+- **Werkzeug-3.x test_client teilt den CookieJar zwischen Instanzen.** Wenn ein vorheriger Test einen User eingeloggt hat (Cookie mit `_user_id`), bleibt der Login-State im naechsten test_client erhalten -- selbst wenn der `client`-Fixture function-scoped ist. Folge: `@login_required`-Routen geben 200 statt 302 zurueck. **Fix**: in Login-Required-Tests am Anfang `client.get("/auth/logout")` aufrufen. Beispiel: [test_meters_import_wizard.py::TestLoginRequired](tests/http/test_meters_import_wizard.py).
+- **`Property.object_type` ist `nullable=False`** (Werte `'Haus'` / `'Garten'` / `'Sonstiges'`). Beim Anlegen von Property-Fixtures **immer** explizit setzen, sonst `IntegrityError: NOT NULL constraint failed: properties.object_type`.
+- **`db.session.commit()` in Service-Funktionen** (z.B. `import_service.commit_import`) macht ein hartes Commit. Tests, die mit echten DB-Effekten arbeiten, koennen das nicht via Outer-Savepoint zurueckrollen -- sie *muessen* gegen die SQLite-In-Memory-Test-DB laufen, niemals gegen die Dev-DB. Der `clean_db`-Autouse-Fixture leert die Tabellen nach jedem Test, daher ist das in der Test-Suite sicher.
 
 ## Schema-Änderungen (Alembic)
 
@@ -88,9 +114,9 @@ Each blueprint: `app/<name>/__init__.py` (registers blueprint) + `app/<name>/rou
 
 - **User** — auth with role ("admin"/"user"), active flag
 - **Customer** → has many **PropertyOwnership**; `base_fee_override` / `additional_fee_override` take priority over tariff
-- **Property** (Objekt/Liegenschaft) → has many **WaterMeter** and **PropertyOwnership**; also has fee overrides
-- **PropertyOwnership** — time-bounded Customer↔Property link (`valid_from` / `valid_to`); `valid_to=None` = currently active
-- **WaterMeter** → has many **MeterReading** (unique per meter+year); tracks `installed_from/to`, `initial_value`, `eichjahr`
+- **Property** (Objekt/Liegenschaft) → has many **WaterMeter** and **PropertyOwnership**; also has fee overrides; `object_type` ist `NOT NULL` (Werte `'Haus'` / `'Garten'` / `'Sonstiges'`)
+- **PropertyOwnership** — time-bounded Customer↔Property link (`valid_from` / `valid_to`); `valid_to=None` = currently active. **Mehrere parallele aktive Ownerships pro Property sind erlaubt** (Ehepaare, Erbengemeinschaften) — Code, der "den" aktuellen Eigentuemer abfragt, muss `.all()` oder `.first()` nehmen, nicht `.scalar()` (sonst `MultipleResultsFound`)
+- **WaterMeter** → has many **MeterReading** (unique per meter+year); tracks `installed_from/to`, `initial_value`, `eichjahr`. **`meter_type`** (`'main'` / `'sub'`, default `'main'`, NOT NULL) klassifiziert Hauptz. vs. Subz.; **`parent_meter_id`** (FK self-ref, ondelete SET NULL) verlinkt Subz. auf Hauptz. (max. 1 Ebene, parent muss `meter_type='main'` sein — Validation in der Route, kein DB-Constraint, weil dialekt-portabel). Self-Reference und Nicht-Hauptz.-Parent werden in `meter_new`/`meter_edit` serverseitig gekappt + Flash-Warnung
 - **WaterTariff** — base_fee + additional_fee + price_per_m3, valid for year range; fee overrides on Customer/Property take priority
 - **Invoice** → linked to Customer + optional Property; has many **InvoiceItem**; statuses: Entwurf → Versendet → Bezahlt → Storniert / Guthaben; invoice_number format `YYYY-NNNNN` (via `InvoiceCounter`)
 - **InvoiceCounter** — per-year sequence counter for invoice numbers; auto-seeded from existing invoices if missing
@@ -121,6 +147,20 @@ Many routes check `request.headers.get("HX-Request")` and return partial HTML fr
 ### Forms
 
 All form handling uses raw `request.form` — no WTForms form classes, though Flask-WTF/CSRFProtect is active for CSRF tokens.
+
+### Ablesungen-Import-Wizard
+
+`/meters/import` ist ein **3-stufiger Wizard** (Bug-Fix-Begruendung: ein einzelner POST-Handler, der erst Upload und dann Mapping verarbeitet, scheitert daran, dass das Mapping-Form keine Datei mehr mitsendet — verifizierter Bug, jetzt sauber getrennt):
+
+| Endpoint | Zweck |
+|---|---|
+| `GET/POST /meters/import` | Upload + Mapping-Modus + Duplikat-Strategie. POST speichert das DataFrame als Pickle in `instance/meter_import_<uuid>.pkl`, Pfad in `session["meter_import_file"]`, Config in `session["meter_import_cfg"]`, redirect zu `/preview`. |
+| `GET/POST /meters/import/preview` | Vorschau-Editor (editierbare Tabelle, Status-Highlighting). POST mit `action=refresh` baut die Vorschau mit der neu im Form gewaehlten Mapping-Config neu auf. POST mit `action=confirm` ruft `commit_import` und redirected zu `/result`. **Beide Actions lesen die Mapping-Config aus dem Form** — nicht nur aus der Session — sonst gingen Spalten-Selektionen beim direkten Confirm-Klick verloren. |
+| `GET /meters/import/result` | Stats (`stats` aus Session). |
+
+Heavy Lifting in [`app/meters/import_service.py`](app/meters/import_service.py): drei Mapping-Modi (`meter_number` / `customer_number` / `customer_name`), Auto-Detection von Zahlen- (`at_de`/`us`/`plain`) und Datumsformaten (`iso`/`de`/`us`/`excel_ts`) mit User-Override, `resolve_meter` mit Hauptzaehler-Bevorzugung bei Mehrdeutigkeit (Customer hat 1 Hauptz. + n Subz. → Hauptz. vorausgewaehlt). `parse_form_edits` parst die `rows[N][feld]`-Form-Keys (Werkzeug-Convention) zurueck in eine Liste und mergt User-Edits auf die frisch resolveten Zeilen.
+
+Der zweite Import-Wizard im Repo, `app/import_csv/` (Stammdaten — Kunden/Objekte/Zaehler), folgt dem gleichen Pickle-Pattern und ist die Vorlage gewesen.
 
 ### Jinja2 Filters & Conventions
 

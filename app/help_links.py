@@ -27,7 +27,9 @@ ENDPOINT_TO_DOC = {
     "meters.readings":             "wasserzaehler#ablesung",
     "meters.add_reading":          "wasserzaehler#ablesung",
     "meters.bulk_read":            "wasserzaehler#bulk",
-    "meters.import_readings":      "wasserzaehler#csv-import",
+    "meters.import_upload":        "wasserzaehler#csv-import",
+    "meters.import_preview":       "wasserzaehler#csv-import",
+    "meters.import_result":        "wasserzaehler#csv-import",
 
     # Rechnungen / OP
     "invoices.index":              "rechnungen",

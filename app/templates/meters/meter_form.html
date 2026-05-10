@@ -59,10 +59,46 @@
               </div>
             </div>
           </div>
+          <div class="row g-2">
+            <div class="col-md-6">
+              <div class="mb-3">
+                <label class="form-label">Zählertyp</label>
+                <select name="meter_type" class="form-select" id="meter_type_select">
+                  <option value="main" {{ 'selected' if (not meter or meter.meter_type == 'main') }}>Hauptzähler</option>
+                  <option value="sub" {{ 'selected' if (meter and meter.meter_type == 'sub') }}>Subzähler</option>
+                </select>
+                <small class="text-muted">Subzähler können einem Hauptzähler zugeordnet werden (z. B. Gartenzähler hinter Hausanschluss).</small>
+              </div>
+            </div>
+            <div class="col-md-6" id="parent_meter_wrap">
+              <div class="mb-3">
+                <label class="form-label">Übergeordneter Hauptzähler</label>
+                <select name="parent_meter_id" class="form-select tom-select">
+                  <option value="">— keiner —</option>
+                  {% for pm in main_meters or [] %}
+                  <option value="{{ pm.id }}" {{ 'selected' if meter and meter.parent_meter_id == pm.id }}>
+                    {{ pm.meter_number }} — {{ pm.property.label() if pm.property else '' }}
+                  </option>
+                  {% endfor %}
+                </select>
+              </div>
+            </div>
+          </div>
           <div class="mb-3">
             <label class="form-label">Notizen</label>
             <textarea name="notes" class="form-control" rows="3">{{ meter.notes if meter else '' }}</textarea>
           </div>
+          <script>
+            // Parent-Dropdown nur sichtbar, wenn Typ = Subzähler.
+            (function () {
+              const sel = document.getElementById('meter_type_select');
+              const wrap = document.getElementById('parent_meter_wrap');
+              if (!sel || !wrap) return;
+              const sync = () => { wrap.style.display = (sel.value === 'sub') ? '' : 'none'; };
+              sel.addEventListener('change', sync);
+              sync();
+            })();
+          </script>
         </div>
         <div class="card-footer">
           <button type="submit" class="btn btn-primary">
