@@ -136,6 +136,14 @@ def run_migrations_online():
         with context.begin_transaction():
             context.run_migrations()
 
+        # SA 2.x: connection.execute("SET search_path …") loest Autobegin aus,
+        # bevor context.begin_transaction() laeuft. Alembic erkennt die offene
+        # Transaktion und macht selbst kein begin()/commit() — die Migration
+        # haengt also in einer Transaktion, die beim connection.__exit__
+        # gerollback'd wuerde. Explizit committen.
+        if connection.in_transaction():
+            connection.commit()
+
 
 if context.is_offline_mode():
     run_migrations_offline()
