@@ -219,6 +219,19 @@ class MeterReading(db.Model):
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+    # Self-Service-Marker (SaaS): Eintrag stammt vom Kunden via Zugangscode.
+    # created_by_id bleibt in dem Fall NULL (kein User), self_service_code_id
+    # zeigt auf den genutzten Code (oder NULL, wenn der Code spaeter geloescht wurde).
+    entered_via_self_service = db.Column(
+        db.Boolean, default=False, nullable=False, index=True,
+        server_default=db.text("false"),
+    )
+    self_service_code_id = db.Column(
+        db.Integer,
+        db.ForeignKey("meter_reading_access_codes.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     created_by = db.relationship("User", foreign_keys=[created_by_id])
 
     __table_args__ = (
@@ -227,6 +240,71 @@ class MeterReading(db.Model):
 
     def __repr__(self):
         return f"<MeterReading {self.meter.meter_number} {self.year}: {self.value}>"
+
+
+class MeterReadingAccessCode(db.Model):
+    """SaaS-Self-Service: Kurzer Zugangscode pro Kunde+Jahr fuer die
+    Zaehlerstands-Selbsteingabe ohne User-Account.
+
+    Klartext-Code (`code`) wird gespeichert, damit der Admin Briefe
+    nachdrucken kann; Hash (`code_hash`) ist der Anker fuer den
+    Constant-Time-Login-Check. Tenant-Schema-isoliert.
+    """
+    __tablename__ = "meter_reading_access_codes"
+
+    id = db.Column(db.Integer, primary_key=True)
+    customer_id = db.Column(
+        db.Integer,
+        db.ForeignKey("customers.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    year = db.Column(db.Integer, nullable=False, index=True)
+    code = db.Column(db.String(16), nullable=False)        # Format XXXX-XXXX
+    code_hash = db.Column(db.String(255), nullable=False)
+    expires_at = db.Column(db.Date, nullable=False)
+    revoked_at = db.Column(db.DateTime, nullable=True)
+    last_used_at = db.Column(db.DateTime, nullable=True)
+    last_used_ip = db.Column(db.String(64), nullable=True)
+    failed_attempts = db.Column(
+        db.Integer, default=0, nullable=False, server_default=db.text("0"),
+    )
+    locked_until = db.Column(db.DateTime, nullable=True)
+    sent_at = db.Column(db.DateTime, nullable=True)
+    sent_via = db.Column(db.String(20), nullable=True)     # 'email' | 'letter'
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+
+    customer = db.relationship(
+        "Customer",
+        backref=db.backref(
+            "meter_access_codes",
+            lazy="dynamic",
+            cascade="all, delete-orphan",
+        ),
+    )
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+
+    __table_args__ = (
+        db.UniqueConstraint("customer_id", "year", name="uq_mrac_customer_year"),
+        db.Index("ix_mrac_year_revoked_expires", "year", "revoked_at", "expires_at"),
+    )
+
+    @property
+    def is_valid(self):
+        if self.revoked_at:
+            return False
+        if self.expires_at < date.today():
+            return False
+        if self.locked_until and self.locked_until > datetime.utcnow():
+            return False
+        return True
+
+    @property
+    def has_been_used(self):
+        return self.last_used_at is not None
+
+    def __repr__(self):
+        return f"<MeterReadingAccessCode customer={self.customer_id} year={self.year}>"
 
 
 # ---------------------------------------------------------------------------

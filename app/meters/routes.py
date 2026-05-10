@@ -7,6 +7,7 @@ from flask_login import login_required, current_user
 from sqlalchemy import case as sa_case
 
 from app.meters import bp
+from app.meters.services import save_reading
 from app.extensions import db
 from app.models import WaterMeter, MeterReading, Property, PropertyOwnership, Customer
 from app.pagination import paginate_query
@@ -256,26 +257,7 @@ def bulk_read():
         if not meter:
             continue
 
-        existing = MeterReading.query.filter_by(meter_id=meter_id, year=year).first()
-        prev = MeterReading.query.filter_by(meter_id=meter_id, year=year - 1).first()
-        consumption = None
-        if prev:
-            consumption = value - prev.value
-        elif meter.initial_value is not None:
-            consumption = value - meter.initial_value
-
-        if existing:
-            existing.value = value
-            existing.consumption = consumption
-            existing.created_by_id = current_user.id
-        else:
-            reading = MeterReading(
-                meter_id=meter_id, year=year, value=value,
-                reading_date=date.today(),
-                consumption=consumption,
-                created_by_id=current_user.id,
-            )
-            db.session.add(reading)
+        save_reading(meter, year, value, created_by_id=current_user.id)
         saved += 1
 
     db.session.commit()
