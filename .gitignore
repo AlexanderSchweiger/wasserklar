@@ -2,10 +2,21 @@ instance/
 __pycache__/
 *.pyc
 *.pyo
-.env
+
+# Env-Files: alle ausser .env.example
+.env*
+!.env.example
+
+# Lokale Daten & Artefakte
 *.db
 *.pdf
 .DS_Store
 .venv
-.claude/*
-.claude/settings.local.json
+
+# Editor / Tool-Konfig
+.vscode/
+.claude/
+
+# Interne Doku & PII-Files
+docs/
+importFiles/
