@@ -165,3 +165,11 @@ Die Tests laufen mit **pytest** gegen eine SQLite-In-Memory-Datenbank — kein l
 - **SECRET_KEY** muss in `.env.test` und `.env.prod` durch einen langen, zufälligen Wert ersetzt werden.
 - Generierte PDFs und Datenbankdaten liegen in `instance/` (als Docker-Volume gemountet — überleben Container-Neustarts).
 - **Test und Prod gleichzeitig** können auf demselben Host betrieben werden: Test läuft auf Port **5001**, Prod auf Port **5000**. Die Docker-Projektnamen (`wg-test` / `wg-prod`) verhindern Container-Namenskonflikte.
+
+---
+
+## Lizenz
+
+Copyright © 2026 Alexander Schweiger — dual-lizenziert unter **AGPL-3.0** (Open Source mit Copyleft) und einer separaten kommerziellen Lizenz für die Betreiberin von [wasserklar.at](https://wasserklar.at).
+
+Wer diese Software als Netzwerk-Dienst (SaaS) betreibt, **muss** den eigenen Quellcode unter AGPL-3.0 offenlegen — es sei denn, es liegt eine separate kommerzielle Lizenz vom Copyright-Inhaber vor. Details siehe [NOTICE.md](NOTICE.md) und [LICENSE](LICENSE).
