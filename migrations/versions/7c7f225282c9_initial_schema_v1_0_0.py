@@ -84,11 +84,6 @@ def upgrade():
     sa.Column('notes', sa.Text(), nullable=True),
     sa.Column('created_by_id', sa.Integer(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=True),
-    sa.ForeignKeyConstraint(['created_by_id'], ['users.id'], ),
-    sa.ForeignKeyConstraint(['fee_invoice_item_id'], ['invoice_items.id'], ),
-    sa.ForeignKeyConstraint(['invoice_id'], ['invoices.id'], ),
-    sa.ForeignKeyConstraint(['reset_by_id'], ['users.id'], ),
-    sa.ForeignKeyConstraint(['stage_id'], ['dunning_stages.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_table('dunning_policies',
@@ -118,10 +113,6 @@ def upgrade():
     sa.Column('project_id', sa.Integer(), nullable=True),
     sa.Column('is_dunning_fee', sa.Integer(), nullable=False),
     sa.Column('dunning_notice_id', sa.Integer(), nullable=True),
-    sa.ForeignKeyConstraint(['account_id'], ['accounts.id'], ),
-    sa.ForeignKeyConstraint(['dunning_notice_id'], ['dunning_notices.id'], ),
-    sa.ForeignKeyConstraint(['invoice_id'], ['invoices.id'], ),
-    sa.ForeignKeyConstraint(['project_id'], ['projects.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_table('projects',
@@ -212,8 +203,6 @@ def upgrade():
     sa.Column('invoices_created', sa.Integer(), nullable=False),
     sa.Column('invoices_skipped', sa.Integer(), nullable=False),
     sa.Column('account_id', sa.Integer(), nullable=True),
-    sa.ForeignKeyConstraint(['account_id'], ['accounts.id'], ),
-    sa.ForeignKeyConstraint(['created_by_id'], ['users.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_table('dunning_stages',
@@ -233,7 +222,6 @@ def upgrade():
     sa.Column('color', sa.String(length=20), nullable=True),
     sa.Column('icon', sa.String(length=50), nullable=True),
     sa.Column('active', sa.Boolean(), nullable=False),
-    sa.ForeignKeyConstraint(['policy_id'], ['dunning_policies.id'], ),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('policy_id', 'level', name='uq_policy_level')
     )
@@ -245,7 +233,6 @@ def upgrade():
     sa.Column('closed_at', sa.DateTime(), nullable=True),
     sa.Column('closed_by_id', sa.Integer(), nullable=True),
     sa.Column('is_vat_liable', sa.Boolean(), nullable=False),
-    sa.ForeignKeyConstraint(['closed_by_id'], ['users.id'], ),
     sa.PrimaryKeyConstraint('year')
     )
     op.create_table('property_ownerships',
@@ -254,8 +241,6 @@ def upgrade():
     sa.Column('customer_id', sa.Integer(), nullable=False),
     sa.Column('valid_from', sa.Date(), nullable=False),
     sa.Column('valid_to', sa.Date(), nullable=True),
-    sa.ForeignKeyConstraint(['customer_id'], ['customers.id'], ),
-    sa.ForeignKeyConstraint(['property_id'], ['properties.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_table('real_account_year_balances',
@@ -263,7 +248,6 @@ def upgrade():
     sa.Column('real_account_id', sa.Integer(), nullable=False),
     sa.Column('year', sa.Integer(), nullable=False),
     sa.Column('closing_balance', sa.Numeric(precision=10, scale=2), nullable=False),
-    sa.ForeignKeyConstraint(['real_account_id'], ['real_accounts.id'], ),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('real_account_id', 'year', name='uq_real_account_year')
     )
@@ -276,9 +260,6 @@ def upgrade():
     sa.Column('to_real_account_id', sa.Integer(), nullable=False),
     sa.Column('created_by_id', sa.Integer(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=True),
-    sa.ForeignKeyConstraint(['created_by_id'], ['users.id'], ),
-    sa.ForeignKeyConstraint(['from_real_account_id'], ['real_accounts.id'], ),
-    sa.ForeignKeyConstraint(['to_real_account_id'], ['real_accounts.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_table('user_preferences',
@@ -305,7 +286,6 @@ def upgrade():
     sa.Column('initial_value', sa.Numeric(precision=12, scale=3), nullable=True),
     sa.Column('eichjahr', sa.Integer(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=True),
-    sa.ForeignKeyConstraint(['property_id'], ['properties.id'], ),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('meter_number')
     )
@@ -315,8 +295,6 @@ def upgrade():
     sa.Column('reopened_at', sa.DateTime(), nullable=False),
     sa.Column('reopened_by_id', sa.Integer(), nullable=False),
     sa.Column('reason', sa.String(length=1000), nullable=False),
-    sa.ForeignKeyConstraint(['fiscal_year_id'], ['fiscal_years.year'], ),
-    sa.ForeignKeyConstraint(['reopened_by_id'], ['users.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_table('invoices',
@@ -335,10 +313,6 @@ def upgrade():
     sa.Column('notes', sa.Text(), nullable=True),
     sa.Column('created_by_id', sa.Integer(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=True),
-    sa.ForeignKeyConstraint(['billing_run_id'], ['billing_runs.id'], ),
-    sa.ForeignKeyConstraint(['created_by_id'], ['users.id'], ),
-    sa.ForeignKeyConstraint(['customer_id'], ['customers.id'], ),
-    sa.ForeignKeyConstraint(['property_id'], ['properties.id'], ),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('invoice_number')
     )
@@ -351,8 +325,6 @@ def upgrade():
     sa.Column('consumption', sa.Numeric(precision=12, scale=3), nullable=True),
     sa.Column('created_by_id', sa.Integer(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=True),
-    sa.ForeignKeyConstraint(['created_by_id'], ['users.id'], ),
-    sa.ForeignKeyConstraint(['meter_id'], ['water_meters.id'], ),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('meter_id', 'year', name='uq_meter_year')
     )
@@ -369,9 +341,6 @@ def upgrade():
     sa.Column('storno_date', sa.Date(), nullable=True),
     sa.Column('created_by_id', sa.Integer(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=True),
-    sa.ForeignKeyConstraint(['created_by_id'], ['users.id'], ),
-    sa.ForeignKeyConstraint(['customer_id'], ['customers.id'], ),
-    sa.ForeignKeyConstraint(['invoice_id'], ['invoices.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_table('open_items',
@@ -388,10 +357,6 @@ def upgrade():
     sa.Column('account_id', sa.Integer(), nullable=True),
     sa.Column('created_by_id', sa.Integer(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=True),
-    sa.ForeignKeyConstraint(['account_id'], ['accounts.id'], ),
-    sa.ForeignKeyConstraint(['created_by_id'], ['users.id'], ),
-    sa.ForeignKeyConstraint(['customer_id'], ['customers.id'], ),
-    sa.ForeignKeyConstraint(['invoice_id'], ['invoices.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_table('bookings',
@@ -414,18 +379,56 @@ def upgrade():
     sa.Column('storno_date', sa.Date(), nullable=True),
     sa.Column('customer_id', sa.Integer(), nullable=True),
     sa.Column('tax_rate', sa.Numeric(precision=5, scale=2), nullable=True),
-    sa.ForeignKeyConstraint(['account_id'], ['accounts.id'], ),
-    sa.ForeignKeyConstraint(['created_by_id'], ['users.id'], ),
-    sa.ForeignKeyConstraint(['customer_id'], ['customers.id'], ),
-    sa.ForeignKeyConstraint(['group_id'], ['booking_groups.id'], ),
-    sa.ForeignKeyConstraint(['invoice_id'], ['invoices.id'], ),
-    sa.ForeignKeyConstraint(['open_item_id'], ['open_items.id'], ),
-    sa.ForeignKeyConstraint(['project_id'], ['projects.id'], ),
-    sa.ForeignKeyConstraint(['real_account_id'], ['real_accounts.id'], ),
-    sa.ForeignKeyConstraint(['storno_of_id'], ['bookings.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
     # ### end Alembic commands ###
+
+    # FK-Constraints separat — vermeidet Reihenfolge-Probleme bei zirkulären FKs
+    op.create_foreign_key('fk_dunning_notices_created_by_id', 'dunning_notices', 'users', ['created_by_id'], ['id'])
+    op.create_foreign_key('fk_dunning_notices_fee_invoice_item_id', 'dunning_notices', 'invoice_items', ['fee_invoice_item_id'], ['id'])
+    op.create_foreign_key('fk_dunning_notices_invoice_id', 'dunning_notices', 'invoices', ['invoice_id'], ['id'])
+    op.create_foreign_key('fk_dunning_notices_reset_by_id', 'dunning_notices', 'users', ['reset_by_id'], ['id'])
+    op.create_foreign_key('fk_dunning_notices_stage_id', 'dunning_notices', 'dunning_stages', ['stage_id'], ['id'])
+    op.create_foreign_key('fk_invoice_items_account_id', 'invoice_items', 'accounts', ['account_id'], ['id'])
+    op.create_foreign_key('fk_invoice_items_dunning_notice_id', 'invoice_items', 'dunning_notices', ['dunning_notice_id'], ['id'])
+    op.create_foreign_key('fk_invoice_items_invoice_id', 'invoice_items', 'invoices', ['invoice_id'], ['id'])
+    op.create_foreign_key('fk_invoice_items_project_id', 'invoice_items', 'projects', ['project_id'], ['id'])
+    op.create_foreign_key('fk_billing_runs_account_id', 'billing_runs', 'accounts', ['account_id'], ['id'])
+    op.create_foreign_key('fk_billing_runs_created_by_id', 'billing_runs', 'users', ['created_by_id'], ['id'])
+    op.create_foreign_key('fk_dunning_stages_policy_id', 'dunning_stages', 'dunning_policies', ['policy_id'], ['id'])
+    op.create_foreign_key('fk_fiscal_years_closed_by_id', 'fiscal_years', 'users', ['closed_by_id'], ['id'])
+    op.create_foreign_key('fk_property_ownerships_customer_id', 'property_ownerships', 'customers', ['customer_id'], ['id'])
+    op.create_foreign_key('fk_property_ownerships_property_id', 'property_ownerships', 'properties', ['property_id'], ['id'])
+    op.create_foreign_key('fk_real_account_year_balances_real_account_id', 'real_account_year_balances', 'real_accounts', ['real_account_id'], ['id'])
+    op.create_foreign_key('fk_transfers_created_by_id', 'transfers', 'users', ['created_by_id'], ['id'])
+    op.create_foreign_key('fk_transfers_from_real_account_id', 'transfers', 'real_accounts', ['from_real_account_id'], ['id'])
+    op.create_foreign_key('fk_transfers_to_real_account_id', 'transfers', 'real_accounts', ['to_real_account_id'], ['id'])
+    op.create_foreign_key('fk_water_meters_property_id', 'water_meters', 'properties', ['property_id'], ['id'])
+    op.create_foreign_key('fk_fiscal_year_reopen_logs_fiscal_year_id', 'fiscal_year_reopen_logs', 'fiscal_years', ['fiscal_year_id'], ['year'])
+    op.create_foreign_key('fk_fiscal_year_reopen_logs_reopened_by_id', 'fiscal_year_reopen_logs', 'users', ['reopened_by_id'], ['id'])
+    op.create_foreign_key('fk_invoices_billing_run_id', 'invoices', 'billing_runs', ['billing_run_id'], ['id'])
+    op.create_foreign_key('fk_invoices_created_by_id', 'invoices', 'users', ['created_by_id'], ['id'])
+    op.create_foreign_key('fk_invoices_customer_id', 'invoices', 'customers', ['customer_id'], ['id'])
+    op.create_foreign_key('fk_invoices_property_id', 'invoices', 'properties', ['property_id'], ['id'])
+    op.create_foreign_key('fk_meter_readings_created_by_id', 'meter_readings', 'users', ['created_by_id'], ['id'])
+    op.create_foreign_key('fk_meter_readings_meter_id', 'meter_readings', 'water_meters', ['meter_id'], ['id'])
+    op.create_foreign_key('fk_booking_groups_created_by_id', 'booking_groups', 'users', ['created_by_id'], ['id'])
+    op.create_foreign_key('fk_booking_groups_customer_id', 'booking_groups', 'customers', ['customer_id'], ['id'])
+    op.create_foreign_key('fk_booking_groups_invoice_id', 'booking_groups', 'invoices', ['invoice_id'], ['id'])
+    op.create_foreign_key('fk_open_items_account_id', 'open_items', 'accounts', ['account_id'], ['id'])
+    op.create_foreign_key('fk_open_items_created_by_id', 'open_items', 'users', ['created_by_id'], ['id'])
+    op.create_foreign_key('fk_open_items_customer_id', 'open_items', 'customers', ['customer_id'], ['id'])
+    op.create_foreign_key('fk_open_items_invoice_id', 'open_items', 'invoices', ['invoice_id'], ['id'])
+    op.create_foreign_key('fk_bookings_account_id', 'bookings', 'accounts', ['account_id'], ['id'])
+    op.create_foreign_key('fk_bookings_created_by_id', 'bookings', 'users', ['created_by_id'], ['id'])
+    op.create_foreign_key('fk_bookings_customer_id', 'bookings', 'customers', ['customer_id'], ['id'])
+    op.create_foreign_key('fk_bookings_group_id', 'bookings', 'booking_groups', ['group_id'], ['id'])
+    op.create_foreign_key('fk_bookings_invoice_id', 'bookings', 'invoices', ['invoice_id'], ['id'])
+    op.create_foreign_key('fk_bookings_open_item_id', 'bookings', 'open_items', ['open_item_id'], ['id'])
+    op.create_foreign_key('fk_bookings_project_id', 'bookings', 'projects', ['project_id'], ['id'])
+    op.create_foreign_key('fk_bookings_real_account_id', 'bookings', 'real_accounts', ['real_account_id'], ['id'])
+    op.create_foreign_key('fk_bookings_storno_of_id', 'bookings', 'bookings', ['storno_of_id'], ['id'])
+
 
 
 def downgrade():
