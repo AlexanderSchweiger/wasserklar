@@ -36,7 +36,7 @@ from app.models import (
 )
 from app.data_transfer.registry import (
     CATEGORIES, INSERT_ORDER, YEAR_FILTERS, NATURAL_KEYS, FOREIGN_KEYS,
-    DEFERRED_FK_UPDATES, EXCLUDED_TABLES, models_for_selection,
+    DEFERRED_FK_UPDATES, EXCLUDED_TABLES, NULL_ON_IMPORT_COLS, models_for_selection,
     is_excluded_setting,
 )
 from app.data_transfer.serializers import (
@@ -54,11 +54,17 @@ FORMAT_VERSION = "1.0"
 # ---------------------------------------------------------------------------
 
 def _current_alembic_revision() -> str | None:
-    """Aktuelle Alembic-Revision der laufenden DB."""
+    """Aktuelle Alembic-Revision der laufenden DB.
+
+    db.session.execute statt db.engine.connect: im SaaS-Kontext setzt der
+    Pool-Checkout-Event search_path auf public zurueck; die Session-Verbindung
+    hat dagegen bereits den Tenant-search_path via after_begin-Listener.
+    """
     try:
-        with db.engine.connect() as conn:
-            row = conn.execute(text("SELECT version_num FROM alembic_version LIMIT 1")).first()
-            return row[0] if row else None
+        row = db.session.execute(
+            text("SELECT version_num FROM alembic_version LIMIT 1")
+        ).first()
+        return row[0] if row else None
     except Exception:
         return None
 
@@ -460,9 +466,8 @@ def _alembic_history_revisions() -> set:
 def _current_table_count(tname: str) -> int:
     """Zaehlt die Records einer Tabelle in der aktuellen DB. 0 bei Fehler."""
     try:
-        with db.engine.connect() as conn:
-            row = conn.execute(text(f"SELECT COUNT(*) FROM {tname}")).first()
-            return int(row[0]) if row else 0
+        row = db.session.execute(text(f"SELECT COUNT(*) FROM {tname}")).first()
+        return int(row[0]) if row else 0
     except Exception:
         return 0
 
@@ -556,11 +561,12 @@ def _truncate_models(models: list):
 def _insert_replace(model, records: list, stats: dict):
     """Vollersatz-Insert: IDs 1:1 uebernehmen, ORM-Bulk-Insert pro Record."""
     deferred = DEFERRED_FK_UPDATES.get(model, [])
+    null_cols = NULL_ON_IMPORT_COLS.get(model, [])
     inserted = 0
     for rec in records:
         if model is AppSetting and is_excluded_setting(rec.get("key", "")):
             continue
-        data = deserialize_record(model, rec, skip_columns=deferred)
+        data = deserialize_record(model, rec, skip_columns=list(deferred) + null_cols)
         # Bei AppSetting: nicht ueberschreiben wenn Schluessel schon existiert
         # (z.B. lokal gesetzte Mail-Konfig nach Truncate eigentlich leer, aber
         # Defensive: kein Doppel-Insert)
@@ -578,6 +584,7 @@ def _insert_merge(model, records: list, id_map: dict, update_existing: bool, sta
     natural_key = NATURAL_KEYS.get(model)
     fk_cols = FOREIGN_KEYS.get(model, {})
     deferred = DEFERRED_FK_UPDATES.get(model, [])
+    null_cols = NULL_ON_IMPORT_COLS.get(model, [])
     pk_cols = primary_key_columns(model)
 
     inserted = updated = skipped = 0
@@ -588,7 +595,7 @@ def _insert_merge(model, records: list, id_map: dict, update_existing: bool, sta
             continue
 
         old_pk = primary_key_value(model, rec)
-        data = deserialize_record(model, rec, skip_columns=deferred)
+        data = deserialize_record(model, rec, skip_columns=list(deferred) + null_cols)
 
         # FKs remappen (ausser deferred)
         for col_name, target in fk_cols.items():

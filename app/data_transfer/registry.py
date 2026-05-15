@@ -16,6 +16,21 @@ from app.models import (
     AppSetting, InvoiceCounter, CustomerCounter,
 )
 
+# Spalten die auf users.id verweisen — werden beim Import auf NULL gesetzt,
+# weil 'users' in EXCLUDED_TABLES ist und IDs im Ziel-System abweichen.
+NULL_ON_IMPORT_COLS = {
+    MeterReading: ["created_by_id"],
+    MeterReadingAccessCode: ["created_by_id"],
+    BillingRun: ["created_by_id"],
+    Invoice: ["created_by_id"],
+    Transfer: ["created_by_id"],
+    Booking: ["created_by_id"],
+    BookingGroup: ["created_by_id"],
+    OpenItem: ["created_by_id"],
+    FiscalYear: ["closed_by_id"],
+    DunningNotice: ["reset_by_id", "created_by_id"],
+}
+
 
 # Modelle pro Kategorie. Reihenfolge spielt hier keine Rolle —
 # fuer FK-sicheres Insert ist INSERT_ORDER massgeblich.
