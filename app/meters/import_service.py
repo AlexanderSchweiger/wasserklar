@@ -21,7 +21,6 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-import pandas as pd
 from flask import current_app
 
 from app.extensions import db
@@ -187,6 +186,7 @@ def save_dataframe(df: pd.DataFrame) -> str:
 
 
 def load_dataframe(path: str) -> pd.DataFrame | None:
+    import pandas as pd
     if not path or not os.path.exists(path):
         return None
     try:
@@ -216,6 +216,7 @@ _RE_DATE_DEUS = re.compile(r"^(\d{1,2})[./](\d{1,2})[./](\d{2,4})$")
 
 
 def _series_strings(series: pd.Series, limit: int | None = None) -> list[str]:
+    import pandas as pd
     out: list[str] = []
     for v in series:
         if v is None:
@@ -268,6 +269,7 @@ def detect_date_format(series: pd.Series) -> str:
     'excel_ts' = pandas hat die Spalte als Timestamp eingelesen
     (passiert bei nativen Excel-Datumszellen, auch mit dtype=str).
     """
+    import pandas as pd
     # 1. Echte Timestamp-Objekte?
     for v in series:
         if isinstance(v, pd.Timestamp):
@@ -306,6 +308,7 @@ def detect_date_format(series: pd.Series) -> str:
 # ---------------------------------------------------------------------------
 
 def _cell(row: dict, col: str) -> str:
+    import pandas as pd
     if not col:
         return ""
     v = row.get(col, "")
@@ -368,6 +371,7 @@ def parse_date(raw: Any, fmt: str) -> date | None:
     'excel_ts'-Spalten -- in dem Fall ignorieren wir 'fmt' und konvertieren
     direkt.
     """
+    import pandas as pd
     if raw is None:
         return None
     if isinstance(raw, pd.Timestamp):
@@ -423,6 +427,7 @@ def parse_date(raw: Any, fmt: str) -> date | None:
 
 
 def parse_year(raw: Any, default_year: int) -> int | None:
+    import pandas as pd
     if raw is None:
         return default_year if default_year else None
     if isinstance(raw, float) and pd.isna(raw):
