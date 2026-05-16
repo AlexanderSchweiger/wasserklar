@@ -4,7 +4,8 @@ from flask_login import login_required, current_user
 from app.settings import bp
 from app.extensions import db
 from app.models import AppSetting
-from app.settings_service import _WG_MAP, _MAIL_MAP, send_mail, encrypt_password, apply_mail_settings
+from app.settings_service import (_WG_MAP, _MAIL_MAP, send_mail, encrypt_password,
+                                  apply_mail_settings, platform_relay_active, get_wg)
 from app.invoices.design import INVOICE_DESIGNS, available_designs
 
 
@@ -22,20 +23,27 @@ def index():
             val = request.form.get(f'wg_{attr}', '').strip()
             AppSetting.set(f'wg.{attr}', val if val else None)
 
-        # Mail-Server
-        for attr, db_key, _ in _MAIL_MAP:
-            if attr == 'password':
-                # Leerstring = unverändert lassen
-                val = request.form.get('mail_password', '').strip()
-                if val:
-                    AppSetting.set('mail.password', encrypt_password(val))
-            elif attr == 'use_tls':
-                # Checkbox: nicht vorhanden = false (muss explizit gespeichert werden)
-                val = 'true' if request.form.get('mail_use_tls') else 'false'
-                AppSetting.set(db_key, val)
-            else:
-                val = request.form.get(f'mail_{attr}', '').strip()
-                AppSetting.set(db_key, val if val else None)
+        # Mail-Versandmodus (Checkbox). Bei aktivem Plattform-Relay sind die
+        # SMTP-Felder im UI disabled und werden nicht mitgesendet — der
+        # _MAIL_MAP-Loop würde die gespeicherten mail.*-Werte sonst leeren.
+        relay = 'true' if request.form.get('mail_use_platform_relay') else 'false'
+        AppSetting.set('mail.use_platform_relay', relay)
+
+        # Mail-Server (nur wenn kein Plattform-Relay aktiv)
+        if relay != 'true':
+            for attr, db_key, _ in _MAIL_MAP:
+                if attr == 'password':
+                    # Leerstring = unverändert lassen
+                    val = request.form.get('mail_password', '').strip()
+                    if val:
+                        AppSetting.set('mail.password', encrypt_password(val))
+                elif attr == 'use_tls':
+                    # Checkbox: nicht vorhanden = false (muss explizit gespeichert werden)
+                    val = 'true' if request.form.get('mail_use_tls') else 'false'
+                    AppSetting.set(db_key, val)
+                else:
+                    val = request.form.get(f'mail_{attr}', '').strip()
+                    AppSetting.set(db_key, val if val else None)
 
         # Rechnungsformat
         fmt = request.form.get('invoice_document_format', 'pdf')
@@ -77,6 +85,14 @@ def index():
     # Passwort-Platzhalter: zeige ob bereits gesetzt
     mail_cfg['password_set'] = bool(AppSetting.get('mail.password')
                                     or current_app.config.get('MAIL_PASSWORD'))
+    mail_cfg['use_platform_relay'] = platform_relay_active()
+
+    # DB-only Werte (ohne .env-Fallback) — das SaaS-Template rendert damit die
+    # SMTP-Felder, ohne die Plattform-Relay-Zugangsdaten aus der .env zu zeigen.
+    mail_raw = {attr: (AppSetting.get(f'mail.{attr}') or '')
+                for attr in ('server', 'port', 'username', 'default_sender')}
+    mail_raw['use_tls_bool'] = str(AppSetting.get('mail.use_tls')).lower() in ('true', '1', 'yes')
+    mail_raw['password_set'] = bool(AppSetting.get('mail.password'))
 
     # Datenbankverbindungsinfo (kein Passwort)
     from sqlalchemy.engine import make_url
@@ -106,7 +122,8 @@ def index():
     invoice_design = AppSetting.get('invoice.design', 'classic')
     if invoice_design not in INVOICE_DESIGNS:
         invoice_design = 'classic'
-    return render_template('settings/index.html', wg=wg, mail=mail_cfg, db_info=db_info,
+    return render_template('settings/index.html', wg=wg, mail=mail_cfg, mail_raw=mail_raw,
+                           db_info=db_info,
                            doc_format=doc_format,
                            invoice_design=invoice_design,
                            invoice_designs=available_designs())
@@ -119,9 +136,9 @@ def send_test_mail():
     if not current_user.is_admin:
         return jsonify({'ok': False, 'error': 'Kein Zugriff'}), 403
 
-    recipient = current_user.email
+    recipient = get_wg('email')
     if not recipient:
-        return jsonify({'ok': False, 'error': 'Keine E-Mail-Adresse beim Admin-Benutzer hinterlegt'}), 400
+        return jsonify({'ok': False, 'error': 'Keine Kontakt-E-Mail-Adresse hinterlegt (Einstellungen → Kontaktdaten)'}), 400
 
     try:
         from flask_mail import Message

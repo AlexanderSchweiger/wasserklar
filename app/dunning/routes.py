@@ -305,9 +305,8 @@ def notice_send_email(notice_id):
     if not customer.email:
         return jsonify(ok=False, error="Kunde hat keine E-Mail-Adresse."), 400
 
-    from app.settings_service import wg_settings
+    from app.settings_service import wg_settings, send_mail
     from flask_mail import Message
-    from app.extensions import mail
 
     wg = wg_settings()
     summary = dunning_summary(notice.invoice)
@@ -358,7 +357,7 @@ def notice_send_email(notice_id):
                 return jsonify(ok=False, error="PDF-Erzeugung erfordert WeasyPrint."), 500
 
     try:
-        mail.send(msg)
+        send_mail(msg)
     except Exception as e:
         return jsonify(ok=False, error=f"E-Mail-Versand fehlgeschlagen: {e}"), 500
 

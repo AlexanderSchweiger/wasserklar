@@ -31,6 +31,17 @@ _MAIL_MAP = [
     ('default_sender', 'mail.default_sender', str),
 ]
 
+# (State-Attribut, Flask-Config-Key) — Reset des Flask-Mail-States auf die
+# app.config-Defaults, bevor per-Tenant-Overrides angewendet werden.
+_MAIL_RESET = [
+    ('server',         'MAIL_SERVER'),
+    ('port',           'MAIL_PORT'),
+    ('use_tls',        'MAIL_USE_TLS'),
+    ('username',       'MAIL_USERNAME'),
+    ('password',       'MAIL_PASSWORD'),
+    ('default_sender', 'MAIL_DEFAULT_SENDER'),
+]
+
 
 def _fernet():
     """Gibt eine Fernet-Instanz zurück, deren Key aus SECRET_KEY abgeleitet wird."""
@@ -73,14 +84,46 @@ def get_wg(key):
     return current_app.config.get(_WG_MAP.get(key, ''), '')
 
 
-def apply_mail_settings():
-    """Liest Mail-Einstellungen aus der DB und schreibt sie in den Flask-Mail-State.
+def platform_relay_active():
+    """True, wenn Mails über den Plattform-Relay (app.config-SMTP) statt über
+    per-Tenant-SMTP laufen.
 
-    Beim App-Start und nach jeder Änderung der Mail-Einstellungen aufrufen.
+    Der AppSetting-Wert hat Vorrang vor dem Config-Default MAIL_PLATFORM_RELAY.
+    Der DB-Zugriff ist abgesichert: beim App-Start (in der SaaS-Variante hat das
+    Schema 'public' keine app_settings-Tabelle) greift der Config-Default.
+    """
+    from app.models import AppSetting
+    try:
+        val = AppSetting.get('mail.use_platform_relay')
+    except Exception:
+        val = None
+    if val is None or val == '':
+        return bool(current_app.config.get('MAIL_PLATFORM_RELAY'))
+    return str(val).lower() in ('true', '1', 'yes')
+
+
+def apply_mail_settings():
+    """Konfiguriert den (prozess-globalen) Flask-Mail-State für den aktuellen
+    Request bzw. Tenant.
+
+    Idempotent: setzt den State zuerst auf die app.config-Defaults zurück und
+    wendet — sofern kein Plattform-Relay aktiv ist — die mail.*-Overrides an.
+    Der Reset ist im Multi-Tenant-Betrieb load-bearing, weil der Flask-Mail-State
+    prozess-global ist und sonst Werte eines anderen Tenants übrig blieben.
     """
     from app.models import AppSetting
 
     state = current_app.extensions['mail']
+
+    # 1. Reset auf die app.config-Defaults (kein DB-Zugriff nötig).
+    for attr, cfg_key in _MAIL_RESET:
+        setattr(state, attr, current_app.config.get(cfg_key))
+
+    # 2. Plattform-Relay: keine per-Tenant-Overrides.
+    if platform_relay_active():
+        return
+
+    # 3. Eigener SMTP: mail.*-Overrides anwenden.
     for attr, db_key, cast in _MAIL_MAP:
         val = AppSetting.get(db_key)
         if val is not None and val != '':
@@ -95,18 +138,27 @@ def apply_mail_settings():
 
 
 def send_mail(msg):
-    """Sendet eine flask_mail.Message. Mail-Einstellungen wurden bereits beim
-    App-Start bzw. nach Einstellungsänderungen via apply_mail_settings() gesetzt."""
+    """Sendet eine flask_mail.Message.
+
+    Wendet vorab die aktuell gültige Mail-Konfiguration an — wichtig im
+    Multi-Tenant-Betrieb, da der Flask-Mail-State prozess-global ist und sonst
+    der zuletzt gespeicherte Tenant gewinnen würde.
+    """
     from app.extensions import mail
     from app.models import AppSetting
 
-    ##Mail Sender wird immer aus Einstellungen gesetzt
-    msg.sender = (
-        AppSetting.get('mail.default_sender')
-        or current_app.config.get('MAIL_DEFAULT_SENDER')
-        or AppSetting.get('mail.username')
-        or current_app.config.get('MAIL_USERNAME')
-        or ''
-    )
+    apply_mail_settings()
+
+    # Absender wird immer aus den Einstellungen gesetzt.
+    if platform_relay_active():
+        msg.sender = current_app.config.get('MAIL_DEFAULT_SENDER') or ''
+    else:
+        msg.sender = (
+            AppSetting.get('mail.default_sender')
+            or current_app.config.get('MAIL_DEFAULT_SENDER')
+            or AppSetting.get('mail.username')
+            or current_app.config.get('MAIL_USERNAME')
+            or ''
+        )
 
     mail.send(msg)

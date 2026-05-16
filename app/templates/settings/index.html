@@ -85,6 +85,7 @@
 
     {# ── Tab 2: E-Mail-Server ────────────────────────────────────────── #}
     <div class="tab-pane fade" id="pane-email" role="tabpanel">
+      {% block email_pane %}
       <div class="card">
         <div class="card-header">
           <h3 class="card-title"><i class="fas fa-envelope me-1"></i> E-Mail-Server (SMTP)</h3>
@@ -156,11 +157,12 @@
           <ul class="ps-3 mb-0">
             <li>Gespeicherte Werte überschreiben die <code>.env</code>-Variablen.</li>
             <li>Leere Felder greifen wieder auf <code>.env</code> zurück.</li>
-            <li>Die Test-Mail wird an Ihre Admin-Adresse (<strong>{{ current_user.email }}</strong>) gesendet.</li>
+            <li>Die Test-Mail wird an die unter <em>Kontaktdaten</em> hinterlegte E-Mail-Adresse gesendet.</li>
             <li>Test-Mail verwendet die aktuell <em>gespeicherten</em> Einstellungen – zuerst speichern, dann testen.</li>
           </ul>
         </div>
       </div>
+      {% endblock %}
     </div>
 
     {# ── Tab 3: Rechnungsformat ──────────────────────────────────────── #}

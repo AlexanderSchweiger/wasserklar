@@ -21,6 +21,9 @@ class Config:
     MAIL_USERNAME = os.environ.get("MAIL_USERNAME")
     MAIL_PASSWORD = os.environ.get("MAIL_PASSWORD")
     MAIL_DEFAULT_SENDER = os.environ.get("MAIL_DEFAULT_SENDER", "wg@example.com")
+    # Plattform-Relay: wenn aktiv, laeuft der Versand ueber den app.config-SMTP
+    # statt ueber per-Tenant-mail.*-Overrides. OSS-Standalone: aus, SaaS: an.
+    MAIL_PLATFORM_RELAY = os.environ.get("MAIL_PLATFORM_RELAY", "false").lower() == "true"
 
     # PDF-Ausgabeverzeichnis
     PDF_DIR = os.path.join(BASE_DIR, "instance", "pdfs")
