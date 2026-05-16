@@ -96,7 +96,7 @@ def apply_schema_upgrades(conn, dialect, *, verbose=False, schema=None):
             return
         if col_name in cols:
             if verbose:
-                print(f"  ✓ {table}.{col_name} bereits vorhanden.")
+                print(f"  ok {table}.{col_name} bereits vorhanden.")
             return
         # MariaDB/MySQL unterstuetzt kein inline REFERENCES in ALTER TABLE ADD COLUMN
         effective_def = col_def
@@ -130,7 +130,7 @@ def seed_default_tax_rates(db, *, verbose=False):
             if verbose:
                 print(f"  + Steuersatz {rate_val}% angelegt.")
         elif verbose:
-            print(f"  ✓ Steuersatz {rate_val}% bereits vorhanden.")
+            print(f"  ok Steuersatz {rate_val}% bereits vorhanden.")
     db.session.commit()
 
 
@@ -141,7 +141,7 @@ def seed_default_dunning_policy(db, *, verbose=False):
 
     if DunningPolicy.query.first():
         if verbose:
-            print("  ✓ Mahnvorlage bereits vorhanden.")
+            print("  ok Mahnvorlage bereits vorhanden.")
         return
 
     policy = DunningPolicy(name="Standard", description="Standard-Mahnvorlage", is_default=True)
