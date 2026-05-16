@@ -96,46 +96,62 @@ def _get_cell(row_dict: dict, col_name: str) -> str:
     return str(val).strip()
 
 
-def _delete_customer_cascade(customer, warnings: list) -> bool:
+def _act(text, kind="info"):
+    """Eine Aktion in der Vorschau. ``kind``: 'new' (wird angelegt),
+    'update' (wird aktualisiert) oder 'info' (neutral)."""
+    return {"text": text, "kind": kind}
+
+
+def _plan_entry(idx, cnum, name, objekt, meter, category, label, actions):
+    """Baut einen serialisierbaren Vorschau-Eintrag für eine CSV-Zeile."""
+    return {
+        "row": idx,
+        "customer_number": str(cnum),
+        "customer_name": name,
+        "object_number": objekt,
+        "meter_number": meter,
+        "category": category,      # "import" | "exists" | "skip"
+        "label": label,
+        "actions": actions,        # Liste von Beschreibungs-Strings
+    }
+
+
+def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str,
+                dry_run: bool = False) -> dict:
     """
-    Löscht Kunden und alle abhängigen Daten (Objekte, Zähler, Ablesungen).
-    Gibt True zurück wenn erfolgreich, False wenn Rechnungen vorhanden (→ nicht löschen).
-    """
-    if customer.invoices.count() > 0:
-        warnings.append(
-            f"Kunden-Nr. {customer.customer_number} ({customer.name}) hat Rechnungen "
-            f"und kann nicht überschrieben werden – übersprungen."
-        )
-        return False
+    Analysiert/importiert die CSV.
 
-    # Ownerships + Properties (ohne Rechnungen)
-    for ownership in customer.ownerships.all():
-        prop = ownership.property
-        if prop and prop.invoices.count() == 0:
-            # Alle Zähler/Ablesungen via cascade löschen
-            for meter in prop.meters.all():
-                db.session.delete(meter)
-            db.session.delete(prop)
-        db.session.delete(ownership)
+    **Additives Verhalten:** Jede Zeile ergänzt Daten, statt sie zu verwerfen.
 
-    db.session.delete(customer)
-    db.session.flush()
-    return True
+    - Ein Kunde, der mehrfach in der CSV vorkommt oder bereits in der Datenbank
+      liegt, wird wiederverwendet – seine zusätzlichen Objekte/Zähler/Ablesungen
+      werden ergänzt.
+    - ``duplicate_mode`` steuert nur, was mit bereits vorhandenen Daten geschieht:
+      ``"overwrite"`` aktualisiert die Stammdaten eines bestehenden Kunden und
+      vorhandene Ablesungen; ``"skip"`` lässt Bestehendes unverändert. Neue
+      Objekte/Zähler/Ablesungen werden in **beiden** Modi ergänzt.
 
+    Bei ``dry_run=True`` läuft der komplette Import durch, wird am Ende aber
+    vollständig zurückgerollt – es bleibt nichts in der DB. So entspricht die
+    Vorschau exakt dem späteren echten Import.
 
-def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str) -> dict:
-    """
-    Führt den eigentlichen Import durch.
-    Gibt dict mit Statistiken zurück.
+    Gibt dict mit Statistiken und – unter ``plan`` – einem Eintrag je Zeile zurück.
     """
     results = {
         "customers_created": 0,
+        "customers_updated": 0,
         "properties_created": 0,
+        "properties_reused": 0,
         "meters_created": 0,
+        "meters_reused": 0,
+        "ownerships_created": 0,
         "readings_created": 0,
+        "readings_updated": 0,
         "rows_skipped": 0,
+        "rows_unchanged": 0,
         "warnings": [],
         "errors": [],
+        "plan": [],
     }
 
     col_cnum = col_map.get("customer_number", "")
@@ -156,6 +172,15 @@ def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str) -> 
 
     rows = df.to_dict(orient="records")
 
+    # Kunden-Nr. → Customer, die in DIESEM Lauf bereits angefasst wurden.
+    seen_customers = {}
+
+    # Äußere Transaktionsklammer um den gesamten Lauf. Notwendig, damit die
+    # Zeilen-Savepoints darin geschachtelt sind: SQLite committet andernfalls
+    # beim RELEASE des *äußersten* SAVEPOINT die Transaktion – ein dry_run
+    # könnte dann nicht mehr sauber zurückgerollt werden.
+    outer = db.session.begin_nested()
+
     for idx, row in enumerate(rows, start=2):  # Zeile 2 = erste Datenzeile nach Header
         sp = db.session.begin_nested()
         try:
@@ -163,6 +188,9 @@ def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str) -> 
             raw_cnum = _get_cell(row, col_cnum)
             if not raw_cnum:
                 results["rows_skipped"] += 1
+                results["plan"].append(_plan_entry(
+                    idx, "", "", "", "", "skip", "Nicht importiert",
+                    [_act("Keine Kunden-Nr. – Zeile ignoriert")]))
                 sp.rollback()
                 continue
 
@@ -170,6 +198,9 @@ def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str) -> 
             first_val = str(list(row.values())[0]).strip() if row else ""
             if "ergebnis" in first_val.lower() or "ergebnis" in raw_cnum.lower():
                 results["rows_skipped"] += 1
+                results["plan"].append(_plan_entry(
+                    idx, raw_cnum, "", "", "", "skip", "Nicht importiert",
+                    [_act("Ergebnis-/Summenzeile – kein Datensatz")]))
                 sp.rollback()
                 continue
 
@@ -178,6 +209,9 @@ def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str) -> 
             except (ValueError, TypeError):
                 results["errors"].append(f"Zeile {idx}: Ungültige Kunden-Nr. '{raw_cnum}'")
                 results["rows_skipped"] += 1
+                results["plan"].append(_plan_entry(
+                    idx, raw_cnum, "", "", "", "skip", "Fehler",
+                    [_act(f"Ungültige Kunden-Nr. '{raw_cnum}'")]))
                 sp.rollback()
                 continue
 
@@ -186,25 +220,11 @@ def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str) -> 
             info_val = _get_cell(row, "Info")
             if "storno" in notes_val.lower() or "storno" in info_val.lower():
                 results["rows_skipped"] += 1
+                results["plan"].append(_plan_entry(
+                    idx, cnum, "", "", "", "skip", "Nicht importiert",
+                    [_act("Storno-Zeile – wird übersprungen")]))
                 sp.rollback()
                 continue
-
-            # --- Duplikat-Prüfung ---
-            existing = Customer.query.filter_by(customer_number=cnum).first()
-            if existing:
-                if duplicate_mode == "skip":
-                    results["warnings"].append(
-                        f"Kunden-Nr. {cnum} ({existing.name}) bereits vorhanden – übersprungen."
-                    )
-                    results["rows_skipped"] += 1
-                    sp.rollback()
-                    continue
-                else:  # overwrite
-                    ok = _delete_customer_cascade(existing, results["warnings"])
-                    if not ok:
-                        results["rows_skipped"] += 1
-                        sp.rollback()
-                        continue
 
             # --- Kunden-Name ---
             raw_name = _get_cell(row, col_name)
@@ -213,9 +233,14 @@ def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str) -> 
                 first = _get_cell(row, col_first)
                 raw_name = f"{last} {first}".strip() if (last or first) else f"Kunde {cnum}"
 
-            # --- Customer erstellen ---
-            customer = Customer(
-                customer_number=cnum,
+            raw_objekt = _get_cell(row, col_prop) or f"Objekt-{cnum}"
+            raw_meter = _get_cell(row, col_meter)
+
+            actions = []
+            new_count = 0       # Anzahl neu angelegter Datensätze in dieser Zeile
+            updated = False     # wurde Bestehendes aktualisiert?
+
+            cust_fields = dict(
                 name=raw_name,
                 strasse=_get_cell(row, col_strasse),
                 plz=_get_cell(row, col_plz),
@@ -225,17 +250,41 @@ def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str) -> 
                 rechnung_per_email=bool(_get_cell(row, col_email)),
                 phone=_get_cell(row, col_phone),
                 notes=_get_cell(row, col_notes),
-                active=True,
             )
-            db.session.add(customer)
-            db.session.flush()
-            results["customers_created"] += 1
+
+            # --- Kunde bestimmen (neu / aus DB / aus diesem Lauf) ---
+            if cnum in seen_customers:
+                customer = seen_customers[cnum]
+                actions.append(_act(
+                    f"Kunde Nr. {cnum} – kam in dieser Datei bereits vor"))
+            else:
+                customer = Customer.query.filter_by(customer_number=cnum).first()
+                if customer is not None:
+                    seen_customers[cnum] = customer
+                    if duplicate_mode == "overwrite":
+                        for key, val in cust_fields.items():
+                            setattr(customer, key, val)
+                        db.session.flush()
+                        results["customers_updated"] += 1
+                        updated = True
+                        actions.append(_act(
+                            f"Kunde Nr. {cnum} »{customer.name}« – bereits vorhanden, "
+                            f"Stammdaten aktualisiert", "update"))
+                    else:
+                        actions.append(_act(
+                            f"Kunde Nr. {cnum} »{customer.name}« – bereits vorhanden, "
+                            f"Stammdaten unverändert"))
+                else:
+                    customer = Customer(customer_number=cnum, active=True, **cust_fields)
+                    db.session.add(customer)
+                    db.session.flush()
+                    seen_customers[cnum] = customer
+                    results["customers_created"] += 1
+                    new_count += 1
+                    actions.append(_act(
+                        f"Kunde Nr. {cnum} »{raw_name}« – neu angelegt", "new"))
 
             # --- Property (Objekt) ---
-            raw_objekt = _get_cell(row, col_prop)
-            if not raw_objekt:
-                raw_objekt = f"Objekt-{cnum}"
-
             raw_typ = _get_cell(row, col_typ).lower()
             object_type = "Sonstiges" if raw_typ in ("stall", "garten") else "Haus"
 
@@ -250,100 +299,154 @@ def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str) -> 
                 db.session.add(prop)
                 db.session.flush()
                 results["properties_created"] += 1
+                new_count += 1
+                actions.append(_act(f"Objekt »{raw_objekt}« – neu angelegt", "new"))
+            else:
+                results["properties_reused"] += 1
+                actions.append(_act(
+                    f"Objekt »{raw_objekt}« – bereits vorhanden, wird verwendet"))
 
-            # --- PropertyOwnership ---
-            ownership = PropertyOwnership(
-                property_id=prop.id,
-                customer_id=customer.id,
-                valid_from=date.today(),
-                valid_to=None,
-            )
-            db.session.add(ownership)
+            # --- PropertyOwnership (Kunde ↔ Objekt) ---
+            existing_ownership = PropertyOwnership.query.filter_by(
+                property_id=prop.id, customer_id=customer.id, valid_to=None
+            ).first()
+            if existing_ownership is None:
+                db.session.add(PropertyOwnership(
+                    property_id=prop.id,
+                    customer_id=customer.id,
+                    valid_from=date.today(),
+                    valid_to=None,
+                ))
+                db.session.flush()
+                results["ownerships_created"] += 1
+                new_count += 1
+                actions.append(_act(
+                    f"Objekt »{raw_objekt}« wird dem Kunden zugeordnet", "new"))
+            else:
+                actions.append(_act(
+                    f"Zuordnung Kunde ↔ Objekt »{raw_objekt}« besteht bereits"))
 
-            # --- WaterMeter ---
-            raw_meter = _get_cell(row, col_meter)
+            # --- WaterMeter + Ablesungen ---
             if not raw_meter:
                 results["warnings"].append(
-                    f"Zeile {idx} (Kunden-Nr. {cnum}): Keine Zählernummer – Zähler und Ablesungen übersprungen."
+                    f"Zeile {idx} (Kunden-Nr. {cnum}): Keine Zählernummer – "
+                    f"Zähler und Ablesungen übersprungen."
                 )
-                sp.commit()
-                continue
-
-            raw_eichjahr = _get_cell(row, col_eichjahr)
-            eichjahr = None
-            if raw_eichjahr:
-                try:
-                    eichjahr = int(float(raw_eichjahr))
-                except (ValueError, TypeError):
-                    pass
-
-            existing_meter = WaterMeter.query.filter_by(meter_number=raw_meter).first()
-            if existing_meter:
-                results["warnings"].append(
-                    f"Zeile {idx}: Zähler '{raw_meter}' existiert bereits – Zähler wird wiederverwendet."
-                )
-                meter = existing_meter
+                actions.append(_act(
+                    "Keine Zählernummer – kein Zähler/keine Ablesungen"))
             else:
-                meter = WaterMeter(
-                    property_id=prop.id,
-                    meter_number=raw_meter,
-                    eichjahr=eichjahr,
-                    active=True,
-                )
-                db.session.add(meter)
-                db.session.flush()
-                results["meters_created"] += 1
+                raw_eichjahr = _get_cell(row, col_eichjahr)
+                eichjahr = None
+                if raw_eichjahr:
+                    try:
+                        eichjahr = int(float(raw_eichjahr))
+                    except (ValueError, TypeError):
+                        pass
 
-            # --- MeterReadings für alle Stand-Spalten ---
-            previous_value = None
-            for col_stand, year in stand_columns:
-                raw_val = _get_cell(row, col_stand)
-                if not raw_val:
-                    continue
-
-                parsed = _parse_austrian_number(raw_val)
-                if parsed is None:
-                    results["warnings"].append(
-                        f"Zeile {idx}: Ungültiger Ablesewert '{raw_val}' für {col_stand} – übersprungen."
-                    )
-                    continue
-
-                # Null-Wert ohne Vorjahr → neue Anschlüsse ohne Ablesung überspringen
-                if parsed == 0 and previous_value is None:
-                    continue
-
-                # Verbrauch berechnen
-                consumption = None
-                if previous_value is not None:
-                    consumption = parsed - previous_value
-
-                # Vorhandene Ablesung überschreiben oder neu anlegen
-                existing_reading = MeterReading.query.filter_by(
-                    meter_id=meter.id, year=year
-                ).first()
-                if existing_reading:
-                    existing_reading.value = parsed
-                    existing_reading.consumption = consumption
+                existing_meter = WaterMeter.query.filter_by(meter_number=raw_meter).first()
+                if existing_meter:
+                    meter = existing_meter
+                    results["meters_reused"] += 1
+                    actions.append(_act(
+                        f"Zähler »{raw_meter}« – bereits vorhanden, "
+                        f"wird wiederverwendet"))
                 else:
-                    reading = MeterReading(
-                        meter_id=meter.id,
-                        year=year,
-                        value=parsed,
-                        consumption=consumption,
-                        reading_date=date(year, 12, 31),
+                    meter = WaterMeter(
+                        property_id=prop.id,
+                        meter_number=raw_meter,
+                        eichjahr=eichjahr,
+                        active=True,
                     )
-                    db.session.add(reading)
-                    results["readings_created"] += 1
+                    db.session.add(meter)
+                    db.session.flush()
+                    results["meters_created"] += 1
+                    new_count += 1
+                    actions.append(_act(f"Zähler »{raw_meter}« – neu angelegt", "new"))
 
-                previous_value = parsed
+                # --- MeterReadings für alle Stand-Spalten ---
+                previous_value = None
+                readings_new = 0
+                readings_upd = 0
+                for col_stand, year in stand_columns:
+                    raw_val = _get_cell(row, col_stand)
+                    if not raw_val:
+                        continue
+
+                    parsed = _parse_austrian_number(raw_val)
+                    if parsed is None:
+                        results["warnings"].append(
+                            f"Zeile {idx}: Ungültiger Ablesewert '{raw_val}' "
+                            f"für {col_stand} – übersprungen."
+                        )
+                        continue
+
+                    # Null-Wert ohne Vorjahr → neue Anschlüsse ohne Ablesung überspringen
+                    if parsed == 0 and previous_value is None:
+                        continue
+
+                    # Verbrauch berechnen
+                    consumption = None
+                    if previous_value is not None:
+                        consumption = parsed - previous_value
+
+                    existing_reading = MeterReading.query.filter_by(
+                        meter_id=meter.id, year=year
+                    ).first()
+                    if existing_reading is not None:
+                        if duplicate_mode == "overwrite":
+                            existing_reading.value = parsed
+                            existing_reading.consumption = consumption
+                            results["readings_updated"] += 1
+                            readings_upd += 1
+                            updated = True
+                        # skip-Modus: vorhandene Ablesung unverändert lassen
+                    else:
+                        db.session.add(MeterReading(
+                            meter_id=meter.id,
+                            year=year,
+                            value=parsed,
+                            consumption=consumption,
+                            reading_date=date(year, 12, 31),
+                        ))
+                        results["readings_created"] += 1
+                        readings_new += 1
+                        new_count += 1
+
+                    previous_value = parsed
+
+                if readings_new:
+                    actions.append(_act(
+                        f"{readings_new} Ablesung(en) werden angelegt", "new"))
+                if readings_upd:
+                    actions.append(_act(
+                        f"{readings_upd} vorhandene Ablesung(en) werden aktualisiert",
+                        "update"))
+
+            # --- Zeile klassifizieren ---
+            if new_count > 0 or updated:
+                category, label = "import", "Wird importiert"
+            else:
+                category, label = "exists", "Bereits vorhanden"
+                results["rows_unchanged"] += 1
+
+            results["plan"].append(_plan_entry(
+                idx, cnum, raw_name, raw_objekt, raw_meter, category, label, actions))
 
             sp.commit()
 
         except Exception as exc:
             sp.rollback()
             results["errors"].append(f"Zeile {idx}: Unerwarteter Fehler – {exc}")
+            results["plan"].append(_plan_entry(
+                idx, "", "", "", "", "skip", "Fehler",
+                [_act(f"Unerwarteter Fehler: {exc}")]))
 
-    db.session.commit()
+    if dry_run:
+        outer.rollback()
+        db.session.rollback()
+    else:
+        outer.commit()
+        db.session.commit()
     return results
 
 
@@ -397,6 +500,8 @@ def upload():
     filepath = os.path.join(current_app.instance_path, filename)
     df.to_pickle(filepath)
     session["import_file"] = filename
+    session.pop("import_col_map", None)
+    session.pop("import_duplicate_mode", None)
 
     return redirect(url_for("import_csv.mapping"))
 
@@ -426,7 +531,10 @@ def mapping():
     stand_columns = _detect_stand_columns(columns)
 
     if request.method == "GET":
-        suggestions = _build_suggestions(columns)
+        # Beim Zurück-Navigieren aus der Vorschau die zuvor getroffene
+        # Zuordnung beibehalten, sonst automatisch vorschlagen.
+        stored = session.get("import_col_map")
+        suggestions = stored if stored else _build_suggestions(columns)
         preview = df.head(5).to_dict(orient="records")
         return render_template(
             "import_csv/mapping.html",
@@ -434,17 +542,56 @@ def mapping():
             suggestions=suggestions,
             stand_columns=stand_columns,
             preview=preview,
+            duplicate_mode=session.get("import_duplicate_mode", "skip"),
         )
 
-    # POST: Import ausführen
+    # POST: Zuordnung übernehmen und zur Vorschau weiterleiten
     col_map = {}
     for key in _COLUMN_HINTS:
         val = request.form.get(f"col_{key}", "")
         col_map[key] = val if val else ""
 
-    duplicate_mode = request.form.get("duplicate_mode", "skip")
+    session["import_col_map"] = col_map
+    session["import_duplicate_mode"] = request.form.get("duplicate_mode", "skip")
+    return redirect(url_for("import_csv.preview"))
 
-    results = _run_import(df, col_map, stand_columns, duplicate_mode)
+
+@bp.route("/preview", methods=["GET", "POST"])
+@login_required
+def preview():
+    filename = session.get("import_file")
+    col_map = session.get("import_col_map")
+    if not filename or col_map is None:
+        flash("Keine Import-Daten gefunden. Bitte neu hochladen.", "warning")
+        return redirect(url_for("import_csv.upload"))
+
+    filepath = os.path.join(current_app.instance_path, filename)
+    if not os.path.exists(filepath):
+        flash("Die hochgeladene Datei ist nicht mehr verfügbar. Bitte neu hochladen.", "warning")
+        session.pop("import_file", None)
+        return redirect(url_for("import_csv.upload"))
+
+    try:
+        import pandas as pd
+        df = pd.read_pickle(filepath)
+    except Exception as exc:
+        flash(f"Fehler beim Laden der Datei: {exc}", "danger")
+        return redirect(url_for("import_csv.upload"))
+
+    stand_columns = _detect_stand_columns(df.columns.tolist())
+    duplicate_mode = session.get("import_duplicate_mode", "skip")
+
+    if request.method == "GET":
+        # Probelauf: zeigt exakt, was der echte Import tun würde, ohne zu schreiben.
+        plan = _run_import(df, col_map, stand_columns, duplicate_mode, dry_run=True)
+        return render_template(
+            "import_csv/preview.html",
+            results=plan,
+            duplicate_mode=duplicate_mode,
+        )
+
+    # POST: "Jetzt importieren" – echter Import
+    results = _run_import(df, col_map, stand_columns, duplicate_mode, dry_run=False)
 
     # Aufräumen
     try:
@@ -452,7 +599,11 @@ def mapping():
     except OSError:
         pass
     session.pop("import_file", None)
+    session.pop("import_col_map", None)
+    session.pop("import_duplicate_mode", None)
 
+    # plan-Liste nicht in die (Cookie-)Session legen – kann sehr groß werden.
+    results.pop("plan", None)
     session["import_result"] = results
     return redirect(url_for("import_csv.result"))
 

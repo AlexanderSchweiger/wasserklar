@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% block title %}Zählertausch-Vorschau{% endblock %}
+{% block page_title %}<i class="fas fa-eye me-2"></i> Zählertausch-Import: Vorschau{% endblock %}
+{% block content %}
+<form method="post" id="swap-preview-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="action" value="confirm">
+
+  {# Statistik-Banner #}
+  <div class="row g-2 mb-3">
+    <div class="col-md-4">
+      <div class="card"><div class="card-body py-2">
+        <span class="badge bg-success text-white me-1">{{ counts.tausch }}</span>
+        Zählertausch
+      </div></div>
+    </div>
+    <div class="col-md-4">
+      <div class="card"><div class="card-body py-2">
+        <span class="badge bg-info text-white me-1">{{ counts.neuanlage }}</span>
+        Neuanlage
+      </div></div>
+    </div>
+    <div class="col-md-4">
+      <div class="card"><div class="card-body py-2">
+        <span class="badge bg-danger text-white me-1">{{ counts.fehler }}</span>
+        Fehler (übersprungen)
+      </div></div>
+    </div>
+  </div>
+
+  {% if 'object_number' not in cols %}
+  <div class="alert alert-secondary">
+    <i class="fas fa-info-circle me-1"></i>
+    Keine Spalte <em>Objekt-Nr.</em> erkannt — Objekte für Neuanlagen bitte unten auswählen.
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">Schritt 2: Vorschau prüfen</h3>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0 align-middle">
+          <thead>
+            <tr>
+              <th style="width:40px">#</th>
+              <th style="width:50px">Skip</th>
+              <th style="width:110px">Status</th>
+              <th style="min-width:200px">Alter Zähler</th>
+              <th style="min-width:180px">Objekt / Eigentümer</th>
+              <th style="width:130px">Ausbau-Stand (m³)</th>
+              <th style="width:140px">Neuer Zähler</th>
+              <th style="width:120px">Anfangsstand (m³)</th>
+              <th style="width:100px">Eichjahr</th>
+              <th style="width:160px">Tauschdatum</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in rows %}
+            {% set badge_label, badge_cls = status_badge(r.status) %}
+            <tr class="{{ status_row_class(r.status) }}">
+              <td class="text-muted">{{ r.human_row }}</td>
+              <td>
+                <input type="checkbox" class="form-check-input"
+                       name="rows[{{ r.idx }}][skip]" value="on"
+                       {{ 'checked' if r.skip }}>
+              </td>
+              <td>
+                <span class="badge {{ badge_cls }}">{{ badge_label }}</span>
+                {% for msg in r.messages %}
+                <small class="text-muted d-block">{{ msg }}</small>
+                {% endfor %}
+              </td>
+              <td>
+                {% if r.status == STATUS_TAUSCH %}
+                  <strong>{{ r.old_meter_number }}</strong>
+                  {% if r.old_last_value is not none %}
+                  <small class="text-muted d-block">
+                    Letzter Stand: {{ format_value_de(r.old_last_value) }} m³
+                    ({{ r.old_last_year }})
+                  </small>
+                  {% else %}
+                  <small class="text-muted d-block">keine Ablesung</small>
+                  {% endif %}
+                {% elif r.old_meter_number %}
+                  <span class="text-muted">{{ r.old_meter_number }}</span>
+                  <small class="text-muted d-block">nicht gefunden</small>
+                {% else %}
+                  <span class="text-muted">—</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if r.status == STATUS_TAUSCH %}
+                  {{ r.old_object_label or '—' }}
+                  <small class="text-muted d-block">{{ r.old_owner or 'kein Eigentümer' }}</small>
+                {% else %}
+                  <select name="rows[{{ r.idx }}][property_id]"
+                          class="form-select form-select-sm">
+                    <option value="">— Objekt wählen —</option>
+                    {% for p in properties %}
+                    <option value="{{ p.id }}" {{ 'selected' if r.property_id == p.id }}>
+                      {{ p.label() }}
+                    </option>
+                    {% endfor %}
+                  </select>
+                {% endif %}
+              </td>
+              <td>
+                {% if r.status == STATUS_NEUANLAGE %}
+                  <span class="text-muted">—</span>
+                {% else %}
+                  <input type="text" name="rows[{{ r.idx }}][dismount_value]"
+                         class="form-control form-control-sm text-end"
+                         value="{{ format_value_de(r.dismount_value) }}"
+                         placeholder="0,000">
+                {% endif %}
+              </td>
+              <td><strong>{{ r.new_meter_number or '—' }}</strong></td>
+              <td>
+                <input type="text" name="rows[{{ r.idx }}][new_initial_value]"
+                       class="form-control form-control-sm text-end"
+                       value="{{ format_value_de(r.new_initial_value) }}"
+                       placeholder="0,000">
+              </td>
+              <td>
+                <input type="number" name="rows[{{ r.idx }}][new_eichjahr]"
+                       class="form-control form-control-sm" min="1900" max="2100"
+                       value="{{ r.new_eichjahr or '' }}">
+              </td>
+              <td>
+                <input type="date" name="rows[{{ r.idx }}][swap_date]"
+                       class="form-control form-control-sm"
+                       value="{{ r.swap_date.strftime('%Y-%m-%d') }}">
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="10" class="text-center text-muted py-4">
+              Keine Zeilen in der Datei.
+            </td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card-footer">
+      <button type="submit" class="btn btn-primary"
+              {{ 'disabled' if rows | length == 0 }}>
+        <i class="fas fa-check me-1"></i>
+        Import ausführen ({{ counts.tausch + counts.neuanlage }} Zeile{{ '' if (counts.tausch + counts.neuanlage) == 1 else 'n' }})
+      </button>
+      <a href="{{ url_for('meters.swap_import_upload') }}" class="btn btn-secondary ms-2">
+        <i class="fas fa-arrow-left me-1"></i> Zurück
+      </a>
+    </div>
+  </div>
+</form>
+{% endblock %}

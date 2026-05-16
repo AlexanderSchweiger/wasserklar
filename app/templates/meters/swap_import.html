@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Zählertausch-Import{% endblock %}
+{% block page_title %}<i class="fas fa-exchange-alt me-2"></i> Zählertausch-Import{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="col-lg-9">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Schritt 1: Datei mit Zählertäuschen wählen</h3>
+      </div>
+      <form method="post" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="card-body">
+          <div class="alert alert-info">
+            <h4 class="alert-title"><i class="fas fa-info-circle me-1"></i> Erwartetes Format</h4>
+            <p class="mb-2">
+              CSV (beliebiges Trennzeichen, UTF-8) oder Excel (<code>.xlsx</code>/<code>.xls</code>)
+              mit folgenden Spalten:
+            </p>
+            <table class="table table-sm table-bordered mb-2" style="font-size:.85rem">
+              <thead>
+                <tr><th>Spalte</th><th>Pflicht</th><th>Bedeutung</th></tr>
+              </thead>
+              <tbody>
+                <tr><td><code>WasserzählerNr. alt</code></td><td>ja</td>
+                    <td>Nummer des auszubauenden Zählers</td></tr>
+                <tr><td><code>Ausbau Zählerstand</code></td><td>ja bei Tausch</td>
+                    <td>Abschlussablesung des alten Zählers</td></tr>
+                <tr><td><code>Wasserzähler Nr. neu</code></td><td>ja</td>
+                    <td>Nummer des neuen Zählers</td></tr>
+                <tr><td><code>Zählerstand neu</code></td><td>nein</td>
+                    <td>Anfangsstand des neuen Zählers (Standard: 0)</td></tr>
+                <tr><td><code>Eichjahr</code></td><td>nein</td>
+                    <td>Eichjahr des neuen Zählers (Standard: leer)</td></tr>
+                <tr><td><code>Tauschdatum</code></td><td>nein</td>
+                    <td>Datum des Tauschs im Format <strong>TT.MM.JJJJ</strong> (Standard: heute)</td></tr>
+                <tr><td><code>Objekt-Nr.</code></td><td>nein</td>
+                    <td>Objekt-Zuordnung — nur für Neuanlagen genutzt</td></tr>
+              </tbody>
+            </table>
+            <small class="text-muted">
+              Wird der alte Zähler nicht im System gefunden, kann der neue Zähler
+              trotzdem als <strong>Neuanlage</strong> importiert werden — das Objekt
+              wählen Sie dann in der Vorschau (oder über die Spalte <em>Objekt-Nr.</em>).
+            </small>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">Datei auswählen <span class="text-danger">*</span></label>
+            <input type="file" name="file" class="form-control"
+                   accept=".csv,.xlsx,.xls" required>
+          </div>
+        </div>
+        <div class="card-footer">
+          <button type="submit" class="btn btn-primary">
+            <i class="fas fa-arrow-right me-1"></i> Weiter zur Vorschau
+          </button>
+          <a href="{{ url_for('meters.index') }}" class="btn btn-secondary ms-2">Abbrechen</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

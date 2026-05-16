@@ -1,0 +1,238 @@
+{% extends "base.html" %}
+{% block title %}Import-Vorschau{% endblock %}
+{% block page_title %}<i class="fas fa-search me-2"></i> Import-Vorschau{% endblock %}
+{% block content %}
+
+{% set imports = results.plan | selectattr('category', 'equalto', 'import') | list %}
+{% set exists  = results.plan | selectattr('category', 'equalto', 'exists') | list %}
+{% set skipped = results.plan | selectattr('category', 'equalto', 'skip')   | list %}
+
+{# ------------------------------------------------------------------ #}
+{# Zusammenfassung                                                     #}
+{# ------------------------------------------------------------------ #}
+<div class="row row-cards mb-3">
+  <div class="col-md-4">
+    <div class="card border-success">
+      <div class="card-body text-center">
+        <div class="h1 m-0 text-success">{{ imports|length }}</div>
+        <div class="text-muted">Zeilen werden importiert</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card border-warning">
+      <div class="card-body text-center">
+        <div class="h1 m-0 text-warning">{{ exists|length }}</div>
+        <div class="text-muted">bereits vorhanden – nicht eingefügt</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card border-secondary">
+      <div class="card-body text-center">
+        <div class="h1 m-0 text-secondary">{{ skipped|length }}</div>
+        <div class="text-muted">nicht importiert</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ------------------------------------------------------------------ #}
+{# Detail-Aufstellung dessen, was angelegt wird                        #}
+{# ------------------------------------------------------------------ #}
+<div class="row mb-3">
+  <div class="col-lg-8">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Das wird angelegt</h3>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-sm mb-0">
+          <tbody>
+            <tr>
+              <td><i class="fas fa-user-plus me-1 text-primary"></i> Kunden neu angelegt</td>
+              <td class="text-end"><strong>{{ results.customers_created }}</strong></td>
+            </tr>
+            {% if results.customers_updated %}
+            <tr>
+              <td><i class="fas fa-user-edit me-1 text-warning"></i> Kunden-Stammdaten aktualisiert</td>
+              <td class="text-end"><strong>{{ results.customers_updated }}</strong></td>
+            </tr>
+            {% endif %}
+            <tr>
+              <td><i class="fas fa-home me-1 text-info"></i> Objekte neu angelegt</td>
+              <td class="text-end"><strong>{{ results.properties_created }}</strong></td>
+            </tr>
+            {% if results.properties_reused %}
+            <tr>
+              <td><i class="fas fa-home me-1 text-muted"></i> Objekte wiederverwendet</td>
+              <td class="text-end"><strong>{{ results.properties_reused }}</strong></td>
+            </tr>
+            {% endif %}
+            <tr>
+              <td><i class="fas fa-link me-1 text-primary"></i> Objekt-Zuordnungen neu</td>
+              <td class="text-end"><strong>{{ results.ownerships_created }}</strong></td>
+            </tr>
+            <tr>
+              <td><i class="fas fa-tachometer-alt me-1 text-secondary"></i> Zähler neu angelegt</td>
+              <td class="text-end"><strong>{{ results.meters_created }}</strong></td>
+            </tr>
+            {% if results.meters_reused %}
+            <tr>
+              <td><i class="fas fa-tachometer-alt me-1 text-muted"></i> Zähler wiederverwendet</td>
+              <td class="text-end"><strong>{{ results.meters_reused }}</strong></td>
+            </tr>
+            {% endif %}
+            <tr>
+              <td><i class="fas fa-list-ol me-1 text-success"></i> Ablesungen neu importiert</td>
+              <td class="text-end"><strong>{{ results.readings_created }}</strong></td>
+            </tr>
+            {% if results.readings_updated %}
+            <tr>
+              <td><i class="fas fa-list-ol me-1 text-warning"></i> Ablesungen aktualisiert</td>
+              <td class="text-end"><strong>{{ results.readings_updated }}</strong></td>
+            </tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if results.errors %}
+<div class="alert alert-danger">
+  <h6 class="alert-title"><i class="fas fa-times-circle me-1"></i>
+    Fehler ({{ results.errors|length }})
+  </h6>
+  <ul class="mb-0" style="font-size:.875rem">
+    {% for e in results.errors %}<li>{{ e }}</li>{% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{# ------------------------------------------------------------------ #}
+{# Tabellen-Makro für eine Datensatz-Gruppe                            #}
+{# ------------------------------------------------------------------ #}
+{% macro plan_table(entries) %}
+<div class="table-responsive">
+  <table class="table table-sm table-vcenter table-bordered mb-0">
+    <thead>
+      <tr>
+        <th style="width:4rem">Zeile</th>
+        <th>Kunde</th>
+        <th>Objekt</th>
+        <th>Zähler</th>
+        <th>Was geschieht</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in entries %}
+      <tr>
+        <td class="text-muted">{{ e.row }}</td>
+        <td>
+          {% if e.customer_number %}<strong>{{ e.customer_number }}</strong>{% endif %}
+          {% if e.customer_name %}<br><small>{{ e.customer_name }}</small>{% endif %}
+        </td>
+        <td>{{ e.object_number or '—' }}</td>
+        <td>{{ e.meter_number or '—' }}</td>
+        <td>
+          <ul class="list-unstyled mb-0" style="font-size:.85rem">
+            {% for a in e.actions %}
+            {% if a.kind == 'new' %}
+            <li class="text-success fw-bold">
+              <i class="fas fa-plus-circle me-1"></i>{{ a.text }}
+            </li>
+            {% elif a.kind == 'update' %}
+            <li class="text-warning">
+              <i class="fas fa-pen me-1"></i>{{ a.text }}
+            </li>
+            {% else %}
+            <li class="text-muted">
+              <i class="fas fa-minus me-1"></i>{{ a.text }}
+            </li>
+            {% endif %}
+            {% endfor %}
+          </ul>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endmacro %}
+
+{# ------------------------------------------------------------------ #}
+{# 1) Wird importiert                                                  #}
+{# ------------------------------------------------------------------ #}
+<div class="card mb-3">
+  <div class="card-header">
+    <h3 class="card-title">
+      <span class="badge bg-success text-white me-2">{{ imports|length }}</span>
+      Datensätze, die importiert werden
+    </h3>
+  </div>
+  <div class="card-body p-0">
+    {% if imports %}
+      {{ plan_table(imports) }}
+    {% else %}
+      <p class="text-muted p-3 mb-0">Keine Datensätze zum Importieren.</p>
+    {% endif %}
+  </div>
+</div>
+
+{# ------------------------------------------------------------------ #}
+{# 2) Bereits vorhanden                                                #}
+{# ------------------------------------------------------------------ #}
+{% if exists %}
+<div class="card mb-3">
+  <div class="card-header">
+    <h3 class="card-title">
+      <span class="badge bg-yellow text-dark me-2">{{ exists|length }}</span>
+      Bereits vorhanden – wird nicht eingefügt
+    </h3>
+    <div class="card-options">
+      <small class="text-muted">
+        Duplikat-Modus: {{ "Überspringen" if duplicate_mode == "skip" else "Überschreiben" }}
+      </small>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    {{ plan_table(exists) }}
+  </div>
+</div>
+{% endif %}
+
+{# ------------------------------------------------------------------ #}
+{# 3) Nicht importiert                                                 #}
+{# ------------------------------------------------------------------ #}
+{% if skipped %}
+<div class="card mb-3">
+  <div class="card-header">
+    <h3 class="card-title">
+      <span class="badge bg-secondary text-white me-2">{{ skipped|length }}</span>
+      Nicht importiert (leere Zeilen, Storno, Fehler)
+    </h3>
+  </div>
+  <div class="card-body p-0">
+    {{ plan_table(skipped) }}
+  </div>
+</div>
+{% endif %}
+
+{# ------------------------------------------------------------------ #}
+{# Aktion                                                              #}
+{# ------------------------------------------------------------------ #}
+<form method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <button type="submit" class="btn btn-success btn-lg"
+          {% if not imports %}disabled{% endif %}>
+    <i class="fas fa-check me-1"></i> Jetzt importieren
+  </button>
+  <a href="{{ url_for('import_csv.mapping') }}" class="btn btn-secondary ms-2">
+    <i class="fas fa-arrow-left me-1"></i> Zurück zur Zuordnung
+  </a>
+  <a href="{{ url_for('import_csv.upload') }}" class="btn btn-link ms-2">Abbrechen</a>
+</form>
+
+{% endblock %}

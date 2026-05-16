@@ -10,6 +10,7 @@ from sqlalchemy import case as sa_case
 
 from app.meters import bp
 from app.meters import import_service
+from app.meters import swap_import_service
 from app.meters.services import save_reading
 from app.extensions import db
 from app.models import WaterMeter, MeterReading, Property, PropertyOwnership, Customer
@@ -828,6 +829,145 @@ def meter_replace(meter_id):
         "meters/replace_form.html",
         meter=old_meter, today=date.today(), from_view=from_view,
     )
+
+
+# ---------------------------------------------------------------------------
+# Zählertausch-Import — CSV / Excel Bulk-Import
+# ---------------------------------------------------------------------------
+#
+#   /meters/swap-import          GET = Upload-Form, POST = Datei -> Pickle -> /preview
+#   /meters/swap-import/preview  GET = Vorschau-Editor
+#                                POST mit action=confirm -> commit, /result
+#   /meters/swap-import/result   GET = Stats anzeigen
+#
+# Persistenz wie beim Ablesungs-Import: das DataFrame liegt als Pickle in
+# instance/, die Session haelt nur den Pfad. Die Vorschau-Zeilen werden bei
+# jedem Aufruf frisch aus dem DataFrame aufgebaut (DB-Lookups inklusive).
+
+_SESSION_SWAP_FILE_KEY = "meter_swap_file"
+_SESSION_SWAP_RESULT_KEY = "meter_swap_result"
+
+
+def _abort_to_swap_upload(
+    reason: str = "Sitzung abgelaufen — bitte erneut hochladen.",
+    category: str = "warning",
+):
+    flash(reason, category)
+    path = session.pop(_SESSION_SWAP_FILE_KEY, None)
+    if path:
+        swap_import_service.delete_dataframe(path)
+    return redirect(url_for("meters.swap_import_upload"))
+
+
+@bp.route("/swap-import", methods=["GET", "POST"])
+@login_required
+def swap_import_upload():
+    """Step 1: CSV/Excel mit Zählertäuschen hochladen."""
+    if request.method == "POST":
+        import pandas as pd
+
+        f = request.files.get("file")
+        if not f or not f.filename:
+            flash("Bitte eine Datei auswählen.", "warning")
+            return redirect(url_for("meters.swap_import_upload"))
+
+        filename = f.filename.lower()
+        try:
+            if filename.endswith(".csv"):
+                df = pd.read_csv(f, dtype=str, sep=None, engine="python")
+            elif filename.endswith((".xlsx", ".xls")):
+                df = pd.read_excel(f, dtype=str)
+            else:
+                flash("Nicht unterstütztes Dateiformat. Bitte CSV oder Excel.", "danger")
+                return redirect(url_for("meters.swap_import_upload"))
+        except Exception as e:
+            flash(f"Fehler beim Lesen der Datei: {e}", "danger")
+            return redirect(url_for("meters.swap_import_upload"))
+
+        cols = swap_import_service.detect_columns(list(df.columns))
+        missing = swap_import_service.missing_required_columns(cols)
+        if missing:
+            flash(
+                "Pflicht-Spalten fehlen in der Datei: " + ", ".join(missing)
+                + ". Bitte Spaltenüberschriften prüfen.",
+                "danger",
+            )
+            return redirect(url_for("meters.swap_import_upload"))
+
+        old_path = session.pop(_SESSION_SWAP_FILE_KEY, None)
+        if old_path:
+            swap_import_service.delete_dataframe(old_path)
+
+        session[_SESSION_SWAP_FILE_KEY] = swap_import_service.save_dataframe(df)
+        return redirect(url_for("meters.swap_import_preview"))
+
+    return render_template("meters/swap_import.html")
+
+
+@bp.route("/swap-import/preview", methods=["GET", "POST"])
+@login_required
+def swap_import_preview():
+    """Step 2: Vorschau der Täusche/Neuanlagen, POST=confirm committet."""
+    path = session.get(_SESSION_SWAP_FILE_KEY)
+    df = swap_import_service.load_dataframe(path) if path else None
+    if df is None:
+        return _abort_to_swap_upload()
+
+    if request.method == "POST" and request.form.get("action") == "confirm":
+        baseline, _cols = swap_import_service.build_swap_rows(df)
+        merged = swap_import_service.parse_swap_form_edits(request.form, baseline)
+        stats = swap_import_service.commit_swap_import(
+            merged, user_id=current_user.id,
+        )
+
+        session.pop(_SESSION_SWAP_FILE_KEY, None)
+        if path:
+            swap_import_service.delete_dataframe(path)
+        session[_SESSION_SWAP_RESULT_KEY] = stats.to_dict()
+
+        done = stats.swapped + stats.created
+        category = "warning" if (stats.errors or done == 0) else "success"
+        flash(
+            f"Import abgeschlossen: {stats.swapped} Tausch(e), "
+            f"{stats.created} Neuanlage(n), {stats.skipped} übersprungen, "
+            f"{stats.skipped_error} fehlerhaft.",
+            category,
+        )
+        return redirect(url_for("meters.swap_import_result"))
+
+    rows, cols = swap_import_service.build_swap_rows(df)
+
+    counts = {"tausch": 0, "neuanlage": 0, "fehler": 0}
+    for r in rows:
+        if r.status == swap_import_service.STATUS_TAUSCH:
+            counts["tausch"] += 1
+        elif r.status == swap_import_service.STATUS_NEUANLAGE:
+            counts["neuanlage"] += 1
+        else:
+            counts["fehler"] += 1
+
+    return render_template(
+        "meters/swap_import_preview.html",
+        rows=rows,
+        cols=cols,
+        counts=counts,
+        properties=swap_import_service.active_properties(),
+        format_value_de=swap_import_service.format_value_de,
+        status_row_class=swap_import_service.status_row_class,
+        status_badge=swap_import_service.status_badge,
+        STATUS_TAUSCH=swap_import_service.STATUS_TAUSCH,
+        STATUS_NEUANLAGE=swap_import_service.STATUS_NEUANLAGE,
+        STATUS_FEHLER=swap_import_service.STATUS_FEHLER,
+    )
+
+
+@bp.route("/swap-import/result")
+@login_required
+def swap_import_result():
+    stats = session.pop(_SESSION_SWAP_RESULT_KEY, None)
+    if not stats:
+        return redirect(url_for("meters.index"))
+    return render_template("meters/swap_import_result.html", stats=stats)
 
 
 @bp.route("/<int:meter_id>/delete", methods=["POST"])

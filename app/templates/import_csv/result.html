@@ -18,9 +18,19 @@
               <td><i class="fas fa-users me-1 text-primary"></i> Kunden angelegt</td>
               <td class="text-end"><strong>{{ results.customers_created }}</strong></td>
             </tr>
+            {% if results.customers_updated %}
+            <tr>
+              <td><i class="fas fa-user-edit me-1 text-warning"></i> Kunden-Stammdaten aktualisiert</td>
+              <td class="text-end"><strong>{{ results.customers_updated }}</strong></td>
+            </tr>
+            {% endif %}
             <tr>
               <td><i class="fas fa-home me-1 text-info"></i> Objekte angelegt</td>
               <td class="text-end"><strong>{{ results.properties_created }}</strong></td>
+            </tr>
+            <tr>
+              <td><i class="fas fa-link me-1 text-primary"></i> Objekt-Zuordnungen angelegt</td>
+              <td class="text-end"><strong>{{ results.ownerships_created }}</strong></td>
             </tr>
             <tr>
               <td><i class="fas fa-tachometer-alt me-1 text-secondary"></i> Zähler angelegt</td>
@@ -30,6 +40,18 @@
               <td><i class="fas fa-list-ol me-1 text-success"></i> Ablesungen importiert</td>
               <td class="text-end"><strong>{{ results.readings_created }}</strong></td>
             </tr>
+            {% if results.readings_updated %}
+            <tr>
+              <td><i class="fas fa-list-ol me-1 text-warning"></i> Ablesungen aktualisiert</td>
+              <td class="text-end"><strong>{{ results.readings_updated }}</strong></td>
+            </tr>
+            {% endif %}
+            {% if results.rows_unchanged %}
+            <tr class="table-secondary">
+              <td><i class="fas fa-equals me-1"></i> Zeilen ohne Änderung (bereits vorhanden)</td>
+              <td class="text-end"><strong>{{ results.rows_unchanged }}</strong></td>
+            </tr>
+            {% endif %}
             <tr class="table-secondary">
               <td><i class="fas fa-forward me-1"></i> Zeilen übersprungen</td>
               <td class="text-end"><strong>{{ results.rows_skipped }}</strong></td>

@@ -109,25 +109,33 @@
       {# ------------------------------------------------------------------ #}
       <div class="card">
         <div class="card-header">
-          <h3 class="card-title"><i class="fas fa-copy me-1"></i> Duplikate-Behandlung</h3>
+          <h3 class="card-title"><i class="fas fa-copy me-1"></i> Vorhandene Kunden</h3>
         </div>
         <div class="card-body">
+          <p class="text-muted mb-2">
+            Neue Objekte, Zähler und Ablesungen werden bestehenden Kunden in
+            <strong>jedem</strong> Fall ergänzt. Diese Einstellung steuert nur,
+            ob bereits vorhandene Daten aus der Datei aktualisiert werden.
+          </p>
           <div class="mb-0">
             <div class="form-check mb-2">
               <input class="form-check-input" type="radio" name="duplicate_mode"
-                     id="mode_skip" value="skip" checked>
+                     id="mode_skip" value="skip"
+                     {% if duplicate_mode != "overwrite" %}checked{% endif %}>
               <label class="form-check-label" for="mode_skip">
-                <strong>Überspringen</strong> –
-                Vorhandene Kunden (gleiche Kunden-Nr.) werden nicht verändert
+                <strong>Bestehendes beibehalten</strong> –
+                Stammdaten vorhandener Kunden und bereits erfasste Ablesungen
+                bleiben unverändert
               </label>
             </div>
             <div class="form-check">
               <input class="form-check-input" type="radio" name="duplicate_mode"
-                     id="mode_overwrite" value="overwrite">
+                     id="mode_overwrite" value="overwrite"
+                     {% if duplicate_mode == "overwrite" %}checked{% endif %}>
               <label class="form-check-label" for="mode_overwrite">
-                <strong>Überschreiben</strong> –
-                Kunden, Objekte und Zähler werden neu angelegt
-                <span class="text-danger">(nur möglich wenn keine Rechnungen vorhanden)</span>
+                <strong>Bestehendes aktualisieren</strong> –
+                Stammdaten vorhandener Kunden und bereits erfasste Ablesungen
+                werden mit den Werten aus der Datei überschrieben
               </label>
             </div>
           </div>
@@ -173,8 +181,8 @@
   {# ------------------------------------------------------------------ #}
   <div class="row">
     <div class="col-12">
-      <button type="submit" class="btn btn-warning">
-        <i class="fas fa-play me-1"></i> Import starten
+      <button type="submit" class="btn btn-primary">
+        <i class="fas fa-search me-1"></i> Weiter zur Vorschau
       </button>
       <a href="{{ url_for('import_csv.upload') }}" class="btn btn-secondary ms-2">
         <i class="fas fa-arrow-left me-1"></i> Zurück

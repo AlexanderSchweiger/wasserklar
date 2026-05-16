@@ -93,6 +93,25 @@
                 {% if meter.initial_value is not none %}
                 <br><small class="text-muted">Anfangsstand: {{ meter.initial_value|int }} m³</small>
                 {% endif %}
+                {% set readings = meter.readings|sort(attribute='year') %}
+                {% if readings %}
+                <table class="table table-sm table-borderless mb-0 mt-2">
+                  <thead>
+                    <tr class="text-muted">
+                      <th class="fw-normal py-0">Ablesedatum</th>
+                      <th class="fw-normal py-0 text-end">Stand</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for r in readings %}
+                    <tr>
+                      <td class="py-0"><small>{{ r.reading_date.strftime('%d.%m.%Y') if r.reading_date else r.year }}</small></td>
+                      <td class="py-0 text-end"><small>{{ r.value|de_number }} m³</small></td>
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+                {% endif %}
               </span>
               <div class="btn-group btn-group-sm">
                 <a href="{{ url_for('meters.meter_edit', meter_id=meter.id) }}"
