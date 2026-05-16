@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "auth/_password_macros.html" import password_field %}
 {% block title %}{{ 'Benutzer bearbeiten' if user else 'Neuer Benutzer' }}{% endblock %}
 {% block page_title %}
   <i class="fas fa-user-cog me-2"></i> {{ 'Benutzer bearbeiten' if user else 'Neuer Benutzer' }}
@@ -21,11 +22,19 @@
             <input type="email" name="email" class="form-control"
               value="{{ user.email if user else '' }}" required>
           </div>
+          {% if user %}
           <div class="mb-3">
-            <label class="form-label">Passwort {% if user %}<small class="text-muted">(leer = unverändert)</small>{% endif %}</label>
-            <input type="password" name="password" class="form-control"
-              {% if not user %}required{% endif %}>
+            <label class="form-label">Passwort</label>
+            <div>
+              <button type="button" class="btn btn-outline-secondary"
+                data-bs-toggle="modal" data-bs-target="#modal-password">
+                <i class="fas fa-key me-1"></i> Passwort ändern
+              </button>
+            </div>
           </div>
+          {% else %}
+          {{ password_field('password', 'Passwort', required=true) }}
+          {% endif %}
           <div class="mb-3">
             <label class="form-label">Rolle</label>
             <select name="role" class="form-select tom-select">
@@ -50,4 +59,37 @@
       </form>
     </div>
 </div>
+{% endblock %}
+{% block modals %}
+{% if user %}
+<div class="modal modal-blur fade" id="modal-password" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered" role="document">
+    <div class="modal-content">
+      <form method="post"
+            action="{{ url_for('auth.user_set_password', user_id=user.id) }}"
+            autocomplete="off">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-header">
+          <h5 class="modal-title">Passwort ändern: {{ user.username }}</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"
+            aria-label="Schließen"></button>
+        </div>
+        <div class="modal-body">
+          {{ password_field('password', 'Neues Passwort',
+             identity=user.username ~ ',' ~ user.email) }}
+          {{ password_field('password_confirm', 'Neues Passwort wiederholen',
+             with_meter=False) }}
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-link link-secondary"
+            data-bs-dismiss="modal">Abbrechen</button>
+          <button type="submit" class="btn btn-primary">
+            <i class="fas fa-key me-1"></i> Passwort speichern
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
 {% endblock %}

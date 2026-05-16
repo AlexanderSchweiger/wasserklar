@@ -1,3 +1,4 @@
+{% from "auth/_password_macros.html" import password_field %}
 <!doctype html>
 <html lang="de">
 
@@ -47,8 +48,7 @@
           <span class="navbar-toggler-icon"></span>
         </button>
         <a href="{{ url_for('main.dashboard') }}" class="navbar-brand navbar-brand-autodark">
-          <i class="fas fa-tint me-2"></i>{{ wg.name | truncate(22, true, '…')
-          }}
+          {% block navbar_brand %}<i class="fas fa-tint me-2"></i>{% endblock %}{{ wg.name | truncate(22, true, '…') }}
         </a>
 
         <div class="collapse navbar-collapse" id="sidebar-menu">
@@ -411,6 +411,10 @@
                 </a>
                 <div class="dropdown-divider"></div>
                 {% endif %}
+                <button type="button" class="dropdown-item"
+                  data-bs-toggle="modal" data-bs-target="#modal-change-password">
+                  <i class="fas fa-key me-2"></i> Passwort ändern
+                </button>
                 <a href="{{ url_for('auth.logout') }}" class="dropdown-item">
                   <i class="fas fa-sign-out-alt me-2"></i> Abmelden
                 </a>
@@ -473,11 +477,51 @@
 
   {# Modals: direkt vor </body>, damit kein Stacking-Context im Content-Bereich
      den Bootstrap-Backdrop ueber dem Modal landen laesst. #}
+  {# Globales "Passwort ändern"-Modal (eigenes Passwort). Auf Seiten mit
+     eigenen Passwortfeldern (change_password, user_form) unterdrueckt, um
+     doppelte input-ids zu vermeiden — dort dient das Inline-Formular. #}
+  {% if current_user.is_authenticated
+        and request.endpoint not in ('auth.change_password', 'auth.user_new', 'auth.user_edit') %}
+  <div class="modal modal-blur fade" id="modal-change-password" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" role="document">
+      <div class="modal-content">
+        <form method="post" action="{{ url_for('auth.change_password') }}" autocomplete="off">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="modal-header">
+            <h5 class="modal-title"><i class="fas fa-key me-2"></i>Passwort ändern</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"
+              aria-label="Schließen"></button>
+          </div>
+          <div class="modal-body">
+            {{ password_field('current_password', 'Aktuelles Passwort',
+               with_meter=False, autocomplete='current-password') }}
+            <hr class="my-3">
+            {{ password_field('password', 'Neues Passwort',
+               identity=current_user.username ~ ',' ~ current_user.email) }}
+            {{ password_field('password_confirm', 'Neues Passwort wiederholen',
+               with_meter=False) }}
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-link link-secondary"
+              data-bs-dismiss="modal">Abbrechen</button>
+            <button type="submit" class="btn btn-primary">
+              <i class="fas fa-save me-1"></i> Passwort speichern
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+  {% endif %}
   {% block modals %}{% endblock %}
 
   {# Seiten-spezifische Skripte: werden bei hx-boost-Swaps bewusst neu
      ausgefuehrt (per-Seite-Logik). Basis-Listener liegen im <head>
      und bleiben ueber den Swap hinweg bestehen. #}
+  {# Passwort-Stärkeanzeige + Anzeigen-Button global laden — das globale
+     Modal oben (und einzelne Seiten) brauchen es; laeuft bei jedem
+     hx-boost-Swap neu. #}
+  <script src="{{ url_for('static', filename='js/password-strength.js') }}"></script>
   {% block scripts %}{% endblock %}
 </body>
 
