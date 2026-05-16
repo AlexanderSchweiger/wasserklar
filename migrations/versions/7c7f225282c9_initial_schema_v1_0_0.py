@@ -383,7 +383,7 @@ def upgrade():
     )
     # ### end Alembic commands ###
 
-    # FK-Constraints separat — vermeidet Reihenfolge-Probleme bei zirkulären FKs
+    # FK-Constraints separat vermeidet Reihenfolge-Probleme bei zirkulaeren FKs
     op.create_foreign_key('fk_dunning_notices_created_by_id', 'dunning_notices', 'users', ['created_by_id'], ['id'])
     op.create_foreign_key('fk_dunning_notices_fee_invoice_item_id', 'dunning_notices', 'invoice_items', ['fee_invoice_item_id'], ['id'])
     op.create_foreign_key('fk_dunning_notices_invoice_id', 'dunning_notices', 'invoices', ['invoice_id'], ['id'])
