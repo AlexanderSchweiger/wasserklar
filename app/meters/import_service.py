@@ -17,7 +17,7 @@ import pickle
 import re
 import uuid
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -390,14 +390,15 @@ def parse_date(raw: Any, fmt: str) -> date | None:
         except ValueError:
             return None
     if fmt == "de":
-        for f in ("%d.%m.%Y", "%d.%m.%y", "%d/%m/%Y", "%d/%m/%y"):
+        for f in ("%d.%m.%Y", "%d.%m.%y", "%d/%m/%Y", "%d/%m/%y",
+                  "%d-%m-%Y", "%d-%m-%y"):
             try:
                 return datetime.strptime(s, f).date()
             except ValueError:
                 continue
         return None
     if fmt == "us":
-        for f in ("%m/%d/%Y", "%m/%d/%y", "%m.%d.%Y"):
+        for f in ("%m/%d/%Y", "%m/%d/%y", "%m.%d.%Y", "%m-%d-%Y"):
             try:
                 return datetime.strptime(s, f).date()
             except ValueError:
@@ -415,6 +416,14 @@ def parse_date(raw: Any, fmt: str) -> date | None:
         d = parse_date(s, try_fmt)
         if d is not None:
             return d
+    # Excel-Serial-Datum (Zelle als Zahl statt Datum formatiert).
+    if re.fullmatch(r"\d{4,6}(\.0+)?", s):
+        try:
+            serial = int(float(s))
+            if 20000 <= serial <= 80000:  # ~1954 bis ~2089
+                return (datetime(1899, 12, 30) + timedelta(days=serial)).date()
+        except (ValueError, OverflowError):
+            pass
     try:
         ts = pd.to_datetime(s, dayfirst=True, errors="coerce")
         if pd.isna(ts):

@@ -526,9 +526,14 @@ def _apply_customer_fields(customer, form, *, is_new: bool) -> str | None:
             return f"Kundennummer {requested} ist bereits vergeben."
         customer.customer_number = requested
         bump_customer_counter_to(requested)
-    else:
-        # Feld leer: bei Neuanlage als Kunde Counter ziehen; beim Bearbeiten
-        # oder bei reinen Lieferanten bestehenden Wert (oft None) belassen.
-        if is_new and customer.is_customer:
+    elif is_new:
+        # Feld leer bei Neuanlage: nur Kunden ziehen einen Counter-Wert,
+        # reine Lieferanten bleiben ohne Nummer (None).
+        if customer.is_customer:
             customer.customer_number = next_customer_number()
+    else:
+        # Feld leer beim Bearbeiten: Nummer explizit entfernen. Gebraucht,
+        # wenn ein faelschlich als Kunde angelegter Datensatz auf reinen
+        # Lieferanten umgestellt wird und die Kundennummer wegfallen soll.
+        customer.customer_number = None
     return None

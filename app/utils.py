@@ -41,17 +41,24 @@ def next_invoice_number(year=None):
 
 
 def _customer_counter():
-    """Singleton-Counter holen oder seedweise anlegen (aus max(customer_number)+1)."""
+    """Singleton-Counter holen oder seedweise anlegen.
+
+    next_seq wird immer auf mindestens ``max(customer_number)+1`` angehoben, damit
+    der Vorschlag auch nach manueller Vergabe, Loeschungen oder einem zurueck-
+    gesetzten Zaehler nie eine bereits vergebene Nummer liefert.
+    """
     from app.extensions import db
     from app.models import Customer, CustomerCounter
     from sqlalchemy import func
 
+    max_nr = (db.session.query(func.max(Customer.customer_number)).scalar() or 0)
     counter = db.session.get(CustomerCounter, 1)
     if counter is None:
-        seed = (db.session.query(func.max(Customer.customer_number)).scalar() or 0) + 1
-        counter = CustomerCounter(id=1, next_seq=seed)
+        counter = CustomerCounter(id=1, next_seq=max_nr + 1)
         db.session.add(counter)
         db.session.flush()
+    elif counter.next_seq <= max_nr:
+        counter.next_seq = max_nr + 1
     return counter
 
 

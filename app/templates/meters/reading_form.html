@@ -5,150 +5,23 @@
 {% endblock %}
 {% block content %}
 <div class="card">
-      <div class="card-header">
-        <h3 class="card-title">Zähler <code>{{ meter.meter_number }}</code>
-          {% if meter.location %}<small class="text-muted ms-2">{{ meter.location }}</small>{% endif %}
-        </h3>
-      </div>
-      <form method="post">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <div class="card-body">
-          {% if prev_value is not none %}
-          <div class="alert alert-info">
-            <h6 class="alert-title">Letzter Stand</h6>
-            <p class="mb-0"><strong>{{ prev_value }} m³</strong></p>
-          </div>
-          {% elif meter.initial_value is not none %}
-          <div class="alert alert-warning">
-            <h6 class="alert-title">Anfangsstand (neuer Zähler)</h6>
-            <p class="mb-0"><strong>{{ meter.initial_value|int }} m³</strong>
-            {% if meter.installed_from %}
-            <small class="text-muted ms-2">eingebaut {{ meter.installed_from.strftime('%d.%m.%Y') }}</small>
-            {% endif %}
-            </p>
-          </div>
-          {% endif %}
-          <div class="row g-2">
-            <div class="col-md-6">
-              <div class="mb-3">
-                <label class="form-label">Abrechnungsperiode <span class="text-danger">*</span></label>
-                <select name="billing_period_id" class="form-select" required>
-                  {% for p in periods %}
-                  <option value="{{ p.id }}" {{ 'selected' if period and p.id == period.id }}>
-                    {{ p.name }}{{ ' — aktiv' if p.active else '' }}
-                  </option>
-                  {% else %}
-                  <option value="">— keine Periode —</option>
-                  {% endfor %}
-                </select>
-              </div>
-            </div>
-            <div class="col-md-6">
-              <div class="mb-3">
-                <label class="form-label">Ablesedatum <span class="text-danger">*</span></label>
-                <input type="date" name="reading_date" class="form-control" required
-                  value="{{ existing.reading_date.isoformat() if existing else (today.isoformat() if today else '') }}">
-              </div>
-            </div>
-          </div>
-          <div class="mb-3">
-            <label class="form-label">Zählerstand (m³) <span class="text-danger">*</span></label>
-            <div class="input-group">
-              <input type="number" name="value" id="valueInput" step="1" class="form-control form-control-lg"
-                value="{{ existing.value|int if existing else '' }}" required autofocus>
-              <span class="input-group-text">m³</span>
-            </div>
-          </div>
-
-          <!-- Live-Verbrauchsanzeige -->
-          <div id="consumptionBox" class="d-none">
-            <div class="alert alert-success" id="consumptionOk">
-              <h6 class="alert-title">Verbrauch</h6>
-              <p class="mb-0"><strong><span id="consumptionValue">—</span> m³</strong></p>
-              {% if avg_consumption is not none %}
-              <small class="text-muted">Ø letzte {{ avg_years }} Ablesung{{ 'en' if avg_years != 1 }}: {{ avg_consumption }} m³</small>
-              {% endif %}
-            </div>
-            <div class="alert alert-danger d-none" id="consumptionNegative">
-              <h6 class="alert-title"><i class="fas fa-exclamation-triangle me-1"></i> Negativer Verbrauch</h6>
-              <p class="mb-0">Der eingegebene Zählerstand ist kleiner als der letzte Stand. Bitte prüfen.</p>
-            </div>
-            <div class="alert alert-warning d-none" id="consumptionWarning">
-              <h6 class="alert-title"><i class="fas fa-exclamation-triangle me-1"></i> Ungewöhnlicher Verbrauch</h6>
-              <p class="mb-0" id="consumptionWarningText"></p>
-            </div>
-          </div>
-        </div>
-        <div class="card-footer">
-          <button type="submit" class="btn btn-primary">
-            <i class="fas fa-save me-1"></i> Speichern
-          </button>
-          <a href="{{ url_for('meters.readings', period_id=period.id if period else none) }}"
-             class="btn btn-secondary ms-2">Abbrechen</a>
-        </div>
-      </form>
+  <div class="card-header">
+    <h3 class="card-title">Zähler <code>{{ meter.meter_number }}</code>
+      {% if meter.location %}<small class="text-muted ms-2">{{ meter.location }}</small>{% endif %}
+    </h3>
+  </div>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="card-body">
+      {% include "meters/_reading_form_body.html" %}
     </div>
+    <div class="card-footer">
+      <button type="submit" class="btn btn-primary">
+        <i class="fas fa-save me-1"></i> Speichern
+      </button>
+      <a href="{{ url_for('meters.readings', period_id=period.id if period else none) }}"
+         class="btn btn-secondary ms-2">Abbrechen</a>
+    </div>
+  </form>
 </div>
-
-<script>
-(function () {
-  var prevValue = {{ prev_value if prev_value is not none else 'null' }};
-  var avgConsumption = {{ avg_consumption if avg_consumption is not none else 'null' }};
-  var oldConsumption = {{ old_consumption if old_consumption is not none else 'null' }};
-
-  var input = document.getElementById('valueInput');
-  var box = document.getElementById('consumptionBox');
-  var okBox = document.getElementById('consumptionOk');
-  var negBox = document.getElementById('consumptionNegative');
-  var warnBox = document.getElementById('consumptionWarning');
-  var warnText = document.getElementById('consumptionWarningText');
-  var consumptionSpan = document.getElementById('consumptionValue');
-
-  function update() {
-    var val = parseInt(input.value, 10);
-    if (isNaN(val) || prevValue === null) {
-      box.classList.add('d-none');
-      return;
-    }
-    box.classList.remove('d-none');
-
-    var consumption = val - prevValue;
-    if (oldConsumption !== null) {
-      consumptionSpan.textContent =
-        oldConsumption + ' m³ + ' + consumption + ' m³ = ' +
-        (consumption + oldConsumption);
-    } else {
-      consumptionSpan.textContent = consumption;
-    }
-
-    if (consumption < 0) {
-      okBox.classList.add('d-none');
-      negBox.classList.remove('d-none');
-      warnBox.classList.add('d-none');
-      return;
-    }
-    negBox.classList.add('d-none');
-    okBox.classList.remove('d-none');
-
-    if (avgConsumption !== null && avgConsumption > 0) {
-      var deviation = Math.abs(consumption - avgConsumption) / avgConsumption;
-      if (deviation > 0.5) {
-        var pct = Math.round(deviation * 100);
-        var dir = consumption > avgConsumption ? 'höher' : 'niedriger';
-        warnText.textContent =
-          'Verbrauch ' + consumption + ' m³ ist ' + pct + ' % ' + dir +
-          ' als der Durchschnitt (' + avgConsumption + ' m³). Bitte prüfen.';
-        warnBox.classList.remove('d-none');
-      } else {
-        warnBox.classList.add('d-none');
-      }
-    } else {
-      warnBox.classList.add('d-none');
-    }
-  }
-
-  input.addEventListener('input', update);
-  if (input.value) update();
-})();
-</script>
 {% endblock %}

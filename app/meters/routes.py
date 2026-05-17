@@ -1,9 +1,11 @@
 import io
+import json
 from datetime import date, datetime
 from decimal import Decimal
 
 from flask import (
     render_template, redirect, url_for, flash, request, jsonify, session,
+    make_response,
 )
 from flask_login import login_required, current_user
 from sqlalchemy import case as sa_case
@@ -362,6 +364,7 @@ def bulk_read():
 def add_reading(meter_id):
     meter = db.get_or_404(WaterMeter, meter_id)
     period = _resolve_period_arg()
+    is_modal = bool(request.headers.get("X-From-Modal"))
 
     if request.method == "POST":
         period = db.session.get(
@@ -389,6 +392,25 @@ def add_reading(meter_id):
             f"Ablesung für {meter.property.label()} ({period.name}) gespeichert.",
             "success",
         )
+
+        if is_modal:
+            # Aktualisiertes Subtable direkt in das offene Panel schreiben,
+            # dann Modal per HX-Trigger schließen.
+            readings = (
+                MeterReading.query
+                .filter_by(meter_id=meter_id)
+                .join(BillingPeriod, MeterReading.billing_period_id == BillingPeriod.id)
+                .order_by(BillingPeriod.start_date.desc(), MeterReading.reading_date.desc())
+                .all()
+            )
+            resp = make_response(render_template(
+                "meters/_readings_subtable.html",
+                meter=meter, readings=readings,
+            ))
+            resp.headers["HX-Retarget"] = f"#readings-content-{meter_id}"
+            resp.headers["HX-Reswap"] = "innerHTML"
+            resp.headers["HX-Trigger"] = json.dumps({"closeReadingModal": True})
+            return resp
 
         if request.headers.get("HX-Request"):
             prev = _last_prev_reading(meter_id, period)
@@ -451,12 +473,18 @@ def add_reading(meter_id):
     if repl and repl["old_reading"] and repl["old_reading"].consumption is not None:
         old_consumption = int(repl["old_reading"].consumption)
 
-    return render_template(
-        "meters/reading_form.html",
+    form_ctx = dict(
         meter=meter, period=period, periods=_all_periods(), existing=existing,
         prev_value=prev_value, avg_consumption=avg_consumption, avg_years=avg_years,
         old_consumption=old_consumption, today=date.today(),
     )
+
+    # HTMX-GET (vom Edit-Button im Subtable): nur den Form-Body zurückgeben,
+    # der dann via HTMX in den Modal-Body geswappt wird.
+    if request.headers.get("HX-Request"):
+        return render_template("meters/_reading_form_body.html", **form_ctx)
+
+    return render_template("meters/reading_form.html", **form_ctx)
 
 
 def _read_type_and_parent(meter_id: int | None) -> tuple[str, int | None]:
@@ -1103,6 +1131,25 @@ def swap_import_result():
     if not stats:
         return redirect(url_for("meters.index"))
     return render_template("meters/swap_import_result.html", stats=stats)
+
+
+@bp.route("/<int:meter_id>/readings-partial")
+@login_required
+def readings_partial(meter_id):
+    """HTMX-Fragment: alle Ablesungen eines Zählers chronologisch."""
+    meter = db.get_or_404(WaterMeter, meter_id)
+    readings = (
+        MeterReading.query
+        .filter_by(meter_id=meter_id)
+        .join(BillingPeriod, MeterReading.billing_period_id == BillingPeriod.id)
+        .order_by(BillingPeriod.start_date.desc(), MeterReading.reading_date.desc())
+        .all()
+    )
+    return render_template(
+        "meters/_readings_subtable.html",
+        meter=meter,
+        readings=readings,
+    )
 
 
 @bp.route("/<int:meter_id>/delete", methods=["POST"])

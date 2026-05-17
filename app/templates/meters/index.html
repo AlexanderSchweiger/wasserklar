@@ -46,3 +46,53 @@
   </div>
 </div>
 {% endblock %}
+
+{# Modal gehört in den modals-Block (direkt vor </body>), nicht in den
+   content-Block — sonst fängt ein Stacking-Context im .page-wrapper den
+   Bootstrap-Backdrop über dem Modal ab. Siehe base.html. #}
+{% block modals %}
+{% include "meters/_reading_edit_modal.html" %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Edit-Button im Subtable ruft diese Funktion direkt auf (onclick).
+function openReadingModal(btn) {
+  var url = btn.dataset.url;
+  var form = document.getElementById('readingEditForm');
+  form.dataset.actionUrl = url;
+
+  // Spinner zurücksetzen, damit alter Inhalt nicht aufblitzt.
+  document.getElementById('readingEditModalBody').innerHTML =
+    '<div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm" role="status"></div></div>';
+
+  // Modal sofort öffnen — Inhalt lädt im Hintergrund nach.
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('readingEditModal')).show();
+
+  // Formularfelder per HTMX in den Modal-Body laden.
+  htmx.ajax('GET', url, {target: '#readingEditModalBody', swap: 'innerHTML'});
+}
+
+// Submit via htmx.ajax, damit HX-Retarget + HX-Trigger aus der Server-Antwort wirken.
+document.getElementById('readingEditForm').addEventListener('submit', function (e) {
+  e.preventDefault();
+  var form = this;
+  var url = form.dataset.actionUrl;
+  var values = {};
+  new FormData(form).forEach(function (v, k) { values[k] = v; });
+  htmx.ajax('POST', url, {
+    target: '#readingEditModalBody',
+    swap: 'innerHTML',
+    values: values,
+    headers: {'X-From-Modal': '1'},
+  });
+});
+
+// Fired by HX-Trigger on successful modal save → close modal.
+document.addEventListener('closeReadingModal', function () {
+  var modal = bootstrap.Modal.getInstance(document.getElementById('readingEditModal'));
+  if (modal) modal.hide();
+});
+</script>
+{% endblock %}
+

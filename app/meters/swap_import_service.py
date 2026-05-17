@@ -292,9 +292,9 @@ def _build_one(idx: int, raw: dict, cols: dict[str, str]) -> SwapRow:
 
     new_eichjahr = _parse_year(eichjahr_raw)
 
-    # Tauschdatum: erwartet TT.MM.YYYY. Excel-Datumszellen (Timestamp) werden
-    # von parse_date unabhaengig vom fmt erkannt.
-    swap_date = parse_date(date_raw, "de") if date_raw is not None else None
+    # Tauschdatum: 'auto' erkennt jedes Format (TT.MM.JJJJ, ISO, US,
+    # Excel-Timestamp/-Serial) -- sonst faellt es still auf date.today() zurueck.
+    swap_date = parse_date(date_raw, "auto") if date_raw is not None else None
     if swap_date is None:
         swap_date = date.today()
 

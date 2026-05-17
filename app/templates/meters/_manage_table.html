@@ -67,7 +67,14 @@
       </td>
       <td class="text-end">
         {% if readings_count > 0 %}
-          <span class="badge bg-light text-dark">{{ readings_count }}</span>
+          <button type="button"
+            class="btn btn-xs btn-outline-secondary readings-toggle"
+            data-meter-id="{{ meter.id }}"
+            data-url="{{ url_for('meters.readings_partial', meter_id=meter.id) }}"
+            onclick="toggleReadings(this)"
+            title="Zählerstände ein-/ausblenden">
+            <i class="fas fa-list me-1"></i>{{ readings_count }}
+          </button>
         {% else %}
           <span class="text-muted">0</span>
         {% endif %}
@@ -103,6 +110,11 @@
         {% endif %}
       </td>
     </tr>
+    <tr id="readings-panel-{{ meter.id }}" class="d-none readings-panel">
+      <td colspan="9" class="p-0 border-top-0">
+        <div id="readings-content-{{ meter.id }}" class="px-3 py-2 bg-light border-bottom"></div>
+      </td>
+    </tr>
     {% else %}
     <tr><td colspan="9" class="text-center text-muted py-3">Keine Zähler gefunden.</td></tr>
     {% endfor %}
@@ -110,3 +122,19 @@
 </table>
 </div>
 {{ render_pagination(pagination) }}
+<script>
+function toggleReadings(btn) {
+  var meterId = btn.dataset.meterId;
+  var panel = document.getElementById('readings-panel-' + meterId);
+  var content = document.getElementById('readings-content-' + meterId);
+  var hidden = panel.classList.contains('d-none');
+  panel.classList.toggle('d-none', !hidden);
+  btn.classList.toggle('btn-outline-secondary', !hidden);
+  btn.classList.toggle('btn-secondary', hidden);
+  if (hidden && !content.dataset.loaded) {
+    content.innerHTML = '<div class="text-center py-2"><div class="spinner-border spinner-border-sm text-secondary" role="status"></div></div>';
+    htmx.ajax('GET', btn.dataset.url, {target: '#readings-content-' + meterId, swap: 'innerHTML'});
+    content.dataset.loaded = '1';
+  }
+}
+</script>
