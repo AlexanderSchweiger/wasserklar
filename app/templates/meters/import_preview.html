@@ -70,31 +70,31 @@
       </div>
 
       <div class="row g-3 mt-1">
-        <div class="col-md-3">
+        <div class="col-md-4">
+          <label class="form-label">Abrechnungsperiode</label>
+          <select name="billing_period_id" class="form-select">
+            {% for p in periods %}
+            <option value="{{ p.id }}" {{ 'selected' if cfg.billing_period_id == p.id }}>
+              {{ p.name }}{{ ' — aktiv' if p.active else '' }}
+            </option>
+            {% else %}
+            <option value="">— keine Periode —</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-4">
           <label class="form-label">Spalte: Datum <small class="text-muted">(optional)</small></label>
           <select name="col_date" class="form-select">
-            <option value="">— kein Datum —</option>
+            <option value="">— Periodenende verwenden —</option>
             {% for c in columns %}<option value="{{ c }}" {{ 'selected' if cfg.col_date == c }}>{{ c }}</option>{% endfor %}
           </select>
         </div>
-        <div class="col-md-3">
-          <label class="form-label">Spalte: Jahr <small class="text-muted">(optional)</small></label>
-          <select name="col_year" class="form-select">
-            <option value="">— Standard-Jahr —</option>
-            {% for c in columns %}<option value="{{ c }}" {{ 'selected' if cfg.col_year == c }}>{{ c }}</option>{% endfor %}
-          </select>
-        </div>
-        <div class="col-md-3">
+        <div class="col-md-4">
           <label class="form-label">Spalte: Verbrauch <small class="text-muted">(optional, nur Vergleich)</small></label>
           <select name="col_consumption" class="form-select">
             <option value="">— kein Vergleich —</option>
             {% for c in columns %}<option value="{{ c }}" {{ 'selected' if cfg.col_consumption == c }}>{{ c }}</option>{% endfor %}
           </select>
-        </div>
-        <div class="col-md-3">
-          <label class="form-label">Standard-Jahr</label>
-          <input type="number" name="default_year" class="form-control" min="2000" max="2100"
-                 value="{{ cfg.default_year }}">
         </div>
       </div>
 
@@ -179,7 +179,6 @@
                 <small class="text-muted d-block">berechnet{% if cfg.col_consumption %} / Import{% endif %}</small>
               </th>
               <th style="width:160px">Datum</th>
-              <th style="width:90px">Jahr</th>
               <th style="min-width:160px">Status</th>
             </tr>
           </thead>
@@ -273,11 +272,6 @@
                        value="{{ r.reading_date.strftime('%Y-%m-%d') if r.reading_date else '' }}">
               </td>
               <td>
-                <input type="number" name="rows[{{ r.idx }}][year]"
-                       class="form-control form-control-sm" min="2000" max="2100"
-                       value="{{ r.year or '' }}">
-              </td>
-              <td>
                 <span class="badge {{ badge_cls }}" title="{{ r.message }}">{{ badge_label }}</span>
                 {% if r.message %}
                 <div><small class="text-muted">{{ r.message }}</small></div>
@@ -285,7 +279,7 @@
               </td>
             </tr>
             {% else %}
-            <tr><td colspan="11" class="text-center text-muted py-4">
+            <tr><td colspan="10" class="text-center text-muted py-4">
               Keine Zeilen — bitte Spalten <em>Lookup-Wert</em> und <em>Zählerstand</em> auswählen
               und auf „Vorschau aktualisieren" klicken.
             </td></tr>

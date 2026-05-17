@@ -4,6 +4,8 @@ Deckt alle vier Endpoints ab: /meters/import (Upload), /meters/import/preview
 (Vorschau-Editor), /meters/import/confirm-Pfad (POST mit action=confirm),
 /meters/import/result (Stats). Inkl. Login-Schutz, Session-Handling,
 Pickle-Cleanup.
+
+Ablesungen werden seit oss-v1.3.0 einer ``BillingPeriod`` zugeordnet.
 """
 import io
 import os
@@ -14,7 +16,8 @@ import pytest
 
 from app.extensions import db
 from app.models import (
-    Customer, MeterReading, Property, PropertyOwnership, User, WaterMeter,
+    BillingPeriod, Customer, MeterReading, Property, PropertyOwnership, User,
+    WaterMeter,
 )
 
 
@@ -32,7 +35,19 @@ def admin(app):
 
 
 @pytest.fixture
-def sample(app):
+def period(app):
+    """Aktive Abrechnungsperiode 2024 — vom Wizard als Default verwendet."""
+    p = BillingPeriod(
+        name="2024", start_date=date(2024, 1, 1), end_date=date(2024, 12, 31),
+        active=True,
+    )
+    db.session.add(p)
+    db.session.commit()
+    return p
+
+
+@pytest.fixture
+def sample(app, period):
     """Liefert einen kompletten Stack: Customer + Property + Ownership + Meter."""
     c = Customer(name="Mueller Hans", customer_number=42)
     db.session.add(c)
@@ -50,7 +65,7 @@ def sample(app):
     )
     db.session.add(m)
     db.session.commit()
-    return {"customer": c, "property": p, "meter": m}
+    return {"customer": c, "property": p, "meter": m, "period": period}
 
 
 def _login(client, username="admin", password="secret"):
@@ -65,7 +80,6 @@ def _upload(client, csv_bytes, filename="test.csv", **form):
     data = {
         "mode": "meter_number",
         "duplicate_mode": "update",
-        "default_year": "2024",
         "file": (io.BytesIO(csv_bytes), filename),
         **form,
     }
@@ -89,9 +103,6 @@ def _cleanup_pickles(client):
 # ---------------------------------------------------------------------------
 
 class TestLoginRequired:
-    # Werkzeug 3.x test_client teilt den CookieJar zwischen Instanzen --
-    # explizit auslogggen, sonst koennen vorherige Test-Sessions reinleaken.
-
     def test_upload_requires_login(self, client):
         client.get("/auth/logout")
         r = client.get("/meters/import", follow_redirects=False)
@@ -116,14 +127,13 @@ class TestLoginRequired:
 # ---------------------------------------------------------------------------
 
 class TestUploadStep:
-    def test_get_renders_step_1(self, client, admin):
+    def test_get_renders_step_1(self, client, admin, period):
         _login(client)
         r = client.get("/meters/import")
         assert r.status_code == 200
         body = r.get_data(as_text=True)
         assert "Schritt 1" in body
         assert "Zuordnungsmodus" in body
-        # alle 3 Mapping-Modi sichtbar
         assert "Zählernummer" in body
         assert "Kundennummer" in body
         assert "Kundenname" in body
@@ -133,9 +143,7 @@ class TestUploadStep:
         r = client.post("/meters/import", data={
             "mode": "meter_number",
             "duplicate_mode": "update",
-            "default_year": "2024",
         }, follow_redirects=False)
-        # ohne Datei -> redirect zurueck
         assert r.status_code == 302
         assert "/meters/import" in r.headers["Location"]
 
@@ -144,17 +152,15 @@ class TestUploadStep:
         r = client.post("/meters/import", data={
             "mode": "meter_number",
             "duplicate_mode": "update",
-            "default_year": "2024",
             "file": (io.BytesIO(b"x"), "evil.exe"),
         }, content_type="multipart/form-data", follow_redirects=False)
-        assert r.status_code == 302  # redirect zurueck zu Upload
+        assert r.status_code == 302
 
     def test_post_csv_redirects_to_preview(self, client, admin, sample):
         _login(client)
-        r = _upload(client, _csv("Zaehlernummer;Stand;Jahr\nZ-001;100,5;2024\n"))
+        r = _upload(client, _csv("Zaehlernummer;Stand\nZ-001;100,5\n"))
         assert r.status_code == 302
         assert "/meters/import/preview" in r.headers["Location"]
-        # Session enthaelt jetzt das Pickle-File
         with client.session_transaction() as s:
             assert s.get("meter_import_file")
             assert s.get("meter_import_cfg") is not None
@@ -182,21 +188,21 @@ class TestPreviewStep:
 
     def test_get_renders_table_with_resolved_rows(self, client, admin, sample):
         _login(client)
-        _upload(client, _csv("Zaehlernummer;Stand;Jahr\nZ-001;100,5;2024\n"))
+        _upload(client, _csv("Zaehlernummer;Stand\nZ-001;100,5\n"))
         r = client.get("/meters/import/preview")
         assert r.status_code == 200
         body = r.get_data(as_text=True)
         assert "Schritt 2" in body
         assert "Z-001" in body
-        assert "Mueller Hans" in body  # Eigentuemer
-        assert "table-success" in body  # OK row class
+        assert "Mueller Hans" in body
+        assert "table-success" in body
         assert "Vorschau aktualisieren" in body
         assert "Import ausführen" in body
         _cleanup_pickles(client)
 
     def test_preview_shows_not_found_red(self, client, admin, sample):
         _login(client)
-        _upload(client, _csv("Zaehlernummer;Stand;Jahr\nXXX-not-existing;100;2024\n"))
+        _upload(client, _csv("Zaehlernummer;Stand\nXXX-not-existing;100\n"))
         r = client.get("/meters/import/preview")
         assert r.status_code == 200
         body = r.get_data(as_text=True)
@@ -204,9 +210,8 @@ class TestPreviewStep:
         assert "nicht gefunden" in body or "Nicht gemappt" in body
         _cleanup_pickles(client)
 
-    def test_preview_shows_ambiguous_yellow(self, client, admin):
+    def test_preview_shows_ambiguous_yellow(self, client, admin, period):
         _login(client)
-        # zwei Hauptzaehler beim selben Customer -> ambiguous
         c = Customer(name="Multi", customer_number=99)
         db.session.add(c); db.session.flush()
         p1 = Property(object_number="P-1", object_type="Haus", ort="X")
@@ -224,26 +229,24 @@ class TestPreviewStep:
         ])
         db.session.commit()
 
-        _upload(client, _csv("Kundennr;Stand;Jahr\n99;100;2024\n"), mode="customer_number")
+        _upload(client, _csv("Kundennr;Stand\n99;100\n"), mode="customer_number")
         r = client.get("/meters/import/preview")
         body = r.get_data(as_text=True)
         assert "table-warning" in body
         assert "Mehrdeutig" in body or "mehrdeutig" in body
-        # beide Meter im Dropdown
         assert "Z-A" in body
         assert "Z-B" in body
         _cleanup_pickles(client)
 
     def test_post_refresh_re_renders(self, client, admin, sample):
         _login(client)
-        _upload(client, _csv("Zaehlernummer;Stand;Jahr\nZ-001;100;2024\n"))
+        _upload(client, _csv("Zaehlernummer;Stand\nZ-001;100\n"))
         r = client.post("/meters/import/preview", data={
             "action": "refresh",
             "mode": "meter_number",
             "col_lookup": "Nr",
             "col_value": "Stand",
-            "col_year": "Jahr",
-            "default_year": "2024",
+            "billing_period_id": str(sample["period"].id),
             "duplicate_mode": "update",
             "value_format": "auto",
             "date_format": "auto",
@@ -259,15 +262,14 @@ class TestPreviewStep:
 # ---------------------------------------------------------------------------
 
 class TestConfirmStep:
-    def _confirm(self, client, **rows_data):
+    def _confirm(self, client, period, **rows_data):
         """rows_data: dict mit 'rows[N][feld]' keys."""
         data = {
             "action": "confirm",
             "mode": "meter_number",
             "col_lookup": "Nr",
             "col_value": "Stand",
-            "col_year": "Jahr",
-            "default_year": "2024",
+            "billing_period_id": str(period.id),
             "duplicate_mode": "update",
             "value_format": "auto",
             "date_format": "auto",
@@ -278,201 +280,198 @@ class TestConfirmStep:
 
     def test_confirm_creates_reading(self, client, admin, sample):
         _login(client)
-        _upload(client, _csv("Zaehlernummer;Stand;Jahr\nZ-001;100,5;2024\n"))
-        r = self._confirm(client, **{
+        _upload(client, _csv("Zaehlernummer;Stand\nZ-001;100,5\n"))
+        r = self._confirm(client, sample["period"], **{
             "rows[0][value]": "100,5",
-            "rows[0][year]": "2024",
             "rows[0][meter_id]": str(sample["meter"].id),
             "rows[0][date]": "2024-12-31",
         })
         assert r.status_code == 302
         assert "/meters/import/result" in r.headers["Location"]
-        rd = MeterReading.query.filter_by(meter_id=sample["meter"].id, year=2024).one()
+        rd = MeterReading.query.filter_by(
+            meter_id=sample["meter"].id,
+            billing_period_id=sample["period"].id).one()
         assert rd.value == Decimal("100.5")
         assert rd.created_by_id == admin.id
-        _cleanup_pickles(client)  # idempotent, sollte schon weg sein
+        _cleanup_pickles(client)
 
     def test_confirm_clears_session_pickle(self, client, admin, sample):
         _login(client)
-        _upload(client, _csv("Zaehlernummer;Stand;Jahr\nZ-001;100;2024\n"))
+        _upload(client, _csv("Zaehlernummer;Stand\nZ-001;100\n"))
         with client.session_transaction() as s:
             path = s.get("meter_import_file")
         assert os.path.exists(path)
-        self._confirm(client, **{
+        self._confirm(client, sample["period"], **{
             "rows[0][value]": "100",
-            "rows[0][year]": "2024",
             "rows[0][meter_id]": str(sample["meter"].id),
             "rows[0][date]": "2024-12-31",
         })
-        # Pickle muss weg sein
         assert not os.path.exists(path)
         with client.session_transaction() as s:
             assert "meter_import_file" not in s
 
     def test_confirm_skip_flag_skips_row(self, client, admin, sample):
         _login(client)
-        _upload(client, _csv("Zaehlernummer;Stand;Jahr\nZ-001;100;2024\n"))
-        self._confirm(client, **{
+        _upload(client, _csv("Zaehlernummer;Stand\nZ-001;100\n"))
+        self._confirm(client, sample["period"], **{
             "rows[0][skip]": "on",
             "rows[0][value]": "100",
-            "rows[0][year]": "2024",
             "rows[0][meter_id]": str(sample["meter"].id),
             "rows[0][date]": "2024-12-31",
         })
-        # nichts in der DB
         assert MeterReading.query.count() == 0
 
     def test_confirm_user_override_meter_works(self, client, admin, sample):
         _login(client)
-        # zweiter Meter, auf den der User in der Vorschau umstellt
         m2 = WaterMeter(property_id=sample["property"].id, meter_number="Z-002",
                         meter_type="sub", active=True)
         db.session.add(m2)
         db.session.commit()
 
-        _upload(client, _csv("Zaehlernummer;Stand;Jahr\nZ-001;100;2024\n"))
-        self._confirm(client, **{
+        _upload(client, _csv("Zaehlernummer;Stand\nZ-001;100\n"))
+        self._confirm(client, sample["period"], **{
             "rows[0][value]": "100",
-            "rows[0][year]": "2024",
             "rows[0][meter_id]": str(m2.id),  # User waehlt ANDEREN Meter
             "rows[0][date]": "2024-12-31",
         })
-        # Reading wurde fuer m2 angelegt, nicht fuer m
-        assert MeterReading.query.filter_by(meter_id=m2.id, year=2024).count() == 1
-        assert MeterReading.query.filter_by(meter_id=sample["meter"].id, year=2024).count() == 0
+        assert MeterReading.query.filter_by(
+            meter_id=m2.id, billing_period_id=sample["period"].id).count() == 1
+        assert MeterReading.query.filter_by(
+            meter_id=sample["meter"].id,
+            billing_period_id=sample["period"].id).count() == 0
 
     def test_confirm_duplicate_mode_skip(self, client, admin, sample):
         _login(client)
-        # Vorab-Reading
         db.session.add(MeterReading(
-            meter_id=sample["meter"].id, year=2024,
+            meter_id=sample["meter"].id, billing_period_id=sample["period"].id,
             value=Decimal("50"), reading_date=date(2024, 12, 31),
         ))
         db.session.commit()
 
-        _upload(client, _csv("Nr;Stand;Jahr\nZ-001;999;2024\n"),
-                duplicate_mode="skip")
-        self._confirm(client, **{
+        _upload(client, _csv("Nr;Stand\nZ-001;999\n"), duplicate_mode="skip")
+        self._confirm(client, sample["period"], **{
             "duplicate_mode": "skip",
             "rows[0][value]": "999",
-            "rows[0][year]": "2024",
             "rows[0][meter_id]": str(sample["meter"].id),
             "rows[0][date]": "2024-12-31",
         })
-        # Existiert weiterhin mit Value 50, nicht 999
-        rd = MeterReading.query.filter_by(meter_id=sample["meter"].id, year=2024).one()
+        rd = MeterReading.query.filter_by(
+            meter_id=sample["meter"].id,
+            billing_period_id=sample["period"].id).one()
         assert rd.value == Decimal("50")
+
+
+# ---------------------------------------------------------------------------
+# Preview-Verbrauchsspalten
+# ---------------------------------------------------------------------------
+
+class TestPreviewConsumptionColumns:
+    """Vorschau zeigt letzten Stand + berechneter Verbrauch + (optional)
+    importierter Verbrauch mit Mismatch-Highlight.
+    """
+
+    def _prev_period(self):
+        p = BillingPeriod(
+            name="2023", start_date=date(2023, 1, 1),
+            end_date=date(2023, 12, 31), active=False,
+        )
+        db.session.add(p)
+        db.session.flush()
+        return p
+
+    def test_prior_and_computed_consumption_shown(self, client, admin, sample):
+        m = sample["meter"]
+        prev = self._prev_period()
+        db.session.add(MeterReading(
+            meter_id=m.id, billing_period_id=prev.id, value=Decimal("100"),
+            reading_date=date(2023, 12, 31),
+        ))
+        db.session.commit()
+
+        _login(client)
+        _upload(client, _csv("Zaehlernummer;Stand\nZ-001;150\n"))
+        r = client.get("/meters/import/preview")
+        body = r.get_data(as_text=True)
+        assert r.status_code == 200
+        assert "100" in body
+        assert "Verbrauch" in body
+        _cleanup_pickles(client)
+
+    def test_imported_consumption_match_no_warning(self, client, admin, sample):
+        m = sample["meter"]
+        prev = self._prev_period()
+        db.session.add(MeterReading(
+            meter_id=m.id, billing_period_id=prev.id, value=Decimal("100"),
+            reading_date=date(2023, 12, 31),
+        ))
+        db.session.commit()
+
+        _login(client)
+        _upload(client, _csv(
+            "Zaehlernummer;Stand;Verbrauch\nZ-001;150;50\n"
+        ))
+        r = client.get("/meters/import/preview")
+        body = r.get_data(as_text=True)
+        assert r.status_code == 200
+        assert "Import: 50" in body or "Import: 50,00" in body
+        assert "Abweichung vom berechneten Verbrauch" not in body
+        _cleanup_pickles(client)
+
+    def test_imported_consumption_mismatch_warning(self, client, admin, sample):
+        m = sample["meter"]
+        prev = self._prev_period()
+        db.session.add(MeterReading(
+            meter_id=m.id, billing_period_id=prev.id, value=Decimal("100"),
+            reading_date=date(2023, 12, 31),
+        ))
+        db.session.commit()
+
+        _login(client)
+        _upload(client, _csv(
+            "Zaehlernummer;Stand;Verbrauch\nZ-001;150;75\n"
+        ))
+        r = client.get("/meters/import/preview")
+        body = r.get_data(as_text=True)
+        assert r.status_code == 200
+        assert "Abweichung vom berechneten Verbrauch" in body
+        assert "text-danger" in body
+        _cleanup_pickles(client)
+
+    def test_consumption_column_select_present(self, client, admin, sample):
+        _login(client)
+        _upload(client, _csv("Zaehlernummer;Stand\nZ-001;100\n"))
+        r = client.get("/meters/import/preview")
+        body = r.get_data(as_text=True)
+        assert 'name="col_consumption"' in body
+        assert "kein Vergleich" in body
+        _cleanup_pickles(client)
 
 
 # ---------------------------------------------------------------------------
 # Result
 # ---------------------------------------------------------------------------
 
-class TestPreviewConsumptionColumns:
-    """Vorschau zeigt Vorjahresstand + berechneter Verbrauch + (optional)
-    importierter Verbrauch mit Mismatch-Highlight + Wechsel-Hinweis.
-    """
-
-    def test_prior_and_computed_consumption_shown(self, client, admin, sample):
-        # Vorjahres-Reading 2023 = 100, importiere 150 fuer 2024 -> Verbrauch 50
-        m = sample["meter"]
-        db.session.add(MeterReading(
-            meter_id=m.id, year=2023, value=Decimal("100"),
-            reading_date=date(2023, 12, 31),
-        ))
-        db.session.commit()
-
-        _login(client)
-        _upload(client, _csv("Zaehlernummer;Stand;Jahr\nZ-001;150;2024\n"))
-        r = client.get("/meters/import/preview")
-        body = r.get_data(as_text=True)
-        assert r.status_code == 200
-        # Vorjahresstand 100 (im DE-Format) und Berechneter Verbrauch 50 sichtbar
-        assert "100" in body
-        # Berechnete Spalte im Header
-        assert "Vorjahres" in body
-        assert "Verbrauch" in body
-        _cleanup_pickles(client)
-
-    def test_imported_consumption_match_no_warning(self, client, admin, sample):
-        m = sample["meter"]
-        db.session.add(MeterReading(
-            meter_id=m.id, year=2023, value=Decimal("100"),
-            reading_date=date(2023, 12, 31),
-        ))
-        db.session.commit()
-
-        _login(client)
-        # CSV mit Verbrauchs-Spalte, Wert passt zur Berechnung (150-100=50)
-        _upload(client, _csv(
-            "Zaehlernummer;Stand;Jahr;Verbrauch\nZ-001;150;2024;50\n"
-        ))
-        r = client.get("/meters/import/preview")
-        body = r.get_data(as_text=True)
-        assert r.status_code == 200
-        # Import-Wert 50 sichtbar, aber NICHT als text-danger (kein Mismatch)
-        assert "Import: 50" in body or "Import: 50,00" in body
-        # Warn-Icon sollte nicht da sein fuer diese Zeile
-        # Conservative check: text-danger als Klasse fuer den Verbrauchs-Vergleich
-        # ist nur bei Mismatch -- pruefen wir einfach, dass kein Mismatch-Tooltip da ist:
-        assert "Abweichung vom berechneten Verbrauch" not in body
-        _cleanup_pickles(client)
-
-    def test_imported_consumption_mismatch_warning(self, client, admin, sample):
-        m = sample["meter"]
-        db.session.add(MeterReading(
-            meter_id=m.id, year=2023, value=Decimal("100"),
-            reading_date=date(2023, 12, 31),
-        ))
-        db.session.commit()
-
-        _login(client)
-        # CSV mit klar abweichendem Import-Verbrauch (75 vs. berechnet 50)
-        _upload(client, _csv(
-            "Zaehlernummer;Stand;Jahr;Verbrauch\nZ-001;150;2024;75\n"
-        ))
-        r = client.get("/meters/import/preview")
-        body = r.get_data(as_text=True)
-        assert r.status_code == 200
-        assert "Abweichung vom berechneten Verbrauch" in body
-        assert "text-danger" in body  # Mismatch markiert
-        _cleanup_pickles(client)
-
-    def test_consumption_column_select_present(self, client, admin, sample):
-        _login(client)
-        _upload(client, _csv("Zaehlernummer;Stand;Jahr\nZ-001;100;2024\n"))
-        r = client.get("/meters/import/preview")
-        body = r.get_data(as_text=True)
-        # Mapping-Konfig zeigt das neue col_consumption-Dropdown
-        assert 'name="col_consumption"' in body
-        assert "kein Vergleich" in body
-        _cleanup_pickles(client)
-
-
 class TestResultStep:
     def test_result_without_stats_redirects(self, client, admin):
         _login(client)
         r = client.get("/meters/import/result", follow_redirects=False)
         assert r.status_code == 302
-        # Nicht zurueck zu /import sondern zu /readings -- siehe routes.py
         assert "/meters/ablesungen" in r.headers["Location"] \
                or "/meters/" in r.headers["Location"]
 
     def test_result_renders_after_confirm(self, client, admin, sample):
         _login(client)
-        _upload(client, _csv("Zaehlernummer;Stand;Jahr\nZ-001;100;2024\n"))
+        _upload(client, _csv("Zaehlernummer;Stand\nZ-001;100\n"))
         client.post("/meters/import/preview", data={
             "action": "confirm",
             "mode": "meter_number",
             "col_lookup": "Nr",
             "col_value": "Stand",
-            "col_year": "Jahr",
-            "default_year": "2024",
+            "billing_period_id": str(sample["period"].id),
             "duplicate_mode": "update",
             "value_format": "auto",
             "date_format": "auto",
             "rows[0][value]": "100",
-            "rows[0][year]": "2024",
             "rows[0][meter_id]": str(sample["meter"].id),
             "rows[0][date]": "2024-12-31",
         }, follow_redirects=False)

@@ -9,7 +9,7 @@
       <th>Rechnungsnr.</th>
       <th>Kunde</th>
       <th>Objekt</th>
-      <th>Jahr</th>
+      <th>Periode</th>
       <th>Datum</th>
       <th>Fällig</th>
       <th class="text-end">Verbrauch</th>
@@ -47,8 +47,8 @@
         {% else %}—{% endif %}
       </td>
       <td>
-        {% if inv.period_year %}
-        <span class="badge bg-primary text-white">{{ inv.period_year }}</span>
+        {% if inv.billing_period %}
+        <span class="badge bg-primary text-white">{{ inv.billing_period.name }}</span>
         {% else %}—{% endif %}
       </td>
       <td>{{ inv.date.strftime('%d.%m.%Y') }}</td>

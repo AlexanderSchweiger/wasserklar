@@ -109,7 +109,7 @@
           <thead>
             <tr>
               <th>Rechnungsnr.</th>
-              <th>Jahr</th>
+              <th>Periode</th>
               <th>Datum</th>
               <th class="text-end">Betrag</th>
               <th>Status</th>
@@ -120,7 +120,7 @@
             {% for inv in invoices %}
             <tr>
               <td>{{ inv.invoice_number }}</td>
-              <td>{{ inv.period_year or '—' }}</td>
+              <td>{{ inv.billing_period.name if inv.billing_period else '—' }}</td>
               <td>{{ inv.date.strftime('%d.%m.%Y') }}</td>
               <td class="text-end"><strong>{{ inv.total_amount|de_number }} €</strong></td>
               <td>{% with invoice = inv %}{% include "invoices/_status_badge.html" %}{% endwith %}</td>

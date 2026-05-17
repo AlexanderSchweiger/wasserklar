@@ -9,6 +9,7 @@ Schwerpunkt: das additive Verhalten von ``_run_import``.
   aktualisiert werden – neue Datensaetze werden in beiden Modi ergaenzt.
 - ``dry_run=True`` (Vorschau) schreibt nichts in die DB.
 """
+from datetime import date
 from decimal import Decimal
 
 import pandas as pd
@@ -17,8 +18,25 @@ import pytest
 from app.extensions import db
 from app.import_csv.routes import _run_import, _detect_stand_columns
 from app.models import (
-    Customer, MeterReading, Property, PropertyOwnership, WaterMeter,
+    BillingPeriod, Customer, MeterReading, Property, PropertyOwnership,
+    WaterMeter,
 )
+
+
+@pytest.fixture(autouse=True)
+def _periods(app):
+    """Abrechnungsperioden 2022–2025 — der Stammdaten-Import ordnet
+    'Stand YYYY'-Spalten ueber den Datumsbereich einer Periode zu."""
+    for y in (2022, 2023, 2024, 2025):
+        db.session.add(BillingPeriod(
+            name=str(y), start_date=date(y, 1, 1), end_date=date(y, 12, 31),
+            active=(y == 2025),
+        ))
+    db.session.commit()
+
+
+def _period(year):
+    return BillingPeriod.query.filter_by(name=str(year)).first()
 
 # Spalten-Zuordnung: CSV-Spaltenname je Zielfeld. Nicht in jedem DataFrame
 # vorhandene Spalten liefern in _get_cell einfach "" – das ist gewollt.
@@ -84,11 +102,11 @@ class TestBasicImport:
              "Zählernummer": "Z1", "Stand 2023": "100", "Stand 2024": "175"},
         ])
         meter = WaterMeter.query.filter_by(meter_number="Z1").first()
-        readings = {r.year: r for r in meter.readings.all()}
-        assert readings[2023].value == Decimal("100")
-        assert readings[2023].consumption is None
-        assert readings[2024].value == Decimal("175")
-        assert readings[2024].consumption == Decimal("75")
+        readings = {r.billing_period.name: r for r in meter.readings.all()}
+        assert readings["2023"].value == Decimal("100")
+        assert readings["2023"].consumption is None
+        assert readings["2024"].value == Decimal("175")
+        assert readings["2024"].consumption == Decimal("75")
 
 
 # ---------------------------------------------------------------------------
@@ -288,7 +306,8 @@ class TestDuplicateMode:
              "Zählernummer": "Z1", "Stand 2024": "999"},
         ], mode="skip")
         assert res["readings_updated"] == 0
-        reading = MeterReading.query.filter_by(year=2024).first()
+        reading = MeterReading.query.filter_by(
+            billing_period_id=_period(2024).id).first()
         assert reading.value == Decimal("100")
 
     def test_overwrite_updates_existing_reading(self, app):
@@ -301,7 +320,8 @@ class TestDuplicateMode:
              "Zählernummer": "Z1", "Stand 2024": "999"},
         ], mode="overwrite")
         assert res["readings_updated"] == 1
-        reading = MeterReading.query.filter_by(year=2024).first()
+        reading = MeterReading.query.filter_by(
+            billing_period_id=_period(2024).id).first()
         assert reading.value == Decimal("999")
 
 

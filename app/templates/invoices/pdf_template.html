@@ -78,7 +78,7 @@
   {% if invoice.customer.customer_number %}<strong>Kundennummer:</strong> {{ invoice.customer.customer_number }}<br>{% endif %}
   <strong>Datum:</strong> {{ invoice.date.strftime('%d.%m.%Y') }}<br>
   <strong>Fällig bis:</strong> {{ invoice.due_date.strftime('%d.%m.%Y') if invoice.due_date else '—' }}<br>
-  {% if invoice.period_year %}<strong>Abrechnungsjahr:</strong> {{ invoice.period_year }}{% endif %}
+  {% if invoice.billing_period %}<strong>Abrechnungsperiode:</strong> {{ invoice.billing_period.name }}{% endif %}
 </div>
 
 <div class="recipient">

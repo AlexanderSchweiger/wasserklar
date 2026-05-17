@@ -149,12 +149,47 @@ Die Tests laufen mit **pytest** gegen eine SQLite-In-Memory-Datenbank — kein l
 
 ## CLI-Befehle
 
+Alle Befehle werden mit `flask --app run <befehl>` aufgerufen (lokal: `.venv/Scripts/flask --app run <befehl>`; Docker: `docker compose exec wkoss flask --app run <befehl>`).
+
+### Schema & Initialisierung
+
 | Befehl | Beschreibung |
 |--------|-------------|
-| `flask --app run init-db` | Tabellen erstellen + Standard-Konten anlegen (einmalig bei Erstinstallation) |
-| `flask --app run upgrade-db` | Schema-Migrations + Seeds nachziehen (idempotent, einziges Update-Kommando) |
-| `flask --app run create-admin` | Admin-Benutzer interaktiv anlegen |
-| `flask --app run run` | Entwicklungsserver starten |
+| `init-db` | Tabellen via Alembic anlegen + Defaults seeden (Steuersätze, Mahnrichtlinie, Abrechnungsperiode). Einmalig bei Erstinstallation. |
+| `upgrade-db` | Schema-Migrations auf head ziehen + fehlende Defaults nachseeden. Idempotent — einziges Kommando für Updates. |
+
+### Benutzerverwaltung
+
+| Befehl | Beschreibung |
+|--------|-------------|
+| `create-admin` | Admin-Benutzer interaktiv anlegen (Benutzername, E-Mail, Passwort per Prompt). |
+
+### Entwicklung & Test
+
+| Befehl | Beschreibung |
+|--------|-------------|
+| `seed-testdata` | Testdaten einfügen: 6 Kunden, Objekte, Zähler, Ablesungen 2021–2025, 24 Rechnungen, Buchungen, Offene Posten. Läuft nur wenn die DB leer ist (Schutz vor doppeltem Seeden). |
+| `clear-db` | Tabellen leeren (Struktur bleibt erhalten). Ohne Flag: Bewegungsdaten; Benutzer und Einstellungen bleiben. Mit `--full`: alles inkl. Benutzer und Einstellungen (Seed-Defaults werden danach neu eingespielt). Bestätigung: `CLEAR`. |
+| `reset-db` | **Alle Daten und Tabellen** löschen und DB neu initialisieren. Fragt zur Bestätigung nach dem Wort `RESET`. |
+
+### Betrieb
+
+| Befehl | Beschreibung |
+|--------|-------------|
+| `mark-posted` | Alle Buchungen mit Status `Offen` und Datum vor heute auf `Verbucht` setzen. Nützlich nach manuellem Jahresabschluss oder Datenimport. |
+
+### Daten-Export / Import
+
+| Befehl | Optionen | Beschreibung |
+|--------|----------|-------------|
+| `export-data` | `--out <datei.zip>` (Pflicht) | Exportiert alle Tabellen in eine ZIP-Datei (gleiches Format wie der UI-Export unter `/data-transfer`). |
+| | `--include stammdaten,buchungen,mahnwesen,einstellungen` | Komma-separierte Kategorien (Standard: alle). |
+| | `--years 2023,2024` | Nur Buchungen dieser Jahre exportieren (Standard: alle Jahre). |
+| | `--no-pdfs` | PDF-Anhänge nicht mit-bundlen. |
+| `import-data` | `--in <datei.zip>` (Pflicht) | Importiert eine zuvor exportierte ZIP-Datei. |
+| | `--mode replace\|merge` | `replace`: Vollersatz (Standard). `merge`: Nur fehlende Records einfügen. |
+| | `--update-existing` | Im Merge-Modus: bestehende Records aktualisieren. |
+| | `--yes` | Bestätigungs-Prompt überspringen (für Scripting). |
 
 ---
 

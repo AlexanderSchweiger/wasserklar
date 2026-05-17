@@ -7,13 +7,21 @@
   <div class="card-header">
     <div class="filter-bar">
       <div class="mb-3">
-        <label class="form-label mb-0 me-1">Jahr</label>
-        <input type="number" id="year-select" name="year" value="{{ year }}"
-          min="2000" max="2100" class="form-control form-control-sm" style="width:90px"
+        <label class="form-label mb-0 me-1">Abrechnungsperiode</label>
+        <select id="period-select" name="period_id"
+          class="form-select form-select-sm" style="width:auto; display:inline-block"
           hx-get="{{ url_for('meters.readings') }}"
           hx-trigger="change"
           hx-target="#meters-table"
-          hx-include="[name='q'],[id='year-select'],[name='mode']">
+          hx-include="[name='q'],[id='period-select'],[name='mode']">
+          {% for p in periods %}
+          <option value="{{ p.id }}" {{ 'selected' if period and p.id == period.id }}>
+            {{ p.name }}{{ ' — aktiv' if p.active else '' }}
+          </option>
+          {% else %}
+          <option value="">— keine Periode —</option>
+          {% endfor %}
+        </select>
       </div>
       <div class="input-group input-group-sm" style="width:240px">
         <input type="search" name="q" value="{{ q }}" class="form-control"
@@ -21,7 +29,7 @@
           hx-get="{{ url_for('meters.readings') }}"
           hx-trigger="input changed delay:300ms"
           hx-target="#meters-table"
-          hx-include="[name='q'],[id='year-select'],[name='mode']">
+          hx-include="[name='q'],[id='period-select'],[name='mode']">
         <span class="input-group-text"><i class="fas fa-search"></i></span>
       </div>
       <div class="mb-3 d-flex gap-2 align-items-center">
@@ -29,7 +37,7 @@
           hx-get="{{ url_for('meters.readings') }}"
           hx-trigger="click"
           hx-target="#meters-table"
-          hx-include="[name='q'],[id='year-select'],[name='mode']">
+          hx-include="[name='q'],[id='period-select'],[name='mode']">
           <i class="fas fa-search me-1"></i> Anzeigen
         </button>
         <a href="{{ url_for('meters.readings') }}" class="btn btn-sm btn-outline-secondary">
@@ -42,7 +50,7 @@
           class="btn btn-sm {{ 'btn-secondary' if mode == 'quick' else 'btn-info' }} me-1"
           hx-get="{{ url_for('meters.readings') }}"
           hx-target="#meters-table"
-          hx-include="[name='q'],[id='year-select'],[name='mode']"
+          hx-include="[name='q'],[id='period-select'],[name='mode']"
           onclick="toggleQuickMode(this)">
         {% if mode == 'quick' %}
           <i class="fas fa-list me-1"></i> Normale Ansicht
@@ -56,7 +64,12 @@
     </div>
   </div>
   <div id="meters-table">
-    {% if mode == 'quick' %}
+    {% if not period %}
+      <div class="card-body text-center text-muted py-4">
+        Keine Abrechnungsperiode vorhanden —
+        <a href="{{ url_for('periods.new') }}">jetzt anlegen</a>.
+      </div>
+    {% elif mode == 'quick' %}
       {% include "meters/_table_quick.html" %}
     {% else %}
       {% include "meters/_table.html" %}

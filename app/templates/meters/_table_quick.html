@@ -1,11 +1,14 @@
 {% from "_pagination.html" import render_pagination %}
 <form method="post" action="{{ url_for('meters.bulk_read') }}">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-  <input type="hidden" name="year" value="{{ year }}">
-  <div class="px-3 py-2 border-bottom">
+  <input type="hidden" name="billing_period_id" value="{{ period.id if period else '' }}">
+  <div class="px-3 py-2 border-bottom d-flex align-items-center gap-2 flex-wrap">
     <button type="submit" class="btn btn-success btn-sm">
       <i class="fas fa-save me-1"></i> Alle speichern
     </button>
+    <label class="form-label mb-0 ms-2 me-1 small">Ablesedatum</label>
+    <input type="date" name="reading_date" class="form-control form-control-sm"
+      style="width:auto" value="{{ today.isoformat() if today else '' }}">
     <small class="text-muted ms-2">Nur befüllte Felder werden gespeichert.</small>
   </div>
   <table class="table table-hover table-striped mb-0">
@@ -15,7 +18,7 @@
         <th>Objekt</th>
         <th>Zählernummer</th>
         <th>Standort</th>
-        <th class="text-end">Stand {{ year - 1 }}</th>
+        <th class="text-end">Letzter Stand</th>
         <th class="text-end">Neuer Stand (m³)</th>
         <th class="text-end">Verbrauch</th>
       </tr>
@@ -44,7 +47,7 @@
             {% if meter.initial_value is not none %}
               {{ "%d"|format(meter.initial_value) }} m³
             {% else %}—{% endif %}
-            <span class="badge bg-warning ms-1" title="Zähler wurde in {{ year }} gewechselt">Tausch</span>
+            <span class="badge bg-warning text-dark ms-1" title="Zähler wurde in dieser Periode gewechselt">Tausch</span>
           {% elif prev_reading %}
             {{ "%d"|format(prev_reading.value) }} m³
           {% else %}—{% endif %}

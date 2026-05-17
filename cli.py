@@ -167,6 +167,34 @@ def seed_default_dunning_policy(db, *, verbose=False):
         print("  + Standard-Mahnvorlage mit 4 Stufen angelegt.")
 
 
+def seed_default_billing_period(db, *, verbose=False):
+    """Eine Default-Abrechnungsperiode fuers laufende Kalenderjahr anlegen,
+    falls noch keine existiert.
+
+    Es muss immer genau eine aktive Abrechnungsperiode geben, damit
+    Zaehlerablesungen erfasst werden koennen.
+    """
+    from datetime import date
+    from app.models import BillingPeriod
+
+    if BillingPeriod.query.first():
+        if verbose:
+            print("  ok Abrechnungsperiode bereits vorhanden.")
+        return
+
+    year = date.today().year
+    period = BillingPeriod(
+        name=str(year),
+        start_date=date(year, 1, 1),
+        end_date=date(year, 12, 31),
+        active=True,
+    )
+    db.session.add(period)
+    db.session.commit()
+    if verbose:
+        print(f"  + Abrechnungsperiode '{year}' angelegt (aktiv).")
+
+
 def run_data_migrations(db, *, verbose=False):
     """Datenmigrationen fuer bestehende DBs (Kundennummern, OpenItems aus versendeten Rechnungen).
 
@@ -200,13 +228,19 @@ def run_data_migrations(db, *, verbose=False):
         .all()
     )
     for inv in sent_no_oi:
+        if inv.billing_period is not None:
+            oi_period_year = inv.billing_period.end_date.year
+        elif inv.date is not None:
+            oi_period_year = inv.date.year
+        else:
+            oi_period_year = None
         oi = OpenItem(
             customer_id=inv.customer_id,
             description=inv.invoice_number,
             amount=inv.total_amount,
             date=inv.date,
             due_date=inv.due_date,
-            period_year=inv.period_year,
+            period_year=oi_period_year,
             status=OpenItem.STATUS_OPEN,
             invoice_id=inv.id,
         )
@@ -223,6 +257,7 @@ def run_data_migrations(db, *, verbose=False):
 
 
 def register_commands(app):
+    import click
     from app.extensions import db
     from app.models import User, Account, TaxRate, DunningPolicy, DunningStage
 
@@ -235,6 +270,7 @@ def register_commands(app):
 
         seed_default_tax_rates(db)
         seed_default_dunning_policy(db)
+        seed_default_billing_period(db)
 
     @app.cli.command("upgrade-db")
     def upgrade_db():
@@ -288,6 +324,7 @@ def register_commands(app):
 
         seed_default_tax_rates(db, verbose=True)
         seed_default_dunning_policy(db, verbose=True)
+        seed_default_billing_period(db, verbose=True)
         run_data_migrations(db, verbose=True)
 
         print("Datenbank aktualisiert.")
@@ -299,7 +336,7 @@ def register_commands(app):
         from decimal import Decimal
         from app.models import (
             User, Customer, Property, PropertyOwnership,
-            WaterMeter, MeterReading, WaterTariff,
+            WaterMeter, MeterReading, WaterTariff, BillingPeriod,
             Invoice, InvoiceItem, Account, Booking, OpenItem,
         )
 
@@ -308,6 +345,21 @@ def register_commands(app):
             return
 
         db.create_all()
+
+        # ------------------------------------------------------------------
+        # Abrechnungsperioden (Kalenderjahre 2021–2025, 2025 aktiv)
+        # ------------------------------------------------------------------
+        perioden = {}
+        for _jahr in range(2021, 2026):
+            p = BillingPeriod(
+                name=str(_jahr),
+                start_date=date(_jahr, 1, 1),
+                end_date=date(_jahr, 12, 31),
+                active=(_jahr == 2025),
+            )
+            db.session.add(p)
+            perioden[_jahr] = p
+        db.session.flush()
 
         # ------------------------------------------------------------------
         # Benutzer
@@ -463,7 +515,7 @@ def register_commands(app):
                 verbrauch = wert - prev_val
                 reading = MeterReading(
                     meter_id=meter.id,
-                    year=jahr,
+                    billing_period_id=perioden[jahr].id,
                     reading_date=date(jahr, 12, 31),
                     value=wert,
                     consumption=verbrauch,
@@ -486,7 +538,7 @@ def register_commands(app):
                 invoice_number=f"RE-{jahr}-{nr:04d}",
                 customer_id=kunde.id,
                 property_id=objekt.id,
-                period_year=jahr,
+                billing_period_id=perioden[jahr].id,
                 date=date(jahr + 1, 1, 15),
                 due_date=date(jahr + 1, 2, 28),
                 status=status,
@@ -629,6 +681,63 @@ def register_commands(app):
         ctx = get_current_context()
         ctx.invoke(init_db)
 
+    @app.cli.command("clear-db")
+    @click.option("--full", is_flag=True, default=False,
+                  help="Auch Benutzer und Einstellungen löschen.")
+    def clear_db(full):
+        """Bewegungsdaten löschen (Tabellen bleiben erhalten).
+
+        Ohne --full: Kunden, Zähler, Ablesungen, Rechnungen, Buchungen usw.
+        werden geleert; Benutzer, User-Preferences und App-Einstellungen bleiben.
+
+        Mit --full: alle Tabellen bis auf die Seed-Defaults (Steuersätze,
+        Mahnrichtlinie, Abrechnungsperiode) werden geleert, dann werden die
+        Defaults neu eingespielt.
+        """
+        schutz = {"tax_rates", "dunning_policies", "dunning_stages"}
+        if not full:
+            schutz |= {"users", "user_preferences", "app_settings"}
+
+        scope = "ALLE Daten (inkl. Benutzer und Einstellungen)" if full else \
+                "alle Bewegungsdaten (Benutzer und Einstellungen bleiben erhalten)"
+        print(f"WARNUNG: {scope} werden unwiderruflich gelöscht!")
+        antwort = input("Zur Bestätigung bitte 'CLEAR' eingeben: ").strip()
+        if antwort != "CLEAR":
+            print("Abgebrochen.")
+            return
+
+        dialect = db.engine.dialect.name
+        existing = set(sa.inspect(db.engine).get_table_names())
+        # FK-Checks werden deaktiviert → Reihenfolge egal, nur existierende Tabellen
+        tables = [t for t in db.metadata.tables.values()
+                  if t.name not in schutz and t.name in existing]
+
+        with db.engine.begin() as conn:
+            if dialect == "mysql":
+                conn.execute(sa.text("SET FOREIGN_KEY_CHECKS=0"))
+            elif dialect == "sqlite":
+                conn.execute(sa.text("PRAGMA foreign_keys=OFF"))
+
+            for table in tables:
+                if dialect == "postgresql":
+                    conn.execute(sa.text(f"TRUNCATE TABLE {table.name} RESTART IDENTITY CASCADE"))
+                else:
+                    conn.execute(table.delete())
+
+            if dialect == "mysql":
+                conn.execute(sa.text("SET FOREIGN_KEY_CHECKS=1"))
+            elif dialect == "sqlite":
+                conn.execute(sa.text("PRAGMA foreign_keys=ON"))
+
+        geloescht = sorted(t.name for t in tables)
+        print(f"{len(geloescht)} Tabelle(n) geleert: {', '.join(geloescht)}")
+
+        if full:
+            seed_default_tax_rates(db)
+            seed_default_dunning_policy(db)
+            seed_default_billing_period(db)
+            print("Standard-Defaults neu eingespielt.")
+
     @app.cli.command("create-admin")
     def create_admin():
         """Admin-Benutzer interaktiv anlegen."""
@@ -652,7 +761,6 @@ def register_commands(app):
     # -----------------------------------------------------------------------
     # Daten-Export/Import (kompatibel zum UI-Feature unter /data-transfer)
     # -----------------------------------------------------------------------
-    import click
 
     @app.cli.command("export-data")
     @click.option("--out", "out_path", required=True,

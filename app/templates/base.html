@@ -82,6 +82,7 @@
             {% set _nav_offene_posten   = request.endpoint in ('accounting.open_items','accounting.open_item_invoice') %}
             {% set _nav_rechnungslauf   = request.endpoint == 'invoices.generate' %}
             {% set _nav_rechnungslaeufe = request.endpoint in ('invoices.billing_runs','invoices.billing_run_detail','invoices.billing_run_delete') %}
+            {% set _nav_perioden        = request.blueprint == 'periods' %}
             {% set _nav_email_settings  = request.endpoint == 'invoices.email_settings' %}
 
             {# Mahnwesen #}
@@ -116,10 +117,77 @@
 
             {# Eltern-Aktiv aus Kinder-OR ableiten #}
             {% set accounting_active   = _nav_buchungen or _nav_umbuchungen or _nav_buchungsjahre or _nav_bankkonten or _nav_kontenplan or _nav_projekte or _nav_bankimport %}
-            {% set invoices_active     = _nav_neue_rechnung or _nav_alle_rechnungen or _nav_offene_posten or _nav_rechnungslauf or _nav_rechnungslaeufe or _nav_email_settings or _nav_tarife %}
+            {% set invoices_active     = _nav_neue_rechnung or _nav_alle_rechnungen or _nav_offene_posten or _nav_rechnungslauf or _nav_rechnungslaeufe or _nav_perioden or _nav_email_settings or _nav_tarife %}
             {% set auswertungen_active = _nav_jahresbericht or _nav_ust %}
-            {% set stammdaten_active   = _nav_kunden or _nav_objekte or _nav_zaehler or _nav_ablesungen or _nav_zaehlertausch or _nav_import %}
+            {% set zaehler_active      = _nav_zaehler or _nav_ablesungen or _nav_zaehlertausch %}
+            {% set stammdaten_active   = _nav_kunden or _nav_objekte or _nav_import %}
             {% set verwaltung_active   = _nav_benutzer or _nav_einstellungen or _nav_data_transfer or _nav_dokumente or _nav_export or _nav_backups %}
+
+            <li class="nav-item">
+              <a class="nav-link dropdown-toggle {% if stammdaten_active %}active{% endif %}" href="#navbar-stammdaten"
+                data-bs-toggle="collapse" role="button"
+                aria-expanded="{{ 'true' if stammdaten_active else 'false' }}"
+                aria-controls="navbar-stammdaten">
+                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-database"></i></span>
+                <span class="nav-link-title">Stammdaten</span>
+              </a>
+              <div class="collapse {% if stammdaten_active %}show{% endif %}" id="navbar-stammdaten">
+                <ul class="nav nav-sm flex-column ps-3">
+                  <li class="nav-item">
+                    <a class="nav-link {% if _nav_kunden %}active{% endif %}"
+                      href="{{ url_for('customers.index') }}">
+                      <i class="fas fa-users me-2"></i>Kontakte
+                    </a>
+                  </li>
+                  <li class="nav-item">
+                    <a class="nav-link {% if _nav_objekte %}active{% endif %}"
+                      href="{{ url_for('properties.index') }}">
+                      <i class="fas fa-home me-2"></i>Objekte
+                    </a>
+                  </li>
+                  {% if current_user.is_admin %}
+                  <li class="nav-item">
+                    <a class="nav-link {% if _nav_import %}active{% endif %}"
+                      href="{{ url_for('import_csv.upload') }}">
+                      <i class="fas fa-file-import me-2"></i>Stammdaten importieren
+                    </a>
+                  </li>
+                  {% endif %}
+                </ul>
+              </div>
+            </li>
+
+            <li class="nav-item">
+              <a class="nav-link dropdown-toggle {% if zaehler_active %}active{% endif %}" href="#navbar-zaehler"
+                data-bs-toggle="collapse" role="button"
+                aria-expanded="{{ 'true' if zaehler_active else 'false' }}"
+                aria-controls="navbar-zaehler">
+                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-tachometer-alt"></i></span>
+                <span class="nav-link-title">Zähler</span>
+              </a>
+              <div class="collapse {% if zaehler_active %}show{% endif %}" id="navbar-zaehler">
+                <ul class="nav nav-sm flex-column ps-3">
+                  <li class="nav-item">
+                    <a class="nav-link {% if _nav_zaehler %}active{% endif %}"
+                      href="{{ url_for('meters.index') }}">
+                      <i class="fas fa-tachometer-alt me-2"></i>Zähler
+                    </a>
+                  </li>
+                  <li class="nav-item">
+                    <a class="nav-link {% if _nav_ablesungen %}active{% endif %}"
+                      href="{{ url_for('meters.readings') }}">
+                      <i class="fas fa-bolt me-2"></i>Zählerablesungen
+                    </a>
+                  </li>
+                  <li class="nav-item">
+                    <a class="nav-link {% if _nav_zaehlertausch %}active{% endif %}"
+                      href="{{ url_for('meters.swap_import_upload') }}">
+                      <i class="fas fa-exchange-alt me-2"></i>Zählertausch-Import
+                    </a>
+                  </li>
+                </ul>
+              </div>
+            </li>
 
             <li class="nav-item">
               <a class="nav-link dropdown-toggle {% if accounting_active %}active{% endif %}" href="#navbar-accounting"
@@ -201,6 +269,12 @@
                     </a>
                   </li>
                   <li class="nav-item">
+                    <a class="nav-link {% if _nav_perioden %}active{% endif %}"
+                      href="{{ url_for('periods.index') }}">
+                      <i class="fas fa-calendar-week me-2"></i>Abrechnungsperioden
+                    </a>
+                  </li>
+                  <li class="nav-item">
                     <a class="nav-link {% if _nav_rechnungslaeufe or _nav_rechnungslauf %}active{% endif %}"
                       href="{{ url_for('invoices.billing_runs') }}">
                       <i class="fas fa-history me-2"></i>Rechnungsläufe
@@ -258,58 +332,6 @@
                       <i class="fas fa-cogs me-2"></i>Vorlagen
                     </a>
                   </li>
-                </ul>
-              </div>
-            </li>
-
-            <li class="nav-item">
-              <a class="nav-link dropdown-toggle {% if stammdaten_active %}active{% endif %}" href="#navbar-stammdaten"
-                data-bs-toggle="collapse" role="button"
-                aria-expanded="{{ 'true' if stammdaten_active else 'false' }}"
-                aria-controls="navbar-stammdaten">
-                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-database"></i></span>
-                <span class="nav-link-title">Stammdaten</span>
-              </a>
-              <div class="collapse {% if stammdaten_active %}show{% endif %}" id="navbar-stammdaten">
-                <ul class="nav nav-sm flex-column ps-3">
-                  <li class="nav-item">
-                    <a class="nav-link {% if _nav_kunden %}active{% endif %}"
-                      href="{{ url_for('customers.index') }}">
-                      <i class="fas fa-users me-2"></i>Kontakte
-                    </a>
-                  </li>
-                  <li class="nav-item">
-                    <a class="nav-link {% if _nav_objekte %}active{% endif %}"
-                      href="{{ url_for('properties.index') }}">
-                      <i class="fas fa-home me-2"></i>Objekte
-                    </a>
-                  </li>
-                  <li class="nav-item">
-                    <a class="nav-link {% if _nav_zaehler %}active{% endif %}"
-                      href="{{ url_for('meters.index') }}">
-                      <i class="fas fa-tachometer-alt me-2"></i>Zähler
-                    </a>
-                  </li>
-                  <li class="nav-item">
-                    <a class="nav-link {% if _nav_ablesungen %}active{% endif %}"
-                      href="{{ url_for('meters.readings') }}">
-                      <i class="fas fa-bolt me-2"></i>Zählerablesungen
-                    </a>
-                  </li>
-                  <li class="nav-item">
-                    <a class="nav-link {% if _nav_zaehlertausch %}active{% endif %}"
-                      href="{{ url_for('meters.swap_import_upload') }}">
-                      <i class="fas fa-exchange-alt me-2"></i>Zählertausch-Import
-                    </a>
-                  </li>
-                  {% if current_user.is_admin %}
-                  <li class="nav-item">
-                    <a class="nav-link {% if _nav_import %}active{% endif %}"
-                      href="{{ url_for('import_csv.upload') }}">
-                      <i class="fas fa-file-import me-2"></i>Stammdaten importieren
-                    </a>
-                  </li>
-                  {% endif %}
                 </ul>
               </div>
             </li>

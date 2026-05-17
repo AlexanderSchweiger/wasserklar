@@ -19,7 +19,10 @@ from decimal import Decimal
 from typing import Any
 
 from app.extensions import db
-from app.models import Customer, MeterReading, Property, PropertyOwnership, WaterMeter
+from app.models import (
+    BillingPeriod, Customer, MeterReading, Property, PropertyOwnership, WaterMeter,
+)
+from app.meters.services import recompute_meter_chain
 from app.meters.import_service import (
     delete_dataframe,
     format_value_de,
@@ -135,7 +138,7 @@ class SwapRow:
 
     # Anzeige-Felder fuer die Vorschau (nicht persistiert)
     old_last_value: Decimal | None = None
-    old_last_year: int | None = None
+    old_last_date: date | None = None
     old_object_label: str = ""
     old_owner: str = ""
 
@@ -321,7 +324,7 @@ def _build_one(idx: int, raw: dict, cols: dict[str, str]) -> SwapRow:
             last = old.last_reading()
             if last is not None:
                 row.old_last_value = last.value
-                row.old_last_year = last.year
+                row.old_last_date = last.reading_date
             row.old_object_label = old.property.label() if old.property else ""
             row.old_owner = _owner_name(old.property_id)
 
@@ -421,24 +424,17 @@ def parse_swap_form_edits(form, baseline_rows: list[SwapRow]) -> list[SwapRow]:
 # Commit
 # ---------------------------------------------------------------------------
 
-def _closing_consumption(meter: WaterMeter, year: int,
-                         value: Decimal) -> Decimal | None:
-    """Verbrauch der Abschlussablesung: Vorjahres-Reading oder initial_value."""
-    prev = MeterReading.query.filter_by(meter_id=meter.id, year=year - 1).first()
-    if prev is not None:
-        return value - prev.value
-    if meter.initial_value is not None:
-        return value - meter.initial_value
-    return None
-
-
-def commit_swap_import(rows: list[SwapRow], user_id: int) -> SwapImportStats:
-    """Persistiert die Zaehlertaeusche und Neuanlagen.
+def commit_swap_import(rows: list[SwapRow], user_id: int,
+                       billing_period: BillingPeriod) -> SwapImportStats:
+    """Persistiert die Zaehlertaeusche und Neuanlagen in die gewaehlte
+    Abrechnungsperiode.
 
     Pro Zeile ein Savepoint -- ein Fehler rollt nur diese eine Zeile zurueck.
-    Spiegelt die Logik aus ``meters.routes.meter_replace``.
+    Spiegelt die Logik aus ``meters.routes.meter_replace``; der Verbrauch der
+    Abschlussablesung wird nach dem Lauf via ``recompute_meter_chain`` gesetzt.
     """
     stats = SwapImportStats()
+    affected_meters: dict[int, WaterMeter] = {}
     for row in rows:
         if row.skip:
             stats.skipped += 1
@@ -459,31 +455,27 @@ def commit_swap_import(rows: list[SwapRow], user_id: int) -> SwapImportStats:
                     stats.skipped_error += 1
                     continue
 
-                year = row.swap_date.year
-
                 # 1. Alten Zaehler ausbauen
                 old.installed_to = row.swap_date
                 old.active = False
 
                 # 2. Abschlussablesung anlegen/aktualisieren
-                consumption = _closing_consumption(old, year, row.dismount_value)
                 existing = MeterReading.query.filter_by(
-                    meter_id=old.id, year=year,
+                    meter_id=old.id, billing_period_id=billing_period.id,
                 ).first()
                 if existing is not None:
                     existing.value = row.dismount_value
                     existing.reading_date = row.swap_date
-                    existing.consumption = consumption
                     existing.created_by_id = user_id
                 else:
                     db.session.add(MeterReading(
                         meter_id=old.id,
-                        year=year,
+                        billing_period_id=billing_period.id,
                         value=row.dismount_value,
                         reading_date=row.swap_date,
-                        consumption=consumption,
                         created_by_id=user_id,
                     ))
+                affected_meters[old.id] = old
 
                 # 3. Neuen Zaehler anlegen
                 db.session.add(WaterMeter(
@@ -522,6 +514,11 @@ def commit_swap_import(rows: list[SwapRow], user_id: int) -> SwapImportStats:
             sp.rollback()
             stats.errors.append(f"Zeile {row.human_row}: {e}")
             stats.skipped_error += 1
+
+    # Verbrauch der betroffenen (alten) Zaehler neu berechnen.
+    db.session.flush()
+    for meter in affected_meters.values():
+        recompute_meter_chain(meter)
 
     db.session.commit()
     return stats

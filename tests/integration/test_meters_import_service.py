@@ -3,6 +3,9 @@
 Deckt die DB-beruehrenden Funktionen ab: resolve_meter (alle 3 Modi),
 build_resolved_rows (End-to-End-Flow), parse_form_edits (User-Edits-Merging),
 commit_import (Insert/Update/Skip-Pfade inkl. consumption-Berechnung).
+
+Ablesungen sind seit oss-v1.3.0 einer ``BillingPeriod`` zugeordnet, nicht
+mehr einer Integer-Jahreszahl.
 """
 from datetime import date
 from decimal import Decimal
@@ -14,7 +17,8 @@ from werkzeug.datastructures import ImmutableMultiDict
 from app.extensions import db
 from app.meters import import_service as svc
 from app.models import (
-    Customer, MeterReading, Property, PropertyOwnership, User, WaterMeter,
+    BillingPeriod, Customer, MeterReading, Property, PropertyOwnership, User,
+    WaterMeter,
 )
 
 
@@ -29,6 +33,18 @@ def admin(app):
     db.session.add(u)
     db.session.commit()
     return u
+
+
+def _make_period(year, name=None, active=False):
+    p = BillingPeriod(
+        name=name or str(year),
+        start_date=date(year, 1, 1),
+        end_date=date(year, 12, 31),
+        active=active,
+    )
+    db.session.add(p)
+    db.session.flush()
+    return p
 
 
 def _make_customer(number=None, name="Kunde X", active=True):
@@ -65,12 +81,12 @@ def _make_meter(prop, number, meter_type="main", parent_id=None, active=True,
     return m
 
 
-def _make_reading(meter, year, value, consumption=None, reading_date=None):
+def _make_reading(meter, period, value, consumption=None, reading_date=None):
     r = MeterReading(
-        meter_id=meter.id, year=year,
+        meter_id=meter.id, billing_period_id=period.id,
         value=Decimal(str(value)),
         consumption=Decimal(str(consumption)) if consumption is not None else None,
-        reading_date=reading_date or date(year, 12, 31),
+        reading_date=reading_date or period.end_date,
     )
     db.session.add(r)
     db.session.flush()
@@ -134,8 +150,7 @@ class TestResolveByCustomerNumber:
         assert "999" in r.message
 
     def test_customer_no_meters(self, app):
-        c = _make_customer(number=42, name="X")
-        # kein Property/Meter
+        _make_customer(number=42, name="X")
         r = svc.resolve_meter("42", "customer_number")
         assert r.status == svc.STATUS_NOT_FOUND
         assert "keine aktiven Zähler" in r.message
@@ -167,7 +182,6 @@ class TestResolveByCustomerNumber:
         _make_meter(p, "Z-S1", meter_type="sub")
         _make_meter(p, "Z-S2", meter_type="sub")
         r = svc.resolve_meter("42", "customer_number")
-        # 0 mains, 2 meters -> ambiguous
         assert r.status == svc.STATUS_AMBIGUOUS
         assert r.chosen is None
 
@@ -211,7 +225,6 @@ class TestResolveByCustomerName:
         r = svc.resolve_meter("Maier", "customer_name")
         assert r.status == svc.STATUS_AMBIGUOUS
         assert r.chosen is None
-        # beide Meter sind in candidates
         assert len(r.candidates) == 2
         assert "2 Kunden" in r.message
 
@@ -231,18 +244,20 @@ class TestBuildResolvedRows:
         assert svc.build_resolved_rows(df, cfg) == []
 
     def test_three_rows_mixed_status(self, app):
+        period = _make_period(2024)
         c = _make_customer(name="A")
         p = _make_property("P-1", c)
         _make_meter(p, "Z-001")
+        db.session.commit()
 
         df = pd.DataFrame([
-            {"Nr": "Z-001", "Stand": "100,5", "Jahr": "2024"},
-            {"Nr": "Z-XXX", "Stand": "200,0", "Jahr": "2024"},  # not_found
-            {"Nr": "Z-001", "Stand": "garbage", "Jahr": "2024"},  # parse_error
+            {"Nr": "Z-001", "Stand": "100,5"},
+            {"Nr": "Z-XXX", "Stand": "200,0"},   # not_found
+            {"Nr": "Z-001", "Stand": "garbage"},  # parse_error
         ])
         cfg = svc.MappingConfig(
             mode="meter_number", col_lookup="Nr", col_value="Stand",
-            col_year="Jahr", default_year=2024,
+            billing_period_id=period.id,
         )
         rows = svc.build_resolved_rows(df, cfg)
         assert len(rows) == 3
@@ -251,41 +266,47 @@ class TestBuildResolvedRows:
         assert rows[1].status == svc.STATUS_NOT_FOUND
         assert rows[2].status == svc.STATUS_PARSE_ERROR
 
-    def test_default_date_31_12_year(self, app):
+    def test_default_date_is_period_end(self, app):
+        period = _make_period(2024)
         c = _make_customer(name="A")
         p = _make_property("P-1", c)
         _make_meter(p, "Z-001")
-        df = pd.DataFrame([{"Nr": "Z-001", "Stand": "10", "Jahr": "2024"}])
+        db.session.commit()
+        df = pd.DataFrame([{"Nr": "Z-001", "Stand": "10"}])
         cfg = svc.MappingConfig(
             mode="meter_number", col_lookup="Nr", col_value="Stand",
-            col_year="Jahr", default_year=2024,
+            billing_period_id=period.id,
         )
         rows = svc.build_resolved_rows(df, cfg)
         assert rows[0].reading_date == date(2024, 12, 31)
 
     def test_explicit_date_column(self, app):
+        period = _make_period(2024)
         c = _make_customer(name="A")
         p = _make_property("P-1", c)
         _make_meter(p, "Z-001")
+        db.session.commit()
         df = pd.DataFrame([
-            {"Nr": "Z-001", "Stand": "10", "Datum": "15.06.2024", "Jahr": "2024"}
+            {"Nr": "Z-001", "Stand": "10", "Datum": "15.06.2024"}
         ])
         cfg = svc.MappingConfig(
             mode="meter_number", col_lookup="Nr", col_value="Stand",
-            col_date="Datum", col_year="Jahr", default_year=2024,
+            col_date="Datum", billing_period_id=period.id,
         )
         rows = svc.build_resolved_rows(df, cfg)
         assert rows[0].reading_date == date(2024, 6, 15)
 
     def test_candidate_meter_ids_populated(self, app):
+        period = _make_period(2024)
         c = _make_customer(number=42, name="X")
         p = _make_property("P-1", c)
         main = _make_meter(p, "Z-M", meter_type="main")
         _make_meter(p, "Z-S", meter_type="sub", parent_id=main.id)
+        db.session.commit()
         df = pd.DataFrame([{"Nr": "42", "Stand": "100"}])
         cfg = svc.MappingConfig(
             mode="customer_number", col_lookup="Nr", col_value="Stand",
-            default_year=2024,
+            billing_period_id=period.id,
         )
         rows = svc.build_resolved_rows(df, cfg)
         assert rows[0].status == svc.STATUS_OK_PREFERRED_MAIN
@@ -305,7 +326,7 @@ class TestParseFormEdits:
         row = svc.ResolvedRow(
             idx=0, raw_data={"Nr": "Z-001", "Stand": "100"},
             lookup_value="Z-001",
-            value=value, reading_date=date(2024, 12, 31), year=2024,
+            value=value, reading_date=date(2024, 12, 31),
             status=status, candidate_meter_ids=[m.id], chosen_meter_id=m.id,
             skip=False, message="",
         )
@@ -318,7 +339,6 @@ class TestParseFormEdits:
         assert out[0].skip is True
 
     def test_skip_unchecked_resets_to_false(self, app):
-        # baseline mit skip=True -> Form ohne skip-Key -> skip muss False werden
         rows, _ = self._baseline(app)
         rows[0].skip = True
         form = ImmutableMultiDict([])
@@ -351,14 +371,7 @@ class TestParseFormEdits:
         out = svc.parse_form_edits(form, rows)
         assert out[0].reading_date == date(2024, 6, 15)
 
-    def test_year_edit(self, app):
-        rows, _ = self._baseline(app)
-        form = ImmutableMultiDict([("rows[0][year]", "2025")])
-        out = svc.parse_form_edits(form, rows)
-        assert out[0].year == 2025
-
     def test_meter_id_edit_resolves_ambiguous(self, app):
-        # baseline status=ambiguous, dann User waehlt -> status=ok
         rows, m = self._baseline(app, status=svc.STATUS_AMBIGUOUS)
         rows[0].chosen_meter_id = None
         form = ImmutableMultiDict([("rows[0][meter_id]", str(m.id))])
@@ -372,145 +385,152 @@ class TestParseFormEdits:
 # ---------------------------------------------------------------------------
 
 class TestCommitImport:
-    def _row(self, m_id, value=Decimal("100"), year=2024, skip=False,
+    def _row(self, m_id, value=Decimal("100"), reading_date=None, skip=False,
              status=svc.STATUS_OK):
         return svc.ResolvedRow(
             idx=0, raw_data={}, lookup_value="x",
-            value=value, reading_date=date(year, 12, 31), year=year,
+            value=value, reading_date=reading_date or date(2024, 12, 31),
             status=status, candidate_meter_ids=[m_id], chosen_meter_id=m_id,
             skip=skip, message="",
         )
 
     def test_create_new_reading(self, app, admin):
+        period = _make_period(2024)
         c = _make_customer(name="A")
         p = _make_property("P-1", c)
         m = _make_meter(p, "Z-001")
         db.session.commit()
-        stats = svc.commit_import([self._row(m.id)], admin.id, "update")
+        stats = svc.commit_import([self._row(m.id)], admin.id, period, "update")
         assert stats.created == 1
         assert stats.updated == 0
-        r = MeterReading.query.filter_by(meter_id=m.id, year=2024).one()
+        r = MeterReading.query.filter_by(
+            meter_id=m.id, billing_period_id=period.id).one()
         assert r.value == Decimal("100")
         assert r.created_by_id == admin.id
 
     def test_update_existing_reading(self, app, admin):
+        period = _make_period(2024)
         c = _make_customer(name="A")
         p = _make_property("P-1", c)
         m = _make_meter(p, "Z-001")
-        db.session.add(MeterReading(meter_id=m.id, year=2024,
-                                    value=Decimal("50"),
-                                    reading_date=date(2024, 12, 31)))
+        _make_reading(m, period, 50)
         db.session.commit()
         stats = svc.commit_import(
-            [self._row(m.id, value=Decimal("200"))], admin.id, "update",
+            [self._row(m.id, value=Decimal("200"))], admin.id, period, "update",
         )
         assert stats.created == 0
         assert stats.updated == 1
-        r = MeterReading.query.filter_by(meter_id=m.id, year=2024).one()
+        r = MeterReading.query.filter_by(
+            meter_id=m.id, billing_period_id=period.id).one()
         assert r.value == Decimal("200")
         assert r.created_by_id == admin.id
 
     def test_skip_duplicate_when_mode_skip(self, app, admin):
+        period = _make_period(2024)
         c = _make_customer(name="A")
         p = _make_property("P-1", c)
         m = _make_meter(p, "Z-001")
-        db.session.add(MeterReading(meter_id=m.id, year=2024,
-                                    value=Decimal("50"),
-                                    reading_date=date(2024, 12, 31)))
+        _make_reading(m, period, 50)
         db.session.commit()
         stats = svc.commit_import(
-            [self._row(m.id, value=Decimal("999"))], admin.id, "skip",
+            [self._row(m.id, value=Decimal("999"))], admin.id, period, "skip",
         )
         assert stats.skipped_dup == 1
         assert stats.updated == 0
-        r = MeterReading.query.filter_by(meter_id=m.id, year=2024).one()
+        r = MeterReading.query.filter_by(
+            meter_id=m.id, billing_period_id=period.id).one()
         assert r.value == Decimal("50")  # unveraendert
 
     def test_skip_flag(self, app, admin):
+        period = _make_period(2024)
         c = _make_customer(name="A")
         p = _make_property("P-1", c)
         m = _make_meter(p, "Z-001")
         db.session.commit()
-        stats = svc.commit_import([self._row(m.id, skip=True)], admin.id, "update")
+        stats = svc.commit_import(
+            [self._row(m.id, skip=True)], admin.id, period, "update")
         assert stats.skipped == 1
         assert stats.created == 0
         assert MeterReading.query.count() == 0
 
     def test_unmapped_skipped(self, app, admin):
+        period = _make_period(2024)
+        db.session.commit()
         row = svc.ResolvedRow(
             idx=0, raw_data={}, lookup_value="x",
-            value=Decimal("100"), reading_date=date(2024, 12, 31), year=2024,
+            value=Decimal("100"), reading_date=date(2024, 12, 31),
             status=svc.STATUS_NOT_FOUND, candidate_meter_ids=[], chosen_meter_id=None,
             skip=False, message="",
         )
-        stats = svc.commit_import([row], admin.id, "update")
+        stats = svc.commit_import([row], admin.id, period, "update")
         assert stats.skipped_unmapped == 1
         assert stats.created == 0
 
     def test_value_none_skipped(self, app, admin):
+        period = _make_period(2024)
         c = _make_customer(name="A")
         p = _make_property("P-1", c)
         m = _make_meter(p, "Z-001")
         db.session.commit()
         stats = svc.commit_import(
-            [self._row(m.id, value=None)], admin.id, "update",
+            [self._row(m.id, value=None)], admin.id, period, "update",
         )
         assert stats.skipped_unmapped == 1
 
-    def test_consumption_with_prev_year(self, app, admin):
+    def test_consumption_with_prev_period(self, app, admin):
+        prev_period = _make_period(2023)
+        period = _make_period(2024)
         c = _make_customer(name="A")
         p = _make_property("P-1", c)
         m = _make_meter(p, "Z-001")
-        db.session.add(MeterReading(meter_id=m.id, year=2023,
-                                    value=Decimal("50"),
-                                    reading_date=date(2023, 12, 31)))
+        _make_reading(m, prev_period, 50)
         db.session.commit()
         stats = svc.commit_import(
-            [self._row(m.id, value=Decimal("130"), year=2024)], admin.id, "update",
+            [self._row(m.id, value=Decimal("130"))], admin.id, period, "update",
         )
         assert stats.created == 1
-        new = MeterReading.query.filter_by(meter_id=m.id, year=2024).one()
+        new = MeterReading.query.filter_by(
+            meter_id=m.id, billing_period_id=period.id).one()
         assert new.consumption == Decimal("80")  # 130 - 50
 
-    def test_consumption_none_without_prev_year(self, app, admin):
+    def test_consumption_none_without_prev_period(self, app, admin):
+        period = _make_period(2024)
         c = _make_customer(name="A")
         p = _make_property("P-1", c)
         m = _make_meter(p, "Z-001")
         db.session.commit()
         stats = svc.commit_import(
-            [self._row(m.id, value=Decimal("130"), year=2024)], admin.id, "update",
+            [self._row(m.id, value=Decimal("130"))], admin.id, period, "update",
         )
-        new = MeterReading.query.filter_by(meter_id=m.id, year=2024).one()
+        new = MeterReading.query.filter_by(
+            meter_id=m.id, billing_period_id=period.id).one()
         assert new.consumption is None
 
     def test_consumption_recomputed_on_update(self, app, admin):
+        prev_period = _make_period(2023)
+        period = _make_period(2024)
         c = _make_customer(name="A")
         p = _make_property("P-1", c)
         m = _make_meter(p, "Z-001")
-        db.session.add(MeterReading(meter_id=m.id, year=2023,
-                                    value=Decimal("50"),
-                                    reading_date=date(2023, 12, 31)))
-        db.session.add(MeterReading(meter_id=m.id, year=2024,
-                                    value=Decimal("100"),
-                                    consumption=Decimal("50"),
-                                    reading_date=date(2024, 12, 31)))
+        _make_reading(m, prev_period, 50)
+        _make_reading(m, period, 100, consumption=50)
         db.session.commit()
         stats = svc.commit_import(
-            [self._row(m.id, value=Decimal("200"), year=2024)], admin.id, "update",
+            [self._row(m.id, value=Decimal("200"))], admin.id, period, "update",
         )
         assert stats.updated == 1
-        r = MeterReading.query.filter_by(meter_id=m.id, year=2024).one()
+        r = MeterReading.query.filter_by(
+            meter_id=m.id, billing_period_id=period.id).one()
         assert r.value == Decimal("200")
         assert r.consumption == Decimal("150")  # 200 - 50
 
     def test_multiple_rows_mixed_outcomes(self, app, admin):
+        period = _make_period(2024)
         c = _make_customer(name="A")
         p = _make_property("P-1", c)
         m1 = _make_meter(p, "Z-1")
         m2 = _make_meter(p, "Z-2")
-        db.session.add(MeterReading(meter_id=m2.id, year=2024,
-                                    value=Decimal("50"),
-                                    reading_date=date(2024, 12, 31)))
+        _make_reading(m2, period, 50)
         db.session.commit()
 
         rows = [
@@ -518,42 +538,45 @@ class TestCommitImport:
             self._row(m2.id, value=Decimal("200")),  # update
             self._row(m1.id, skip=True),             # skip
         ]
-        stats = svc.commit_import(rows, admin.id, "update")
+        stats = svc.commit_import(rows, admin.id, period, "update")
         assert stats.created == 1
         assert stats.updated == 1
         assert stats.skipped == 1
 
     def test_consumption_via_initial_value_when_no_prev_reading(self, app, admin):
-        # Bug-Fix-Test: Ein neuer Meter mit initial_value aber ohne
-        # Vorjahres-Reading bekommt jetzt consumption=value-initial (vorher None).
+        # Ein neuer Meter mit initial_value aber ohne Vorablesung bekommt
+        # consumption = value - initial_value.
+        period = _make_period(2024)
         c = _make_customer(name="A")
         p = _make_property("P-1", c)
         m = _make_meter(p, "Z-NEU", initial_value=Decimal("10"))
         db.session.commit()
         stats = svc.commit_import(
-            [self._row(m.id, value=Decimal("100"), year=2024)], admin.id, "update",
+            [self._row(m.id, value=Decimal("100"))], admin.id, period, "update",
         )
         assert stats.created == 1
-        r = MeterReading.query.filter_by(meter_id=m.id, year=2024).one()
+        r = MeterReading.query.filter_by(
+            meter_id=m.id, billing_period_id=period.id).one()
         assert r.consumption == Decimal("90")
 
 
 # ---------------------------------------------------------------------------
-# compute_prior_and_consumption -- Vorjahresstand + Verbrauch inkl. Wechsel
+# compute_prior_and_consumption -- Vorablesung (nach Datum) + Verbrauch
 # ---------------------------------------------------------------------------
 
 class TestComputePriorAndConsumption:
-    def test_prev_year_reading_present(self, app):
+    def test_prev_reading_present(self, app):
+        prev_period = _make_period(2023)
         c = _make_customer(name="A")
         p = _make_property("P-1", c)
         m = _make_meter(p, "Z-1")
-        _make_reading(m, 2023, Decimal("50"))
+        _make_reading(m, prev_period, Decimal("50"))
         db.session.commit()
         prior, label, cons, info = svc.compute_prior_and_consumption(
-            m, 2024, Decimal("130"),
+            m, date(2024, 12, 31), Decimal("130"),
         )
         assert prior == Decimal("50")
-        assert label == "2023"
+        assert label == "31.12.2023"
         assert cons == Decimal("80")
         assert info == ""
 
@@ -564,7 +587,7 @@ class TestComputePriorAndConsumption:
                         installed_from=date(2024, 3, 1))
         db.session.commit()
         prior, label, cons, info = svc.compute_prior_and_consumption(
-            m, 2024, Decimal("100"),
+            m, date(2024, 12, 31), Decimal("100"),
         )
         assert prior == Decimal("10")
         assert "01.03.2024" in label
@@ -577,72 +600,39 @@ class TestComputePriorAndConsumption:
         m = _make_meter(p, "Z-1")  # kein initial_value
         db.session.commit()
         prior, label, cons, info = svc.compute_prior_and_consumption(
-            m, 2024, Decimal("100"),
+            m, date(2024, 12, 31), Decimal("100"),
         )
         assert prior is None
         assert cons is None
         assert label == "—"
 
     def test_value_none_returns_none(self, app):
+        prev_period = _make_period(2023)
         c = _make_customer(name="A")
         p = _make_property("P-1", c)
         m = _make_meter(p, "Z-1")
-        _make_reading(m, 2023, Decimal("50"))
+        _make_reading(m, prev_period, Decimal("50"))
         db.session.commit()
         prior, label, cons, info = svc.compute_prior_and_consumption(
-            m, 2024, None,
+            m, date(2024, 12, 31), None,
         )
         assert prior is None
         assert cons is None
 
-    def test_meter_replacement_in_year_aggregates_predecessor(self, app):
-        # Szenario: Alter Meter Z-OLD bis Juni 2024 (Vorjahresende=1200,
-        # Abschluss-Ablesung 2024 mit value=1500 consumption=300).
-        # Neuer Meter Z-NEW ab Juni 2024 mit initial_value=0.
-        # Jahresend-Ablesung Z-NEW = 350.
-        # Erwartet: prior=0, cons = 350 + 300 = 650, info enthaelt "Wechsel".
+    def test_new_meter_uses_initial_value(self, app):
+        # Zaehlertausch: der neue Meter hat keine eigene Vorablesung, der
+        # Verbrauch rechnet gegen seinen initial_value (Stand bei Einbau).
         c = _make_customer(name="A")
         p = _make_property("P-1", c)
-        old = _make_meter(p, "Z-OLD", active=False,
-                          installed_to=date(2024, 6, 15),
-                          initial_value=None)
-        _make_reading(old, 2023, Decimal("1200"))
-        _make_reading(old, 2024, Decimal("1500"), consumption=Decimal("300"),
-                      reading_date=date(2024, 6, 15))
         new = _make_meter(p, "Z-NEW", active=True,
                           installed_from=date(2024, 6, 15),
                           initial_value=Decimal("0"))
         db.session.commit()
-
         prior, label, cons, info = svc.compute_prior_and_consumption(
-            new, 2024, Decimal("350"),
+            new, date(2024, 12, 31), Decimal("350"),
         )
         assert prior == Decimal("0")
-        assert "Anfang" in label
-        assert cons == Decimal("650")
-        assert "Wechsel" in info
-        assert "Z-OLD" in info
-        assert "300" in info  # Vorgaenger-Verbrauch wird genannt
-
-    def test_replacement_without_predecessor_closing_reading(self, app):
-        # Wechsel im Jahr, aber Vorgaenger hat keine Abschluss-Ablesung
-        # (z.B. Daten unvollstaendig). Erwartung: nur Verbrauch dieses
-        # Meters wird gezeigt, info erwaehnt unbekannten Vorgaenger-Anteil.
-        c = _make_customer(name="A")
-        p = _make_property("P-1", c)
-        old = _make_meter(p, "Z-OLD", active=False,
-                          installed_to=date(2024, 6, 15))
-        new = _make_meter(p, "Z-NEW", active=True,
-                          installed_from=date(2024, 6, 15),
-                          initial_value=Decimal("0"))
-        db.session.commit()
-
-        prior, label, cons, info = svc.compute_prior_and_consumption(
-            new, 2024, Decimal("350"),
-        )
-        assert prior == Decimal("0")
-        assert cons == Decimal("350")  # ohne Vorgaenger-Anteil
-        assert "unbekannt" in info.lower() or "fehlt" in info.lower()
+        assert cons == Decimal("350")
 
 
 # ---------------------------------------------------------------------------
@@ -651,38 +641,41 @@ class TestComputePriorAndConsumption:
 
 class TestBuildResolvedRowsConsumption:
     def test_prior_and_consumption_filled_with_prev_reading(self, app):
+        prev_period = _make_period(2023)
+        period = _make_period(2024)
         c = _make_customer(name="A")
         p = _make_property("P-1", c)
         m = _make_meter(p, "Z-1")
-        _make_reading(m, 2023, Decimal("100"))
+        _make_reading(m, prev_period, Decimal("100"))
         db.session.commit()
 
-        df = pd.DataFrame([{"Nr": "Z-1", "Stand": "150", "Jahr": "2024"}])
+        df = pd.DataFrame([{"Nr": "Z-1", "Stand": "150"}])
         cfg = svc.MappingConfig(
             mode="meter_number", col_lookup="Nr", col_value="Stand",
-            col_year="Jahr", default_year=2024,
+            billing_period_id=period.id,
         )
         rows = svc.build_resolved_rows(df, cfg)
         assert rows[0].prior_value == Decimal("100")
-        assert rows[0].prior_label == "2023"
+        assert rows[0].prior_label == "31.12.2023"
         assert rows[0].computed_consumption == Decimal("50")
         assert rows[0].imported_consumption is None
         assert rows[0].consumption_mismatch is False
-        assert rows[0].replacement_info == ""
 
     def test_imported_consumption_matches(self, app):
+        prev_period = _make_period(2023)
+        period = _make_period(2024)
         c = _make_customer(name="A")
         p = _make_property("P-1", c)
         m = _make_meter(p, "Z-1")
-        _make_reading(m, 2023, Decimal("100"))
+        _make_reading(m, prev_period, Decimal("100"))
         db.session.commit()
 
         df = pd.DataFrame([{
-            "Nr": "Z-1", "Stand": "150", "Jahr": "2024", "Verbrauch": "50,0",
+            "Nr": "Z-1", "Stand": "150", "Verbrauch": "50,0",
         }])
         cfg = svc.MappingConfig(
             mode="meter_number", col_lookup="Nr", col_value="Stand",
-            col_year="Jahr", col_consumption="Verbrauch", default_year=2024,
+            col_consumption="Verbrauch", billing_period_id=period.id,
         )
         rows = svc.build_resolved_rows(df, cfg)
         assert rows[0].computed_consumption == Decimal("50")
@@ -690,68 +683,51 @@ class TestBuildResolvedRowsConsumption:
         assert rows[0].consumption_mismatch is False
 
     def test_imported_consumption_mismatch(self, app):
+        prev_period = _make_period(2023)
+        period = _make_period(2024)
         c = _make_customer(name="A")
         p = _make_property("P-1", c)
         m = _make_meter(p, "Z-1")
-        _make_reading(m, 2023, Decimal("100"))
+        _make_reading(m, prev_period, Decimal("100"))
         db.session.commit()
 
         df = pd.DataFrame([{
-            "Nr": "Z-1", "Stand": "150", "Jahr": "2024", "Verbrauch": "75",
+            "Nr": "Z-1", "Stand": "150", "Verbrauch": "75",
         }])
         cfg = svc.MappingConfig(
             mode="meter_number", col_lookup="Nr", col_value="Stand",
-            col_year="Jahr", col_consumption="Verbrauch", default_year=2024,
+            col_consumption="Verbrauch", billing_period_id=period.id,
         )
         rows = svc.build_resolved_rows(df, cfg)
         assert rows[0].computed_consumption == Decimal("50")
         assert rows[0].imported_consumption == Decimal("75")
         assert rows[0].consumption_mismatch is True
 
-    def test_replacement_info_visible_on_resolved_row(self, app):
-        c = _make_customer(name="A")
-        p = _make_property("P-1", c)
-        old = _make_meter(p, "Z-OLD", active=False,
-                          installed_to=date(2024, 6, 15))
-        _make_reading(old, 2023, Decimal("1200"))
-        _make_reading(old, 2024, Decimal("1500"),
-                      consumption=Decimal("300"),
-                      reading_date=date(2024, 6, 15))
-        new = _make_meter(p, "Z-NEW", active=True,
-                          installed_from=date(2024, 6, 15),
-                          initial_value=Decimal("0"))
-        db.session.commit()
-
-        df = pd.DataFrame([{"Nr": "Z-NEW", "Stand": "350", "Jahr": "2024"}])
-        cfg = svc.MappingConfig(
-            mode="meter_number", col_lookup="Nr", col_value="Stand",
-            col_year="Jahr", default_year=2024,
-        )
-        rows = svc.build_resolved_rows(df, cfg)
-        assert rows[0].computed_consumption == Decimal("650")
-        assert "Wechsel" in rows[0].replacement_info
-
     def test_no_consumption_column_skips_imported(self, app):
+        prev_period = _make_period(2023)
+        period = _make_period(2024)
         c = _make_customer(name="A")
         p = _make_property("P-1", c)
         m = _make_meter(p, "Z-1")
-        _make_reading(m, 2023, Decimal("100"))
+        _make_reading(m, prev_period, Decimal("100"))
         db.session.commit()
 
-        df = pd.DataFrame([{"Nr": "Z-1", "Stand": "150", "Jahr": "2024"}])
+        df = pd.DataFrame([{"Nr": "Z-1", "Stand": "150"}])
         cfg = svc.MappingConfig(
             mode="meter_number", col_lookup="Nr", col_value="Stand",
-            col_year="Jahr", default_year=2024,  # col_consumption leer
+            billing_period_id=period.id,
         )
         rows = svc.build_resolved_rows(df, cfg)
         assert rows[0].imported_consumption is None
         assert rows[0].consumption_mismatch is False
 
     def test_unmapped_row_has_no_prior_or_consumption(self, app):
-        df = pd.DataFrame([{"Nr": "XXX", "Stand": "150", "Jahr": "2024"}])
+        period = _make_period(2024)
+        db.session.commit()
+        df = pd.DataFrame([{"Nr": "XXX", "Stand": "150"}])
         cfg = svc.MappingConfig(
             mode="meter_number", col_lookup="Nr", col_value="Stand",
-            col_year="Jahr", default_year=2024,
+            billing_period_id=period.id,
         )
         rows = svc.build_resolved_rows(df, cfg)
         assert rows[0].prior_value is None

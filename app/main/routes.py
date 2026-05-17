@@ -19,17 +19,21 @@ def dashboard():
         db.func.sum(Invoice.total_amount)
     ).filter_by(status=Invoice.STATUS_SENT).scalar() or 0
 
-    # Ausstehende Ablesungen dieses Jahr
-    from app.models import WaterMeter, MeterReading, Property
+    # Ausstehende Ablesungen in der aktiven Abrechnungsperiode
+    from app.models import WaterMeter, MeterReading, Property, BillingPeriod
+    active_period = BillingPeriod.current()
     total_meters = WaterMeter.query.join(Property).filter(
         WaterMeter.active == True, Property.active == True
     ).count()
-    read_this_year = db.session.query(MeterReading).join(WaterMeter).join(Property).filter(
-        MeterReading.year == current_year,
-        WaterMeter.active == True,
-        Property.active == True,
-    ).count()
-    missing_readings = total_meters - read_this_year
+    if active_period is not None:
+        read_in_period = db.session.query(MeterReading).join(WaterMeter).join(Property).filter(
+            MeterReading.billing_period_id == active_period.id,
+            WaterMeter.active == True,
+            Property.active == True,
+        ).count()
+        missing_readings = total_meters - read_in_period
+    else:
+        missing_readings = total_meters
 
     # Saldo laufendes Jahr (Stornopaare werden über den Service ausgeschlossen)
     _, _, year_income, year_expense, year_balance = acc_svc.year_income_expense(current_year)
@@ -46,6 +50,7 @@ def dashboard():
     return render_template(
         "main/dashboard.html",
         current_year=current_year,
+        active_period=active_period,
         open_invoices=open_invoices,
         total_open=total_open,
         missing_readings=missing_readings,

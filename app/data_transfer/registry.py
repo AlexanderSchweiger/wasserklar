@@ -10,7 +10,7 @@ from app.models import (
     Customer, Property, PropertyOwnership, WaterMeter,
     WaterTariff, TaxRate, Account, RealAccount, Project,
     FiscalYear, MeterReadingAccessCode, MeterReading,
-    Invoice, InvoiceItem, BillingRun, OpenItem,
+    Invoice, InvoiceItem, BillingRun, BillingPeriod, OpenItem,
     BookingGroup, Booking, Transfer, RealAccountYearBalance,
     DunningPolicy, DunningStage, DunningNotice,
     AppSetting, InvoiceCounter, CustomerCounter,
@@ -38,7 +38,7 @@ CATEGORIES = {
     "stammdaten": [
         TaxRate, FiscalYear, Account, RealAccount, Project,
         Customer, Property, PropertyOwnership, WaterMeter,
-        MeterReadingAccessCode, WaterTariff,
+        BillingPeriod, MeterReadingAccessCode, WaterTariff,
     ],
     "buchungen": [
         MeterReading, BillingRun, Invoice, InvoiceItem, OpenItem,
@@ -64,7 +64,7 @@ CATEGORIES = {
 INSERT_ORDER = [
     TaxRate, FiscalYear, Account, RealAccount, Project,
     Customer, Property, PropertyOwnership, WaterMeter,
-    MeterReadingAccessCode, WaterTariff, MeterReading,
+    BillingPeriod, MeterReadingAccessCode, WaterTariff, MeterReading,
     BillingRun, Invoice, InvoiceItem, OpenItem,
     BookingGroup, Booking, Transfer, RealAccountYearBalance,
     DunningPolicy, DunningStage, DunningNotice,
@@ -73,15 +73,15 @@ INSERT_ORDER = [
 
 
 # Spalten, die per Jahr gefiltert werden koennen (fuer "Buchungen"-Kategorie).
-# Wert: Spaltenname (Integer-Jahr) ODER ("date_col", "year") fuer Date-Spalten,
-# bei denen das Jahr per EXTRACT/strftime gezogen wird.
+# Wert: Spaltenname (Integer-Jahr) ODER ("date_year", "<spalte>") fuer
+# Date-/DateTime-Spalten, bei denen das Jahr per EXTRACT gezogen wird.
 YEAR_FILTERS = {
-    MeterReading: "year",
-    BillingRun: "period_year",
-    Invoice: ("date", "period_year"),  # period_year bevorzugt, fallback date
+    MeterReading: ("date_year", "reading_date"),
+    BillingRun: ("date_year", "created_at"),
+    Invoice: ("date_year", "date"),
     OpenItem: "period_year",
-    Booking: ("date_year",),            # year aus date extrahieren
-    Transfer: ("date_year",),
+    Booking: ("date_year", "date"),
+    Transfer: ("date_year", "date"),
     RealAccountYearBalance: "year",
     InvoiceCounter: "year",
 }
@@ -101,9 +101,10 @@ NATURAL_KEYS = {
     Property: ("object_number",),       # unique; fallback handled in serializer wenn None
     PropertyOwnership: ("property_id", "customer_id", "valid_from"),
     WaterMeter: ("meter_number",),
-    MeterReadingAccessCode: ("customer_id", "year"),
+    BillingPeriod: ("name",),
+    MeterReadingAccessCode: ("customer_id", "billing_period_id"),
     WaterTariff: ("name", "valid_from"),
-    MeterReading: ("meter_id", "year"),
+    MeterReading: ("meter_id", "billing_period_id"),
     BillingRun: None,                   # kein natuerlicher Schluessel
     Invoice: ("invoice_number",),
     InvoiceItem: None,
@@ -127,10 +128,12 @@ NATURAL_KEYS = {
 FOREIGN_KEYS = {
     PropertyOwnership: {"property_id": Property, "customer_id": Customer},
     WaterMeter: {"property_id": Property},
-    MeterReadingAccessCode: {"customer_id": Customer},
-    MeterReading: {"meter_id": WaterMeter, "self_service_code_id": MeterReadingAccessCode},
-    BillingRun: {"account_id": Account},
-    Invoice: {"customer_id": Customer, "property_id": Property, "billing_run_id": BillingRun},
+    MeterReadingAccessCode: {"customer_id": Customer, "billing_period_id": BillingPeriod},
+    MeterReading: {"meter_id": WaterMeter, "self_service_code_id": MeterReadingAccessCode,
+                   "billing_period_id": BillingPeriod},
+    BillingRun: {"account_id": Account, "billing_period_id": BillingPeriod},
+    Invoice: {"customer_id": Customer, "property_id": Property, "billing_run_id": BillingRun,
+              "billing_period_id": BillingPeriod},
     InvoiceItem: {"invoice_id": Invoice, "account_id": Account, "project_id": Project,
                   "dunning_notice_id": DunningNotice},  # zweiter Pass
     OpenItem: {"customer_id": Customer, "invoice_id": Invoice, "account_id": Account},

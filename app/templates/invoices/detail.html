@@ -27,8 +27,8 @@
             </a>
           </dd>
           {% endif %}
-          <dt class="col-sm-5">Jahr</dt>
-          <dd class="col-sm-7">{{ invoice.period_year or '—' }}</dd>
+          <dt class="col-sm-5">Periode</dt>
+          <dd class="col-sm-7">{{ invoice.billing_period.name if invoice.billing_period else '—' }}</dd>
           <dt class="col-sm-5">Datum</dt>
           <dd class="col-sm-7">{{ invoice.date.strftime('%d.%m.%Y') }}</dd>
           <dt class="col-sm-5">Fällig</dt>

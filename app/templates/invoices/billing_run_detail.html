@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Rechnungslauf {{ run.period_year }} – {{ run.created_at.strftime('%d.%m.%Y %H:%M') }}{% endblock %}
+{% block title %}Rechnungslauf {{ run.billing_period.name if run.billing_period else '' }} – {{ run.created_at.strftime('%d.%m.%Y %H:%M') }}{% endblock %}
 {% block page_title %}<i class="fas fa-history me-2"></i> Rechnungslauf{% endblock %}
 {% block content %}
 
@@ -27,8 +27,8 @@
           <dt class="col-5">Benutzer</dt>
           <dd class="col-7">{{ run.created_by.username if run.created_by else '—' }}</dd>
 
-          <dt class="col-5">Abrechnungsjahr</dt>
-          <dd class="col-7"><strong>{{ run.period_year }}</strong></dd>
+          <dt class="col-5">Abrechnungsperiode</dt>
+          <dd class="col-7"><strong>{{ run.billing_period.name if run.billing_period else '—' }}</strong></dd>
 
           <dt class="col-5">Erstellt</dt>
           <dd class="col-7">
@@ -145,9 +145,9 @@
           <span class="badge bg-primary text-white ms-1">{{ invoices | length }}</span>
         </h3>
         <div class="card-options">
-          <a href="{{ url_for('invoices.index', year=run.period_year) }}"
+          <a href="{{ url_for('invoices.index', period_id=run.billing_period_id) }}"
              class="btn btn-outline-secondary btn-sm">
-            <i class="fas fa-list me-1"></i> Alle {{ run.period_year }}-Rechnungen
+            <i class="fas fa-list me-1"></i> Alle Rechnungen dieser Periode
           </a>
         </div>
       </div>

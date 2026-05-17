@@ -35,6 +35,22 @@
   </div>
   {% endif %}
 
+  <div class="card mb-3">
+    <div class="card-body py-2 d-flex align-items-center gap-2 flex-wrap">
+      <label class="form-label mb-0 me-1">Abrechnungsperiode <span class="text-danger">*</span></label>
+      <select name="billing_period_id" class="form-select form-select-sm" style="width:auto" required>
+        {% for p in periods %}
+        <option value="{{ p.id }}" {{ 'selected' if active_period and p.id == active_period.id }}>
+          {{ p.name }}{{ ' — aktiv' if p.active else '' }}
+        </option>
+        {% else %}
+        <option value="">— keine Periode —</option>
+        {% endfor %}
+      </select>
+      <small class="text-muted">Die Abschlussablesungen der getauschten Zähler werden dieser Periode zugeordnet.</small>
+    </div>
+  </div>
+
   <div class="card">
     <div class="card-header">
       <h3 class="card-title">Schritt 2: Vorschau prüfen</h3>
@@ -78,7 +94,7 @@
                   {% if r.old_last_value is not none %}
                   <small class="text-muted d-block">
                     Letzter Stand: {{ format_value_de(r.old_last_value) }} m³
-                    ({{ r.old_last_year }})
+                    {% if r.old_last_date %}({{ r.old_last_date.strftime('%d.%m.%Y') }}){% endif %}
                   </small>
                   {% else %}
                   <small class="text-muted d-block">keine Ablesung</small>

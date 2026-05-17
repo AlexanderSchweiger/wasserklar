@@ -13,17 +13,14 @@
 
   {# Stand Vorjahr #}
   <td class="text-end text-muted">
-    {% if repl %}
-      {% if meter.initial_value is not none %}
-        {{ "%d"|format(meter.initial_value) }} m³
-      {% else %}
-        —
-      {% endif %}
-      <span class="badge bg-warning ms-1" title="Zähler wurde in {{ year }} gewechselt">Tausch</span>
-    {% elif prev_reading %}
-      {{ "%d"|format(prev_reading.value) }} m³
+    {% set last_stand = prev_reading or (repl.old_prev_reading if repl else none) %}
+    {% if last_stand %}
+      {{ "%d"|format(last_stand.value) }} m³
     {% else %}
       —
+    {% endif %}
+    {% if repl and repl.old_reading %}
+      <br><small>{{ "%d"|format(repl.old_reading.value) }} m³ <span class="badge bg-warning-lt ms-1">Tausch</span></small>
     {% endif %}
   </td>
 
@@ -61,7 +58,7 @@
 
   <td>{{ reading.reading_date.strftime('%d.%m.%Y') if reading else '—' }}</td>
   <td class="text-end">
-    <a href="{{ url_for('meters.add_reading', meter_id=meter.id, year=year) }}"
+    <a href="{{ url_for('meters.add_reading', meter_id=meter.id, period_id=period.id if period else none) }}"
        class="btn btn-sm {{ 'btn-outline-secondary' if reading else 'btn-warning' }}">
       <i class="fas fa-{{ 'edit' if reading else 'plus' }} me-1"></i>
       {{ 'Bearbeiten' if reading else 'Ablesen' }}

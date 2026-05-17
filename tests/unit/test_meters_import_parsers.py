@@ -19,7 +19,6 @@ from app.meters.import_service import (
     format_value_de,
     parse_date,
     parse_number,
-    parse_year,
     status_badge,
     status_row_class,
 )
@@ -203,44 +202,18 @@ class TestParseDate:
 
 
 # ---------------------------------------------------------------------------
-# parse_year
-# ---------------------------------------------------------------------------
-
-class TestParseYear:
-    def test_int_string(self):
-        assert parse_year("2024", 2025) == 2024
-
-    def test_float_string(self):
-        # pandas read_excel mit dtype=str kann z.B. "2024.0" liefern
-        assert parse_year("2024.0", 2025) == 2024
-
-    def test_int_value(self):
-        assert parse_year(2024, 2025) == 2024
-
-    def test_empty_uses_default(self):
-        assert parse_year("", 2025) == 2025
-        assert parse_year(None, 2025) == 2025
-
-    def test_garbage_uses_default(self):
-        assert parse_year("xxx", 2025) == 2025
-
-    def test_no_default_returns_none(self):
-        assert parse_year("", 0) is None
-
-
-# ---------------------------------------------------------------------------
 # MappingConfig
 # ---------------------------------------------------------------------------
 
 class TestMappingConfigFromForm:
     def test_minimum_form(self):
         form = ImmutableMultiDict([])
-        cfg = MappingConfig.from_form(form, default_year_fallback=2024)
+        cfg = MappingConfig.from_form(form)
         assert cfg.mode == "meter_number"
         assert cfg.duplicate_mode == "update"
         assert cfg.value_format == "auto"
         assert cfg.date_format == "auto"
-        assert cfg.default_year == 2024
+        assert cfg.billing_period_id == 0
 
     def test_full_form(self):
         form = ImmutableMultiDict([
@@ -248,40 +221,35 @@ class TestMappingConfigFromForm:
             ("col_lookup", "Name"),
             ("col_value", "Stand"),
             ("col_date", "Datum"),
-            ("col_year", "Jahr"),
-            ("default_year", "2023"),
+            ("billing_period_id", "7"),
             ("duplicate_mode", "skip"),
             ("value_format", "us"),
             ("date_format", "iso"),
         ])
-        cfg = MappingConfig.from_form(form, default_year_fallback=2024)
+        cfg = MappingConfig.from_form(form)
         assert cfg.mode == "customer_name"
         assert cfg.col_lookup == "Name"
         assert cfg.col_value == "Stand"
-        assert cfg.default_year == 2023
+        assert cfg.billing_period_id == 7
         assert cfg.duplicate_mode == "skip"
         assert cfg.value_format == "us"
         assert cfg.date_format == "iso"
 
     def test_invalid_mode_falls_back(self):
-        form = ImmutableMultiDict([("mode", "evil")])
-        cfg = MappingConfig.from_form(form, default_year_fallback=2024)
+        cfg = MappingConfig.from_form(ImmutableMultiDict([("mode", "evil")]))
         assert cfg.mode == "meter_number"
 
     def test_invalid_duplicate_mode_falls_back(self):
-        form = ImmutableMultiDict([("duplicate_mode", "evil")])
-        cfg = MappingConfig.from_form(form, default_year_fallback=2024)
+        cfg = MappingConfig.from_form(ImmutableMultiDict([("duplicate_mode", "evil")]))
         assert cfg.duplicate_mode == "update"
 
     def test_invalid_value_format_falls_back(self):
-        form = ImmutableMultiDict([("value_format", "evil")])
-        cfg = MappingConfig.from_form(form, default_year_fallback=2024)
+        cfg = MappingConfig.from_form(ImmutableMultiDict([("value_format", "evil")]))
         assert cfg.value_format == "auto"
 
-    def test_invalid_year_falls_back(self):
-        form = ImmutableMultiDict([("default_year", "abc")])
-        cfg = MappingConfig.from_form(form, default_year_fallback=2024)
-        assert cfg.default_year == 2024
+    def test_invalid_billing_period_falls_back(self):
+        cfg = MappingConfig.from_form(ImmutableMultiDict([("billing_period_id", "abc")]))
+        assert cfg.billing_period_id == 0
 
     def test_to_dict_from_dict_roundtrip(self):
         cfg1 = MappingConfig(
@@ -289,9 +257,8 @@ class TestMappingConfigFromForm:
             col_lookup="Kundennr",
             col_value="Stand",
             col_date="Datum",
-            col_year="Jahr",
             col_consumption="Verbrauch",
-            default_year=2024,
+            billing_period_id=3,
             duplicate_mode="skip",
             value_format="at_de",
             date_format="de",
@@ -300,13 +267,12 @@ class TestMappingConfigFromForm:
         assert cfg2 == cfg1
 
     def test_col_consumption_default_empty(self):
-        cfg = MappingConfig.from_form(ImmutableMultiDict([]), default_year_fallback=2024)
+        cfg = MappingConfig.from_form(ImmutableMultiDict([]))
         assert cfg.col_consumption == ""
 
     def test_col_consumption_from_form(self):
         cfg = MappingConfig.from_form(
             ImmutableMultiDict([("col_consumption", "Verbrauch m3")]),
-            default_year_fallback=2024,
         )
         assert cfg.col_consumption == "Verbrauch m3"
 

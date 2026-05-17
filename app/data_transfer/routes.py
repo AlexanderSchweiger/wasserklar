@@ -41,12 +41,14 @@ def _require_admin():
 def _available_years() -> list[int]:
     """Sammelt alle Jahre, die in Buchungs-Tabellen vorkommen, fuer den Filter."""
     years: set[int] = set()
-    # MeterReading.year
-    for (y,) in db.session.query(MeterReading.year).distinct().all():
+    # MeterReading.reading_date -> Jahr
+    for (y,) in db.session.query(
+        func.extract("year", MeterReading.reading_date)
+    ).distinct().all():
         if y is not None:
             years.add(int(y))
-    # Invoice.period_year
-    for (y,) in db.session.query(Invoice.period_year).distinct().all():
+    # Invoice.date -> Jahr
+    for (y,) in db.session.query(func.extract("year", Invoice.date)).distinct().all():
         if y is not None:
             years.add(int(y))
     # Booking.date -> Jahr

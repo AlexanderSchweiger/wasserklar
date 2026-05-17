@@ -10,7 +10,7 @@ from flask_login import login_required, current_user
 
 from app.invoices import bp
 from app.extensions import db
-from app.models import Invoice, InvoiceItem, Customer, WaterMeter, MeterReading, WaterTariff, Booking, Account, Property, OpenItem, Project, RealAccount, InvoiceCounter, AppSetting, BillingRun
+from app.models import Invoice, InvoiceItem, Customer, WaterMeter, MeterReading, WaterTariff, Booking, Account, Property, OpenItem, Project, RealAccount, InvoiceCounter, AppSetting, BillingRun, BillingPeriod
 from app.utils import next_invoice_number as _next_invoice_number
 from app.settings_service import get_wg, send_mail, wg_settings
 from app.invoices.design import get_design
@@ -41,6 +41,20 @@ def _resolve_open_item_account_id(invoice, form_account_id=None):
     return form_account_id
 
 
+def _invoice_period_year(invoice):
+    """Leitet das Integer-Jahr fuer einen OpenItem aus der Rechnung ab —
+    aus der Abrechnungsperiode (Enddatum), sonst aus dem Rechnungsdatum.
+
+    ``OpenItem.period_year`` bleibt bewusst eine Jahreszahl (Buchhaltungs-
+    Tag); die Abrechnungsperiode kann ein abweichendes Geschaeftsjahr haben.
+    """
+    if invoice.billing_period is not None:
+        return invoice.billing_period.end_date.year
+    if invoice.date is not None:
+        return invoice.date.year
+    return None
+
+
 def _create_or_update_open_item(invoice, account_id=None):
     """Erzeugt oder aktualisiert den verknüpften OpenItem wenn eine Rechnung versendet wird."""
     oi = invoice.open_item
@@ -51,7 +65,7 @@ def _create_or_update_open_item(invoice, account_id=None):
             amount=invoice.total_amount,
             date=invoice.date,
             due_date=invoice.due_date,
-            period_year=invoice.period_year,
+            period_year=_invoice_period_year(invoice),
             status=OpenItem.STATUS_OPEN,
             invoice_id=invoice.id,
             account_id=account_id,
@@ -60,9 +74,16 @@ def _create_or_update_open_item(invoice, account_id=None):
     else:
         oi.amount = invoice.total_amount
         oi.due_date = invoice.due_date
-        oi.period_year = invoice.period_year
+        oi.period_year = _invoice_period_year(invoice)
         if account_id is not None:
             oi.account_id = account_id
+
+
+def _billing_period_list():
+    """Alle Abrechnungsperioden, neueste zuerst (fuer Auswahl-Dropdowns)."""
+    return BillingPeriod.query.order_by(
+        BillingPeriod.start_date.desc(), BillingPeriod.id.desc()
+    ).all()
 
 
 def _invoice_is_locked(invoice):
@@ -127,7 +148,7 @@ def _render_email_body(invoice):
         return Environment().from_string(custom).render(
             name=invoice.customer.name,
             rechnungsnummer=invoice.invoice_number,
-            buchungsjahr=invoice.period_year or "",
+            buchungsjahr=(invoice.billing_period.name if invoice.billing_period else ""),
             betrag=f"{invoice.total_amount:.2f}",
             faelligkeitsdatum=(
                 invoice.due_date.strftime("%d.%m.%Y") if invoice.due_date else "—"
@@ -141,7 +162,7 @@ def _render_email_body(invoice):
 @login_required
 def index():
     status_filter = request.args.get("status", "")
-    year_filter = request.args.get("year", "", type=str)
+    period_filter = request.args.get("period_id", "", type=str)
     date_from = request.args.get("date_from", date(date.today().year, 1, 1).isoformat()).strip()
     date_to = request.args.get("date_to", "").strip()
     q = request.args.get("q", "").strip()
@@ -156,8 +177,8 @@ def index():
     )
     if status_filter:
         query = query.filter(Invoice.status == status_filter)
-    if year_filter:
-        query = query.filter(Invoice.period_year == int(year_filter))
+    if period_filter:
+        query = query.filter(Invoice.billing_period_id == int(period_filter))
     if date_from:
         query = query.filter(Invoice.date >= date.fromisoformat(date_from))
     if date_to:
@@ -196,7 +217,10 @@ def index():
         invoices=invoices,
         statuses=Invoice.ALL_STATUSES,
         status_filter=status_filter,
-        year_filter=year_filter,
+        period_filter=period_filter,
+        periods=BillingPeriod.query.order_by(
+            BillingPeriod.start_date.desc(), BillingPeriod.id.desc()
+        ).all(),
         date_from=date_from,
         date_to=date_to,
         projects_for_filter=projects_for_filter,
@@ -216,14 +240,22 @@ def generate():
     tariffs = WaterTariff.query.order_by(WaterTariff.valid_from.desc()).all()
     accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
     if request.method == "POST":
-        year = int(request.form["year"])
+        period = db.session.get(
+            BillingPeriod, request.form.get("billing_period_id", type=int)
+        )
+        if period is None:
+            flash("Bitte eine Abrechnungsperiode für den Rechnungslauf auswählen.", "danger")
+            return redirect(url_for("invoices.generate"))
         tariff_id = int(request.form["tariff_id"])
         tariff = db.get_or_404(WaterTariff, tariff_id)
         due_days = int(request.form.get("due_days", 30))
         account_id_raw = request.form.get("account_id") or None
         if not account_id_raw:
             flash("Bitte ein Buchungskonto für den Rechnungslauf auswählen.", "danger")
-            return render_template("invoices/generate.html", tariffs=tariffs, accounts=accounts, year=date.today().year)
+            return render_template(
+                "invoices/generate.html", tariffs=tariffs, accounts=accounts,
+                periods=_billing_period_list(), active_period=BillingPeriod.current(),
+            )
         billing_account_id = int(account_id_raw)
 
         # Rechnungsdatum für den Rechnungslauf ist heute.
@@ -236,17 +268,17 @@ def generate():
         # Standard-Wasser-Steuersatz nur in USt-pflichtigen Buchungsjahren anwenden
         water_tax = acc_svc.default_water_tax_rate(invoice_date.year)
 
-        # Alle Ablesungen für das Jahr holen (inkl. ausgebauter Zähler vom selben Jahr)
+        # Alle Ablesungen der Periode holen (inkl. ausgebauter Zähler)
         readings = (
             MeterReading.query
-            .filter_by(year=year)
+            .filter_by(billing_period_id=period.id)
             .join(WaterMeter)
             .join(Property)
             .filter(Property.active == True)
             .all()
         )
 
-        # Nach Objekt gruppieren (ein Objekt kann mehrere Zähler im selben Jahr haben)
+        # Nach Objekt gruppieren (ein Objekt kann mehrere Zähler in der Periode haben)
         from collections import defaultdict
         property_readings = defaultdict(list)
         for reading in readings:
@@ -254,7 +286,7 @@ def generate():
 
         # Rechnungslauf anlegen (Tarif-Snapshot + Metadaten)
         billing_run = BillingRun(
-            period_year=year,
+            billing_period_id=period.id,
             created_by_id=current_user.id,
             tariff_name=tariff.name,
             tariff_valid_from=tariff.valid_from,
@@ -281,7 +313,7 @@ def generate():
 
             # Bereits vorhanden?
             exists = Invoice.query.filter_by(
-                property_id=prop.id, period_year=year
+                property_id=prop.id, billing_period_id=period.id
             ).first()
             if exists:
                 skipped += 1
@@ -305,11 +337,11 @@ def generate():
             additional_fee_label = tariff.additional_fee_label or "Zusatzgebühr"
 
             inv = Invoice(
-                invoice_number=_next_invoice_number(year),
+                invoice_number=_next_invoice_number(invoice_date.year),
                 customer_id=ownership.customer_id,
                 property_id=prop.id,
                 billing_run_id=billing_run.id,
-                period_year=year,
+                billing_period_id=period.id,
                 date=date.today(),
                 due_date=date.today() + timedelta(days=due_days),
                 status=Invoice.STATUS_DRAFT,
@@ -353,17 +385,18 @@ def generate():
                 if is_replacement:
                     if meter.installed_to:
                         date_hint = f"ausgebaut {meter.installed_to.strftime('%d.%m.%Y')}"
-                    elif meter.installed_from and meter.installed_from.year == year:
+                    elif (meter.installed_from
+                          and period.start_date <= meter.installed_from <= period.end_date):
                         date_hint = f"eingebaut {meter.installed_from.strftime('%d.%m.%Y')}"
                     else:
-                        date_hint = f"ganzjährig"
+                        date_hint = "ganzer Zeitraum"
                     desc = (
-                        f"Wasserverbrauch {year} – Zähler {meter.meter_number}"
+                        f"Wasserverbrauch {period.name} – Zähler {meter.meter_number}"
                         f" ({date_hint}, {consumption} m³)"
                     )
                 else:
                     desc = (
-                        f"Wasserverbrauch {year}"
+                        f"Wasserverbrauch {period.name}"
                         f" ({consumption} m³ × {tariff.price_per_m3} €/m³)"
                     )
 
@@ -399,7 +432,8 @@ def generate():
         "invoices/generate.html",
         tariffs=tariffs,
         accounts=accounts,
-        year=date.today().year,
+        periods=_billing_period_list(),
+        active_period=BillingPeriod.current(),
     )
 
 

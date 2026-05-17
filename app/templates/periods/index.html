@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% from "_pagination.html" import render_pagination %}
+{% block title %}Abrechnungsperioden{% endblock %}
+{% block page_title %}<i class="fas fa-calendar-week me-2"></i> Abrechnungsperioden{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="card-header">
+    <h3 class="card-title">Abrechnungsperioden</h3>
+    <div class="card-options">
+      <a href="{{ url_for('periods.new') }}" class="btn btn-primary btn-sm">
+        <i class="fas fa-plus me-1"></i> Neue Periode
+      </a>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <table class="table table-hover table-striped mb-0">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Zeitraum</th>
+          <th>Status</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for period in periods %}
+        <tr>
+          <td><strong>{{ period.name }}</strong></td>
+          <td>
+            {{ period.start_date.strftime('%d.%m.%Y') }}
+            &ndash; {{ period.end_date.strftime('%d.%m.%Y') }}
+          </td>
+          <td>
+            {% if period.active %}
+            <span class="badge bg-success text-white">aktiv</span>
+            {% else %}
+            <span class="badge bg-secondary-lt">inaktiv</span>
+            {% endif %}
+          </td>
+          <td class="text-end">
+            <div class="btn-group btn-group-sm">
+              {% if not period.active %}
+              <form method="post" action="{{ url_for('periods.activate', period_id=period.id) }}"
+                    style="display:inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-outline-success btn-sm" title="Aktiv setzen">
+                  <i class="fas fa-check"></i>
+                </button>
+              </form>
+              {% endif %}
+              <a href="{{ url_for('periods.edit', period_id=period.id) }}"
+                 class="btn btn-outline-secondary btn-sm" title="Bearbeiten">
+                <i class="fas fa-edit"></i>
+              </a>
+              {% if not period.active %}
+              <form method="post" action="{{ url_for('periods.delete', period_id=period.id) }}"
+                    style="display:inline"
+                    onsubmit="return confirm('Periode \'{{ period.name }}\' wirklich löschen?')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-outline-danger btn-sm" title="Löschen">
+                  <i class="fas fa-trash"></i>
+                </button>
+              </form>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="4" class="text-center text-muted py-3">
+            Noch keine Abrechnungsperiode angelegt.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ render_pagination(pagination) }}
+</div>
+{% endblock %}

@@ -208,7 +208,7 @@ class WaterMeter(db.Model):
 
     readings = db.relationship("MeterReading", backref="meter", lazy="dynamic",
                                cascade="all, delete-orphan",
-                               order_by="MeterReading.year.desc()")
+                               order_by="MeterReading.reading_date.desc()")
 
     parent_meter = db.relationship(
         "WaterMeter", remote_side="WaterMeter.id",
@@ -217,10 +217,9 @@ class WaterMeter(db.Model):
     )
 
     def last_reading(self):
-        return self.readings.order_by(MeterReading.year.desc()).first()
-
-    def reading_for_year(self, year):
-        return self.readings.filter_by(year=year).first()
+        return self.readings.order_by(
+            MeterReading.reading_date.desc(), MeterReading.id.desc()
+        ).first()
 
     def is_main(self):
         return self.meter_type == "main"
@@ -243,8 +242,10 @@ class MeterReading(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     meter_id = db.Column(db.Integer, db.ForeignKey("water_meters.id"), nullable=False)
-    year = db.Column(db.Integer, nullable=False)
-    reading_date = db.Column(db.Date, default=date.today)
+    billing_period_id = db.Column(
+        db.Integer, db.ForeignKey("billing_periods.id"), nullable=False, index=True,
+    )
+    reading_date = db.Column(db.Date, nullable=False, default=date.today)
     value = db.Column(db.Numeric(12, 3), nullable=False)  # m³
     consumption = db.Column(db.Numeric(12, 3))             # m³ Verbrauch (berechnet)
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
@@ -264,18 +265,20 @@ class MeterReading(db.Model):
     )
 
     created_by = db.relationship("User", foreign_keys=[created_by_id])
+    billing_period = db.relationship("BillingPeriod")
 
     __table_args__ = (
-        db.UniqueConstraint("meter_id", "year", name="uq_meter_year"),
+        db.UniqueConstraint("meter_id", "billing_period_id",
+                            name="uq_meter_reading_period"),
     )
 
     def __repr__(self):
-        return f"<MeterReading {self.meter.meter_number} {self.year}: {self.value}>"
+        return f"<MeterReading {self.meter.meter_number} {self.reading_date}: {self.value}>"
 
 
 class MeterReadingAccessCode(db.Model):
-    """SaaS-Self-Service: Kurzer Zugangscode pro Kunde+Jahr fuer die
-    Zaehlerstands-Selbsteingabe ohne User-Account.
+    """SaaS-Self-Service: Kurzer Zugangscode pro Kunde+Abrechnungsperiode
+    fuer die Zaehlerstands-Selbsteingabe ohne User-Account.
 
     Klartext-Code (`code`) wird gespeichert, damit der Admin Briefe
     nachdrucken kann; Hash (`code_hash`) ist der Anker fuer den
@@ -289,7 +292,9 @@ class MeterReadingAccessCode(db.Model):
         db.ForeignKey("customers.id", ondelete="CASCADE"),
         nullable=False, index=True,
     )
-    year = db.Column(db.Integer, nullable=False, index=True)
+    billing_period_id = db.Column(
+        db.Integer, db.ForeignKey("billing_periods.id"), nullable=False, index=True,
+    )
     code = db.Column(db.String(16), nullable=False)        # Format XXXX-XXXX
     code_hash = db.Column(db.String(255), nullable=False)
     expires_at = db.Column(db.Date, nullable=False)
@@ -314,10 +319,13 @@ class MeterReadingAccessCode(db.Model):
         ),
     )
     created_by = db.relationship("User", foreign_keys=[created_by_id])
+    billing_period = db.relationship("BillingPeriod")
 
     __table_args__ = (
-        db.UniqueConstraint("customer_id", "year", name="uq_mrac_customer_year"),
-        db.Index("ix_mrac_year_revoked_expires", "year", "revoked_at", "expires_at"),
+        db.UniqueConstraint("customer_id", "billing_period_id",
+                            name="uq_mrac_customer_period"),
+        db.Index("ix_mrac_period_revoked_expires",
+                 "billing_period_id", "revoked_at", "expires_at"),
     )
 
     @property
@@ -335,7 +343,55 @@ class MeterReadingAccessCode(db.Model):
         return self.last_used_at is not None
 
     def __repr__(self):
-        return f"<MeterReadingAccessCode customer={self.customer_id} year={self.year}>"
+        return (f"<MeterReadingAccessCode customer={self.customer_id} "
+                f"period={self.billing_period_id}>")
+
+
+# ---------------------------------------------------------------------------
+# Abrechnungsperioden
+# ---------------------------------------------------------------------------
+
+class BillingPeriod(db.Model):
+    """Abrechnungsperiode — zentraler Gruppierungsschluessel fuer Zaehler-
+    ablesungen, Zaehlertausche und Rechnungslaeufe (ersetzt die fruehere
+    Kalenderjahr-Verdrahtung). ``start_date``/``end_date`` halten das
+    "Von/Bis" der Periode (z.B. Juni–Juni).
+
+    Es ist immer genau eine Periode aktiv — applikationsseitig erzwungen
+    (kein portabler Partial-Index ueber SQLite/MySQL/Postgres). ``activate``
+    setzt alle anderen inaktiv; ``current`` liefert die aktive Periode.
+    """
+    __tablename__ = "billing_periods"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(50), unique=True, nullable=False)   # z.B. "2025/26"
+    start_date = db.Column(db.Date, nullable=False)
+    end_date = db.Column(db.Date, nullable=False)
+    active = db.Column(
+        db.Boolean, default=False, nullable=False,
+        server_default=db.text("false"),
+    )
+    notes = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    @classmethod
+    def current(cls):
+        """Die aktuell aktive Abrechnungsperiode (oder ``None``)."""
+        return cls.query.filter_by(active=True).first()
+
+    def activate(self):
+        """Setzt diese Periode aktiv und alle anderen inaktiv.
+
+        Caller ist fuer ``db.session.commit()`` zustaendig.
+        """
+        q = BillingPeriod.query
+        if self.id is not None:
+            q = q.filter(BillingPeriod.id != self.id)
+        q.update({BillingPeriod.active: False}, synchronize_session=False)
+        self.active = True
+
+    def __repr__(self):
+        return f"<BillingPeriod {self.name}>"
 
 
 # ---------------------------------------------------------------------------
@@ -371,7 +427,9 @@ class BillingRun(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
-    period_year = db.Column(db.Integer, nullable=False)
+    billing_period_id = db.Column(
+        db.Integer, db.ForeignKey("billing_periods.id"), nullable=False,
+    )
 
     # Snapshot des verwendeten Tarifs (historische Kopie)
     tariff_name = db.Column(db.String(100), nullable=False)
@@ -391,9 +449,10 @@ class BillingRun(db.Model):
     created_by = db.relationship("User", foreign_keys=[created_by_id])
     invoices = db.relationship("Invoice", backref="billing_run", lazy="dynamic")
     account = db.relationship("Account", foreign_keys=[account_id])
+    billing_period = db.relationship("BillingPeriod")
 
     def __repr__(self):
-        return f"<BillingRun {self.period_year} {self.created_at}>"
+        return f"<BillingRun {self.billing_period_id} {self.created_at}>"
 
 
 # ---------------------------------------------------------------------------
@@ -415,7 +474,7 @@ class Invoice(db.Model):
     customer_id = db.Column(db.Integer, db.ForeignKey("customers.id"), nullable=False)
     property_id = db.Column(db.Integer, db.ForeignKey("properties.id"), nullable=True)
     billing_run_id = db.Column(db.Integer, db.ForeignKey("billing_runs.id"), nullable=True)
-    period_year = db.Column(db.Integer)
+    billing_period_id = db.Column(db.Integer, db.ForeignKey("billing_periods.id"), nullable=True)
     date = db.Column(db.Date, default=date.today)
     due_date = db.Column(db.Date)
     status = db.Column(db.String(20), default=STATUS_DRAFT)
@@ -430,6 +489,7 @@ class Invoice(db.Model):
                             cascade="all, delete-orphan")
     created_by = db.relationship("User", foreign_keys=[created_by_id])
     bookings = db.relationship("Booking", backref="invoice", lazy="dynamic")
+    billing_period = db.relationship("BillingPeriod")
 
     def recalculate_total(self):
         """Berechnet den Bruttobetrag (netto + USt) und speichert ihn in ``total_amount``.

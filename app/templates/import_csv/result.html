@@ -36,6 +36,12 @@
               <td><i class="fas fa-tachometer-alt me-1 text-secondary"></i> Zähler angelegt</td>
               <td class="text-end"><strong>{{ results.meters_created }}</strong></td>
             </tr>
+            {% if results.periods_created %}
+            <tr>
+              <td><i class="fas fa-calendar-alt me-1 text-info"></i> Abrechnungsperioden automatisch angelegt</td>
+              <td class="text-end"><strong>{{ results.periods_created }}</strong></td>
+            </tr>
+            {% endif %}
             <tr>
               <td><i class="fas fa-list-ol me-1 text-success"></i> Ablesungen importiert</td>
               <td class="text-end"><strong>{{ results.readings_created }}</strong></td>

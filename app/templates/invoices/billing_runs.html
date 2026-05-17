@@ -20,7 +20,7 @@
         <tr>
           <th>Datum / Uhrzeit</th>
           <th>Benutzer</th>
-          <th>Abrechnungsjahr</th>
+          <th>Periode</th>
           <th>Tarif</th>
           <th class="text-end">Preis/m³</th>
           <th class="text-end">Erstellt</th>
@@ -37,7 +37,7 @@
             </a>
           </td>
           <td>{{ run.created_by.username if run.created_by else '—' }}</td>
-          <td><strong>{{ run.period_year }}</strong></td>
+          <td><strong>{{ run.billing_period.name if run.billing_period else '—' }}</strong></td>
           <td>
             {{ run.tariff_name }}
             <small class="text-muted">

@@ -13,11 +13,10 @@
       <form method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="card-body">
-          {% set prev = meter.readings.filter_by(year=year-1).first() %}
-          {% if prev %}
+          {% if prev_value is not none %}
           <div class="alert alert-info">
-            <h6 class="alert-title">Vorjahreswert ({{ year - 1 }})</h6>
-            <p class="mb-0"><strong>{{ "%d"|format(prev.value) }} m³</strong></p>
+            <h6 class="alert-title">Letzter Stand</h6>
+            <p class="mb-0"><strong>{{ prev_value }} m³</strong></p>
           </div>
           {% elif meter.initial_value is not none %}
           <div class="alert alert-warning">
@@ -32,16 +31,23 @@
           <div class="row g-2">
             <div class="col-md-6">
               <div class="mb-3">
-                <label class="form-label">Jahr <span class="text-danger">*</span></label>
-                <input type="number" name="year" class="form-control"
-                  value="{{ year }}" min="2000" max="2100" required>
+                <label class="form-label">Abrechnungsperiode <span class="text-danger">*</span></label>
+                <select name="billing_period_id" class="form-select" required>
+                  {% for p in periods %}
+                  <option value="{{ p.id }}" {{ 'selected' if period and p.id == period.id }}>
+                    {{ p.name }}{{ ' — aktiv' if p.active else '' }}
+                  </option>
+                  {% else %}
+                  <option value="">— keine Periode —</option>
+                  {% endfor %}
+                </select>
               </div>
             </div>
             <div class="col-md-6">
               <div class="mb-3">
-                <label class="form-label">Ablesedatum</label>
-                <input type="date" name="reading_date" class="form-control"
-                  value="{{ existing.reading_date.isoformat() if existing else '' }}">
+                <label class="form-label">Ablesedatum <span class="text-danger">*</span></label>
+                <input type="date" name="reading_date" class="form-control" required
+                  value="{{ existing.reading_date.isoformat() if existing else (today.isoformat() if today else '') }}">
               </div>
             </div>
           </div>
@@ -57,15 +63,15 @@
           <!-- Live-Verbrauchsanzeige -->
           <div id="consumptionBox" class="d-none">
             <div class="alert alert-success" id="consumptionOk">
-              <h6 class="alert-title">Verbrauch {{ year }}</h6>
+              <h6 class="alert-title">Verbrauch</h6>
               <p class="mb-0"><strong><span id="consumptionValue">—</span> m³</strong></p>
               {% if avg_consumption is not none %}
-              <small class="text-muted">Ø letzte {{ avg_years }} Jahr{{ 'e' if avg_years != 1 }}: {{ avg_consumption }} m³</small>
+              <small class="text-muted">Ø letzte {{ avg_years }} Ablesung{{ 'en' if avg_years != 1 }}: {{ avg_consumption }} m³</small>
               {% endif %}
             </div>
             <div class="alert alert-danger d-none" id="consumptionNegative">
               <h6 class="alert-title"><i class="fas fa-exclamation-triangle me-1"></i> Negativer Verbrauch</h6>
-              <p class="mb-0">Der eingegebene Zählerstand ist kleiner als der Vorjahreswert. Bitte prüfen.</p>
+              <p class="mb-0">Der eingegebene Zählerstand ist kleiner als der letzte Stand. Bitte prüfen.</p>
             </div>
             <div class="alert alert-warning d-none" id="consumptionWarning">
               <h6 class="alert-title"><i class="fas fa-exclamation-triangle me-1"></i> Ungewöhnlicher Verbrauch</h6>
@@ -77,7 +83,8 @@
           <button type="submit" class="btn btn-primary">
             <i class="fas fa-save me-1"></i> Speichern
           </button>
-          <a href="{{ url_for('meters.readings', year=year) }}" class="btn btn-secondary ms-2">Abbrechen</a>
+          <a href="{{ url_for('meters.readings', period_id=period.id if period else none) }}"
+             class="btn btn-secondary ms-2">Abbrechen</a>
         </div>
       </form>
     </div>
@@ -87,6 +94,7 @@
 (function () {
   var prevValue = {{ prev_value if prev_value is not none else 'null' }};
   var avgConsumption = {{ avg_consumption if avg_consumption is not none else 'null' }};
+  var oldConsumption = {{ old_consumption if old_consumption is not none else 'null' }};
 
   var input = document.getElementById('valueInput');
   var box = document.getElementById('consumptionBox');
@@ -105,7 +113,13 @@
     box.classList.remove('d-none');
 
     var consumption = val - prevValue;
-    consumptionSpan.textContent = consumption;
+    if (oldConsumption !== null) {
+      consumptionSpan.textContent =
+        oldConsumption + ' m³ + ' + consumption + ' m³ = ' +
+        (consumption + oldConsumption);
+    } else {
+      consumptionSpan.textContent = consumption;
+    }
 
     if (consumption < 0) {
       okBox.classList.add('d-none');

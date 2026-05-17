@@ -94,22 +94,10 @@ def _apply_year_filter(model, query, years: list[int]):
     if isinstance(spec, str):
         col = getattr(model, spec)
         return query.filter(col.in_(years))
-    # Tuple: ("date", "period_year") → period_year bevorzugen, sonst date-Jahr
-    # Tuple: ("date_year",) → year aus date-Spalte extrahieren
-    if isinstance(spec, tuple):
-        if spec == ("date_year",):
-            return query.filter(func.extract("year", model.date).in_(years))
-        # Invoice-Pattern: period_year bevorzugen, fallback Jahr aus date
-        if spec == ("date", "period_year"):
-            return query.filter(
-                or_(
-                    model.period_year.in_(years),
-                    and_(
-                        model.period_year.is_(None),
-                        func.extract("year", model.date).in_(years),
-                    ),
-                )
-            )
+    # Tuple: ("date_year", "<spalte>") → Jahr aus einer Date-/DateTime-Spalte
+    if isinstance(spec, tuple) and len(spec) == 2 and spec[0] == "date_year":
+        col = getattr(model, spec[1])
+        return query.filter(func.extract("year", col).in_(years))
     return query
 
 
@@ -150,14 +138,8 @@ def _build_query_filtered(model, years: list[int], invoice_ids: set | None,
         spec = YEAR_FILTERS[model]
         if isinstance(spec, str):
             q = q.filter(getattr(model, spec).in_(years))
-        elif spec == ("date_year",):
-            q = q.filter(func.extract("year", model.date).in_(years))
-        elif spec == ("date", "period_year"):
-            q = q.filter(or_(
-                model.period_year.in_(years),
-                and_(model.period_year.is_(None),
-                     func.extract("year", model.date).in_(years)),
-            ))
+        elif isinstance(spec, tuple) and len(spec) == 2 and spec[0] == "date_year":
+            q = q.filter(func.extract("year", getattr(model, spec[1])).in_(years))
     elif model is InvoiceItem and invoice_ids is not None:
         q = q.filter(InvoiceItem.invoice_id.in_(invoice_ids or [-1]))
     elif model is DunningNotice and invoice_ids is not None:
@@ -744,16 +726,17 @@ def _reset_sequences(models: list):
 def _bump_counters(stats: dict):
     """InvoiceCounter / CustomerCounter auf MAX nachziehen, falls Buchungen
     importiert wurden — schuetzt vor Nummer-Kollisionen bei zukuenftigen Inserts."""
-    # InvoiceCounter pro Jahr
+    # InvoiceCounter pro Jahr — Jahr stammt aus dem Rechnungsnummer-Praefix
+    # (Format YYYY-NNNNN), nicht aus der Abrechnungsperiode.
     rows = db.session.query(
-        Invoice.period_year,
-        func.count(Invoice.id),
-    ).filter(Invoice.period_year.is_not(None)).group_by(Invoice.period_year).all()
-    for year, _ in rows:
-        # Suffix der hoechsten Rechnung des Jahres
-        max_inv = db.session.query(func.max(Invoice.invoice_number)).filter(
-            Invoice.period_year == year
-        ).scalar()
+        func.substr(Invoice.invoice_number, 1, 4),
+        func.max(Invoice.invoice_number),
+    ).group_by(func.substr(Invoice.invoice_number, 1, 4)).all()
+    for year_str, max_inv in rows:
+        try:
+            year = int(year_str)
+        except (TypeError, ValueError):
+            continue
         if not max_inv or "-" not in max_inv:
             continue
         try:

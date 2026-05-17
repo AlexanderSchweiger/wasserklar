@@ -11,21 +11,25 @@
           hx-get="{{ url_for('invoices.index') }}"
           hx-trigger="change"
           hx-target="#invoices-table"
-          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id'],[name='nur_email']">
+          hx-include="[name='status'],[name='period_id'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id'],[name='nur_email']">
           <option value="">Alle Status</option>
           {% for s in statuses %}
           <option value="{{ s }}" {{ 'selected' if status_filter == s }}>{{ s }}</option>
           {% endfor %}
         </select>
       </div>
-      <div class="mb-3">
-        <label class="form-label mb-0 me-1">Rechn.Lauf Jahr</label>
-        <input type="number" name="year" value="{{ year_filter }}" placeholder="—"
-          class="form-control form-control-sm" style="width:90px"
+      <div class="mb-3" style="width:170px">
+        <label class="form-label mb-0 me-1">Periode</label>
+        <select name="period_id" class="form-select form-select-sm tom-select"
           hx-get="{{ url_for('invoices.index') }}"
           hx-trigger="change"
           hx-target="#invoices-table"
-          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id'],[name='nur_email']">
+          hx-include="[name='status'],[name='period_id'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id'],[name='nur_email']">
+          <option value="">Alle Perioden</option>
+          {% for p in periods %}
+          <option value="{{ p.id }}" {{ 'selected' if period_filter|string == p.id|string }}>{{ p.name }}</option>
+          {% endfor %}
+        </select>
       </div>
       <div class="mb-3">
         <label class="form-label mb-0 me-1">Datum von</label>
@@ -34,7 +38,7 @@
           hx-get="{{ url_for('invoices.index') }}"
           hx-trigger="change"
           hx-target="#invoices-table"
-          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id'],[name='nur_email']">
+          hx-include="[name='status'],[name='period_id'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id'],[name='nur_email']">
       </div>
       <div class="mb-3">
         <label class="form-label mb-0 me-1">bis</label>
@@ -43,7 +47,7 @@
           hx-get="{{ url_for('invoices.index') }}"
           hx-trigger="change"
           hx-target="#invoices-table"
-          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id'],[name='nur_email']">
+          hx-include="[name='status'],[name='period_id'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id'],[name='nur_email']">
       </div>
       <div class="mb-3" style="width:180px">
         <label class="form-label mb-0 me-1">Projekt</label>
@@ -51,7 +55,7 @@
           hx-get="{{ url_for('invoices.index') }}"
           hx-trigger="change"
           hx-target="#invoices-table"
-          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id'],[name='nur_email']">
+          hx-include="[name='status'],[name='period_id'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id'],[name='nur_email']">
           <option value="">Alle Projekte</option>
           {% for p in projects_for_filter %}
           <option value="{{ p.id }}" {{ 'selected' if project_id_filter|string == p.id|string }}>
@@ -65,7 +69,7 @@
           hx-get="{{ url_for('invoices.index') }}"
           hx-trigger="input changed delay:300ms"
           hx-target="#invoices-table"
-          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id'],[name='nur_email']">
+          hx-include="[name='status'],[name='period_id'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id'],[name='nur_email']">
         <span class="input-group-text"><i class="fas fa-search"></i></span>
       </div>
       <div class="ms-2 mb-0 d-flex align-items-center">
@@ -75,7 +79,7 @@
                  hx-get="{{ url_for('invoices.index') }}"
                  hx-trigger="change"
                  hx-target="#invoices-table"
-                 hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id'],[name='nur_email']">
+                 hx-include="[name='status'],[name='period_id'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id'],[name='nur_email']">
           <label class="form-check-label" for="nur_email">Nur E-Mail-Rechnungen</label>
         </div>
       </div>
@@ -84,7 +88,7 @@
           hx-get="{{ url_for('invoices.index') }}"
           hx-trigger="click"
           hx-target="#invoices-table"
-          hx-include="[name='status'],[name='year'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id'],[name='nur_email']">
+          hx-include="[name='status'],[name='period_id'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id'],[name='nur_email']">
           <i class="fas fa-search me-1"></i> Anzeigen
         </button>
         <a href="{{ url_for('invoices.index') }}" class="btn btn-sm btn-outline-secondary">

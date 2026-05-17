@@ -27,15 +27,15 @@
               <li><strong>CSV:</strong> beliebiges Trennzeichen (Komma, Semikolon, Tab), Zeichensatz UTF-8</li>
               <li><strong>Excel:</strong> <code>.xlsx</code> oder <code>.xls</code></li>
               <li>Zahlen- und Datumsformate werden im nächsten Schritt automatisch erkannt (DE/AT, US, ISO).</li>
-              <li>In der Vorschau können Sie pro Zeile den Ziel-Zähler, Wert, Datum und Jahr noch korrigieren.</li>
+              <li>In der Vorschau können Sie pro Zeile den Ziel-Zähler, Wert und Datum noch korrigieren.</li>
             </ul>
             <strong>Beispiel CSV:</strong>
-            <pre class="mb-0" style="font-size:.8rem;background:#f8f9fa;padding:.5rem;border-radius:4px">Kundennummer;Stand;Jahr;Datum;Verbrauch
-1042;1.412,00;2024;31.12.2024;125,00
-1043;612,50;2024;31.12.2024;
-1044;987;2024;;</pre>
+            <pre class="mb-0" style="font-size:.8rem;background:#f8f9fa;padding:.5rem;border-radius:4px">Kundennummer;Stand;Datum;Verbrauch
+1042;1.412,00;31.12.2024;125,00
+1043;612,50;31.12.2024;
+1044;987;;</pre>
             <small class="text-muted">
-              Spalten <em>Jahr</em>, <em>Datum</em> und <em>Verbrauch</em> sind optional — wird kein Datum angegeben, nimmt das System den 31.12. des Jahres.
+              Spalten <em>Datum</em> und <em>Verbrauch</em> sind optional — wird kein Datum angegeben, nimmt das System das Enddatum der gewählten Abrechnungsperiode.
               Die Spalte <em>Verbrauch</em> dient nur als Vergleichswert: er wird in der Vorschau neben dem berechneten Verbrauch angezeigt und bei Abweichung markiert, aber nicht gespeichert.
             </small>
           </div>
@@ -62,7 +62,7 @@
           </div>
 
           <div class="mb-3">
-            <label class="form-label">Bei bestehender Ablesung (gleicher Zähler + gleiches Jahr)</label>
+            <label class="form-label">Bei bestehender Ablesung (gleicher Zähler + gleiche Periode)</label>
             <div>
               {% for d in duplicate_modes %}
               <div class="form-check">
@@ -77,15 +77,28 @@
           </div>
 
           <div class="row g-2">
-            <div class="col-md-6">
+            <div class="col-md-8">
               <div class="mb-3">
-                <label class="form-label">Standard-Jahr</label>
-                <input type="number" name="default_year" class="form-control"
-                       value="{{ default_year }}" min="2000" max="2100">
-                <small class="text-muted">Wird verwendet, wenn die Datei keine Jahr-Spalte hat.</small>
+                <label class="form-label">Abrechnungsperiode <span class="text-danger">*</span></label>
+                <select name="billing_period_id" class="form-select" required
+                  {% if not periods %}disabled{% endif %}>
+                  {% for p in periods %}
+                  <option value="{{ p.id }}" {{ 'selected' if active_period and p.id == active_period.id }}>
+                    {{ p.name }}{{ ' — aktiv' if p.active else '' }}
+                  </option>
+                  {% else %}
+                  <option value="">— keine Periode vorhanden —</option>
+                  {% endfor %}
+                </select>
+                <small class="text-muted">Alle importierten Ablesungen werden dieser Periode zugeordnet.</small>
               </div>
             </div>
           </div>
+          {% if not periods %}
+          <div class="alert alert-warning">
+            <a href="{{ url_for('periods.new') }}">Zuerst eine Abrechnungsperiode anlegen →</a>
+          </div>
+          {% endif %}
 
           <div class="mb-3">
             <label class="form-label">Datei auswählen <span class="text-danger">*</span></label>

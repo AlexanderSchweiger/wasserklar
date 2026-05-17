@@ -187,8 +187,8 @@ def generate_docx(invoice, wg: dict, design: dict | None = None) -> bytes:
         "Fällig bis",
         invoice.due_date.strftime("%d.%m.%Y") if invoice.due_date else "—"
     ))
-    if invoice.period_year:
-        meta_lines.append(("Abrechnungsjahr", str(invoice.period_year)))
+    if invoice.billing_period:
+        meta_lines.append(("Abrechnungsperiode", invoice.billing_period.name))
 
     for label, value in meta_lines:
         p = doc.add_paragraph()

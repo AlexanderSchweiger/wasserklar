@@ -26,7 +26,9 @@ from flask import current_app
 from app.extensions import db
 from app.models import (
     Customer, MeterReading, Property, PropertyOwnership, WaterMeter,
+    BillingPeriod,
 )
+from app.meters.services import previous_reading, recompute_meter_chain
 
 
 # ---------------------------------------------------------------------------
@@ -55,19 +57,14 @@ class MappingConfig:
     col_lookup: str = ""
     col_value: str = ""
     col_date: str = ""
-    col_year: str = ""
     col_consumption: str = ""  # optional: vom Excel mitgelieferter Verbrauch zum Vergleich
-    default_year: int = 0
+    billing_period_id: int = 0
     duplicate_mode: str = "update"
     value_format: str = "auto"
     date_format: str = "auto"
 
     @classmethod
-    def from_form(cls, form, default_year_fallback: int) -> "MappingConfig":
-        try:
-            dy = int(form.get("default_year") or default_year_fallback)
-        except (TypeError, ValueError):
-            dy = default_year_fallback
+    def from_form(cls, form) -> "MappingConfig":
         mode = form.get("mode") or "meter_number"
         if mode not in MAPPING_MODES:
             mode = "meter_number"
@@ -80,14 +77,17 @@ class MappingConfig:
         df_ = form.get("date_format") or "auto"
         if df_ not in DATE_FORMATS:
             df_ = "auto"
+        try:
+            bpid = int(form.get("billing_period_id") or 0)
+        except (TypeError, ValueError):
+            bpid = 0
         return cls(
             mode=mode,
             col_lookup=(form.get("col_lookup") or "").strip(),
             col_value=(form.get("col_value") or "").strip(),
             col_date=(form.get("col_date") or "").strip(),
-            col_year=(form.get("col_year") or "").strip(),
             col_consumption=(form.get("col_consumption") or "").strip(),
-            default_year=dy,
+            billing_period_id=bpid,
             duplicate_mode=dup,
             value_format=vf,
             date_format=df_,
@@ -99,9 +99,8 @@ class MappingConfig:
             "col_lookup": self.col_lookup,
             "col_value": self.col_value,
             "col_date": self.col_date,
-            "col_year": self.col_year,
             "col_consumption": self.col_consumption,
-            "default_year": self.default_year,
+            "billing_period_id": self.billing_period_id,
             "duplicate_mode": self.duplicate_mode,
             "value_format": self.value_format,
             "date_format": self.date_format,
@@ -129,7 +128,6 @@ class ResolvedRow:
     lookup_value: str
     value: Decimal | None
     reading_date: date | None
-    year: int | None
     status: str
     candidate_meter_ids: list[int]
     chosen_meter_id: int | None
@@ -426,21 +424,6 @@ def parse_date(raw: Any, fmt: str) -> date | None:
         return None
 
 
-def parse_year(raw: Any, default_year: int) -> int | None:
-    import pandas as pd
-    if raw is None:
-        return default_year if default_year else None
-    if isinstance(raw, float) and pd.isna(raw):
-        return default_year if default_year else None
-    s = str(raw).strip()
-    if not s or s.lower() in ("nan", "none"):
-        return default_year if default_year else None
-    try:
-        return int(float(s))
-    except (TypeError, ValueError):
-        return default_year if default_year else None
-
-
 # ---------------------------------------------------------------------------
 # Mapping / Resolver
 # ---------------------------------------------------------------------------
@@ -542,103 +525,36 @@ def resolve_meter(lookup_value: str, mode: str) -> ResolveResult:
 CONSUMPTION_TOLERANCE = Decimal("0.5")
 
 
-def _find_predecessor(meter: WaterMeter) -> WaterMeter | None:
-    """Sucht den Vorgaenger eines Meters: gleiche property_id, sein
-    installed_to == unserem installed_from. Spiegelt _build_replacement_map
-    in routes.py.
-    """
-    if not meter.installed_from:
-        return None
-    return (
-        WaterMeter.query
-        .filter(
-            WaterMeter.property_id == meter.property_id,
-            WaterMeter.installed_to == meter.installed_from,
-            WaterMeter.id != meter.id,
-        )
-        .first()
-    )
-
-
 def compute_prior_and_consumption(
-    meter: WaterMeter, year: int, value: Decimal | None,
+    meter: WaterMeter, reading_date: date | None, value: Decimal | None,
 ) -> tuple[Decimal | None, str, Decimal | None, str]:
     """Liefert (prior_value, prior_label, consumption, replacement_info).
 
-    Standardfall: prior_value = Vorjahres-Reading; consumption = value - prior.
+    prior_value = Wert der vorigen Ablesung des Meters (chronologisch nach
+    ``reading_date``), sonst ``initial_value``. consumption = value - prior.
 
-    Bei Zaehlerwechsel im selben Jahr (meter wurde in `year` installiert,
-    Vorgaenger via property_id + installed_to-Match): consumption ist die
-    SUMME aus dem Verbrauch dieses Meters seit Einbau plus dem Verbrauch
-    des Vorgaengers von Jahresbeginn bis zum Wechseldatum -- so wie der
-    Customer das im Excel typischerweise als Jahres-Total sieht.
-    Der replacement_info-String erklaert die Aufteilung im UI.
-
-    Wenn kein Vergleichswert ermittelbar ist (neuer Meter, kein initial,
-    kein Vorgaenger): consumption = None.
+    Reine Vorschau-Berechnung — der tatsaechlich gespeicherte Verbrauch wird
+    beim Commit ueber ``recompute_meter_chain`` gesetzt. ``replacement_info``
+    bleibt leer (Beibehaltung der 4er-Tupel-Signatur fuer Template-Kompat).
     """
-    if value is None:
+    if value is None or reading_date is None:
         return (None, "—", None, "")
 
-    # 1) Vorjahres-Reading desselben Meters?
-    prev = MeterReading.query.filter_by(meter_id=meter.id, year=year - 1).first()
+    prev = previous_reading(meter, reading_date)
     if prev is not None:
-        return (prev.value, str(year - 1), value - prev.value, "")
-
-    # 2) Wechsel im aktuellen Jahr -> Vorgaenger einbeziehen
-    pred = None
-    if meter.installed_from and meter.installed_from.year == year:
-        pred = _find_predecessor(meter)
-
-    # Wert, von dem aus diesem Meter weg gerechnet wird:
-    init = meter.initial_value if meter.initial_value is not None else None
-
-    if pred:
-        # Verbrauch dieses Meters seit Einbau:
-        this_meter_cons = (value - init) if init is not None else None
-
-        # Verbrauch des Vorgaengers im laufenden Jahr (Vorjahresende -> Wechsel)
-        pred_year_reading = MeterReading.query.filter_by(
-            meter_id=pred.id, year=year,
-        ).first()
-        pred_prev_reading = MeterReading.query.filter_by(
-            meter_id=pred.id, year=year - 1,
-        ).first()
-        pred_cons = None
-        if pred_year_reading is not None:
-            if pred_prev_reading is not None:
-                pred_cons = pred_year_reading.value - pred_prev_reading.value
-            elif pred.initial_value is not None:
-                pred_cons = pred_year_reading.value - pred.initial_value
-
-        total = None
-        if this_meter_cons is not None and pred_cons is not None:
-            total = this_meter_cons + pred_cons
-        elif this_meter_cons is not None:
-            total = this_meter_cons  # ohne Vorgaenger-Anteil
-
-        info_parts = [
-            f"Wechsel von {pred.meter_number} am "
-            f"{meter.installed_from.strftime('%d.%m.%Y')}"
-        ]
-        if pred_cons is not None:
-            info_parts.append(f"Vorgaenger-Verbrauch: {pred_cons} m³")
-        else:
-            info_parts.append("Vorgaenger-Verbrauch unbekannt (Abschluss-Ablesung fehlt)")
         return (
-            init,
-            f"Anfang {meter.installed_from.strftime('%d.%m.%Y')}",
-            total,
-            "; ".join(info_parts),
+            prev.value,
+            prev.reading_date.strftime("%d.%m.%Y"),
+            value - prev.value,
+            "",
         )
 
-    # 3) Kein Vorjahres-Reading, kein Wechsel -> initial_value Fallback
-    if init is not None:
+    if meter.initial_value is not None:
         label = (
             f"Anfang {meter.installed_from.strftime('%d.%m.%Y')}"
             if meter.installed_from else "Anfangsstand"
         )
-        return (init, label, value - init, "")
+        return (meter.initial_value, label, value - meter.initial_value, "")
 
     return (None, "—", None, "")
 
@@ -676,6 +592,11 @@ def build_resolved_rows(df: pd.DataFrame, cfg: MappingConfig) -> list[ResolvedRo
         return []
 
     value_fmt, date_fmt = detect_formats_for_config(df, cfg)
+    period = (
+        db.session.get(BillingPeriod, cfg.billing_period_id)
+        if cfg.billing_period_id else None
+    )
+    fallback_date = period.end_date if period is not None else None
     rows: list[ResolvedRow] = []
 
     for idx, row in df.iterrows():
@@ -683,7 +604,6 @@ def build_resolved_rows(df: pd.DataFrame, cfg: MappingConfig) -> list[ResolvedRo
         lookup = _cell(row_dict, cfg.col_lookup)
         value_raw = _cell(row_dict, cfg.col_value)
         date_raw = row_dict.get(cfg.col_date) if cfg.col_date else None
-        year_raw = row_dict.get(cfg.col_year) if cfg.col_year else None
         consumption_raw = _cell(row_dict, cfg.col_consumption) if cfg.col_consumption else ""
 
         parse_errors: list[str] = []
@@ -702,11 +622,9 @@ def build_resolved_rows(df: pd.DataFrame, cfg: MappingConfig) -> list[ResolvedRo
             if d_str:
                 parse_errors.append(f"Datum '{d_str}' nicht parsbar")
 
-        year = parse_year(year_raw, cfg.default_year)
-
-        # Fallback: wenn kein Datum geparst, aber Jahr da, dann 31.12. des Jahres
-        if rdate is None and year:
-            rdate = date(year, 12, 31)
+        # Fallback: ohne Ablesedatum das Periodenende verwenden.
+        if rdate is None:
+            rdate = fallback_date
 
         # Mapping-Resolve
         resolve = resolve_meter(lookup, cfg.mode)
@@ -721,15 +639,15 @@ def build_resolved_rows(df: pd.DataFrame, cfg: MappingConfig) -> list[ResolvedRo
             status = STATUS_PARSE_ERROR
             message = "; ".join(parse_errors) or "Wert fehlt"
 
-        # Vorjahresstand + Verbrauch berechnen (nur wenn wir einen Meter UND
-        # einen Wert UND ein Jahr haben).
+        # Vorablesung + Verbrauch berechnen (nur wenn wir einen Meter UND
+        # einen Wert UND ein Datum haben).
         prior_value: Decimal | None = None
         prior_label = "—"
         computed_cons: Decimal | None = None
         replacement_info = ""
-        if resolve.chosen is not None and value is not None and year:
+        if resolve.chosen is not None and value is not None and rdate is not None:
             prior_value, prior_label, computed_cons, replacement_info = (
-                compute_prior_and_consumption(resolve.chosen, year, value)
+                compute_prior_and_consumption(resolve.chosen, rdate, value)
             )
 
         rows.append(ResolvedRow(
@@ -738,7 +656,6 @@ def build_resolved_rows(df: pd.DataFrame, cfg: MappingConfig) -> list[ResolvedRo
             lookup_value=lookup,
             value=value,
             reading_date=rdate,
-            year=year,
             status=status,
             candidate_meter_ids=candidate_ids,
             chosen_meter_id=chosen_id,
@@ -823,14 +740,6 @@ def parse_form_edits(form, baseline_rows: list[ResolvedRow]) -> list[ResolvedRow
             else:
                 r.reading_date = None
 
-        # year
-        if "year" in e:
-            y_raw = (e.get("year") or "").strip()
-            try:
-                r.year = int(y_raw) if y_raw else r.year
-            except ValueError:
-                pass
-
         # meter_id
         if "meter_id" in e:
             mid_raw = (e.get("meter_id") or "").strip()
@@ -850,18 +759,23 @@ def parse_form_edits(form, baseline_rows: list[ResolvedRow]) -> list[ResolvedRow
 # ---------------------------------------------------------------------------
 
 def commit_import(rows: list[ResolvedRow], user_id: int,
+                  billing_period: BillingPeriod,
                   duplicate_mode: str) -> ImportStats:
-    """Persistiert die resolved + edited Zeilen.
+    """Persistiert die resolved + edited Zeilen in die gewaehlte
+    Abrechnungsperiode.
 
     Pro Zeile ein Savepoint -- ein Fehler einer Zeile rollt nur diese eine
-    zurueck. Am Ende ein einziger commit auf den outer-trans.
+    zurueck. Nach dem Lauf wird die Verbrauchskette jedes betroffenen
+    Zaehlers neu berechnet (``recompute_meter_chain``), dann ein einziger
+    commit auf den outer-trans.
     """
     stats = ImportStats()
+    affected_meters: dict[int, WaterMeter] = {}
     for row in rows:
         if row.skip:
             stats.skipped += 1
             continue
-        if not row.chosen_meter_id or row.value is None or not row.year:
+        if not row.chosen_meter_id or row.value is None:
             stats.skipped_unmapped += 1
             continue
 
@@ -875,25 +789,11 @@ def commit_import(rows: list[ResolvedRow], user_id: int,
                 )
                 continue
 
+            rdate = row.reading_date or billing_period.end_date
+
             existing = MeterReading.query.filter_by(
-                meter_id=meter.id, year=row.year,
+                meter_id=meter.id, billing_period_id=billing_period.id,
             ).first()
-
-            # Per-Meter-Verbrauch (was in die DB-Spalte geht). Die
-            # Vorschau-Total-Berechnung mit Vorgaenger-Anteil ist nur
-            # Anzeige -- DB-Konsistenz mit save_reading bleibt: ein
-            # MeterReading kennt nur seinen eigenen Verbrauchs-Delta.
-            prev = MeterReading.query.filter_by(
-                meter_id=meter.id, year=row.year - 1,
-            ).first()
-            if prev is not None:
-                consumption = row.value - prev.value
-            elif meter.initial_value is not None:
-                consumption = row.value - meter.initial_value
-            else:
-                consumption = None
-
-            rdate = row.reading_date or date(row.year, 12, 31)
 
             if existing:
                 if duplicate_mode == "skip":
@@ -902,23 +802,27 @@ def commit_import(rows: list[ResolvedRow], user_id: int,
                     continue
                 existing.value = row.value
                 existing.reading_date = rdate
-                existing.consumption = consumption
                 existing.created_by_id = user_id
                 stats.updated += 1
             else:
                 db.session.add(MeterReading(
                     meter_id=meter.id,
-                    year=row.year,
+                    billing_period_id=billing_period.id,
                     value=row.value,
                     reading_date=rdate,
-                    consumption=consumption,
                     created_by_id=user_id,
                 ))
                 stats.created += 1
+            affected_meters[meter.id] = meter
             sp.commit()
         except Exception as e:  # pragma: no cover - defensive
             sp.rollback()
             stats.errors.append(f"Zeile {row.idx + 2}: {e}")
+
+    # Verbrauch (consumption) der betroffenen Zaehler einheitlich neu rechnen.
+    db.session.flush()
+    for meter in affected_meters.values():
+        recompute_meter_chain(meter)
 
     db.session.commit()
     return stats

@@ -6,22 +6,31 @@
   <div class="col-md-6">
     <div class="card">
       <div class="card-header">
-        <h3 class="card-title">Rechnungen für ein Jahr erstellen</h3>
+        <h3 class="card-title">Rechnungen für eine Abrechnungsperiode erstellen</h3>
       </div>
       <form method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="card-body">
           <div class="alert alert-info">
-            Erstellt Rechnungen für alle Objekte mit aktivem Besitzer und einer Zählerablesung im gewählten Jahr.
-            Bereits vorhandene Rechnungen (je Objekt und Jahr) werden übersprungen.
+            Erstellt Rechnungen für alle Objekte mit aktivem Besitzer und einer Zählerablesung in der gewählten Abrechnungsperiode.
+            Bereits vorhandene Rechnungen (je Objekt und Periode) werden übersprungen.
             Objekte ohne aktuellen Besitzer werden ebenfalls übersprungen.
           </div>
           <div class="row g-2">
             <div class="col-md-6">
               <div class="mb-3">
-                <label class="form-label">Abrechnungsjahr <span class="text-danger">*</span></label>
-                <input type="number" name="year" class="form-control"
-                  value="{{ year }}" min="2000" max="2100" required>
+                <label class="form-label">Abrechnungsperiode <span class="text-danger">*</span></label>
+                <select name="billing_period_id" class="form-select tom-select" required
+                  {% if not periods %}disabled{% endif %}>
+                  {% for p in periods %}
+                  <option value="{{ p.id }}" {{ 'selected' if active_period and p.id == active_period.id }}>
+                    {{ p.name }}{{ ' — aktiv' if p.active else '' }}
+                    ({{ p.start_date.strftime('%d.%m.%Y') }}–{{ p.end_date.strftime('%d.%m.%Y') }})
+                  </option>
+                  {% else %}
+                  <option value="">— keine Periode vorhanden —</option>
+                  {% endfor %}
+                </select>
               </div>
             </div>
             <div class="col-md-6">
@@ -62,9 +71,14 @@
             <a href="{{ url_for('invoices.tariff_new') }}">Zuerst einen Tarif anlegen →</a>
           </div>
           {% endif %}
+          {% if not periods %}
+          <div class="alert alert-warning">
+            <a href="{{ url_for('periods.new') }}">Zuerst eine Abrechnungsperiode anlegen →</a>
+          </div>
+          {% endif %}
         </div>
         <div class="card-footer">
-          <button type="submit" class="btn btn-success" {% if not tariffs %}disabled{% endif %}>
+          <button type="submit" class="btn btn-success" {% if not tariffs or not periods %}disabled{% endif %}>
             <i class="fas fa-play me-1"></i> Rechnungen erstellen
           </button>
           <a href="{{ url_for('invoices.index') }}" class="btn btn-secondary ms-2">Abbrechen</a>

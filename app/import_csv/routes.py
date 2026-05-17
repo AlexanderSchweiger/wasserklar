@@ -12,7 +12,10 @@ from flask_login import login_required
 
 from app.import_csv import bp
 from app.extensions import db
-from app.models import Customer, Property, PropertyOwnership, WaterMeter, MeterReading
+from app.models import (
+    Customer, Property, PropertyOwnership, WaterMeter, MeterReading,
+    BillingPeriod,
+)
 
 # ---------------------------------------------------------------------------
 # Bekannte Spalten-Zuordnungen (normalisierter Spaltenname → Ziel-Feld)
@@ -145,6 +148,7 @@ def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str,
         "meters_created": 0,
         "meters_reused": 0,
         "ownerships_created": 0,
+        "periods_created": 0,
         "readings_created": 0,
         "readings_updated": 0,
         "rows_skipped": 0,
@@ -170,16 +174,53 @@ def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str,
     col_email = col_map.get("email", "")
     col_notes = col_map.get("notes", "")
 
+    # Äußere Transaktionsklammer vor alle DB-Schreibzugriffe ziehen — auch
+    # vor die Period-Erstellung, damit dry_run alles sauber zurückrollt.
+    outer = db.session.begin_nested()
+
+    # Jede "Stand YYYY"-Spalte einer Abrechnungsperiode zuordnen.
+    # Existiert keine passende Periode, wird automatisch eine Kalender-Periode
+    # (01.01.YYYY – 31.12.YYYY) angelegt.  Falls vor dem Import noch keine
+    # aktive Periode existierte, wird die neueste auto-erstellte aktiviert.
+    had_active = BillingPeriod.query.filter_by(active=True).first() is not None
+    auto_created: list[tuple[int, BillingPeriod]] = []
+
+    period_by_year: dict[int, int] = {}
+    for _col, _year in stand_columns:
+        if _year in period_by_year:
+            continue
+        _eoy = date(_year, 12, 31)
+        _p = (
+            BillingPeriod.query
+            .filter(BillingPeriod.start_date <= _eoy,
+                    BillingPeriod.end_date >= _eoy)
+            .order_by(BillingPeriod.start_date.desc())
+            .first()
+        )
+        if _p is None:
+            _p = BillingPeriod(
+                name=str(_year),
+                start_date=date(_year, 1, 1),
+                end_date=date(_year, 12, 31),
+            )
+            db.session.add(_p)
+            db.session.flush()
+            auto_created.append((_year, _p))
+            results["periods_created"] += 1
+            results["warnings"].append(
+                f"Keine Abrechnungsperiode für Jahr {_year} gefunden – "
+                f"Periode '{_year}' (01.01.{_year}–31.12.{_year}) automatisch angelegt."
+            )
+        period_by_year[_year] = _p.id
+
+    if not had_active and auto_created:
+        newest = max(auto_created, key=lambda x: x[0])
+        newest[1].activate()
+
     rows = df.to_dict(orient="records")
 
     # Kunden-Nr. → Customer, die in DIESEM Lauf bereits angefasst wurden.
     seen_customers = {}
-
-    # Äußere Transaktionsklammer um den gesamten Lauf. Notwendig, damit die
-    # Zeilen-Savepoints darin geschachtelt sind: SQLite committet andernfalls
-    # beim RELEASE des *äußersten* SAVEPOINT die Transaktion – ein dry_run
-    # könnte dann nicht mehr sauber zurückgerollt werden.
-    outer = db.session.begin_nested()
 
     for idx, row in enumerate(rows, start=2):  # Zeile 2 = erste Datenzeile nach Header
         sp = db.session.begin_nested()
@@ -372,6 +413,8 @@ def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str,
                     if not raw_val:
                         continue
 
+                    bp_id = period_by_year[year]
+
                     parsed = _parse_austrian_number(raw_val)
                     if parsed is None:
                         results["warnings"].append(
@@ -390,7 +433,7 @@ def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str,
                         consumption = parsed - previous_value
 
                     existing_reading = MeterReading.query.filter_by(
-                        meter_id=meter.id, year=year
+                        meter_id=meter.id, billing_period_id=bp_id
                     ).first()
                     if existing_reading is not None:
                         if duplicate_mode == "overwrite":
@@ -403,7 +446,7 @@ def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str,
                     else:
                         db.session.add(MeterReading(
                             meter_id=meter.id,
-                            year=year,
+                            billing_period_id=bp_id,
                             value=parsed,
                             consumption=consumption,
                             reading_date=date(year, 12, 31),
