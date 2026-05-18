@@ -3,7 +3,7 @@ import os
 from datetime import date, datetime
 
 from flask import (
-    current_app, jsonify, render_template, request, redirect,
+    abort, current_app, jsonify, render_template, request, redirect,
     send_file, url_for, flash,
 )
 from flask_login import login_required, current_user
@@ -270,7 +270,10 @@ def notice_pdf(notice_id):
 
     try:
         import weasyprint
-    except ImportError:
+    except (ImportError, OSError):
+        if current_app.debug:
+            flash("WeasyPrint nicht verfügbar – HTML-Vorschau geöffnet (Strg+P → Als PDF speichern).", "info")
+            return redirect(url_for("dunning.notice_pdf_preview", notice_id=notice_id))
         flash("PDF-Erzeugung erfordert WeasyPrint (nur im Docker-Container verfügbar). "
               "Verwenden Sie ?fmt=docx für Word-Download.", "warning")
         return redirect(url_for("dunning.notice_detail", notice_id=notice_id))
@@ -287,6 +290,27 @@ def notice_pdf(notice_id):
     db.session.commit()
     return send_file(pdf_path, as_attachment=True,
                      download_name=_dunning_filename(notice, "pdf"))
+
+
+# ---------------------------------------------------------------------------
+# HTML-Vorschau (Entwicklung)
+# ---------------------------------------------------------------------------
+
+@bp.route("/notices/<int:notice_id>/pdf-preview")
+@login_required
+def notice_pdf_preview(notice_id):
+    """HTML-Vorschau des Mahn-PDF-Templates im Browser (nur Entwicklung)."""
+    notice = db.session.get(DunningNotice, notice_id)
+    if not notice:
+        abort(404)
+    from app.settings_service import wg_settings
+    wg = wg_settings()
+    summary = dunning_summary(notice.invoice)
+    return render_template(
+        "dunning/pdf_template.html",
+        notice=notice, invoice=notice.invoice,
+        summary=summary, wg=wg, design=_current_design(),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -352,9 +376,11 @@ def notice_send_email(notice_id):
             with open(pdf_path, "wb") as f:
                 f.write(pdf_data)
             notice.pdf_path = pdf_path
-        except ImportError:
+        except (ImportError, OSError):
             if fmt == "pdf":
-                return jsonify(ok=False, error="PDF-Erzeugung erfordert WeasyPrint."), 500
+                preview_url = url_for("dunning.notice_pdf_preview", notice_id=notice_id)
+                return jsonify(ok=False, error="PDF-Erzeugung erfordert WeasyPrint.",
+                               preview_url=preview_url if current_app.debug else None), 500
 
     try:
         send_mail(msg)
@@ -424,9 +450,12 @@ def bulk_pdf_merged():
 
     try:
         import weasyprint
-    except ImportError:
-        flash("PDF-Erzeugung erfordert WeasyPrint (nur im Docker-Container). "
-              "Verwenden Sie den DOCX-Export.", "warning")
+    except (ImportError, OSError):
+        if current_app.debug:
+            flash("WeasyPrint nicht verfügbar. Einzelne PDF-Vorschau unter /dunning/notices/<id>/pdf-preview.", "info")
+        else:
+            flash("PDF-Erzeugung erfordert WeasyPrint (nur im Docker-Container). "
+                  "Verwenden Sie den DOCX-Export.", "warning")
         return redirect(url_for("dunning.notices"))
 
     from app.settings_service import wg_settings

@@ -116,11 +116,11 @@
             {% set _nav_backups        = is_saas is defined and is_saas and request.blueprint == 'backups' %}
 
             {# Eltern-Aktiv aus Kinder-OR ableiten #}
-            {% set accounting_active   = _nav_buchungen or _nav_umbuchungen or _nav_buchungsjahre or _nav_bankkonten or _nav_kontenplan or _nav_projekte or _nav_bankimport %}
-            {% set invoices_active     = _nav_neue_rechnung or _nav_alle_rechnungen or _nav_offene_posten or _nav_rechnungslauf or _nav_rechnungslaeufe or _nav_perioden or _nav_email_settings or _nav_tarife %}
+            {% set accounting_active   = _nav_buchungen or _nav_umbuchungen or _nav_bankkonten or _nav_kontenplan or _nav_projekte or _nav_bankimport %}
+            {% set invoices_active     = _nav_neue_rechnung or _nav_alle_rechnungen or _nav_offene_posten or _nav_rechnungslauf or _nav_rechnungslaeufe or _nav_email_settings or _nav_tarife %}
             {% set auswertungen_active = _nav_jahresbericht or _nav_ust %}
             {% set zaehler_active      = _nav_zaehler or _nav_ablesungen or _nav_zaehlertausch %}
-            {% set stammdaten_active   = _nav_kunden or _nav_objekte or _nav_import %}
+            {% set stammdaten_active   = _nav_kunden or _nav_objekte or _nav_import or _nav_buchungsjahre or _nav_perioden %}
             {% set verwaltung_active   = _nav_benutzer or _nav_einstellungen or _nav_data_transfer or _nav_dokumente or _nav_export or _nav_backups %}
 
             <li class="nav-item">
@@ -143,6 +143,18 @@
                     <a class="nav-link {% if _nav_objekte %}active{% endif %}"
                       href="{{ url_for('properties.index') }}">
                       <i class="fas fa-home me-2"></i>Objekte
+                    </a>
+                  </li>
+                  <li class="nav-item">
+                    <a class="nav-link {% if _nav_buchungsjahre %}active{% endif %}"
+                      href="{{ url_for('accounting.fiscal_years') }}">
+                      <i class="fas fa-calendar-alt me-2"></i>Buchungsjahre
+                    </a>
+                  </li>
+                  <li class="nav-item">
+                    <a class="nav-link {% if _nav_perioden %}active{% endif %}"
+                      href="{{ url_for('periods.index') }}">
+                      <i class="fas fa-calendar-week me-2"></i>Abrechnungsperioden
                     </a>
                   </li>
                   {% if current_user.is_admin %}
@@ -212,12 +224,6 @@
                     </a>
                   </li>
                   <li class="nav-item">
-                    <a class="nav-link {% if _nav_buchungsjahre %}active{% endif %}"
-                      href="{{ url_for('accounting.fiscal_years') }}">
-                      <i class="fas fa-calendar-alt me-2"></i>Buchungsjahre
-                    </a>
-                  </li>
-                  <li class="nav-item">
                     <a class="nav-link {% if _nav_bankkonten %}active{% endif %}"
                       href="{{ url_for('accounting.real_accounts') }}">
                       <i class="fas fa-university me-2"></i>Bankkonten
@@ -266,12 +272,6 @@
                     <a class="nav-link {% if _nav_offene_posten %}active{% endif %}"
                       href="{{ url_for('accounting.open_items') }}">
                       <i class="fas fa-inbox me-2"></i>Offene Posten
-                    </a>
-                  </li>
-                  <li class="nav-item">
-                    <a class="nav-link {% if _nav_perioden %}active{% endif %}"
-                      href="{{ url_for('periods.index') }}">
-                      <i class="fas fa-calendar-week me-2"></i>Abrechnungsperioden
                     </a>
                   </li>
                   <li class="nav-item">

@@ -7,6 +7,9 @@ Key wird aus SECRET_KEY abgeleitet). Wer nur die DB hat, kann es nicht lesen.
 """
 import base64
 import hashlib
+import re
+from html import escape
+from html.parser import HTMLParser
 
 from flask import current_app
 
@@ -100,6 +103,85 @@ def platform_relay_active():
     if val is None or val == '':
         return bool(current_app.config.get('MAIL_PLATFORM_RELAY'))
     return str(val).lower() in ('true', '1', 'yes')
+
+
+# ── Rechnungs-Kontakttext (einfaches Rich-Text) ──────────────────────────────
+#
+# Der Kontakttext fuer Rechnungen/Briefe wird als stark reduziertes HTML
+# gespeichert: nur <b>/<i>/<u>/<br>. Beim Speichern wird beliebiges HTML aus dem
+# contenteditable-Editor auf genau diese Tags normalisiert (Attribute weg,
+# unbekannte Tags weg, Block-Elemente -> Zeilenumbruch). Das normalisierte
+# Format ist sowohl im PDF (direkt) als auch im DOCX (geparst) renderbar.
+
+_RT_INLINE = {'b': 'b', 'strong': 'b', 'i': 'i', 'em': 'i', 'u': 'u'}
+_RT_BLOCK = {'p', 'div', 'li'}
+
+
+class _RichTextSanitizer(HTMLParser):
+    """Reduziert eingehendes HTML auf <b>/<i>/<u>/<br>."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts = []
+        self._open = []  # Stack offener (normalisierter) Inline-Tags
+
+    def _line_break(self):
+        if self.parts and not self.parts[-1].endswith('<br>'):
+            self.parts.append('<br>')
+
+    def handle_starttag(self, tag, attrs):
+        if tag == 'br':
+            self.parts.append('<br>')
+        elif tag in _RT_INLINE:
+            norm = _RT_INLINE[tag]
+            self.parts.append(f'<{norm}>')
+            self._open.append(norm)
+        elif tag in _RT_BLOCK:
+            self._line_break()
+
+    def handle_startendtag(self, tag, attrs):
+        if tag == 'br':
+            self.parts.append('<br>')
+
+    def handle_endtag(self, tag):
+        if tag in _RT_INLINE:
+            norm = _RT_INLINE[tag]
+            if norm in self._open:
+                while self._open:
+                    top = self._open.pop()
+                    self.parts.append(f'</{top}>')
+                    if top == norm:
+                        break
+
+    def handle_data(self, data):
+        self.parts.append(escape(data))
+
+    def result(self):
+        while self._open:
+            self.parts.append(f'</{self._open.pop()}>')
+        html = ''.join(self.parts)
+        html = re.sub(r'(?:<br>\s*){3,}', '<br><br>', html)
+        html = re.sub(r'^(?:<br>\s*)+', '', html)
+        html = re.sub(r'(?:\s*<br>)+$', '', html)
+        return html.strip()
+
+
+def sanitize_rich_text(raw: str) -> str:
+    """Normalisiert HTML aus dem Kontakttext-Editor auf <b>/<i>/<u>/<br>."""
+    if not raw or not raw.strip():
+        return ''
+    parser = _RichTextSanitizer()
+    parser.feed(raw)
+    return parser.result()
+
+
+def get_contact_info() -> str:
+    """Gibt den gespeicherten Rechnungs-Kontakttext (sanitisiertes HTML) zurueck."""
+    from app.models import AppSetting
+    try:
+        return AppSetting.get('invoice.contact_info') or ''
+    except Exception:
+        return ''
 
 
 def apply_mail_settings():

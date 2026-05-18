@@ -571,7 +571,7 @@ def recompute_group_total(group_id):
     group.total_amount = q.scalar() or Decimal("0")
 
 
-def _split_invoice_by_dimensions(invoice, gross_amount):
+def _split_invoice_by_dimensions(invoice, gross_amount, fallback_account_id=None):
     """Splittet den Brutto-Zahlbetrag einer Rechnung nach (account_id, project_id, tax_rate).
 
     Die Rechnungs-Positionen werden über ihren Nettobetrag gewichtet, der
@@ -585,11 +585,11 @@ def _split_invoice_by_dimensions(invoice, gross_amount):
     """
     gross_amount = Decimal(str(gross_amount))
 
-    # Fallback-Konto aus OpenItem oder BillingRun (Default-Vererbung, ADR-002).
-    default_account_id = None
-    if invoice.open_item and invoice.open_item.account_id:
+    # Fallback-Konto: expliziter Parameter > OpenItem > BillingRun.
+    default_account_id = fallback_account_id
+    if not default_account_id and invoice.open_item and invoice.open_item.account_id:
         default_account_id = invoice.open_item.account_id
-    elif getattr(invoice, "billing_run", None) and invoice.billing_run.account_id:
+    if not default_account_id and getattr(invoice, "billing_run", None) and invoice.billing_run.account_id:
         default_account_id = invoice.billing_run.account_id
 
     # Erst: Positionen gruppieren, Netto & Brutto je Dimension sammeln.
@@ -668,6 +668,7 @@ def booking_group_from_invoice_payment(
     created_by_id,
     open_item=None,
     reference=None,
+    fallback_account_id=None,
 ):
     """Erzeugt (bei Bedarf) eine Sammelbuchung für eine Rechnungs-Zahlung.
 
@@ -702,7 +703,7 @@ def booking_group_from_invoice_payment(
     open_item_id = open_item.id if open_item is not None else None
     fallback_desc = f"Zahlung Rechnung {invoice.invoice_number}"
 
-    splits = _split_invoice_by_dimensions(invoice, amount)
+    splits = _split_invoice_by_dimensions(invoice, amount, fallback_account_id=fallback_account_id)
 
     # Einzelzeile → flache Einzelbuchung, wie bisher
     if len(splits) <= 1:
@@ -710,8 +711,8 @@ def booking_group_from_invoice_payment(
         acc_id = s["account_id"]
         if acc_id is None:
             raise ValueError(
-                "Zahlungsbuchung kann nicht angelegt werden: Kein Konto "
-                "auf der Rechnungsposition und kein Default (OpenItem/BillingRun)."
+                "Zahlungsbuchung kann nicht angelegt werden: Kein Buchungskonto "
+                "auf der Rechnungsposition und kein Fallback übergeben."
             )
         booking = Booking(
             date=payment_date,
@@ -750,8 +751,8 @@ def booking_group_from_invoice_payment(
         acc_id = s["account_id"]
         if acc_id is None:
             raise ValueError(
-                "Zahlungsbuchung kann nicht angelegt werden: Kein Konto "
-                "auf der Rechnungsposition und kein Default (OpenItem/BillingRun)."
+                "Zahlungsbuchung kann nicht angelegt werden: Kein Buchungskonto "
+                "auf der Rechnungsposition und kein Fallback übergeben."
             )
         child = Booking(
             date=payment_date,

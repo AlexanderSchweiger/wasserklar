@@ -28,7 +28,11 @@
     {% for prop in properties %}
     {% set owner = prop.current_owner() %}
     <tr>
-      <td>{{ prop.object_number or '—' }}</td>
+      <td>
+        {% if prop.object_number %}
+          <a href="{{ url_for('properties.detail', property_id=prop.id) }}">{{ prop.object_number }}</a>
+        {% else %}—{% endif %}
+      </td>
       <td>{{ prop.object_type }}</td>
       <td>
         {% set street = [prop.strasse, prop.hausnummer] | select | join(' ') %}

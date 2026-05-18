@@ -251,13 +251,14 @@ def index():
     return render_template("meters/index.html", **ctx)
 
 
-@bp.route("/ablesungen")
+@bp.route("/readings")
 @login_required
 def readings():
     """Zählerablesung: Schnelleingabe, Ablesen pro Zeile, Import."""
     period = _resolve_period_arg()
     q = request.args.get("q", "").strip()
     mode = request.args.get("mode", "normal")
+    only_missing = request.args.get("only_missing") == "1"
 
     meters_query = (
         WaterMeter.query
@@ -282,6 +283,11 @@ def readings():
                 Customer.name.ilike(f"%{q}%"),
             )
         )
+    if only_missing and period is not None:
+        already_read = db.session.query(MeterReading.meter_id).filter(
+            MeterReading.billing_period_id == period.id
+        ).subquery()
+        meters_query = meters_query.filter(~WaterMeter.id.in_(already_read))
 
     pagination = paginate_query(meters_query, page_key="meters")
     meters = pagination.items
@@ -306,7 +312,7 @@ def readings():
         prev_readings_map=prev_readings_map, period=period,
         periods=_all_periods(), today=date.today(),
         replacement_map=replacement_map, owners_map=owners_map,
-        pagination=pagination,
+        pagination=pagination, only_missing=only_missing,
     )
     if request.headers.get("HX-Request"):
         template = "meters/_table_quick.html" if mode == "quick" else "meters/_table.html"

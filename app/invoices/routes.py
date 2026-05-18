@@ -12,7 +12,7 @@ from app.invoices import bp
 from app.extensions import db
 from app.models import Invoice, InvoiceItem, Customer, WaterMeter, MeterReading, WaterTariff, Booking, Account, Property, OpenItem, Project, RealAccount, InvoiceCounter, AppSetting, BillingRun, BillingPeriod
 from app.utils import next_invoice_number as _next_invoice_number
-from app.settings_service import get_wg, send_mail, wg_settings
+from app.settings_service import get_wg, send_mail, wg_settings, get_contact_info
 from app.invoices.design import get_design
 from app.pagination import paginate_query
 
@@ -28,6 +28,7 @@ def _render_pdf_html(invoice):
         "invoices/pdf_template.html",
         invoice=invoice,
         design=_current_design(),
+        contact_info=get_contact_info(),
     )
 
 
@@ -238,7 +239,6 @@ def generate():
     """Massenrechnungslauf: Alle Kunden mit Ablesung für ein Jahr."""
     from app.accounting import services as acc_svc
     tariffs = WaterTariff.query.order_by(WaterTariff.valid_from.desc()).all()
-    accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
     if request.method == "POST":
         period = db.session.get(
             BillingPeriod, request.form.get("billing_period_id", type=int)
@@ -250,13 +250,7 @@ def generate():
         tariff = db.get_or_404(WaterTariff, tariff_id)
         due_days = int(request.form.get("due_days", 30))
         account_id_raw = request.form.get("account_id") or None
-        if not account_id_raw:
-            flash("Bitte ein Buchungskonto für den Rechnungslauf auswählen.", "danger")
-            return render_template(
-                "invoices/generate.html", tariffs=tariffs, accounts=accounts,
-                periods=_billing_period_list(), active_period=BillingPeriod.current(),
-            )
-        billing_account_id = int(account_id_raw)
+        billing_account_id = int(account_id_raw) if account_id_raw else None
 
         # Rechnungsdatum für den Rechnungslauf ist heute.
         invoice_date = date.today()
@@ -397,7 +391,7 @@ def generate():
                 else:
                     desc = (
                         f"Wasserverbrauch {period.name}"
-                        f" ({consumption} m³ × {tariff.price_per_m3} €/m³)"
+                        f" ({consumption.quantize(Decimal("1"))} m³ × {tariff.price_per_m3} €/m³)"
                     )
 
                 amount = (consumption * tariff.price_per_m3).quantize(Decimal("0.01"))
@@ -431,7 +425,6 @@ def generate():
     return render_template(
         "invoices/generate.html",
         tariffs=tariffs,
-        accounts=accounts,
         periods=_billing_period_list(),
         active_period=BillingPeriod.current(),
     )
@@ -611,7 +604,7 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
             amount = (consumption * tariff.price_per_m3).quantize(Decimal("0.01"))
             db.session.add(InvoiceItem(
                 invoice_id=inv.id,
-                description=f"Wasserverbrauch ({consumption} m³ × {tariff.price_per_m3} €/m³)",
+                description=f"Wasserverbrauch ({consumption.quantize(Decimal("1"))} m³ × {tariff.price_per_m3} €/m³)",
                 quantity=consumption,
                 unit="m³",
                 unit_price=tariff.price_per_m3,
@@ -626,7 +619,7 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
             desc = (
                 row_descriptions[i].strip()
                 if i < len(row_descriptions) and row_descriptions[i].strip()
-                else f"Wasserverbrauch ({consumption} m³)"
+                else f"Wasserverbrauch ({consumption.quantize(Decimal("1"))} m³)"
             )
             amount = (consumption * unit_price).quantize(Decimal("0.01"))
             db.session.add(InvoiceItem(
@@ -795,15 +788,8 @@ def bulk_action():
         if action == Invoice.STATUS_DRAFT:
             flash("Rechnungen können nicht auf 'Entwurf' zurückgesetzt werden.", "danger")
             return redirect(url_for("invoices.index"))
-        # Für Massen-Versenden: ein Buchungskonto für alle manuellen Rechnungen
         bulk_account_id_raw = request.form.get("account_id") or None
         bulk_account_id = int(bulk_account_id_raw) if bulk_account_id_raw else None
-        if action == Invoice.STATUS_SENT:
-            # Prüfen ob manuelle Rechnungen enthalten sind, für die ein Konto fehlt
-            manual_invoices = [inv for inv in invoices if not inv.billing_run_id]
-            if manual_invoices and not bulk_account_id:
-                flash("Bitte ein Buchungskonto wählen für manuelle Rechnungen (ohne Rechnungslauf).", "danger")
-                return redirect(url_for("invoices.index"))
         changed = 0
         try:
             for inv in invoices:
@@ -842,8 +828,11 @@ def bulk_pdf_merged():
         return redirect(url_for("invoices.index"))
     try:
         from weasyprint import HTML
-    except ImportError:
-        flash("WeasyPrint ist nicht installiert. PDF-Export nur im Docker-Container verfügbar.", "danger")
+    except (ImportError, OSError):
+        if current_app.debug:
+            flash("WeasyPrint nicht verfügbar. Einzelne PDF-Vorschau unter /invoices/<id>/pdf-preview.", "info")
+        else:
+            flash("WeasyPrint ist nicht installiert. PDF-Export nur im Docker-Container verfügbar.", "danger")
         return redirect(url_for("invoices.index"))
     invoices = Invoice.query.filter(Invoice.id.in_(invoice_ids)).order_by(Invoice.invoice_number).all()
     rendered_docs = []
@@ -875,8 +864,11 @@ def bulk_pdf_zip():
         return redirect(url_for("invoices.index"))
     try:
         from weasyprint import HTML
-    except ImportError:
-        flash("WeasyPrint ist nicht installiert. PDF-Export nur im Docker-Container verfügbar.", "danger")
+    except (ImportError, OSError):
+        if current_app.debug:
+            flash("WeasyPrint nicht verfügbar. Einzelne PDF-Vorschau unter /invoices/<id>/pdf-preview.", "info")
+        else:
+            flash("WeasyPrint ist nicht installiert. PDF-Export nur im Docker-Container verfügbar.", "danger")
         return redirect(url_for("invoices.index"))
     invoices = Invoice.query.filter(Invoice.id.in_(invoice_ids)).order_by(Invoice.invoice_number).all()
     buf = io.BytesIO()
@@ -981,12 +973,6 @@ def set_status(invoice_id):
         if new_status == Invoice.STATUS_SENT:
             form_account_id_raw = request.form.get("account_id") or None
             form_account_id = int(form_account_id_raw) if form_account_id_raw else None
-            # Für manuelle Rechnungen ist das Buchungskonto Pflicht
-            if not invoice.billing_run_id and not form_account_id:
-                flash("Bitte ein Buchungskonto wählen, bevor die Rechnung auf 'Versendet' gesetzt wird.", "danger")
-                if request.headers.get("HX-Request"):
-                    return render_template("invoices/_status_badge.html", invoice=invoice)
-                return redirect(url_for("invoices.detail", invoice_id=invoice.id))
             account_id = _resolve_open_item_account_id(invoice, form_account_id)
             invoice.status = new_status
             _create_or_update_open_item(invoice, account_id=account_id)
@@ -1152,7 +1138,10 @@ def pdf(invoice_id):
                          download_name=f"{invoice.invoice_number}.pdf")
     try:
         from weasyprint import HTML
-    except ImportError:
+    except (ImportError, OSError):
+        if current_app.debug:
+            flash("WeasyPrint nicht verfügbar – HTML-Vorschau geöffnet (Strg+P → Als PDF speichern).", "info")
+            return redirect(url_for("invoices.pdf_preview", invoice_id=invoice.id))
         flash("WeasyPrint ist nicht installiert. PDF-Export nur im Docker-Container verfügbar.", "danger")
         return redirect(url_for("invoices.detail", invoice_id=invoice.id))
     html_content = _render_pdf_html(invoice)
@@ -1164,6 +1153,18 @@ def pdf(invoice_id):
         db.session.commit()
     return send_file(pdf_path, as_attachment=False,
                      download_name=f"{invoice.invoice_number}.pdf")
+
+
+@bp.route("/<int:invoice_id>/pdf-preview")
+@login_required
+def pdf_preview(invoice_id):
+    """HTML-Vorschau des PDF-Templates im Browser (nur Entwicklung).
+
+    Ruft denselben Render-Pfad wie WeasyPrint auf, gibt das HTML aber direkt
+    aus. Im Browser: Strg+P → Als PDF speichern simuliert den echten Output.
+    """
+    invoice = db.get_or_404(Invoice, invoice_id)
+    return _render_pdf_html(invoice)
 
 
 @bp.route("/<int:invoice_id>/send-email", methods=["POST"])
@@ -1201,8 +1202,12 @@ def send_email(invoice_id):
             weasyprint.HTML(string=html_content).write_pdf(pdf_path)
             with open(pdf_path, "rb") as fp:
                 msg.attach(f"{invoice.invoice_number}.pdf", "application/pdf", fp.read())
-        except ImportError:
+        except (ImportError, OSError):
             if fmt == "pdf":
+                if current_app.debug:
+                    flash("WeasyPrint nicht verfügbar. "
+                          "PDF-Vorschau unter /invoices/{}/pdf-preview.".format(invoice_id), "info")
+                    return redirect(url_for("invoices.pdf_preview", invoice_id=invoice_id))
                 flash("WeasyPrint ist nicht installiert. E-Mail-Versand nur im Docker-Container verfügbar.", "danger")
                 return redirect(url_for("invoices.detail", invoice_id=invoice_id))
             # bei 'both': PDF-Anhang überspringen, .docx wurde bereits angehängt
@@ -1280,9 +1285,11 @@ def send_email_ajax(invoice_id):
                 weasyprint.HTML(string=html_content).write_pdf(pdf_path)
                 with open(pdf_path, "rb") as fp:
                     msg.attach(f"{invoice.invoice_number}.pdf", "application/pdf", fp.read())
-            except ImportError:
+            except (ImportError, OSError):
                 if fmt == "pdf":
-                    return jsonify({"ok": False, "error": "WeasyPrint nicht verfügbar"}), 503
+                    preview_url = url_for("invoices.pdf_preview", invoice_id=invoice_id)
+                    return jsonify({"ok": False, "error": "WeasyPrint nicht verfügbar",
+                                    "preview_url": preview_url if current_app.debug else None}), 503
                 # bei 'both': PDF-Anhang überspringen, .docx wurde bereits angehängt
 
         if not msg.attachments:

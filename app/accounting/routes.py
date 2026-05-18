@@ -16,7 +16,7 @@ from sqlalchemy import extract, func
 from app.accounting import bp
 from app.accounting import services as acc_svc
 from app.extensions import db
-from app.models import Account, Booking, BookingGroup, Invoice, OpenItem, WaterTariff, Customer, Project, RealAccount, RealAccountYearBalance, FiscalYear, FiscalYearReopenLog, TaxRate, Transfer
+from app.models import Account, Booking, BookingGroup, Invoice, OpenItem, WaterTariff, Customer, Project, RealAccount, RealAccountYearBalance, FiscalYear, FiscalYearReopenLog, TaxRate, Transfer, BillingPeriod
 from app.utils import next_invoice_number
 from app.pagination import paginate_list, paginate_query
 
@@ -980,7 +980,7 @@ def open_items():
     amount_max_raw = request.args.get("amount_max", "").strip()
     customer_q = request.args.get("customer", "").strip()
     ref_q = request.args.get("ref", "").strip()  # Rechnungsnr. oder Beschreibung
-    year_q = request.args.get("year", "").strip()
+    period_q = request.args.get("period", "").strip()  # BillingPeriod-ID
 
     item_q = OpenItem.query.join(Customer, OpenItem.customer_id == Customer.id)
 
@@ -991,9 +991,13 @@ def open_items():
         item_q = item_q.filter(Customer.name.ilike(f"%{customer_q}%"))
     if ref_q:
         item_q = item_q.filter(OpenItem.description.ilike(f"%{ref_q}%"))
-    if year_q:
+    if period_q:
+        # Abrechnungsperiode wird ueber die verknuepfte Rechnung ermittelt —
+        # OpenItems ohne Rechnung haben keine Periode und fallen hier raus.
         try:
-            item_q = item_q.filter(OpenItem.period_year == int(year_q))
+            item_q = item_q.join(Invoice, OpenItem.invoice_id == Invoice.id).filter(
+                Invoice.billing_period_id == int(period_q)
+            )
         except ValueError:
             pass
     if amount_min_raw:
@@ -1012,6 +1016,10 @@ def open_items():
     total_open = sum(item.open_balance for item in all_items)
 
     pagination = paginate_list(all_items, page_key="open_items")
+    accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
+    billing_periods = BillingPeriod.query.order_by(
+        BillingPeriod.start_date.desc(), BillingPeriod.id.desc()
+    ).all()
 
     return render_template(
         "accounting/open_items.html",
@@ -1021,19 +1029,36 @@ def open_items():
         show_closed=show_closed,
         f_customer=customer_q,
         f_ref=ref_q,
-        f_year=year_q,
+        f_period=period_q,
         f_amount_min=amount_min_raw,
         f_amount_max=amount_max_raw,
         pagination=pagination,
+        accounts=accounts,
+        billing_periods=billing_periods,
     )
+
+
+@bp.route("/open-items/set-account", methods=["POST"])
+@login_required
+def open_items_set_account():
+    """Setzt das Buchungskonto auf allen noch nicht abgeschlossenen Posten."""
+    account_id_raw = request.form.get("account_id") or None
+    if not account_id_raw:
+        flash("Bitte ein Buchungskonto wählen.", "warning")
+        return redirect(url_for("accounting.open_items"))
+    account_id = int(account_id_raw)
+    updated = OpenItem.query.filter(
+        OpenItem.status.in_([OpenItem.STATUS_OPEN, OpenItem.STATUS_PARTIAL])
+    ).update({OpenItem.account_id: account_id}, synchronize_session=False)
+    db.session.commit()
+    flash(f"Buchungskonto für {updated} offene(n) Posten gesetzt.", "success")
+    return redirect(url_for("accounting.open_items"))
 
 
 @bp.route("/open-items/new", methods=["GET", "POST"])
 @login_required
 def open_item_new():
-    from app.models import Account
     customers = Customer.query.filter_by(active=True).order_by(Customer.name).all()
-    accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
     if request.method == "POST":
         from decimal import Decimal
         item_date = date.fromisoformat(request.form["date"])
@@ -1042,11 +1067,10 @@ def open_item_new():
             flash(f"{fy_error} Offener Posten wurde nicht gespeichert.", "danger")
             return render_template(
                 "accounting/open_item_form.html",
-                item=None, customers=customers, accounts=accounts, today=date.today(),
+                item=None, customers=customers, today=date.today(),
                 form_data=request.form,
             )
         amount_raw = request.form.get("amount", "0").replace(",", ".")
-        account_id_raw = request.form.get("account_id") or None
         item = OpenItem(
             customer_id=int(request.form["customer_id"]),
             description=request.form["description"].strip(),
@@ -1055,14 +1079,13 @@ def open_item_new():
             date=item_date,
             due_date=date.fromisoformat(request.form["due_date"]) if request.form.get("due_date") else None,
             status=OpenItem.STATUS_OPEN,
-            account_id=int(account_id_raw) if account_id_raw else None,
             created_by_id=current_user.id,
         )
         db.session.add(item)
         db.session.commit()
         flash("Offener Posten angelegt.", "success")
         return redirect(url_for("accounting.open_items"))
-    return render_template("accounting/open_item_form.html", item=None, customers=customers, accounts=accounts, today=date.today())
+    return render_template("accounting/open_item_form.html", item=None, customers=customers, today=date.today())
 
 
 @bp.route("/open-items/<int:item_id>/pay", methods=["POST"])
@@ -1078,6 +1101,8 @@ def open_item_pay(item_id):
     item = db.get_or_404(OpenItem, item_id)
     from decimal import Decimal
     amount_raw = request.form.get("amount", "0").replace(",", ".")
+    form_account_id_raw = request.form.get("account_id") or None
+    form_account_id = int(form_account_id_raw) if form_account_id_raw else None
     try:
         amount = Decimal(amount_raw)
     except Exception:
@@ -1101,6 +1126,8 @@ def open_item_pay(item_id):
             if invoice is None:
                 flash("Verknüpfte Rechnung nicht gefunden.", "danger")
                 return redirect(url_for("accounting.open_items"))
+            if form_account_id and item.account_id != form_account_id:
+                item.account_id = form_account_id
             group, children = acc_svc.booking_group_from_invoice_payment(
                 invoice=invoice,
                 amount=amount,
@@ -1109,13 +1136,17 @@ def open_item_pay(item_id):
                 created_by_id=current_user.id,
                 open_item=item,
                 reference=invoice.invoice_number,
+                fallback_account_id=form_account_id,
             )
         else:
             # Manueller OpenItem ohne Rechnung → einfache Einzelbuchung.
-            if item.account_id:
-                acc = Account.query.get(item.account_id)
+            account_id_to_use = form_account_id or item.account_id
+            if account_id_to_use:
+                acc = Account.query.get(account_id_to_use)
             else:
                 acc = Account.query.filter_by(active=True).first()
+            if form_account_id and item.account_id != form_account_id:
+                item.account_id = form_account_id
             if not acc:
                 flash("Kein aktives Konto gefunden.", "danger")
                 return redirect(url_for("accounting.open_items"))

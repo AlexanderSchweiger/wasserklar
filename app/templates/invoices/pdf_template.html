@@ -16,6 +16,9 @@
   .recipient { margin-top: 0.5cm; }
   .invoice-meta { float: right; text-align: right; margin-bottom: 1cm; }
   .invoice-meta strong { color: {{ design.meta_label_color }}; }
+  .contact-info-block { margin-top: 0.4cm; }
+  .intro { margin-bottom: 0.4cm; }
+  .closing { margin-top: 1cm; }
   h1 {
     font-size: 18pt;
     margin: 1cm 0 0.5cm 0;
@@ -75,10 +78,12 @@
 
 <div class="invoice-meta">
   <strong>Rechnungsnummer:</strong> {{ invoice.invoice_number }}<br>
+  <strong>Rechnungsdatum:</strong> {{ invoice.date.strftime('%d.%m.%Y') }}<br>
+  <strong>Lieferdatum:</strong> {{ invoice.date.strftime('%d.%m.%Y') }}<br>
   {% if invoice.customer.customer_number %}<strong>Kundennummer:</strong> {{ invoice.customer.customer_number }}<br>{% endif %}
-  <strong>Datum:</strong> {{ invoice.date.strftime('%d.%m.%Y') }}<br>
   <strong>Fällig bis:</strong> {{ invoice.due_date.strftime('%d.%m.%Y') if invoice.due_date else '—' }}<br>
-  {% if invoice.billing_period %}<strong>Abrechnungsperiode:</strong> {{ invoice.billing_period.name }}{% endif %}
+  {% if invoice.billing_period %}<strong>Abrechnungsperiode:</strong> {{ invoice.billing_period.name }}<br>{% endif %}
+  {% if contact_info %}<div class="contact-info-block">{{ contact_info | safe }}</div>{% endif %}
 </div>
 
 <div class="recipient">
@@ -89,11 +94,16 @@
   {% if city %}{{ city }}<br>{% endif %}
   {% if invoice.customer.land and invoice.customer.land != 'Österreich' %}{{ invoice.customer.land }}<br>{% endif %}
   {% if invoice.property %}
-  <br><small>Betr.: {{ invoice.property.label() }}</small>
   {% endif %}
 </div>
 
-<h1>Rechnung</h1>
+<h1>Rechnung {{ invoice.invoice_number }}</h1>
+
+{% if invoice.property %}
+<p class="intro">Wir stellen für das Objekt <strong>„{{ invoice.property.address_display() or invoice.property.label() }}"</strong> wie folgt in Rechnung:</p>
+{% else %}
+<p class="intro">Wir stellen wie folgt in Rechnung:</p>
+{% endif %}
 
 {% set tax_summary = invoice.tax_breakdown %}
 {% set has_tax = tax_summary | length > 0 %}
@@ -104,7 +114,7 @@
       <th class="text-right">Menge</th>
       <th class="text-right">Einheit</th>
       <th class="text-right">Einzelpreis</th>
-      <th class="text-right">Betrag</th>
+      <th class="text-right">Gesamtpreis</th>
     </tr>
   </thead>
   <tbody>
@@ -121,7 +131,7 @@
   <tfoot>
     {% if has_tax %}
     <tr>
-      <td colspan="4" class="text-right">Nettosumme</td>
+      <td colspan="4" class="text-right">Nettobetrag</td>
       <td class="text-right">{{ invoice.net_total|de_number(2) }} €</td>
     </tr>
     {% for rate, info in tax_summary.items() %}
@@ -132,7 +142,7 @@
     {% endfor %}
     {% endif %}
     <tr class="total-row">
-      <td colspan="4" class="text-right">Gesamtbetrag{% if has_tax %} inkl. USt.{% endif %}</td>
+      <td colspan="4" class="text-right">Gesamtsumme</td>
       <td class="text-right">{{ invoice.total_amount|de_number(2) }} €</td>
     </tr>
   </tfoot>
@@ -143,13 +153,16 @@
 {% endif %}
 
 <div class="payment-info">
-  <strong>Zahlungsinformationen</strong><br>
-  Bitte überweisen Sie den Betrag von <strong>{{ invoice.total_amount|de_number(2) }} €</strong>
-  bis zum {{ invoice.due_date.strftime('%d.%m.%Y') if invoice.due_date else '—' }}<br>
+  <strong>Zahlung</strong><br>
+  Wir ersuchen Sie, den Rechnungsbetrag von <strong>{{ invoice.total_amount|de_number(2) }} €</strong>
+  {% if invoice.due_date %}bis zum {{ invoice.due_date.strftime('%d.%m.%Y') }} {% endif %}auf unser Konto einzuzahlen:<br>
   {% if wg.iban %}IBAN: <strong>{{ wg.iban }}</strong><br>{% endif %}
+  {% if wg.bic %}BIC: <strong>{{ wg.bic }}</strong><br>{% endif %}
   Empfänger: {{ wg.name }}<br>
   Verwendungszweck: <strong>{{ invoice.invoice_number }}</strong>
 </div>
+
+<p class="closing">Mit freundlichen Grüßen<br>{{ wg.name }}</p>
 
 <div class="footer">
   {{ wg.name }}

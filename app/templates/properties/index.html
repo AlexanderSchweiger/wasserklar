@@ -6,7 +6,7 @@
   <div class="card-header">
     <div class="input-group input-group-sm" style="width:280px">
       <input type="search" name="q" value="{{ q }}" class="form-control"
-        placeholder="Nummer, Straße, Ort…"
+        placeholder="Nummer, Straße, Ort, Besitzer…"
         hx-get="{{ url_for('properties.index') }}"
         hx-trigger="input changed delay:300ms, search"
         hx-target="#property-table"

@@ -2,7 +2,7 @@ from datetime import date, timedelta
 
 from flask import render_template, redirect, url_for, flash, request
 from flask_login import login_required
-from sqlalchemy import case as sa_case, func as sa_func
+from sqlalchemy import case as sa_case, exists, func as sa_func
 
 from app.properties import bp
 from app.extensions import db
@@ -29,11 +29,18 @@ def index():
 
     query = Property.query.filter_by(active=True)
     if q:
+        owner_match = exists().where(
+            PropertyOwnership.property_id == Property.id,
+            PropertyOwnership.valid_to.is_(None),
+            PropertyOwnership.customer_id == Customer.id,
+            Customer.name.ilike(f"%{q}%"),
+        )
         query = query.filter(
             db.or_(
                 Property.object_number.ilike(f"%{q}%"),
                 Property.strasse.ilike(f"%{q}%"),
                 Property.ort.ilike(f"%{q}%"),
+                owner_match,
             )
         )
     query = _apply_property_sort(query, sort, direction)

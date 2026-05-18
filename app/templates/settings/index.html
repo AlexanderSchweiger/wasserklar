@@ -23,6 +23,11 @@
       </a>
     </li>
     <li class="nav-item" role="presentation">
+      <a class="nav-link" id="tab-briefe" data-bs-toggle="tab" href="#pane-briefe" role="tab">
+        <i class="fas fa-envelope-open-text me-1"></i> Briefe/Rechnungen
+      </a>
+    </li>
+    <li class="nav-item" role="presentation">
       <a class="nav-link" id="tab-db" data-bs-toggle="tab" href="#pane-db" role="tab">
         <i class="fas fa-database me-1"></i> Datenbankverbindung
       </a>
@@ -207,6 +212,36 @@
       </div>
     </div>
 
+    {# ── Tab: Briefe/Rechnungen ──────────────────────────────────────── #}
+    <div class="tab-pane fade" id="pane-briefe" role="tabpanel">
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title"><i class="fas fa-envelope-open-text me-1"></i> Briefe/Rechnungen</h3>
+        </div>
+        <div class="card-body">
+          <div class="mb-1">
+            <label class="form-label">Kontaktinformation</label>
+            <div class="form-text mb-2">
+              Erscheint auf der Rechnung im Adressblock rechts – z.&nbsp;B. Ansprechpartner
+              (Obmann, Kassier) mit Telefonnummer. Text kann <strong>fett</strong> und
+              <em>kursiv</em> formatiert werden.
+            </div>
+            <div class="btn-group btn-group-sm mb-2" role="group" aria-label="Formatierung">
+              <button type="button" class="btn btn-outline-secondary" data-rt-cmd="bold"
+                      title="Fett"><strong>F</strong></button>
+              <button type="button" class="btn btn-outline-secondary" data-rt-cmd="italic"
+                      title="Kursiv"><em>K</em></button>
+              <button type="button" class="btn btn-outline-secondary" data-rt-cmd="underline"
+                      title="Unterstrichen"><u>U</u></button>
+            </div>
+            <div id="contactInfoEditor" class="form-control" contenteditable="true"
+                 style="min-height:8rem">{{ invoice_contact_info | safe }}</div>
+            <input type="hidden" name="invoice_contact_info" id="contactInfoInput">
+          </div>
+        </div>
+      </div>
+    </div>
+
     {# ── Tab 4: Datenbankverbindung ──────────────────────────────────── #}
     <div class="tab-pane fade" id="pane-db" role="tabpanel">
       <div class="card">
@@ -288,6 +323,24 @@ document.querySelector('[name=invoice_document_format]')?.addEventListener('chan
   const show = this.value === 'docx' || this.value === 'both';
   document.getElementById('docx-warning').style.display = show ? 'block' : 'none';
 });
+
+// ── Kontaktinformation Rich-Text-Editor ─────────────────────────────────
+(function () {
+  const editor = document.getElementById('contactInfoEditor');
+  const input = document.getElementById('contactInfoInput');
+  if (!editor || !input) return;
+  try { document.execCommand('styleWithCSS', false, false); } catch (e) { /* ignore */ }
+  document.querySelectorAll('[data-rt-cmd]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      editor.focus();
+      document.execCommand(btn.getAttribute('data-rt-cmd'), false, null);
+    });
+  });
+  // Editor-Inhalt vor dem Absenden in das versteckte Feld spiegeln.
+  editor.closest('form').addEventListener('submit', function () {
+    input.value = editor.innerHTML;
+  });
+})();
 
 // ── Test-Mail ─────────────────────────────────────────────────────────────
 document.getElementById('btnTestMail').addEventListener('click', function () {

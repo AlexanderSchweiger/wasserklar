@@ -1,6 +1,7 @@
 """Hilfsfunktionen zur Rechnungsdokument-Generierung."""
 import io
 from decimal import Decimal
+from html.parser import HTMLParser
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -96,7 +97,53 @@ def _remove_table_borders(table):
     tblPr.append(tblBorders)
 
 
-def generate_docx(invoice, wg: dict, design: dict | None = None) -> bytes:
+class _RichTextRunParser(HTMLParser):
+    """Parst das normalisierte Kontakttext-HTML (<b>/<i>/<u>/<br>) in Zeilen
+    von Runs: Liste von Zeilen, jede Zeile = Liste (text, bold, italic, underline)."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.lines = [[]]
+        self._b = self._i = self._u = False
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "b":
+            self._b = True
+        elif tag == "i":
+            self._i = True
+        elif tag == "u":
+            self._u = True
+        elif tag == "br":
+            self.lines.append([])
+
+    def handle_startendtag(self, tag, attrs):
+        if tag == "br":
+            self.lines.append([])
+
+    def handle_endtag(self, tag):
+        if tag == "b":
+            self._b = False
+        elif tag == "i":
+            self._i = False
+        elif tag == "u":
+            self._u = False
+
+    def handle_data(self, data):
+        if data:
+            self.lines[-1].append((data, self._b, self._i, self._u))
+
+
+def _parse_rich_text(html: str) -> list:
+    """Parst Kontakttext-HTML in Zeilen von formatierten Runs."""
+    if not html:
+        return []
+    parser = _RichTextRunParser()
+    parser.feed(html)
+    return parser.lines
+
+
+def generate_docx(invoice, wg: dict, design: dict | None = None,
+                   contact_info: str | None = None) -> bytes:
     """Erstellt ein Word-Dokument (.docx) für die übergebene Rechnung.
 
     Parameters
@@ -108,6 +155,9 @@ def generate_docx(invoice, wg: dict, design: dict | None = None) -> bytes:
     design : dict | None
         Design-Parameter (Schriftart, Farben). Wenn ``None``, wird das
         Standard-Design ``classic`` verwendet.
+    contact_info : str | None
+        Sanitisiertes Kontakttext-HTML (<b>/<i>/<u>/<br>) für den Adressblock.
+        Wenn ``None``, wird der gespeicherte Wert aus den AppSettings geladen.
 
     Returns
     -------
@@ -116,6 +166,9 @@ def generate_docx(invoice, wg: dict, design: dict | None = None) -> bytes:
     """
     if design is None:
         design = get_design("classic")
+    if contact_info is None:
+        from app.settings_service import get_contact_info
+        contact_info = get_contact_info()
 
     font_name = design.get("docx_font", "Arial")
     text_rgb = _hex_to_rgb(design.get("text_color", "#333333"))
@@ -176,13 +229,18 @@ def generate_docx(invoice, wg: dict, design: dict | None = None) -> bytes:
 
     doc.add_paragraph()  # Abstand
 
-    # ── Rechnungs-Meta (rechtsbündig) ─────────────────────────────────────
+    # ── Empfänger (links) + Rechnungs-Meta (rechts) ───────────────────────
+    # Als rahmenlose 2-Spalten-Tabelle: Word kennt kein float wie das
+    # PDF-Layout — ohne Tabelle rutscht der Empfängerblock unter den
+    # gesamten Meta-Block statt daneben zu stehen.
+    invoice_date_str = invoice.date.strftime("%d.%m.%Y")
     meta_lines = [
         ("Rechnungsnummer", invoice.invoice_number),
+        ("Rechnungsdatum", invoice_date_str),
+        ("Lieferdatum", invoice_date_str),
     ]
     if invoice.customer.customer_number:
         meta_lines.append(("Kundennummer", str(invoice.customer.customer_number)))
-    meta_lines.append(("Datum", invoice.date.strftime("%d.%m.%Y")))
     meta_lines.append((
         "Fällig bis",
         invoice.due_date.strftime("%d.%m.%Y") if invoice.due_date else "—"
@@ -190,40 +248,69 @@ def generate_docx(invoice, wg: dict, design: dict | None = None) -> bytes:
     if invoice.billing_period:
         meta_lines.append(("Abrechnungsperiode", invoice.billing_period.name))
 
-    for label, value in meta_lines:
-        p = doc.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        run_lbl = p.add_run(f"{label}: ")
-        run_lbl.bold = True
-        run_lbl.font.color.rgb = heading_rgb
-        p.add_run(value)
+    addr_tbl = doc.add_table(rows=1, cols=2)
+    _remove_table_borders(addr_tbl)
+    addr_tbl.columns[0].width = Cm(9)
+    addr_tbl.columns[1].width = Cm(7)
+    recipient_cell = addr_tbl.cell(0, 0)
+    meta_cell = addr_tbl.cell(0, 1)
 
-    doc.add_paragraph()  # Abstand
-
-    # ── Empfänger ─────────────────────────────────────────────────────────
-    p_cust = doc.add_paragraph(invoice.customer.name)
-    p_cust.runs[0].bold = True
+    # Empfänger (linke Spalte)
+    p_cust = recipient_cell.paragraphs[0]
+    p_cust.add_run(invoice.customer.name).bold = True
 
     street_parts = [invoice.customer.strasse, invoice.customer.hausnummer]
     street = " ".join(p for p in street_parts if p)
     city_parts = [invoice.customer.plz, invoice.customer.ort]
     city = " ".join(p for p in city_parts if p)
     if street:
-        doc.add_paragraph(street)
+        recipient_cell.add_paragraph(street)
     if city:
-        doc.add_paragraph(city)
+        recipient_cell.add_paragraph(city)
     land = invoice.customer.land
     if land and land != "Österreich":
-        doc.add_paragraph(land)
+        recipient_cell.add_paragraph(land)
     if invoice.property:
-        p_prop = doc.add_paragraph()
+        p_prop = recipient_cell.add_paragraph()
         run_prop = p_prop.add_run(f"Betr.: {invoice.property.label()}")
         run_prop.font.size = Pt(9)
 
+    # Rechnungs-Meta + Kontaktinfo (rechte Spalte, rechtsbündig)
+    meta_cell.paragraphs[0].clear()
+    meta_first = True
+    for label, value in meta_lines:
+        p = meta_cell.paragraphs[0] if meta_first else meta_cell.add_paragraph()
+        meta_first = False
+        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        run_lbl = p.add_run(f"{label}: ")
+        run_lbl.bold = True
+        run_lbl.font.color.rgb = heading_rgb
+        p.add_run(value)
+
+    for line in _parse_rich_text(contact_info):
+        p = meta_cell.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        for text, bold, italic, underline in line:
+            run = p.add_run(text)
+            run.font.size = Pt(10)
+            run.bold = bold
+            run.italic = italic
+            run.underline = underline
+
     # ── Überschrift ───────────────────────────────────────────────────────
-    heading = doc.add_heading("Rechnung", level=1)
+    heading = doc.add_heading(f"Rechnung {invoice.invoice_number}", level=1)
     heading.runs[0].font.color.rgb = heading_rgb
     heading.runs[0].font.name = font_name
+
+    # ── Einleitungstext ───────────────────────────────────────────────────
+    if invoice.property:
+        p_intro = doc.add_paragraph()
+        p_intro.add_run("Wir stellen für das Objekt ")
+        prop_display = invoice.property.address_display() or invoice.property.label()
+        p_intro.add_run(f”„{prop_display}””).bold = True
+        p_intro.add_run(" wie folgt in Rechnung:")
+    else:
+        doc.add_paragraph("Wir stellen wie folgt in Rechnung:")
 
     # ── Positionen-Tabelle ────────────────────────────────────────────────
     items = invoice.items
@@ -236,11 +323,11 @@ def generate_docx(invoice, wg: dict, design: dict | None = None) -> bytes:
 
     # Kopfzeile
     hdr_cells = tbl.rows[0].cells
-    headers = ["Beschreibung", "Menge", "Einheit", "Einzelpreis", "Betrag"]
+    headers = ["Beschreibung", "Menge", "Einheit", "Einzelpreis", "Gesamtpreis"]
 
     header_text_rgb = _hex_to_rgb(design.get("header_text", "#333333"))
     for i, hdr in enumerate(headers):
-        right = hdr in ("Menge", "Einheit", "Einzelpreis", "Betrag")
+        right = hdr in ("Menge", "Einheit", "Einzelpreis", "Gesamtpreis")
         if right:
             _right_align_cell(hdr_cells[i], hdr, font_name=font_name,
                               font_size=Pt(10), color=header_text_rgb, bold=True)
@@ -270,7 +357,7 @@ def generate_docx(invoice, wg: dict, design: dict | None = None) -> bytes:
         # Nettosumme
         row_net = tbl.add_row().cells
         row_net[0].merge(row_net[col_count - 2])
-        _right_align_cell(row_net[0], "Nettosumme")
+        _right_align_cell(row_net[0], "Nettobetrag")
         _right_align_cell(row_net[col_count - 1], f"{_de_fmt(invoice.net_total, 2)} €")
         # USt pro Satz
         for rate, info in tax_summary.items():
@@ -284,13 +371,13 @@ def generate_docx(invoice, wg: dict, design: dict | None = None) -> bytes:
         # Gesamt
         row_total = tbl.add_row().cells
         row_total[0].merge(row_total[col_count - 2])
-        _right_align_cell(row_total[0], "Gesamtbetrag inkl. USt.",
+        _right_align_cell(row_total[0], "Gesamtsumme",
                           color=heading_rgb, bold=True)
         _right_align_cell(row_total[col_count - 1],
                           f"{_de_fmt(invoice.total_amount, 2)} €",
                           color=heading_rgb, bold=True)
     else:
-        _add_total_row(tbl, col_count, invoice.total_amount, "Gesamtbetrag", heading_rgb)
+        _add_total_row(tbl, col_count, invoice.total_amount, "Gesamtsumme", heading_rgb)
 
     # ── Hinweistext ───────────────────────────────────────────────────────
     if invoice.notes:
@@ -307,25 +394,31 @@ def generate_docx(invoice, wg: dict, design: dict | None = None) -> bytes:
     _set_cell_bg(payment_cell, payment_bg_hex)
 
     p_pay = payment_cell.paragraphs[0]
-    run_pay_lbl = p_pay.add_run("Zahlungsinformationen")
+    run_pay_lbl = p_pay.add_run("Zahlung")
     run_pay_lbl.bold = True
     run_pay_lbl.font.color.rgb = heading_rgb
 
-    due_str = invoice.due_date.strftime("%d.%m.%Y") if invoice.due_date else "—"
-    p_pay2 = payment_cell.add_paragraph(
-        f"Bitte überweisen Sie den Betrag von "
-    )
+    p_pay2 = payment_cell.add_paragraph("Wir ersuchen Sie, den Rechnungsbetrag von ")
     p_pay2.add_run(f"{_de_fmt(invoice.total_amount, 2)} €").bold = True
-    p_pay2.add_run(f" bis zum {due_str}")
+    if invoice.due_date:
+        p_pay2.add_run(f" bis zum {invoice.due_date.strftime('%d.%m.%Y')}")
+    p_pay2.add_run(" auf unser Konto einzuzahlen:")
 
     if wg.get("iban"):
         p_iban = payment_cell.add_paragraph("IBAN: ")
         p_iban.add_run(wg["iban"]).bold = True
     if wg.get("bic"):
-        payment_cell.add_paragraph(f"BIC: {wg['bic']}")
+        p_bic = payment_cell.add_paragraph("BIC: ")
+        p_bic.add_run(wg["bic"]).bold = True
     payment_cell.add_paragraph(f"Empfänger: {wg.get('name', '')}")
     p_ref = payment_cell.add_paragraph("Verwendungszweck: ")
     p_ref.add_run(invoice.invoice_number).bold = True
+
+    doc.add_paragraph()  # Abstand
+
+    # ── Grußformel ────────────────────────────────────────────────────────
+    doc.add_paragraph("Mit freundlichen Grüßen")
+    doc.add_paragraph(wg.get("name", ""))
 
     doc.add_paragraph()  # Abstand
 

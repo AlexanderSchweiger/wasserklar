@@ -456,7 +456,7 @@ class TestResultStep:
         _login(client)
         r = client.get("/meters/import/result", follow_redirects=False)
         assert r.status_code == 302
-        assert "/meters/ablesungen" in r.headers["Location"] \
+        assert "/meters/readings" in r.headers["Location"] \
                or "/meters/" in r.headers["Location"]
 
     def test_result_renders_after_confirm(self, client, admin, sample):

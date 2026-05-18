@@ -25,9 +25,13 @@
                  value="{{ f_ref }}" placeholder="RE-2024-… oder Beschreibung">
         </div>
         <div class="col-md-2">
-          <label class="form-label">Rechn.Lauf Jahr</label>
-          <input type="number" name="year" class="form-control form-control-sm"
-                 value="{{ f_year }}" placeholder="{{ today.year }}">
+          <label class="form-label">Abrechnungsperiode</label>
+          <select name="period" class="form-select form-select-sm">
+            <option value="">— Alle —</option>
+            {% for p in billing_periods %}
+            <option value="{{ p.id }}" {{ 'selected' if f_period == p.id|string }}>{{ p.name }}</option>
+            {% endfor %}
+          </select>
         </div>
         <div class="col-md-2">
           <label class="form-label">Betrag ≥ (€)</label>
@@ -67,8 +71,26 @@
 <div class="card">
   <div class="card-header">
     <h3 class="card-title"><i class="fas fa-exclamation-circle me-1"></i> Offene Posten</h3>
-    <div class="card-options d-flex align-items-center">
+    <div class="card-options d-flex align-items-center gap-2">
       <span class="me-2 text-muted">Gesamt offen: <strong class="{{ 'text-danger' if total_open > 0 else 'text-success' }}">{{ total_open|de_number }} €</strong></span>
+      {% if accounts %}
+      <form method="post" action="{{ url_for('accounting.open_items_set_account') }}"
+            class="d-inline-flex align-items-center gap-1"
+            onsubmit="return confirm('Buchungskonto auf allen offenen Posten setzen?');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <select name="account_id" class="form-select form-select-sm" style="width:200px" required
+                title="Buchungskonto für alle offenen Posten setzen">
+          <option value="">— Konto für alle setzen —</option>
+          {% for a in accounts %}
+          <option value="{{ a.id }}">{% if a.code %}[{{ a.code }}] {% endif %}{{ a.name }}</option>
+          {% endfor %}
+        </select>
+        <button type="submit" class="btn btn-sm btn-outline-secondary"
+                title="Auf alle offenen Posten anwenden">
+          <i class="fas fa-check"></i>
+        </button>
+      </form>
+      {% endif %}
       <a href="{{ url_for('accounting.open_item_new') }}" class="btn btn-sm btn-primary">
         <i class="fas fa-plus me-1"></i> Neuer offener Posten
       </a>
@@ -80,7 +102,7 @@
         <tr>
           <th>Rechnungsnr. / Beschreibung</th>
           <th>Kunde</th>
-          <th>Rechn.Lauf Jahr</th>
+          <th>Abr.Periode</th>
           <th>Datum</th>
           <th>Fällig</th>
           <th>Status</th>
@@ -117,8 +139,14 @@
             </a>
           </td>
 
-          {# Rechn.Lauf Jahr #}
-          <td>{{ item.period_year or '—' }}</td>
+          {# Abrechnungsperiode #}
+          <td>
+            {%- if item.invoice and item.invoice.billing_period -%}
+              {{ item.invoice.billing_period.name }}
+            {%- elif item.period_year -%}
+              {{ item.period_year }}
+            {%- else -%}—{%- endif -%}
+          </td>
 
           {# Datum #}
           <td>{{ item.date.strftime('%d.%m.%Y') }}</td>
@@ -141,10 +169,10 @@
           </td>
 
           {# Gesamt #}
-          <td class="text-end">{{ item.amount|de_number }} €</td>
+          <td class="text-end" style="white-space:nowrap">{{ item.amount|de_number }} €</td>
 
           {# Offen #}
-          <td class="text-end">
+          <td class="text-end" style="white-space:nowrap">
             <strong class="{{ 'text-danger' if bal < 0 }}">{{ bal|de_number }} €</strong>
           </td>
 
@@ -152,13 +180,24 @@
           <td class="text-end" style="white-space:nowrap">
             {% if not is_closed %}
             <form method="post" action="{{ url_for('accounting.open_item_pay', item_id=item.id) }}"
-                  class="d-inline-flex align-items-center">
+                  class="d-inline-flex align-items-center gap-1">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input type="number" name="amount" step="0.01" min="0.01"
                      value="{{ '%.2f'|format(bal) }}"
-                     class="form-control form-control-sm me-1" style="width:90px"
+                     class="form-control form-control-sm" style="width:90px"
                      title="Zahlungsbetrag">
-              <button type="submit" class="btn btn-sm btn-success me-1" title="Zahlung buchen">
+              {% if accounts %}
+              <select name="account_id" class="form-select form-select-sm" style="width:160px" required
+                      title="Buchungskonto">
+                <option value="">— Konto —</option>
+                {% for a in accounts %}
+                <option value="{{ a.id }}" {{ 'selected' if item.account_id == a.id }}>
+                  {% if a.code %}[{{ a.code }}] {% endif %}{{ a.name }}
+                </option>
+                {% endfor %}
+              </select>
+              {% endif %}
+              <button type="submit" class="btn btn-sm btn-success" title="Zahlung buchen">
                 <i class="fas fa-check"></i> Bezahlen
               </button>
             </form>

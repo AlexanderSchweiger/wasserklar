@@ -70,17 +70,6 @@
         <form method="post" action="{{ url_for('invoices.send_email', invoice_id=invoice.id) }}"
               style="display:inline">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          {% if not invoice.billing_run_id and invoice.status == 'Entwurf' and accounts %}
-          <select name="account_id" class="form-select form-select-sm tom-select d-inline-block ms-1 mb-1"
-                  style="max-width:200px" title="Buchungskonto für E-Mail-Versand">
-            <option value="">— Buchungskonto —</option>
-            {% for a in accounts %}
-            <option value="{{ a.id }}" {{ 'selected' if invoice.open_item and invoice.open_item.account_id == a.id }}>
-              {% if a.code %}[{{ a.code }}] {% endif %}{{ a.name }}
-            </option>
-            {% endfor %}
-          </select>
-          {% endif %}
           <button type="submit" class="btn btn-sm btn-outline-primary ms-1">
             <i class="fas fa-envelope me-1"></i> E-Mail
           </button>
@@ -98,8 +87,7 @@
               id="statusForm">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <div class="input-group input-group-sm mb-2">
-            <select name="status" class="form-select tom-select" id="statusSelect"
-                    onchange="toggleBuchungskonto(this.value)">
+            <select name="status" class="form-select tom-select" id="statusSelect">
               {% for s in invoice.ALL_STATUSES %}
               {% if s != 'Entwurf' or invoice.status == 'Entwurf' %}
               <option value="{{ s }}" {{ 'selected' if invoice.status == s }}>{{ s }}</option>
@@ -110,25 +98,6 @@
               <i class="fas fa-check"></i>
             </button>
           </div>
-          {% if not invoice.billing_run_id and accounts %}
-          <div id="buchungskontoField" class="mb-0" style="display:none">
-            <select name="account_id" class="form-select form-select-sm tom-select">
-              <option value="">— Buchungskonto (bei Versendet) —</option>
-              {% for a in accounts %}
-              <option value="{{ a.id }}" {{ 'selected' if invoice.open_item and invoice.open_item.account_id == a.id }}>
-                {% if a.code %}[{{ a.code }}] {% endif %}{{ a.name }}
-              </option>
-              {% endfor %}
-            </select>
-          </div>
-          <script>
-            function toggleBuchungskonto(val) {
-              var f = document.getElementById('buchungskontoField');
-              if (f) f.style.display = (val === 'Versendet') ? '' : 'none';
-            }
-            toggleBuchungskonto(document.getElementById('statusSelect').value);
-          </script>
-          {% endif %}
         </form>
       </div>
     </div>

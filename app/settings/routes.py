@@ -5,7 +5,8 @@ from app.settings import bp
 from app.extensions import db
 from app.models import AppSetting
 from app.settings_service import (_WG_MAP, _MAIL_MAP, send_mail, encrypt_password,
-                                  apply_mail_settings, platform_relay_active, get_wg)
+                                  apply_mail_settings, platform_relay_active, get_wg,
+                                  sanitize_rich_text)
 from app.invoices.design import INVOICE_DESIGNS, available_designs
 
 
@@ -54,6 +55,10 @@ def index():
         if design_key not in INVOICE_DESIGNS:
             design_key = 'classic'
         AppSetting.set('invoice.design', design_key)
+
+        # Rechnungs-Kontakttext (Rich-Text, auf <b>/<i>/<u>/<br> normalisiert)
+        contact_info = sanitize_rich_text(request.form.get('invoice_contact_info', ''))
+        AppSetting.set('invoice.contact_info', contact_info if contact_info else None)
 
         db.session.commit()
         apply_mail_settings()
@@ -122,11 +127,13 @@ def index():
     invoice_design = AppSetting.get('invoice.design', 'classic')
     if invoice_design not in INVOICE_DESIGNS:
         invoice_design = 'classic'
+    contact_info = AppSetting.get('invoice.contact_info') or ''
     return render_template('settings/index.html', wg=wg, mail=mail_cfg, mail_raw=mail_raw,
                            db_info=db_info,
                            doc_format=doc_format,
                            invoice_design=invoice_design,
-                           invoice_designs=available_designs())
+                           invoice_designs=available_designs(),
+                           invoice_contact_info=contact_info)
 
 
 @bp.route('/test-mail', methods=['POST'])
