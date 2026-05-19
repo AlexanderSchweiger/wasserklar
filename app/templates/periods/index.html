@@ -38,10 +38,9 @@
             {% endif %}
           </td>
           <td class="text-end">
-            <div class="btn-group btn-group-sm">
+            <div class="d-flex justify-content-end gap-1">
               {% if not period.active %}
-              <form method="post" action="{{ url_for('periods.activate', period_id=period.id) }}"
-                    style="display:inline">
+              <form method="post" action="{{ url_for('periods.activate', period_id=period.id) }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn btn-outline-success btn-sm" title="Aktiv setzen">
                   <i class="fas fa-check"></i>
@@ -54,7 +53,6 @@
               </a>
               {% if not period.active %}
               <form method="post" action="{{ url_for('periods.delete', period_id=period.id) }}"
-                    style="display:inline"
                     onsubmit="return confirm('Periode \'{{ period.name }}\' wirklich löschen?')">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn btn-outline-danger btn-sm" title="Löschen">

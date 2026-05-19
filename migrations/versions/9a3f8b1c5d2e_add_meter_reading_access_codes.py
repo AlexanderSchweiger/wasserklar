@@ -72,7 +72,7 @@ def upgrade():
 
     # 2. Marker-Spalten an meter_readings haengen — batch_alter_table fuer
     #    SQLite-Vertraeglichkeit (auf Postgres no-op-Wrapper).
-    with op.batch_alter_table('meter_readings') as batch_op:
+    with op.batch_alter_table('meter_readings', recreate='always') as batch_op:
         batch_op.add_column(sa.Column(
             'entered_via_self_service', sa.Boolean(),
             nullable=False, server_default=sa.false(),
@@ -93,7 +93,7 @@ def upgrade():
 
 
 def downgrade():
-    with op.batch_alter_table('meter_readings') as batch_op:
+    with op.batch_alter_table('meter_readings', recreate='always') as batch_op:
         batch_op.drop_constraint(
             'fk_meter_readings_self_service_code_id', type_='foreignkey',
         )

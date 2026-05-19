@@ -409,7 +409,7 @@ class WaterTariff(db.Model):
     base_fee_label = db.Column(db.String(100), default="Grundgebühr")
     additional_fee = db.Column(db.Numeric(10, 2))          # Zusatzgebühr €; None = keine Position auf Rechnung
     additional_fee_label = db.Column(db.String(100), default="Zusatzgebühr")
-    price_per_m3 = db.Column(db.Numeric(10, 2), nullable=False)  # Preis pro m³
+    price_per_m3 = db.Column(db.Numeric(10, 4), nullable=False)  # Preis pro m³ (4 Nachkommastellen)
     notes = db.Column(db.Text)
 
     def __repr__(self):
@@ -439,7 +439,7 @@ class BillingRun(db.Model):
     tariff_base_fee_label = db.Column(db.String(100), nullable=True)
     tariff_additional_fee = db.Column(db.Numeric(10, 2), nullable=True)
     tariff_additional_fee_label = db.Column(db.String(100), nullable=True)
-    tariff_price_per_m3 = db.Column(db.Numeric(10, 2), nullable=False)
+    tariff_price_per_m3 = db.Column(db.Numeric(10, 4), nullable=False)
     tariff_notes = db.Column(db.Text, nullable=True)
 
     invoices_created = db.Column(db.Integer, default=0, nullable=False)

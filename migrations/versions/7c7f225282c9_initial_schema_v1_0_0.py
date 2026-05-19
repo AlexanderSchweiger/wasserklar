@@ -5,6 +5,8 @@ Revises:
 Create Date: 2026-05-09 18:15:09.244965
 
 """
+from itertools import groupby
+
 from alembic import op
 import sqlalchemy as sa
 
@@ -383,51 +385,70 @@ def upgrade():
     )
     # ### end Alembic commands ###
 
-    # FK-Constraints separat vermeidet Reihenfolge-Probleme bei zirkulaeren FKs
-    op.create_foreign_key('fk_dunning_notices_created_by_id', 'dunning_notices', 'users', ['created_by_id'], ['id'])
-    op.create_foreign_key('fk_dunning_notices_fee_invoice_item_id', 'dunning_notices', 'invoice_items', ['fee_invoice_item_id'], ['id'])
-    op.create_foreign_key('fk_dunning_notices_invoice_id', 'dunning_notices', 'invoices', ['invoice_id'], ['id'])
-    op.create_foreign_key('fk_dunning_notices_reset_by_id', 'dunning_notices', 'users', ['reset_by_id'], ['id'])
-    op.create_foreign_key('fk_dunning_notices_stage_id', 'dunning_notices', 'dunning_stages', ['stage_id'], ['id'])
-    op.create_foreign_key('fk_invoice_items_account_id', 'invoice_items', 'accounts', ['account_id'], ['id'])
-    op.create_foreign_key('fk_invoice_items_dunning_notice_id', 'invoice_items', 'dunning_notices', ['dunning_notice_id'], ['id'])
-    op.create_foreign_key('fk_invoice_items_invoice_id', 'invoice_items', 'invoices', ['invoice_id'], ['id'])
-    op.create_foreign_key('fk_invoice_items_project_id', 'invoice_items', 'projects', ['project_id'], ['id'])
-    op.create_foreign_key('fk_billing_runs_account_id', 'billing_runs', 'accounts', ['account_id'], ['id'])
-    op.create_foreign_key('fk_billing_runs_created_by_id', 'billing_runs', 'users', ['created_by_id'], ['id'])
-    op.create_foreign_key('fk_dunning_stages_policy_id', 'dunning_stages', 'dunning_policies', ['policy_id'], ['id'])
-    op.create_foreign_key('fk_fiscal_years_closed_by_id', 'fiscal_years', 'users', ['closed_by_id'], ['id'])
-    op.create_foreign_key('fk_property_ownerships_customer_id', 'property_ownerships', 'customers', ['customer_id'], ['id'])
-    op.create_foreign_key('fk_property_ownerships_property_id', 'property_ownerships', 'properties', ['property_id'], ['id'])
-    op.create_foreign_key('fk_real_account_year_balances_real_account_id', 'real_account_year_balances', 'real_accounts', ['real_account_id'], ['id'])
-    op.create_foreign_key('fk_transfers_created_by_id', 'transfers', 'users', ['created_by_id'], ['id'])
-    op.create_foreign_key('fk_transfers_from_real_account_id', 'transfers', 'real_accounts', ['from_real_account_id'], ['id'])
-    op.create_foreign_key('fk_transfers_to_real_account_id', 'transfers', 'real_accounts', ['to_real_account_id'], ['id'])
-    op.create_foreign_key('fk_water_meters_property_id', 'water_meters', 'properties', ['property_id'], ['id'])
-    op.create_foreign_key('fk_fiscal_year_reopen_logs_fiscal_year_id', 'fiscal_year_reopen_logs', 'fiscal_years', ['fiscal_year_id'], ['year'])
-    op.create_foreign_key('fk_fiscal_year_reopen_logs_reopened_by_id', 'fiscal_year_reopen_logs', 'users', ['reopened_by_id'], ['id'])
-    op.create_foreign_key('fk_invoices_billing_run_id', 'invoices', 'billing_runs', ['billing_run_id'], ['id'])
-    op.create_foreign_key('fk_invoices_created_by_id', 'invoices', 'users', ['created_by_id'], ['id'])
-    op.create_foreign_key('fk_invoices_customer_id', 'invoices', 'customers', ['customer_id'], ['id'])
-    op.create_foreign_key('fk_invoices_property_id', 'invoices', 'properties', ['property_id'], ['id'])
-    op.create_foreign_key('fk_meter_readings_created_by_id', 'meter_readings', 'users', ['created_by_id'], ['id'])
-    op.create_foreign_key('fk_meter_readings_meter_id', 'meter_readings', 'water_meters', ['meter_id'], ['id'])
-    op.create_foreign_key('fk_booking_groups_created_by_id', 'booking_groups', 'users', ['created_by_id'], ['id'])
-    op.create_foreign_key('fk_booking_groups_customer_id', 'booking_groups', 'customers', ['customer_id'], ['id'])
-    op.create_foreign_key('fk_booking_groups_invoice_id', 'booking_groups', 'invoices', ['invoice_id'], ['id'])
-    op.create_foreign_key('fk_open_items_account_id', 'open_items', 'accounts', ['account_id'], ['id'])
-    op.create_foreign_key('fk_open_items_created_by_id', 'open_items', 'users', ['created_by_id'], ['id'])
-    op.create_foreign_key('fk_open_items_customer_id', 'open_items', 'customers', ['customer_id'], ['id'])
-    op.create_foreign_key('fk_open_items_invoice_id', 'open_items', 'invoices', ['invoice_id'], ['id'])
-    op.create_foreign_key('fk_bookings_account_id', 'bookings', 'accounts', ['account_id'], ['id'])
-    op.create_foreign_key('fk_bookings_created_by_id', 'bookings', 'users', ['created_by_id'], ['id'])
-    op.create_foreign_key('fk_bookings_customer_id', 'bookings', 'customers', ['customer_id'], ['id'])
-    op.create_foreign_key('fk_bookings_group_id', 'bookings', 'booking_groups', ['group_id'], ['id'])
-    op.create_foreign_key('fk_bookings_invoice_id', 'bookings', 'invoices', ['invoice_id'], ['id'])
-    op.create_foreign_key('fk_bookings_open_item_id', 'bookings', 'open_items', ['open_item_id'], ['id'])
-    op.create_foreign_key('fk_bookings_project_id', 'bookings', 'projects', ['project_id'], ['id'])
-    op.create_foreign_key('fk_bookings_real_account_id', 'bookings', 'real_accounts', ['real_account_id'], ['id'])
-    op.create_foreign_key('fk_bookings_storno_of_id', 'bookings', 'bookings', ['storno_of_id'], ['id'])
+    # FK-Constraints werden nach den Tabellen gesetzt — das vermeidet
+    # Reihenfolge-Probleme bei zirkulaeren FKs (z.B. dunning_notices <->
+    # invoice_items, bookings.storno_of_id self-ref).
+    # Tupel: (constraint_name, source_table, referent_table, local_cols, remote_cols)
+    foreign_keys = [
+        ('fk_dunning_notices_created_by_id', 'dunning_notices', 'users', ['created_by_id'], ['id']),
+        ('fk_dunning_notices_fee_invoice_item_id', 'dunning_notices', 'invoice_items', ['fee_invoice_item_id'], ['id']),
+        ('fk_dunning_notices_invoice_id', 'dunning_notices', 'invoices', ['invoice_id'], ['id']),
+        ('fk_dunning_notices_reset_by_id', 'dunning_notices', 'users', ['reset_by_id'], ['id']),
+        ('fk_dunning_notices_stage_id', 'dunning_notices', 'dunning_stages', ['stage_id'], ['id']),
+        ('fk_invoice_items_account_id', 'invoice_items', 'accounts', ['account_id'], ['id']),
+        ('fk_invoice_items_dunning_notice_id', 'invoice_items', 'dunning_notices', ['dunning_notice_id'], ['id']),
+        ('fk_invoice_items_invoice_id', 'invoice_items', 'invoices', ['invoice_id'], ['id']),
+        ('fk_invoice_items_project_id', 'invoice_items', 'projects', ['project_id'], ['id']),
+        ('fk_billing_runs_account_id', 'billing_runs', 'accounts', ['account_id'], ['id']),
+        ('fk_billing_runs_created_by_id', 'billing_runs', 'users', ['created_by_id'], ['id']),
+        ('fk_dunning_stages_policy_id', 'dunning_stages', 'dunning_policies', ['policy_id'], ['id']),
+        ('fk_fiscal_years_closed_by_id', 'fiscal_years', 'users', ['closed_by_id'], ['id']),
+        ('fk_property_ownerships_customer_id', 'property_ownerships', 'customers', ['customer_id'], ['id']),
+        ('fk_property_ownerships_property_id', 'property_ownerships', 'properties', ['property_id'], ['id']),
+        ('fk_real_account_year_balances_real_account_id', 'real_account_year_balances', 'real_accounts', ['real_account_id'], ['id']),
+        ('fk_transfers_created_by_id', 'transfers', 'users', ['created_by_id'], ['id']),
+        ('fk_transfers_from_real_account_id', 'transfers', 'real_accounts', ['from_real_account_id'], ['id']),
+        ('fk_transfers_to_real_account_id', 'transfers', 'real_accounts', ['to_real_account_id'], ['id']),
+        ('fk_water_meters_property_id', 'water_meters', 'properties', ['property_id'], ['id']),
+        ('fk_fiscal_year_reopen_logs_fiscal_year_id', 'fiscal_year_reopen_logs', 'fiscal_years', ['fiscal_year_id'], ['year']),
+        ('fk_fiscal_year_reopen_logs_reopened_by_id', 'fiscal_year_reopen_logs', 'users', ['reopened_by_id'], ['id']),
+        ('fk_invoices_billing_run_id', 'invoices', 'billing_runs', ['billing_run_id'], ['id']),
+        ('fk_invoices_created_by_id', 'invoices', 'users', ['created_by_id'], ['id']),
+        ('fk_invoices_customer_id', 'invoices', 'customers', ['customer_id'], ['id']),
+        ('fk_invoices_property_id', 'invoices', 'properties', ['property_id'], ['id']),
+        ('fk_meter_readings_created_by_id', 'meter_readings', 'users', ['created_by_id'], ['id']),
+        ('fk_meter_readings_meter_id', 'meter_readings', 'water_meters', ['meter_id'], ['id']),
+        ('fk_booking_groups_created_by_id', 'booking_groups', 'users', ['created_by_id'], ['id']),
+        ('fk_booking_groups_customer_id', 'booking_groups', 'customers', ['customer_id'], ['id']),
+        ('fk_booking_groups_invoice_id', 'booking_groups', 'invoices', ['invoice_id'], ['id']),
+        ('fk_open_items_account_id', 'open_items', 'accounts', ['account_id'], ['id']),
+        ('fk_open_items_created_by_id', 'open_items', 'users', ['created_by_id'], ['id']),
+        ('fk_open_items_customer_id', 'open_items', 'customers', ['customer_id'], ['id']),
+        ('fk_open_items_invoice_id', 'open_items', 'invoices', ['invoice_id'], ['id']),
+        ('fk_bookings_account_id', 'bookings', 'accounts', ['account_id'], ['id']),
+        ('fk_bookings_created_by_id', 'bookings', 'users', ['created_by_id'], ['id']),
+        ('fk_bookings_customer_id', 'bookings', 'customers', ['customer_id'], ['id']),
+        ('fk_bookings_group_id', 'bookings', 'booking_groups', ['group_id'], ['id']),
+        ('fk_bookings_invoice_id', 'bookings', 'invoices', ['invoice_id'], ['id']),
+        ('fk_bookings_open_item_id', 'bookings', 'open_items', ['open_item_id'], ['id']),
+        ('fk_bookings_project_id', 'bookings', 'projects', ['project_id'], ['id']),
+        ('fk_bookings_real_account_id', 'bookings', 'real_accounts', ['real_account_id'], ['id']),
+        ('fk_bookings_storno_of_id', 'bookings', 'bookings', ['storno_of_id'], ['id']),
+    ]
+
+    if op.get_bind().dialect.name == 'sqlite':
+        # SQLite kann FKs nicht per ALTER TABLE nachruesten — pro Tabelle ein
+        # batch-recreate (copy-and-move), das alle FKs der Tabelle auf einmal
+        # mitzieht.
+        by_table = sorted(foreign_keys, key=lambda fk: fk[1])
+        for source_table, group in groupby(by_table, key=lambda fk: fk[1]):
+            with op.batch_alter_table(source_table, recreate='always') as batch_op:
+                for name, _src, referent, local_cols, remote_cols in group:
+                    batch_op.create_foreign_key(name, referent, local_cols, remote_cols)
+    else:
+        # Postgres/MariaDB: FKs direkt per ALTER TABLE ADD CONSTRAINT.
+        for name, source_table, referent, local_cols, remote_cols in foreign_keys:
+            op.create_foreign_key(name, source_table, referent, local_cols, remote_cols)
 
 
 

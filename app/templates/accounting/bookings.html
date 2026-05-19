@@ -5,6 +5,8 @@
 
 <div class="card">
   <div class="card-header">
+    {% set filter_include = "[name='year'],[name='month'],[name='quarter'],[name='real_account_id'],[name='kind'],[name='tax'],[name='account_id'],[name='project_id']" %}
+    {% set months = [(1,'Jänner'),(2,'Februar'),(3,'März'),(4,'April'),(5,'Mai'),(6,'Juni'),(7,'Juli'),(8,'August'),(9,'September'),(10,'Oktober'),(11,'November'),(12,'Dezember')] %}
     <div class="filter-bar">
       <div class="mb-3">
         <label class="form-label mb-0 me-1">Jahr</label>
@@ -13,42 +15,46 @@
           hx-get="{{ url_for('accounting.bookings') }}"
           hx-trigger="change"
           hx-target="#bookings-table"
-          hx-include="[name='year'],[name='account_id'],[name='project_id'],[name='real_account_id'],[name='kind']">
+          hx-include="{{ filter_include }}">
       </div>
       <div class="mb-3">
-        {# Versteckter Select – HTMX hört darauf #}
-        <select name="real_account_id" id="ra-select" style="display:none"
+        <label class="form-label mb-0 me-1">Monat</label>
+        <select name="month" class="form-select form-select-sm"
           hx-get="{{ url_for('accounting.bookings') }}"
           hx-trigger="change"
           hx-target="#bookings-table"
-          hx-include="[name='year'],[name='account_id'],[name='project_id'],[name='real_account_id'],[name='kind']">
-          <option value=""></option>
-          {% for ra in real_accounts %}
-          <option value="{{ ra.id }}" {{ 'selected' if real_account_id|string == ra.id|string }}
-                  data-icon="{{ ra.icon or 'fa-university' }}">{{ ra.name }}</option>
+          hx-include="{{ filter_include }}">
+          <option value="">Alle Monate</option>
+          {% for num, name in months %}
+          <option value="{{ num }}" {{ 'selected' if month == num }}>{{ name }}</option>
           {% endfor %}
         </select>
-        {# Sichtbares Custom-Dropdown mit Icons #}
-        {% set sel_ra = real_accounts | selectattr('id', 'equalto', real_account_id | int) | first if real_account_id else None %}
-        <div class="dropdown d-inline-block">
-          <button type="button" class="btn btn-sm btn-outline-secondary dropdown-toggle"
-                  id="ra-btn" data-bs-toggle="dropdown" style="min-width:160px; text-align:left;">
-            <i class="fas {{ sel_ra.icon if sel_ra and sel_ra.icon else 'fa-university' }} me-1 text-muted" id="ra-btn-icon"></i>
-            <span id="ra-btn-label">{{ sel_ra.name if sel_ra else 'Alle Bankkonten' }}</span>
-          </button>
-          <div class="dropdown-menu">
-            <a class="dropdown-item" href="#" data-value="" data-icon="fa-university">
-              <i class="fas fa-university me-1 text-muted"></i> Alle Bankkonten
-            </a>
-            <div class="dropdown-divider"></div>
-            {% for ra in real_accounts %}
-            <a class="dropdown-item" href="#"
-               data-value="{{ ra.id }}" data-icon="{{ ra.icon or 'fa-university' }}">
-              <i class="fas {{ ra.icon or 'fa-university' }} me-1 text-muted"></i> {{ ra.name }}
-            </a>
-            {% endfor %}
-          </div>
-        </div>
+      </div>
+      <div class="mb-3">
+        <label class="form-label mb-0 me-1">Quartal</label>
+        <select name="quarter" class="form-select form-select-sm"
+          hx-get="{{ url_for('accounting.bookings') }}"
+          hx-trigger="change"
+          hx-target="#bookings-table"
+          hx-include="{{ filter_include }}">
+          <option value="">Alle Quartale</option>
+          {% for q in [1, 2, 3, 4] %}
+          <option value="{{ q }}" {{ 'selected' if quarter == q }}>Q{{ q }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="mb-3">
+        <label class="form-label mb-0 me-1">Bankkonto</label>
+        <select name="real_account_id" class="form-select form-select-sm"
+          hx-get="{{ url_for('accounting.bookings') }}"
+          hx-trigger="change"
+          hx-target="#bookings-table"
+          hx-include="{{ filter_include }}">
+          <option value="">Alle Bankkonten</option>
+          {% for ra in real_accounts %}
+          <option value="{{ ra.id }}" {{ 'selected' if real_account_id|string == ra.id|string }}>{{ ra.name }}</option>
+          {% endfor %}
+        </select>
       </div>
       <div class="mb-3">
         <label class="form-label mb-0 me-1">Typ</label>
@@ -56,10 +62,24 @@
           hx-get="{{ url_for('accounting.bookings') }}"
           hx-trigger="change"
           hx-target="#bookings-table"
-          hx-include="[name='year'],[name='account_id'],[name='project_id'],[name='real_account_id'],[name='kind']">
+          hx-include="{{ filter_include }}">
           <option value="" {{ 'selected' if not kind }}>Alle</option>
           <option value="income" {{ 'selected' if kind == 'income' }}>Einnahmen</option>
           <option value="expense" {{ 'selected' if kind == 'expense' }}>Ausgaben</option>
+        </select>
+      </div>
+      <div class="mb-3">
+        <label class="form-label mb-0 me-1">Steuer</label>
+        <select name="tax" class="form-select form-select-sm"
+          hx-get="{{ url_for('accounting.bookings') }}"
+          hx-trigger="change"
+          hx-target="#bookings-table"
+          hx-include="{{ filter_include }}">
+          <option value="" {{ 'selected' if not tax }}>Alle</option>
+          <option value="any" {{ 'selected' if tax == 'any' }}>Alle mit Steuer</option>
+          {% for tr in tax_rates %}
+          <option value="{{ tr.rate | int }}" {{ 'selected' if tax == tr.rate|int|string }}>{{ tr.rate | int }} %</option>
+          {% endfor %}
         </select>
       </div>
       <div class="mb-3">
@@ -68,7 +88,7 @@
           hx-get="{{ url_for('accounting.bookings') }}"
           hx-trigger="change"
           hx-target="#bookings-table"
-          hx-include="[name='year'],[name='account_id'],[name='project_id'],[name='real_account_id'],[name='kind']">
+          hx-include="{{ filter_include }}">
           <option value="">Alle Konten</option>
           {% for a in accounts %}
           <option value="{{ a.id }}" {{ 'selected' if account_id|string == a.id|string }}>
@@ -83,7 +103,7 @@
           hx-get="{{ url_for('accounting.bookings') }}"
           hx-trigger="change"
           hx-target="#bookings-table"
-          hx-include="[name='year'],[name='account_id'],[name='project_id'],[name='real_account_id'],[name='kind']">
+          hx-include="{{ filter_include }}">
           <option value="">Alle Projekte</option>
           {% for p in projects %}
           <option value="{{ p.id }}" {{ 'selected' if project_id|string == p.id|string }}>
@@ -97,7 +117,7 @@
           hx-get="{{ url_for('accounting.bookings') }}"
           hx-trigger="click"
           hx-target="#bookings-table"
-          hx-include="[name='year'],[name='account_id'],[name='project_id'],[name='real_account_id'],[name='kind']">
+          hx-include="{{ filter_include }}">
           <i class="fas fa-search me-1"></i> Anzeigen
         </button>
         <a href="{{ url_for('accounting.bookings') }}" class="btn btn-sm btn-outline-secondary">
@@ -132,8 +152,15 @@
           <a class="dropdown-item" href="{{ url_for('accounting.import_bookings') }}">
             <i class="fas fa-file-import me-1"></i> Importieren
           </a>
-          <a class="dropdown-item" href="{{ url_for('accounting.export_csv', year=year) }}">
-            <i class="fas fa-file-csv me-1"></i> CSV exportieren
+          <div class="dropdown-divider"></div>
+          <h6 class="dropdown-header">CSV exportieren</h6>
+          <a class="dropdown-item disabled" id="export-filtered"
+             href="{{ url_for('accounting.export_csv', year=year) }}">
+            <i class="fas fa-filter me-1"></i> Mit aktuellen Filtern
+          </a>
+          <a class="dropdown-item" id="export-year"
+             href="{{ url_for('accounting.export_csv', year=year) }}">
+            <i class="fas fa-calendar me-1"></i> Ganzes Jahr
           </a>
         </div>
       </div>
@@ -147,25 +174,35 @@
 
 {% block scripts %}
 <script>
+{# Das Export-Menü liegt im card-header und wird bei HTMX-Filter-Swaps nicht
+   neu gerendert. Daher den "Mit aktuellen Filtern"-Link aus den Live-Werten
+   der Filter-Leiste ableiten. #}
 (function () {
-  var sel      = document.getElementById('ra-select');
-  var btnIcon  = document.getElementById('ra-btn-icon');
-  var btnLabel = document.getElementById('ra-btn-label');
-  if (!sel) return;
+  var link     = document.getElementById('export-filtered');
+  var yearLink = document.getElementById('export-year');
+  var bar      = document.querySelector('.filter-bar');
+  if (!link || !bar) return;
+  var base = "{{ url_for('accounting.export_csv') }}";
+  var fields = ['month', 'quarter', 'real_account_id', 'kind', 'tax', 'account_id', 'project_id'];
 
-  document.querySelectorAll('.dropdown-menu .dropdown-item[data-value]').forEach(function (item) {
-    item.addEventListener('click', function (e) {
-      e.preventDefault();
-      var icon  = this.dataset.icon || 'fa-university';
-      var label = this.textContent.trim();
-
-      sel.value = this.dataset.value;
-      btnIcon.className = 'fas ' + icon + ' me-1 text-muted';
-      btnLabel.textContent = label;
-
-      sel.dispatchEvent(new Event('change'));
+  function sync() {
+    var params = new URLSearchParams();
+    var yearEl = bar.querySelector("[name='year']");
+    var year = (yearEl && yearEl.value) || '';
+    if (year) params.set('year', year);
+    var any = false;
+    fields.forEach(function (name) {
+      var el = bar.querySelector("[name='" + name + "']");
+      if (el && el.value) { params.set(name, el.value); any = true; }
     });
-  });
+    link.href = base + '?' + params.toString();
+    link.classList.toggle('disabled', !any);
+    if (yearLink) yearLink.href = base + (year ? '?year=' + year : '');
+  }
+
+  bar.addEventListener('change', sync);
+  sync();
 })();
 </script>
 {% endblock %}
+

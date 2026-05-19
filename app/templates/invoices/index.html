@@ -72,8 +72,9 @@
           hx-include="[name='status'],[name='period_id'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id'],[name='nur_email']">
         <span class="input-group-text"><i class="fas fa-search"></i></span>
       </div>
-      <div class="ms-2 mb-0 d-flex align-items-center">
-        <div class="form-check">
+      <div class="mb-3">
+        <label class="form-label mb-0" style="visibility:hidden">&nbsp;</label>
+        <div class="form-check mb-0">
           <input type="checkbox" class="form-check-input" id="nur_email"
                  name="nur_email" value="1" {{ 'checked' if nur_email }}
                  hx-get="{{ url_for('invoices.index') }}"

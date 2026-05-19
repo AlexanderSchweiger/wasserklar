@@ -56,6 +56,10 @@ def index():
             design_key = 'classic'
         AppSetting.set('invoice.design', design_key)
 
+        # Zählerwechsel-Detail auf Rechnungen (Checkbox)
+        print_swap = 'true' if request.form.get('invoice_print_meter_swap') else 'false'
+        AppSetting.set('invoice.print_meter_swap', print_swap)
+
         # Rechnungs-Kontakttext (Rich-Text, auf <b>/<i>/<u>/<br> normalisiert)
         contact_info = sanitize_rich_text(request.form.get('invoice_contact_info', ''))
         AppSetting.set('invoice.contact_info', contact_info if contact_info else None)
@@ -128,12 +132,14 @@ def index():
     if invoice_design not in INVOICE_DESIGNS:
         invoice_design = 'classic'
     contact_info = AppSetting.get('invoice.contact_info') or ''
+    print_meter_swap = AppSetting.get('invoice.print_meter_swap') == 'true'
     return render_template('settings/index.html', wg=wg, mail=mail_cfg, mail_raw=mail_raw,
                            db_info=db_info,
                            doc_format=doc_format,
                            invoice_design=invoice_design,
                            invoice_designs=available_designs(),
-                           invoice_contact_info=contact_info)
+                           invoice_contact_info=contact_info,
+                           invoice_print_meter_swap=print_meter_swap)
 
 
 @bp.route('/test-mail', methods=['POST'])

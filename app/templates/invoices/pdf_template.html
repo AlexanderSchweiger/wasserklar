@@ -123,7 +123,7 @@
       <td>{{ item.description }}</td>
       <td class="text-right">{{ item.quantity|de_number(2) }}</td>
       <td class="text-right">{{ item.unit }}</td>
-      <td class="text-right">{{ item.unit_price|de_number(2) }} €</td>
+      <td class="text-right">{{ item.unit_price|de_number(4 if item.unit == 'm³' else 2) }} €</td>
       <td class="text-right">{{ item.amount|de_number(2) }} €</td>
     </tr>
     {% endfor %}

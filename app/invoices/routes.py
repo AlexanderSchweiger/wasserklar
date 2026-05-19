@@ -368,15 +368,18 @@ def generate():
                     tax_rate=water_tax,
                 ))
 
-            # Verbrauchspositionen — bei Zählerwechsel je Zähler eine Zeile
+            # Verbrauchspositionen
             is_replacement = len(prop_readings) > 1
-            total_consumption = Decimal("0")
-            for reading in prop_readings:
-                consumption = reading.consumption or Decimal("0")
-                total_consumption += consumption
-                meter = reading.meter
+            print_meter_swap = AppSetting.get('invoice.print_meter_swap') == 'true'
+            total_consumption = sum(
+                (r.consumption or Decimal("0")) for r in prop_readings
+            )
 
-                if is_replacement:
+            if is_replacement and print_meter_swap:
+                # Separate Zeile je Zähler
+                for reading in prop_readings:
+                    consumption = reading.consumption or Decimal("0")
+                    meter = reading.meter
                     if meter.installed_to:
                         date_hint = f"ausgebaut {meter.installed_to.strftime('%d.%m.%Y')}"
                     elif (meter.installed_from
@@ -388,17 +391,28 @@ def generate():
                         f"Wasserverbrauch {period.name} – Zähler {meter.meter_number}"
                         f" ({date_hint}, {consumption} m³)"
                     )
-                else:
-                    desc = (
-                        f"Wasserverbrauch {period.name}"
-                        f" ({consumption.quantize(Decimal("1"))} m³ × {tariff.price_per_m3} €/m³)"
-                    )
-
-                amount = (consumption * tariff.price_per_m3).quantize(Decimal("0.01"))
+                    amount = (consumption * tariff.price_per_m3).quantize(Decimal("0.01"))
+                    db.session.add(InvoiceItem(
+                        invoice_id=inv.id,
+                        description=desc,
+                        quantity=consumption,
+                        unit="m³",
+                        unit_price=tariff.price_per_m3,
+                        amount=amount,
+                        tax_rate=water_tax,
+                    ))
+            else:
+                # Eine Zeile mit Gesamtverbrauch (Standard)
+                desc = (
+                    f"Wasserverbrauch {period.name}"
+                    f" ({total_consumption.quantize(Decimal('1'))} m³"
+                    f" × {tariff.price_per_m3} €/m³)"
+                )
+                amount = (total_consumption * tariff.price_per_m3).quantize(Decimal("0.01"))
                 db.session.add(InvoiceItem(
                     invoice_id=inv.id,
                     description=desc,
-                    quantity=consumption,
+                    quantity=total_consumption,
                     unit="m³",
                     unit_price=tariff.price_per_m3,
                     amount=amount,
@@ -659,12 +673,12 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
 @login_required
 def detail(invoice_id):
     from app.accounting import services as acc_svc
-    from app.models import TaxRate
+    from app import tax_service
     invoice = db.get_or_404(Invoice, invoice_id)
     accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
     doc_format = AppSetting.get("invoice.document_format", "pdf")
     fy_vat_liable = acc_svc.is_year_vat_liable(invoice.date.year) if invoice.date else False
-    tax_rates = TaxRate.query.order_by(TaxRate.rate).all() if fy_vat_liable else []
+    tax_rates = tax_service.tax_rates() if fy_vat_liable else []
     # Tarife und Projekte werden nur im Entwurfs-Modus für den Positions-Editor benötigt.
     if invoice.status == Invoice.STATUS_DRAFT:
         tariffs = WaterTariff.query.order_by(WaterTariff.valid_from.desc()).all()

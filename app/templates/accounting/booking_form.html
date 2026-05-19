@@ -12,7 +12,7 @@
   </div>
   {% if locked %}
   <div class="card-header bg-warning text-dark py-2">
-    <i class="fas fa-lock me-1"></i> Verbuchte Buchung — Datum, Betrag, Belegnummer{% if has_vat_fiscal_year %} und Steuersatz{% endif %} können nicht mehr
+    <i class="fas fa-lock me-1"></i> Verbuchte Buchung — Datum, Betrag, Belegnummer und Steuersatz können nicht mehr
     geändert werden.
   </div>
   {% endif %}
@@ -22,13 +22,13 @@
 
       <!-- Zeile 1: Datum | Betrag | Steuersatz | Berechnete Steuer -->
       <div class="row g-3">
-        <div class="col-12 col-sm-{% if has_vat_fiscal_year %}3{% else %}6{% endif %}">
+        <div class="col-12 col-sm-3">
           <label class="form-label">Datum <span class="text-danger">*</span></label>
           <input type="date" name="date" class="form-control"
             value="{{ booking.date.isoformat() if booking else (form_data.get('date', '') if form_data is defined else (keep_date if keep_date is defined and keep_date else (today.isoformat() if today is defined else ''))) }}"
             {% if not locked and today is defined %}max="{{ today.isoformat() }}" {% endif %}{{ 'readonly' if locked }} required>
         </div>
-        <div class="col-12 col-sm-{% if has_vat_fiscal_year %}3{% else %}6{% endif %}">
+        <div class="col-12 col-sm-3">
           <label class="form-label">Betrag (€) <span class="text-danger">*</span></label>
           <div class="input-group">
             <input type="number" name="amount" id="amount" step="0.01" class="form-control"
@@ -40,7 +40,6 @@
             <span id="buchungstyp_badge" class="badge bg-secondary text-white">—</span>
           </div>
         </div>
-        {% if has_vat_fiscal_year %}
         <div class="col-12 col-sm-3">
           <label class="form-label">Steuersatz</label>
           <select name="tax_rate" id="tax_rate" class="form-select tom-select" {{ 'disabled' if locked }}>
@@ -53,7 +52,6 @@
             </option>
             {% endfor %}
           </select>
-          <small class="text-muted d-block">Nur für USt-pflichtige Jahre</small>
           {% if locked %}<input type="hidden" name="tax_rate" value="{{ booking.tax_rate or 0 }}">{% endif %}
         </div>
         <div id="tax_display" class="col-12 col-sm-3">
@@ -64,9 +62,6 @@
           </div>
           <small class="text-muted">Netto: <span id="net_amount_display">–</span>&nbsp;€</small>
         </div>
-        {% else %}
-        <input type="hidden" name="tax_rate" value="0">
-        {% endif %}
       </div>
 
       <!-- Zeile 3: Konto | Projekt -->

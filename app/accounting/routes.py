@@ -15,8 +15,9 @@ from sqlalchemy import extract, func
 
 from app.accounting import bp
 from app.accounting import services as acc_svc
+from app import tax_service
 from app.extensions import db
-from app.models import Account, Booking, BookingGroup, Invoice, OpenItem, WaterTariff, Customer, Project, RealAccount, RealAccountYearBalance, FiscalYear, FiscalYearReopenLog, TaxRate, Transfer, BillingPeriod
+from app.models import Account, Booking, BookingGroup, Invoice, OpenItem, WaterTariff, Customer, Project, RealAccount, RealAccountYearBalance, FiscalYear, FiscalYearReopenLog, Transfer, BillingPeriod
 from app.utils import next_invoice_number
 from app.pagination import paginate_list, paginate_query
 
@@ -122,6 +123,18 @@ def bookings():
     kind = request.args.get("kind", "", type=str)
     if kind not in ("income", "expense"):
         kind = ""
+    # month (1–12) / quarter (1–4): zusätzliche Datumsfilter innerhalb des Jahres
+    month = request.args.get("month", 0, type=int)
+    if month not in range(1, 13):
+        month = 0
+    quarter = request.args.get("quarter", 0, type=int)
+    if quarter not in range(1, 5):
+        quarter = 0
+    # tax: "" (alle) / "any" (alle mit Steuer ≠ 0%) / Satz-Wert ("10", "20", …)
+    tax = request.args.get("tax", "", type=str)
+    _tax_values = {str(int(r)) for r in tax_service.tax_rate_values()}
+    if tax not in ({"any"} | _tax_values):
+        tax = ""
 
     query = (
         Booking.query
@@ -137,10 +150,23 @@ def bookings():
         query = query.filter(Booking.project_id == int(project_id))
     if real_account_id:
         query = query.filter(Booking.real_account_id == int(real_account_id))
+    if month:
+        query = query.filter(extract("month", Booking.date) == month)
+    if quarter:
+        query = query.filter(
+            extract("month", Booking.date).between(quarter * 3 - 2, quarter * 3)
+        )
     if kind == "income":
         query = query.filter(Booking.amount > 0)
     elif kind == "expense":
         query = query.filter(Booking.amount < 0)
+    # 0 % wird als tax_rate NULL gespeichert (siehe booking_new/_edit).
+    if tax == "any":
+        query = query.filter(Booking.tax_rate.isnot(None), Booking.tax_rate > 0)
+    elif tax == "0":
+        query = query.filter(db.or_(Booking.tax_rate.is_(None), Booking.tax_rate == 0))
+    elif tax:
+        query = query.filter(Booking.tax_rate == Decimal(tax))
 
     bkgs = query.all()
     accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
@@ -161,16 +187,23 @@ def bookings():
                 Transfer.to_real_account_id == ra_id,
             )
         )
-    # account_id/project_id/kind gelten nur für Buchungen, nicht für Umbuchungen.
-    # Bei aktivem Einnahmen-/Ausgaben-Filter werden Umbuchungen ebenfalls
-    # ausgeblendet, da sie weder echte Einnahmen noch Ausgaben sind.
-    transfers = [] if (account_id or project_id or kind) else transfer_query.all()
+    if month:
+        transfer_query = transfer_query.filter(extract("month", Transfer.date) == month)
+    if quarter:
+        transfer_query = transfer_query.filter(
+            extract("month", Transfer.date).between(quarter * 3 - 2, quarter * 3)
+        )
+    # account_id/project_id/kind/tax gelten nur für Buchungen, nicht für
+    # Umbuchungen. Bei aktivem Einnahmen-/Ausgaben- oder Steuerfilter werden
+    # Umbuchungen ebenfalls ausgeblendet, da sie weder echte Einnahmen noch
+    # Ausgaben sind und keinen Steuersatz tragen.
+    transfers = [] if (account_id or project_id or kind or tax) else transfer_query.all()
 
     # Grouping-Modus: Sammelbuchungen werden nur im ungefilterten Jahresview
     # gruppiert. Sobald Konto-/Projekt-/Bankkonto-Filter aktiv sind, fällt die
     # Ansicht auf eine flache Zeilenliste zurück (ADR-002), damit Filter
     # innerhalb einer Sammelbuchung konsistent wirken.
-    group_mode = not (account_id or project_id or real_account_id or kind)
+    group_mode = not (account_id or project_id or real_account_id or kind or tax)
 
     rows = []
     seen_groups = OrderedDict()  # group_id → row-dict (für In-Place-Update)
@@ -254,7 +287,8 @@ def bookings():
         accounts=accounts, projects=projects,
         account_id=account_id, project_id=project_id,
         real_accounts=real_accounts, real_account_id=real_account_id,
-        kind=kind,
+        kind=kind, month=month, quarter=quarter, tax=tax,
+        tax_rates=tax_service.tax_rates(),
         **table_ctx,
     )
 
@@ -266,7 +300,7 @@ def booking_new():
     active_projects = Project.query.filter_by(closed=False).order_by(Project.name).all()
     real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
     customers = Customer.query.filter_by(active=True).order_by(Customer.name).all()
-    tax_rates = TaxRate.query.order_by(TaxRate.rate).all()
+    tax_rates = tax_service.tax_rates()
     default_real_account = RealAccount.query.filter_by(is_default=True, active=True).first()
     today = date.today()
 
@@ -347,7 +381,7 @@ def booking_edit(booking_id):
     active_projects = Project.query.filter_by(closed=False).order_by(Project.name).all()
     real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
     customers = Customer.query.filter_by(active=True).order_by(Customer.name).all()
-    tax_rates = TaxRate.query.order_by(TaxRate.rate).all()
+    tax_rates = tax_service.tax_rates()
     if request.method == "POST":
         acc = db.get_or_404(Account, int(request.form["account_id"]))
         project_id_raw = request.form.get("project_id") or None
@@ -526,7 +560,7 @@ def booking_group_new():
     active_projects = Project.query.filter_by(closed=False).order_by(Project.name).all()
     real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
     customers = Customer.query.filter_by(active=True).order_by(Customer.name).all()
-    tax_rates = TaxRate.query.order_by(TaxRate.rate).all()
+    tax_rates = tax_service.tax_rates()
     default_real_account = RealAccount.query.filter_by(is_default=True, active=True).first()
     today = date.today()
 
@@ -713,7 +747,7 @@ def booking_group_edit(group_id):
     active_projects = Project.query.filter_by(closed=False).order_by(Project.name).all()
     real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
     customers = Customer.query.filter_by(active=True).order_by(Customer.name).all()
-    tax_rates = TaxRate.query.order_by(TaxRate.rate).all()
+    tax_rates = tax_service.tax_rates()
     default_real_account = RealAccount.query.filter_by(is_default=True, active=True).first()
     today = date.today()
 
@@ -2013,12 +2047,40 @@ def import_bookings():
 @login_required
 def export_csv():
     year = request.args.get("year", date.today().year, type=int)
-    bookings = (
-        Booking.query
-        .filter(extract("year", Booking.date) == year)
-        .order_by(Booking.date)
-        .all()
-    )
+    # Filter werden nur angewandt, wenn die jeweiligen Parameter mitgegeben
+    # werden — der "ganzes Jahr"-Export ruft die Route ohne sie auf.
+    real_account_id = request.args.get("real_account_id", "", type=str)
+    account_id = request.args.get("account_id", "", type=str)
+    project_id = request.args.get("project_id", "", type=str)
+    kind = request.args.get("kind", "", type=str)
+    month = request.args.get("month", 0, type=int)
+    quarter = request.args.get("quarter", 0, type=int)
+    tax = request.args.get("tax", "", type=str)
+
+    query = Booking.query.filter(extract("year", Booking.date) == year)
+    if real_account_id:
+        query = query.filter(Booking.real_account_id == int(real_account_id))
+    if account_id:
+        query = query.filter(Booking.account_id == int(account_id))
+    if project_id:
+        query = query.filter(Booking.project_id == int(project_id))
+    if month in range(1, 13):
+        query = query.filter(extract("month", Booking.date) == month)
+    if quarter in range(1, 5):
+        query = query.filter(
+            extract("month", Booking.date).between(quarter * 3 - 2, quarter * 3)
+        )
+    if kind == "income":
+        query = query.filter(Booking.amount > 0)
+    elif kind == "expense":
+        query = query.filter(Booking.amount < 0)
+    if tax == "any":
+        query = query.filter(Booking.tax_rate.isnot(None), Booking.tax_rate > 0)
+    elif tax == "0":
+        query = query.filter(db.or_(Booking.tax_rate.is_(None), Booking.tax_rate == 0))
+    elif tax in {str(int(r)) for r in tax_service.tax_rate_values()}:
+        query = query.filter(Booking.tax_rate == Decimal(tax))
+    bookings = query.order_by(Booking.date).all()
 
     def generate():
         output = io.StringIO()

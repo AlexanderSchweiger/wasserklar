@@ -158,7 +158,7 @@
               <td>{{ item.description }}</td>
               <td class="text-end">{{ item.quantity|de_number(0) }}</td>
               <td class="text-end">{{ item.unit }}</td>
-              <td class="text-end">{{ item.unit_price|de_number }} €</td>
+              <td class="text-end">{{ item.unit_price|de_number(4 if item.unit == 'm³' else 2) }} €</td>
               {% if fy_vat_liable %}
               <td class="text-end">{% if item.tax_rate %}{{ item.tax_rate|de_number(0) }} %{% else %}—{% endif %}</td>
               {% endif %}

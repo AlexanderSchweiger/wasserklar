@@ -196,6 +196,21 @@
 
           <hr class="my-3">
 
+          <hr class="my-3">
+
+          <div class="mb-3">
+            <label class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" name="invoice_print_meter_swap"
+                     {% if invoice_print_meter_swap %}checked{% endif %}>
+              <span class="form-check-label">Zählerwechsel auf Rechnungen drucken</span>
+            </label>
+            <div class="form-text">
+              Wenn aktiviert, wird bei Objekten mit Zählertausch jeder Zähler als eigene Zeile
+              auf der Rechnung ausgewiesen. Wenn deaktiviert (Standard), erscheint nur eine
+              Zeile mit dem Gesamtverbrauch aller Zähler.
+            </div>
+          </div>
+
           <div class="mb-1">
             <label class="form-label">Rechnungsdesign</label>
             <select name="invoice_design" class="form-select">

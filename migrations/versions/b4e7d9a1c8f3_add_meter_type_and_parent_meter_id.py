@@ -30,7 +30,7 @@ depends_on = None
 
 
 def upgrade():
-    with op.batch_alter_table('water_meters') as batch_op:
+    with op.batch_alter_table('water_meters', recreate='always') as batch_op:
         batch_op.add_column(sa.Column(
             'meter_type', sa.String(length=10),
             nullable=False, server_default=sa.text("'main'"),
@@ -50,7 +50,7 @@ def upgrade():
 
 
 def downgrade():
-    with op.batch_alter_table('water_meters') as batch_op:
+    with op.batch_alter_table('water_meters', recreate='always') as batch_op:
         batch_op.drop_constraint(
             'fk_water_meters_parent_meter_id', type_='foreignkey',
         )

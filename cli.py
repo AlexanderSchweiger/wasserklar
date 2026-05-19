@@ -114,23 +114,17 @@ def apply_schema_upgrades(conn, dialect, *, verbose=False, schema=None):
 
 
 def seed_default_tax_rates(db, *, verbose=False):
-    """Die vier Standard-Steuersaetze idempotent anlegen."""
-    from decimal import Decimal
+    """Die Standard-Steuersaetze idempotent anlegen (Quelle: tax_service)."""
     from app.models import TaxRate
+    from app import tax_service
 
-    default_rates = [
-        (0,  "0 % – keine MwSt"),
-        (10, "10 %"),
-        (13, "13 %"),
-        (20, "20 %"),
-    ]
-    for rate_val, label in default_rates:
-        if not TaxRate.query.filter_by(rate=Decimal(str(rate_val))).first():
-            db.session.add(TaxRate(rate=Decimal(str(rate_val)), label=label))
+    for tr in tax_service.tax_rates():
+        if not TaxRate.query.filter_by(rate=tr.rate).first():
+            db.session.add(TaxRate(rate=tr.rate, label=tr.label))
             if verbose:
-                print(f"  + Steuersatz {rate_val}% angelegt.")
+                print(f"  + Steuersatz {tr.rate}% angelegt.")
         elif verbose:
-            print(f"  ok Steuersatz {rate_val}% bereits vorhanden.")
+            print(f"  ok Steuersatz {tr.rate}% bereits vorhanden.")
     db.session.commit()
 
 
