@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% set is_system = role and role.is_system %}
+{% block title %}{{ 'Rolle bearbeiten' if role else 'Neue Rolle' }}{% endblock %}
+{% block page_title %}
+  <i class="fas fa-user-shield me-2"></i>
+  {{ 'Rolle bearbeiten: ' + role.name if role else 'Neue Rolle' }}
+{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="card-header">
+    <h3 class="card-title">
+      {% if is_system %}
+        <i class="fas fa-lock me-1 text-muted"></i> System-Rolle (nur Lesen)
+      {% else %}
+        {{ 'Bearbeiten' if role else 'Anlegen' }}
+      {% endif %}
+    </h3>
+  </div>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="card-body">
+      <div class="mb-3">
+        <label class="form-label">Name</label>
+        <input type="text" name="name" class="form-control"
+               value="{{ role.name if role else '' }}"
+               {{ 'readonly' if is_system }} required>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Beschreibung</label>
+        <input type="text" name="description" class="form-control"
+               value="{{ role.description if role else '' }}"
+               {{ 'readonly' if is_system }}>
+      </div>
+      <div class="mb-2">
+        <label class="form-label">Rechte</label>
+        {% if is_system %}
+          <div class="text-secondary small mb-2">
+            Die Admin-Rolle hat implizit alle Rechte — auch zukünftig neu hinzukommende.
+          </div>
+        {% endif %}
+      </div>
+      <div class="row g-2">
+        {% for key, label, desc in ALL_PERMISSIONS %}
+        <div class="col-md-6">
+          <label class="form-check">
+            <input type="checkbox" name="permissions" value="{{ key }}"
+                   class="form-check-input"
+                   {{ 'checked' if (is_system or key in selected_perms) }}
+                   {{ 'disabled' if is_system }}>
+            <span class="form-check-label">
+              <strong>{{ label }}</strong>
+              <div class="text-secondary small">{{ desc }}</div>
+            </span>
+          </label>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="card-footer">
+      {% if not is_system %}
+      <button type="submit" class="btn btn-primary">
+        <i class="fas fa-save me-1"></i> Speichern
+      </button>
+      {% endif %}
+      <a href="{{ url_for('auth.roles') }}" class="btn btn-secondary ms-2">
+        {{ 'Zurück' if is_system else 'Abbrechen' }}
+      </a>
+    </div>
+  </form>
+</div>
+{% endblock %}

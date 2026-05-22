@@ -6,11 +6,13 @@ import pytest
 
 from app.extensions import db
 from app.models import Account, Customer, RealAccount, User
+from tests.conftest import _ensure_role
 
 
 @pytest.fixture
 def user(app):
-    u = User(username="tester", email="tester@test.com", role="admin")
+    admin = _ensure_role("Admin")
+    u = User(username="tester", email="tester@test.com", role_id=admin.id)
     u.set_password("test")
     db.session.add(u)
     db.session.commit()

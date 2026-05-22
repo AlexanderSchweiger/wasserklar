@@ -4,8 +4,14 @@ from flask_mail import Message
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from app.auth import bp
 from app.auth.password_policy import validate_password
+from app.auth.permissions import (
+    ALL_PERMISSIONS,
+    PERMISSION_KEYS,
+    PERM_VERWALTUNG,
+    permission_required,
+)
 from app.extensions import db
-from app.models import User
+from app.models import Role, RolePermission, User
 from app.settings_service import send_mail
 
 
@@ -178,60 +184,74 @@ def admin_required(f):
     return decorated
 
 
+def _all_roles():
+    return Role.query.order_by(Role.name).all()
+
+
+def _resolve_role_id(raw):
+    """POST-Param 'role_id' -> Role oder None bei ungueltigem/fehlendem Wert."""
+    try:
+        return db.session.get(Role, int(raw))
+    except (TypeError, ValueError):
+        return None
+
+
 @bp.route("/users")
-@login_required
-@admin_required
+@permission_required(PERM_VERWALTUNG)
 def users():
     all_users = User.query.order_by(User.username).all()
     return render_template("auth/users.html", users=all_users)
 
 
 @bp.route("/users/new", methods=["GET", "POST"])
-@login_required
-@admin_required
+@permission_required(PERM_VERWALTUNG)
 def user_new():
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         email = request.form.get("email", "").strip()
         password = request.form.get("password", "")
-        role = request.form.get("role", "user")
+        role = _resolve_role_id(request.form.get("role_id"))
         pw_errors = validate_password(password, username=username, email=email)
         if User.query.filter_by(username=username).first():
             flash("Benutzername bereits vergeben.", "danger")
         elif User.query.filter_by(email=email).first():
             flash("E-Mail bereits vergeben.", "danger")
+        elif role is None:
+            flash("Bitte eine gültige Rolle auswählen.", "danger")
         elif pw_errors:
             for e in pw_errors:
                 flash(e, "danger")
         else:
-            user = User(username=username, email=email, role=role)
+            user = User(username=username, email=email, role_id=role.id)
             user.set_password(password)
             db.session.add(user)
             db.session.commit()
             flash(f"Benutzer '{username}' angelegt.", "success")
             return redirect(url_for("auth.users"))
-    return render_template("auth/user_form.html", user=None)
+    return render_template("auth/user_form.html", user=None, roles=_all_roles())
 
 
 @bp.route("/users/<int:user_id>/edit", methods=["GET", "POST"])
-@login_required
-@admin_required
+@permission_required(PERM_VERWALTUNG)
 def user_edit(user_id):
     user = db.get_or_404(User, user_id)
     if request.method == "POST":
-        user.username = request.form.get("username", "").strip()
-        user.email = request.form.get("email", "").strip()
-        user.role = request.form.get("role", "user")
-        user.active = "active" in request.form
-        db.session.commit()
-        flash("Benutzer aktualisiert.", "success")
-        return redirect(url_for("auth.users"))
-    return render_template("auth/user_form.html", user=user)
+        role = _resolve_role_id(request.form.get("role_id"))
+        if role is None:
+            flash("Bitte eine gültige Rolle auswählen.", "danger")
+        else:
+            user.username = request.form.get("username", "").strip()
+            user.email = request.form.get("email", "").strip()
+            user.role_id = role.id
+            user.active = "active" in request.form
+            db.session.commit()
+            flash("Benutzer aktualisiert.", "success")
+            return redirect(url_for("auth.users"))
+    return render_template("auth/user_form.html", user=user, roles=_all_roles())
 
 
 @bp.route("/users/<int:user_id>/password", methods=["POST"])
-@login_required
-@admin_required
+@permission_required(PERM_VERWALTUNG)
 def user_set_password(user_id):
     user = db.get_or_404(User, user_id)
     password = request.form.get("password", "")
@@ -247,3 +267,110 @@ def user_set_password(user_id):
         db.session.commit()
         flash(f"Passwort für '{user.username}' geändert.", "success")
     return redirect(url_for("auth.user_edit", user_id=user.id))
+
+
+# ---------------------------------------------------------------------------
+# Rollen- und Berechtigungsverwaltung
+# ---------------------------------------------------------------------------
+
+def _selected_permissions_from_form():
+    """Aus dem Form gewaehlte Permission-Keys extrahieren (Checkbox-Liste)."""
+    raw = request.form.getlist("permissions")
+    return [p for p in raw if p in PERMISSION_KEYS]
+
+
+@bp.route("/roles")
+@permission_required(PERM_VERWALTUNG)
+def roles():
+    all_roles = Role.query.order_by(Role.is_system.desc(), Role.name).all()
+    user_counts = {
+        rid: cnt
+        for rid, cnt in db.session.query(
+            User.role_id, db.func.count(User.id)
+        ).group_by(User.role_id).all()
+    }
+    return render_template(
+        "auth/roles.html", roles=all_roles, user_counts=user_counts
+    )
+
+
+@bp.route("/roles/new", methods=["GET", "POST"])
+@permission_required(PERM_VERWALTUNG)
+def role_new():
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        description = request.form.get("description", "").strip() or None
+        perms = _selected_permissions_from_form()
+        if not name:
+            flash("Bitte einen Namen für die Rolle angeben.", "danger")
+        elif Role.query.filter(db.func.lower(Role.name) == name.lower()).first():
+            flash("Rollenname bereits vergeben.", "danger")
+        else:
+            role = Role(name=name, description=description, is_system=False)
+            for key in perms:
+                role.permissions.append(RolePermission(permission_key=key))
+            db.session.add(role)
+            db.session.commit()
+            flash(f"Rolle '{name}' angelegt.", "success")
+            return redirect(url_for("auth.roles"))
+    return render_template(
+        "auth/role_form.html",
+        role=None,
+        selected_perms=set(_selected_permissions_from_form()),
+    )
+
+
+@bp.route("/roles/<int:role_id>/edit", methods=["GET", "POST"])
+@permission_required(PERM_VERWALTUNG)
+def role_edit(role_id):
+    role = db.get_or_404(Role, role_id)
+    if request.method == "POST":
+        if role.is_system:
+            flash("System-Rollen können nicht verändert werden.", "danger")
+            return redirect(url_for("auth.roles"))
+        name = request.form.get("name", "").strip()
+        description = request.form.get("description", "").strip() or None
+        perms = _selected_permissions_from_form()
+        clash = Role.query.filter(
+            db.func.lower(Role.name) == name.lower(), Role.id != role.id
+        ).first()
+        if not name:
+            flash("Bitte einen Namen für die Rolle angeben.", "danger")
+        elif clash is not None:
+            flash("Rollenname bereits vergeben.", "danger")
+        else:
+            role.name = name
+            role.description = description
+            # Permissions neu setzen (cascade=delete-orphan raeumt die alten weg)
+            role.permissions.clear()
+            for key in perms:
+                role.permissions.append(RolePermission(permission_key=key))
+            db.session.commit()
+            flash(f"Rolle '{name}' aktualisiert.", "success")
+            return redirect(url_for("auth.roles"))
+    return render_template(
+        "auth/role_form.html",
+        role=role,
+        selected_perms=role.permission_keys,
+    )
+
+
+@bp.route("/roles/<int:role_id>/delete", methods=["POST"])
+@permission_required(PERM_VERWALTUNG)
+def role_delete(role_id):
+    role = db.get_or_404(Role, role_id)
+    if role.is_system:
+        flash("System-Rollen können nicht gelöscht werden.", "danger")
+        return redirect(url_for("auth.roles"))
+    user_count = User.query.filter_by(role_id=role.id).count()
+    if user_count:
+        flash(
+            f"Rolle '{role.name}' ist noch {user_count} Benutzer(n) zugeordnet "
+            "und kann daher nicht gelöscht werden.",
+            "danger",
+        )
+        return redirect(url_for("auth.roles"))
+    db.session.delete(role)
+    db.session.commit()
+    flash(f"Rolle '{role.name}' gelöscht.", "success")
+    return redirect(url_for("auth.roles"))

@@ -30,11 +30,8 @@ from app.models import Booking, Invoice, MeterReading, Transfer
 
 
 def _require_admin():
-    if not current_user.is_authenticated:
-        abort(401)
-    if not current_user.is_admin:
-        flash("Kein Zugriff.", "danger")
-        return redirect(url_for("main.dashboard"))
+    """Deprecated: das Blueprint setzt das ``verwaltung``-Recht bereits via
+    ``before_request`` durch. Bleibt als No-Op, bis alle Aufrufer entfernt sind."""
     return None
 
 

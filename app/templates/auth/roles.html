@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Rollen & Rechte{% endblock %}
+{% block page_title %}<i class="fas fa-user-shield me-2"></i> Rollen & Rechte{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="card-header">
+    <h3 class="card-title">Rollen</h3>
+    <div class="card-options">
+      <a href="{{ url_for('auth.role_new') }}" class="btn btn-primary btn-sm">
+        <i class="fas fa-plus me-1"></i> Neue Rolle
+      </a>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <table class="table table-hover table-striped mb-0">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Beschreibung</th>
+          <th>Rechte</th>
+          <th class="text-end">Benutzer</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in roles %}
+        <tr>
+          <td>
+            {% if r.is_system %}
+              <i class="fas fa-lock text-muted me-1" title="System-Rolle"></i>
+            {% endif %}
+            <strong>{{ r.name }}</strong>
+          </td>
+          <td class="text-secondary">{{ r.description or '' }}</td>
+          <td>
+            {% if r.name == 'Admin' %}
+              <span class="badge bg-danger text-white">alle Rechte</span>
+            {% else %}
+              {% for key, label, _desc in ALL_PERMISSIONS %}
+                {% if key in r.permission_keys %}
+                  <span class="badge bg-blue-lt">{{ label }}</span>
+                {% endif %}
+              {% endfor %}
+              {% if not r.permission_keys %}
+                <span class="text-muted small">keine</span>
+              {% endif %}
+            {% endif %}
+          </td>
+          <td class="text-end">{{ user_counts.get(r.id, 0) }}</td>
+          <td class="text-end">
+            {% if r.is_system %}
+              <span class="text-muted small"><i class="fas fa-lock"></i> System</span>
+            {% else %}
+              <a href="{{ url_for('auth.role_edit', role_id=r.id) }}" class="btn btn-sm btn-outline-secondary">
+                <i class="fas fa-edit"></i>
+              </a>
+              <form method="post" action="{{ url_for('auth.role_delete', role_id=r.id) }}"
+                    class="d-inline"
+                    onsubmit="return confirm('Rolle „{{ r.name }}“ wirklich löschen?');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-sm btn-outline-danger"
+                        {{ 'disabled' if user_counts.get(r.id, 0) }}>
+                  <i class="fas fa-trash"></i>
+                </button>
+              </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

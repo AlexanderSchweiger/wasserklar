@@ -37,9 +37,13 @@
           {% endif %}
           <div class="mb-3">
             <label class="form-label">Rolle</label>
-            <select name="role" class="form-select tom-select">
-              <option value="user" {{ 'selected' if user and user.role == 'user' }}>Benutzer</option>
-              <option value="admin" {{ 'selected' if user and user.role == 'admin' }}>Administrator</option>
+            <select name="role_id" class="form-select tom-select" required>
+              {% for r in roles %}
+              <option value="{{ r.id }}"
+                {{ 'selected' if user and user.role_id == r.id }}>
+                {{ r.name }}{% if r.description %} — {{ r.description }}{% endif %}
+              </option>
+              {% endfor %}
             </select>
           </div>
           {% if user %}

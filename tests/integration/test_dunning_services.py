@@ -19,6 +19,7 @@ from app.dunning.services import (
     eligible_invoices_for_stage,
     reset_dunning_notice,
 )
+from tests.conftest import _ensure_role
 
 
 # ---------------------------------------------------------------------------
@@ -27,7 +28,8 @@ from app.dunning.services import (
 
 @pytest.fixture
 def admin_user():
-    u = User(username="admin", email="admin@test.at", role="admin", active=True)
+    admin_role = _ensure_role("Admin")
+    u = User(username="admin", email="admin@test.at", role_id=admin_role.id, active=True)
     u.set_password("test1234")
     db.session.add(u)
     db.session.commit()

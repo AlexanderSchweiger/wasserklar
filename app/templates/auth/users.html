@@ -28,9 +28,13 @@
           <td>{{ u.username }}</td>
           <td>{{ u.email }}</td>
           <td>
-            <span class="badge bg-{{ 'danger' if u.role == 'admin' else 'secondary' }}">
-              {{ u.role }}
+            {% if u.role %}
+            <span class="badge bg-{{ 'danger' if u.role.name == 'Admin' else 'secondary' }} text-white">
+              {{ u.role.name }}
             </span>
+            {% else %}
+            <span class="badge bg-warning text-dark">keine Rolle</span>
+            {% endif %}
           </td>
           <td>
             {% if u.active %}

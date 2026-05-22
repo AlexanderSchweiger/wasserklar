@@ -13,11 +13,7 @@ from app.invoices.design import INVOICE_DESIGNS, available_designs
 @bp.route('/', methods=['GET', 'POST'])
 @login_required
 def index():
-    """Einstellungsseite für WG-Kontaktdaten und E-Mail-Server (nur Admin)."""
-    if not current_user.is_admin:
-        flash('Kein Zugriff.', 'danger')
-        return redirect(url_for('main.dashboard'))
-
+    """Einstellungsseite für WG-Kontaktdaten und E-Mail-Server (Verwaltungs-Recht)."""
     if request.method == 'POST':
         # WG-Kontaktdaten
         for attr in _WG_MAP:
@@ -156,9 +152,6 @@ def index():
 @login_required
 def send_test_mail():
     """Sendet eine Test-Mail an die Admin-Adresse (JSON-Antwort)."""
-    if not current_user.is_admin:
-        return jsonify({'ok': False, 'error': 'Kein Zugriff'}), 403
-
     recipient = get_wg('email')
     if not recipient:
         return jsonify({'ok': False, 'error': 'Keine Kontakt-E-Mail-Adresse hinterlegt (Einstellungen → Kontaktdaten)'}), 400

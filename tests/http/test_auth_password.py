@@ -4,11 +4,13 @@ import pytest
 from app.auth.routes import _make_reset_token
 from app.extensions import db
 from app.models import User
+from tests.conftest import _ensure_role
 
 
 @pytest.fixture
 def user(app):
-    u = User(username="tester", email="tester@example.com", role="user")
+    role = _ensure_role("NurLesen")
+    u = User(username="tester", email="tester@example.com", role_id=role.id)
     u.set_password("Altes-Passwort-2026")
     db.session.add(u)
     db.session.commit()
@@ -17,7 +19,8 @@ def user(app):
 
 @pytest.fixture
 def admin(app):
-    u = User(username="chef", email="chef@example.com", role="admin")
+    admin_role = _ensure_role("Admin")
+    u = User(username="chef", email="chef@example.com", role_id=admin_role.id)
     u.set_password("Admin-Passwort-2026")
     db.session.add(u)
     db.session.commit()
@@ -179,13 +182,14 @@ class TestAdminUserForm:
     def test_new_user_with_weak_password_is_rejected(self, client, admin):
         client.get("/auth/logout")
         _login(client, "chef", "Admin-Passwort-2026")
+        nurlesen = _ensure_role("NurLesen")
         r = client.post(
             "/auth/users/new",
             data={
                 "username": "neuer",
                 "email": "neuer@example.com",
                 "password": "schwach",
-                "role": "user",
+                "role_id": str(nurlesen.id),
             },
         )
         assert r.status_code == 200
@@ -194,13 +198,14 @@ class TestAdminUserForm:
     def test_new_user_with_strong_password_is_created(self, client, admin):
         client.get("/auth/logout")
         _login(client, "chef", "Admin-Passwort-2026")
+        nurlesen = _ensure_role("NurLesen")
         r = client.post(
             "/auth/users/new",
             data={
                 "username": "neuer",
                 "email": "neuer@example.com",
                 "password": "Starkes-Passwort-2026",
-                "role": "user",
+                "role_id": str(nurlesen.id),
             },
             follow_redirects=False,
         )

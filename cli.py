@@ -161,6 +161,45 @@ def seed_default_dunning_policy(db, *, verbose=False):
         print("  + Standard-Mahnvorlage mit 4 Stufen angelegt.")
 
 
+def seed_default_roles(db, *, verbose=False):
+    """Die drei Standard-Rollen idempotent anlegen.
+
+    Quelle der Wahrheit: app.auth.permissions. Admin (is_system=True) hat
+    implizit alle Rechte und kann nicht editiert/geloescht werden — daher
+    keine RolePermission-Eintraege noetig (Logik im Model). Kassier und
+    Zaehlerverwalter bekommen ihre Default-Berechtigungen.
+    """
+    from app.models import Role, RolePermission
+    from app.auth.permissions import (
+        PERM_AUSWERTUNGEN,
+        PERM_BUCHHALTUNG,
+        PERM_MAHNWESEN,
+        PERM_RECHNUNGEN,
+        PERM_ZAEHLER,
+    )
+
+    defaults = [
+        ("Admin", "Vollzugriff auf alle Bereiche", True, []),
+        ("Kassier", "Buchhaltung, Rechnungen/OP, Mahnwesen und Auswertungen", False,
+         [PERM_BUCHHALTUNG, PERM_RECHNUNGEN, PERM_MAHNWESEN, PERM_AUSWERTUNGEN]),
+        ("Zählerverwalter", "Verwaltung von Zählern und Ablesungen", False,
+         [PERM_ZAEHLER]),
+    ]
+    for name, desc, is_system, perms in defaults:
+        role = Role.query.filter_by(name=name).first()
+        if role is None:
+            role = Role(name=name, description=desc, is_system=is_system)
+            db.session.add(role)
+            db.session.flush()
+            for key in perms:
+                db.session.add(RolePermission(role_id=role.id, permission_key=key))
+            if verbose:
+                print(f"  + Rolle '{name}' angelegt.")
+        elif verbose:
+            print(f"  ok Rolle '{name}' bereits vorhanden.")
+    db.session.commit()
+
+
 def seed_default_billing_period(db, *, verbose=False):
     """Eine Default-Abrechnungsperiode fuers laufende Kalenderjahr anlegen,
     falls noch keine existiert.
@@ -265,6 +304,7 @@ def register_commands(app):
         seed_default_tax_rates(db)
         seed_default_dunning_policy(db)
         seed_default_billing_period(db)
+        seed_default_roles(db)
 
     @app.cli.command("upgrade-db")
     def upgrade_db():
@@ -319,6 +359,7 @@ def register_commands(app):
         seed_default_tax_rates(db, verbose=True)
         seed_default_dunning_policy(db, verbose=True)
         seed_default_billing_period(db, verbose=True)
+        seed_default_roles(db, verbose=True)
         run_data_migrations(db, verbose=True)
 
         print("Datenbank aktualisiert.")
@@ -358,13 +399,20 @@ def register_commands(app):
         # ------------------------------------------------------------------
         # Benutzer
         # ------------------------------------------------------------------
+        from app.models import Role
+        seed_default_roles(db)
+        admin_role = Role.query.filter_by(name="Admin").first()
+        kassier_role = Role.query.filter_by(name="Kassier").first()
         admin = User.query.filter_by(username="admin").first()
         if not admin:
-            admin = User(username="admin", email="admin@wassergenossenschaft.at", role="admin")
+            admin = User(username="admin", email="admin@wassergenossenschaft.at",
+                         role_id=admin_role.id)
             admin.set_password("admin123")
             db.session.add(admin)
         if not User.query.filter_by(username="sachbearbeiter").first():
-            user1 = User(username="sachbearbeiter", email="sachbearbeiter@wassergenossenschaft.at", role="user")
+            user1 = User(username="sachbearbeiter",
+                         email="sachbearbeiter@wassergenossenschaft.at",
+                         role_id=kassier_role.id)
             user1.set_password("user123")
             db.session.add(user1)
         db.session.flush()
@@ -730,6 +778,7 @@ def register_commands(app):
             seed_default_tax_rates(db)
             seed_default_dunning_policy(db)
             seed_default_billing_period(db)
+            seed_default_roles(db)
             print("Standard-Defaults neu eingespielt.")
 
     @app.cli.command("create-admin")
@@ -746,7 +795,10 @@ def register_commands(app):
             print(f"Benutzer '{username}' existiert bereits.")
             return
 
-        user = User(username=username, email=email, role="admin")
+        from app.models import Role
+        seed_default_roles(db)
+        admin_role = Role.query.filter_by(name="Admin").first()
+        user = User(username=username, email=email, role_id=admin_role.id)
         user.set_password(password)
         db.session.add(user)
         db.session.commit()

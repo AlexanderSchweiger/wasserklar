@@ -101,6 +101,10 @@ def create_app(config_name=None):
     from app.pagination import page_url as _page_url
     app.jinja_env.globals["page_url"] = _page_url
 
+    # Berechtigungs-Liste fuer Rollen-Formular + Permission-Konstanten in Templates.
+    from app.auth.permissions import ALL_PERMISSIONS as _ALL_PERMISSIONS
+    app.jinja_env.globals["ALL_PERMISSIONS"] = _ALL_PERMISSIONS
+
     # Context Processor: WG-Einstellungen in alle Templates injizieren
     @app.context_processor
     def inject_wg_settings():

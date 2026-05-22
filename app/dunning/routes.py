@@ -506,10 +506,6 @@ def policies():
 @login_required
 def policy_new():
     """Neue Mahnvorlage anlegen."""
-    if not current_user.is_admin:
-        flash("Nur Administratoren können Mahnvorlagen anlegen.", "danger")
-        return redirect(url_for("dunning.policies"))
-
     if request.method == "POST":
         return _save_policy(None)
 
@@ -525,10 +521,6 @@ def policy_edit(policy_id):
         flash("Mahnvorlage nicht gefunden.", "danger")
         return redirect(url_for("dunning.policies"))
 
-    if not current_user.is_admin:
-        flash("Nur Administratoren können Mahnvorlagen bearbeiten.", "danger")
-        return redirect(url_for("dunning.policies"))
-
     if request.method == "POST":
         return _save_policy(policy)
 
@@ -539,10 +531,6 @@ def policy_edit(policy_id):
 @login_required
 def policy_delete(policy_id):
     """Mahnvorlage löschen (nur wenn keine Notices darauf verweisen)."""
-    if not current_user.is_admin:
-        flash("Nur Administratoren können Mahnvorlagen löschen.", "danger")
-        return redirect(url_for("dunning.policies"))
-
     policy = db.session.get(DunningPolicy, policy_id)
     if not policy:
         flash("Mahnvorlage nicht gefunden.", "danger")
@@ -567,10 +555,6 @@ def policy_delete(policy_id):
 @login_required
 def policy_set_default(policy_id):
     """Mahnvorlage als Standard setzen."""
-    if not current_user.is_admin:
-        flash("Nur Administratoren können den Standard ändern.", "danger")
-        return redirect(url_for("dunning.policies"))
-
     policy = db.session.get(DunningPolicy, policy_id)
     if not policy:
         flash("Mahnvorlage nicht gefunden.", "danger")

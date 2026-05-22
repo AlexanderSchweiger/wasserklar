@@ -29,3 +29,28 @@ def clean_db(app):
 @pytest.fixture
 def client(app):
     return app.test_client()
+
+
+def _ensure_role(name, perms=()):
+    """Test-Helper: idempotent eine Rolle anlegen.
+
+    Nach jedem Test laeuft ``clean_db`` und leert auch die ``roles``-Tabelle.
+    Tests, die User anlegen, muessen daher die benoetigte Rolle vorher
+    re-seeden. ``User.role_id`` ist NOT NULL, ein blosses ``role="admin"``-
+    Anlegen kracht — daher diese Hilfsfunktion.
+    """
+    from app.models import Role, RolePermission
+    role = Role.query.filter_by(name=name).first()
+    if role is None:
+        role = Role(name=name, is_system=(name == "Admin"))
+        _db.session.add(role)
+        _db.session.flush()
+        for key in perms:
+            _db.session.add(RolePermission(role_id=role.id, permission_key=key))
+        _db.session.commit()
+    return role
+
+
+@pytest.fixture
+def admin_role(app):
+    return _ensure_role("Admin")

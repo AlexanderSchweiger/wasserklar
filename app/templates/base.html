@@ -123,6 +123,7 @@
             {% set stammdaten_active   = _nav_kunden or _nav_objekte or _nav_import or _nav_buchungsjahre or _nav_perioden %}
             {% set verwaltung_active   = _nav_benutzer or _nav_einstellungen or _nav_data_transfer or _nav_dokumente or _nav_export or _nav_backups %}
 
+            {% if current_user.has_permission('stammdaten') %}
             <li class="nav-item">
               <a class="nav-link dropdown-toggle {% if stammdaten_active %}active{% endif %}" href="#navbar-stammdaten"
                 data-bs-toggle="collapse" role="button"
@@ -157,18 +158,18 @@
                       <i class="fas fa-calendar-week me-2"></i>Abrechnungsperioden
                     </a>
                   </li>
-                  {% if current_user.is_admin %}
                   <li class="nav-item">
                     <a class="nav-link {% if _nav_import %}active{% endif %}"
                       href="{{ url_for('import_csv.upload') }}">
                       <i class="fas fa-file-import me-2"></i>Stammdaten importieren
                     </a>
                   </li>
-                  {% endif %}
                 </ul>
               </div>
             </li>
+            {% endif %}
 
+            {% if current_user.has_permission('zaehler') %}
             <li class="nav-item">
               <a class="nav-link dropdown-toggle {% if zaehler_active %}active{% endif %}" href="#navbar-zaehler"
                 data-bs-toggle="collapse" role="button"
@@ -200,7 +201,9 @@
                 </ul>
               </div>
             </li>
+            {% endif %}
 
+            {% if current_user.has_permission('buchhaltung') %}
             <li class="nav-item">
               <a class="nav-link dropdown-toggle {% if accounting_active %}active{% endif %}" href="#navbar-accounting"
                 data-bs-toggle="collapse" role="button"
@@ -245,7 +248,9 @@
                 </ul>
               </div>
             </li>
+            {% endif %}
 
+            {% if current_user.has_permission('rechnungen_op') %}
             <li class="nav-item">
               <a class="nav-link dropdown-toggle {% if invoices_active %}active{% endif %}" href="#navbar-invoices"
                 data-bs-toggle="collapse" role="button"
@@ -286,7 +291,7 @@
                       <i class="fas fa-tags me-2"></i>Tarife
                     </a>
                   </li>
-                  {% if current_user.is_admin %}
+                  {% if current_user.has_permission('verwaltung') %}
                   <li class="nav-item">
                     <a class="nav-link {% if _nav_email_settings %}active{% endif %}"
                       href="{{ url_for('invoices.email_settings') }}">
@@ -297,7 +302,9 @@
                 </ul>
               </div>
             </li>
+            {% endif %}
 
+            {% if current_user.has_permission('mahnwesen') %}
             <li class="nav-item">
               <a class="nav-link dropdown-toggle {% if dunning_active %}active{% endif %}" href="#navbar-dunning"
                 data-bs-toggle="collapse" role="button"
@@ -335,7 +342,9 @@
                 </ul>
               </div>
             </li>
+            {% endif %}
 
+            {% if current_user.has_permission('auswertungen') %}
             <li class="nav-item">
               <a class="nav-link dropdown-toggle {% if auswertungen_active %}active{% endif %}" href="#navbar-auswertungen"
                 data-bs-toggle="collapse" role="button"
@@ -363,8 +372,9 @@
                 </ul>
               </div>
             </li>
+            {% endif %}
 
-            {% if current_user.is_admin %}
+            {% if current_user.has_permission('verwaltung') %}
             <li class="nav-item">
               <a class="nav-link dropdown-toggle {% if verwaltung_active %}active{% endif %}" href="#navbar-verwaltung"
                 data-bs-toggle="collapse" role="button"
@@ -376,9 +386,15 @@
               <div class="collapse {% if verwaltung_active %}show{% endif %}" id="navbar-verwaltung">
                 <ul class="nav nav-sm flex-column ps-3">
                   <li class="nav-item">
-                    <a class="nav-link {% if _nav_benutzer %}active{% endif %}"
+                    <a class="nav-link {% if _nav_benutzer and request.endpoint not in ('auth.roles','auth.role_new','auth.role_edit') %}active{% endif %}"
                       href="{{ url_for('auth.users') }}">
                       <i class="fas fa-user-cog me-2"></i>Benutzer
+                    </a>
+                  </li>
+                  <li class="nav-item">
+                    <a class="nav-link {% if request.endpoint in ('auth.roles','auth.role_new','auth.role_edit') %}active{% endif %}"
+                      href="{{ url_for('auth.roles') }}">
+                      <i class="fas fa-user-shield me-2"></i>Rollen & Rechte
                     </a>
                   </li>
                   <li class="nav-item">
@@ -429,7 +445,7 @@
                 <div class="d-none d-xl-block">
                   <div>{{ current_user.username }}</div>
                   <div class="mt-1 small text-secondary">
-                    {{ current_user.role }}
+                    {{ current_user.role.name if current_user.role else '' }}
                   </div>
                 </div>
               </a>

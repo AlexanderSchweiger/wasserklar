@@ -20,6 +20,7 @@ from app.models import (
     BillingPeriod, Customer, MeterReading, Property, PropertyOwnership, User,
     WaterMeter,
 )
+from tests.conftest import _ensure_role
 
 
 # ---------------------------------------------------------------------------
@@ -28,7 +29,8 @@ from app.models import (
 
 @pytest.fixture
 def admin(app):
-    u = User(username="testadmin", email="t@t.test", role="admin")
+    admin_role = _ensure_role("Admin")
+    u = User(username="testadmin", email="t@t.test", role_id=admin_role.id)
     u.set_password("x")
     db.session.add(u)
     db.session.commit()

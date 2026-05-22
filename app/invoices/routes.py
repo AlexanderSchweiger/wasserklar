@@ -1336,10 +1336,7 @@ def send_email_ajax(invoice_id):
 @bp.route("/email-einstellungen", methods=["GET", "POST"])
 @login_required
 def email_settings():
-    """E-Mail-Vorlage für den Rechnungsversand konfigurieren (nur Admin)."""
-    if not current_user.is_admin:
-        flash("Kein Zugriff.", "danger")
-        return redirect(url_for("invoices.index"))
+    """E-Mail-Vorlage für den Rechnungsversand konfigurieren (Verwaltungs-Recht)."""
     import pathlib
     if request.method == "POST":
         AppSetting.set("email_body_template", request.form.get("email_body_template", "").strip())

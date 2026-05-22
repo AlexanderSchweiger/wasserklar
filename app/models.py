@@ -8,6 +8,44 @@ from app.extensions import db, login_manager
 # Auth
 # ---------------------------------------------------------------------------
 
+class Role(db.Model):
+    __tablename__ = "roles"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(50), unique=True, nullable=False)
+    description = db.Column(db.String(255))
+    is_system = db.Column(db.Boolean, default=False, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    permissions = db.relationship(
+        "RolePermission",
+        backref="role",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
+    @property
+    def permission_keys(self):
+        return {p.permission_key for p in self.permissions}
+
+    def has_permission(self, key):
+        return self.name == "Admin" or key in self.permission_keys
+
+    def __repr__(self):
+        return f"<Role {self.name}>"
+
+
+class RolePermission(db.Model):
+    __tablename__ = "role_permissions"
+
+    role_id = db.Column(
+        db.Integer,
+        db.ForeignKey("roles.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    permission_key = db.Column(db.String(50), primary_key=True)
+
+
 class User(UserMixin, db.Model):
     __tablename__ = "users"
 
@@ -15,9 +53,15 @@ class User(UserMixin, db.Model):
     username = db.Column(db.String(80), unique=True, nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(256), nullable=False)
-    role = db.Column(db.String(20), default="user")  # admin / user
+    role_id = db.Column(
+        db.Integer,
+        db.ForeignKey("roles.id"),
+        nullable=False,
+    )
     active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    role = db.relationship("Role", lazy="joined")
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -27,7 +71,10 @@ class User(UserMixin, db.Model):
 
     @property
     def is_admin(self):
-        return self.role == "admin"
+        return self.role is not None and self.role.name == "Admin"
+
+    def has_permission(self, key):
+        return self.role is not None and self.role.has_permission(key)
 
     def __repr__(self):
         return f"<User {self.username}>"

@@ -3,11 +3,13 @@ import pytest
 
 from app.extensions import db
 from app.models import User
+from tests.conftest import _ensure_role
 
 
 @pytest.fixture
 def admin_user(app):
-    u = User(username="admin", email="admin@test.com", role="admin")
+    admin = _ensure_role("Admin")
+    u = User(username="admin", email="admin@test.com", role_id=admin.id)
     u.set_password("secret")
     db.session.add(u)
     db.session.commit()
@@ -16,7 +18,9 @@ def admin_user(app):
 
 @pytest.fixture
 def normal_user(app):
-    u = User(username="normal", email="normal@test.com", role="user")
+    # "Normal-User" hat eine Rolle ohne Rechte (entspricht dem alten role='user')
+    role = _ensure_role("NurLesen")
+    u = User(username="normal", email="normal@test.com", role_id=role.id)
     u.set_password("pass")
     db.session.add(u)
     db.session.commit()
