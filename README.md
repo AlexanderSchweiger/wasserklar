@@ -46,30 +46,6 @@ cp .env.example .env
 
 ---
 
-## Test-Deployment (Docker)
-
-Verbindet sich mit `wasserklar_test`. Läuft als produktionsähnliche Umgebung (DEBUG=False).
-
-```bash
-# 1. Konfiguration anlegen
-cp .env.example .env.test
-#    → FLASK_ENV=testing
-#    → DATABASE_URL auf wasserklar_test setzen
-#    → SECRET_KEY, Mail-Daten anpassen
-
-# 2. Container bauen und starten
-docker compose -f docker-compose.test.yml up -d --build
-
-# 3. Datenbank initialisieren (einmalig)
-docker compose -f docker-compose.test.yml exec wkoss flask --app run init-db
-
-# 4. Admin-Benutzer anlegen (einmalig)
-docker compose -f docker-compose.test.yml exec wkoss flask --app run create-admin
-#    → http://SERVER-IP:5000
-```
-
----
-
 ## Produktions-Deployment (Docker)
 
 Verbindet sich mit `wasserklar_prod`. Vollständige Produktionskonfiguration (DEBUG=False).

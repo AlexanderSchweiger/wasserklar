@@ -28,6 +28,11 @@
       </a>
     </li>
     <li class="nav-item" role="presentation">
+      <a class="nav-link" id="tab-zaehler" data-bs-toggle="tab" href="#pane-zaehler" role="tab">
+        <i class="fas fa-tachometer-alt me-1"></i> Zähler
+      </a>
+    </li>
+    <li class="nav-item" role="presentation">
       <a class="nav-link" id="tab-db" data-bs-toggle="tab" href="#pane-db" role="tab">
         <i class="fas fa-database me-1"></i> Datenbankverbindung
       </a>
@@ -252,6 +257,27 @@
             <div id="contactInfoEditor" class="form-control" contenteditable="true"
                  style="min-height:8rem">{{ invoice_contact_info | safe }}</div>
             <input type="hidden" name="invoice_contact_info" id="contactInfoInput">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {# ── Tab: Zähler ─────────────────────────────────────────────────── #}
+    <div class="tab-pane fade" id="pane-zaehler" role="tabpanel">
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title"><i class="fas fa-tachometer-alt me-1"></i> Wasserzähler</h3>
+        </div>
+        <div class="card-body">
+          <div class="mb-1" style="max-width:20rem">
+            <label class="form-label">Zählertausch nach … Jahren</label>
+            <input type="number" name="meter_replacement_interval" class="form-control"
+                   min="1" step="1" value="{{ meter_replacement_interval }}">
+            <div class="form-text">
+              Nach wie vielen Jahren ein Wasserzähler getauscht werden muss.
+              Das Fälligkeitsjahr ergibt sich aus dem Eichjahr (ersatzweise dem
+              Einbaujahr) zuzüglich dieser Anzahl. Standard: 5&nbsp;Jahre.
+            </div>
           </div>
         </div>
       </div>

@@ -184,6 +184,20 @@ def get_contact_info() -> str:
         return ''
 
 
+def meter_replacement_interval() -> int:
+    """Tausch-Intervall fuer Wasserzaehler in Jahren (Default 5)."""
+    from app.models import AppSetting
+    try:
+        raw = AppSetting.get('meters.replacement_interval_years')
+    except Exception:
+        raw = None
+    try:
+        val = int(raw)
+    except (TypeError, ValueError):
+        return 5
+    return val if val >= 1 else 5
+
+
 def apply_mail_settings():
     """Konfiguriert den (prozess-globalen) Flask-Mail-State für den aktuellen
     Request bzw. Tenant.

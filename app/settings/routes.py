@@ -6,7 +6,7 @@ from app.extensions import db
 from app.models import AppSetting
 from app.settings_service import (_WG_MAP, _MAIL_MAP, send_mail, encrypt_password,
                                   apply_mail_settings, platform_relay_active, get_wg,
-                                  sanitize_rich_text)
+                                  sanitize_rich_text, meter_replacement_interval)
 from app.invoices.design import INVOICE_DESIGNS, available_designs
 
 
@@ -63,6 +63,15 @@ def index():
         # Rechnungs-Kontakttext (Rich-Text, auf <b>/<i>/<u>/<br> normalisiert)
         contact_info = sanitize_rich_text(request.form.get('invoice_contact_info', ''))
         AppSetting.set('invoice.contact_info', contact_info if contact_info else None)
+
+        # Zähler-Tauschintervall (Jahre)
+        try:
+            interval = int(request.form.get('meter_replacement_interval', '5'))
+        except (TypeError, ValueError):
+            interval = 5
+        if interval < 1:
+            interval = 5
+        AppSetting.set('meters.replacement_interval_years', str(interval))
 
         db.session.commit()
         apply_mail_settings()
@@ -139,7 +148,8 @@ def index():
                            invoice_design=invoice_design,
                            invoice_designs=available_designs(),
                            invoice_contact_info=contact_info,
-                           invoice_print_meter_swap=print_meter_swap)
+                           invoice_print_meter_swap=print_meter_swap,
+                           meter_replacement_interval=meter_replacement_interval())
 
 
 @bp.route('/test-mail', methods=['POST'])

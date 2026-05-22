@@ -17,6 +17,13 @@ Fuegt zwei Spalten an ``water_meters``:
 Manuell geschrieben statt autogenerate, weil Self-Referencing-FK + SQLite
 ``batch_alter_table`` heikel ist und die FK-Reihenfolge sauber gesetzt sein
 muss. Siehe wasserklaross/CLAUDE.md "Schema-Aenderungen (Alembic)".
+
+``batch_alter_table`` laeuft hier mit dem Default ``recreate='auto'`` (nicht
+``'always'``): SQLite erkennt das ``create_foreign_key`` und baut die Tabelle
+selbst neu auf; Postgres/MariaDB emittieren direkte ``ALTER TABLE``-Statements
+ohne Rebuild. ``recreate='always'`` wuerde den Copy-and-Move-Weg auch auf
+Postgres erzwingen und dort beim Drop des ``water_meters_pkey`` an der
+abhaengigen FK von ``meter_readings`` scheitern.
 """
 from alembic import op
 import sqlalchemy as sa
@@ -30,7 +37,7 @@ depends_on = None
 
 
 def upgrade():
-    with op.batch_alter_table('water_meters', recreate='always') as batch_op:
+    with op.batch_alter_table('water_meters') as batch_op:
         batch_op.add_column(sa.Column(
             'meter_type', sa.String(length=10),
             nullable=False, server_default=sa.text("'main'"),
@@ -50,7 +57,7 @@ def upgrade():
 
 
 def downgrade():
-    with op.batch_alter_table('water_meters', recreate='always') as batch_op:
+    with op.batch_alter_table('water_meters') as batch_op:
         batch_op.drop_constraint(
             'fk_water_meters_parent_meter_id', type_='foreignkey',
         )

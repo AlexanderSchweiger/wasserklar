@@ -2,56 +2,216 @@
 {% block title %}Dashboard{% endblock %}
 {% block page_title %}<i class="fas fa-tachometer-alt me-2"></i> Dashboard {{ current_year }}{% endblock %}
 {% block content %}
-<!-- Stat-Kacheln -->
-<div class="row row-deck row-cards mb-3">
-  <div class="col-lg-4 col-md-6">
-    <a href="{{ url_for('accounting.open_items') }}" class="text-decoration-none d-flex h-100">
-      <div class="card w-100 {{ 'bg-danger' if total_open > 0 else 'bg-success' }} text-white">
-        <div class="card-body d-flex flex-column">
-          <div class="small text-uppercase fw-semibold mb-2" style="color: rgba(255,255,255,0.7)">
-            Offene Posten ({{ open_invoices }} Rechnungen)
-          </div>
-          <div class="h1 mb-0 flex-grow-1">{{ total_open|de_number }} €</div>
-          <div class="mt-3 small" style="color: rgba(255,255,255,0.7)">
-            <i class="fas fa-file-invoice-dollar me-1"></i> Details &rarr;
-          </div>
+
+{# ── Stat-Kacheln ───────────────────────────────────────────────────────── #}
+<div class="row row-cards mb-3">
+
+  <div class="col-6 col-lg">
+    <a href="{{ url_for('meters.index') }}" class="card card-link h-100 text-decoration-none">
+      <div class="card-body">
+        <div class="text-muted small text-uppercase fw-semibold mb-1">Zähler aktiv</div>
+        <div class="h1 mb-1">{{ total_meters }}</div>
+        <div class="text-muted small">
+          {% if active_period %}{{ read_percent }} % abgelesen{% else %}keine aktive Periode{% endif %}
         </div>
       </div>
     </a>
   </div>
-  <div class="col-lg-4 col-md-6">
-    <a href="{{ url_for('meters.readings', period_id=active_period.id if active_period else none) }}" class="text-decoration-none d-flex h-100">
-      <div class="card w-100 {{ 'bg-warning' if missing_readings > 0 else 'bg-success' }} text-white">
-        <div class="card-body d-flex flex-column">
-          <div class="small text-uppercase fw-semibold mb-2" style="color: rgba(255,255,255,0.7)">
-            Fehlende Ablesungen{% if active_period %} {{ active_period.name }}{% endif %}
-          </div>
-          <div class="h1 mb-0 flex-grow-1">{{ missing_readings }}</div>
-          <div class="mt-3 small" style="color: rgba(255,255,255,0.7)">
-            <i class="fas fa-tachometer-alt me-1"></i> Zur Übersicht &rarr;
-          </div>
+
+  <div class="col-6 col-lg">
+    <a href="{{ url_for('meters.readings', period_id=active_period.id if active_period else none) }}"
+       class="card card-link h-100 text-decoration-none">
+      <div class="card-body">
+        <div class="text-muted small text-uppercase fw-semibold mb-1">Verbrauch gesamt</div>
+        <div class="h1 mb-1">{{ period_consumption|de_number(decimals=0) }}<span class="text-muted h3 ms-1">m³</span></div>
+        <div class="text-muted small">
+          {% if active_period %}{{ active_period.name }}{% else %}keine aktive Periode{% endif %}
         </div>
       </div>
     </a>
   </div>
-  <div class="col-lg-4 col-md-6">
-    <a href="{{ url_for('accounting.report', year=current_year) }}" class="text-decoration-none d-flex h-100">
-      <div class="card w-100 {{ 'bg-success' if year_balance >= 0 else 'bg-danger' }} text-white">
-        <div class="card-body d-flex flex-column">
-          <div class="small text-uppercase fw-semibold mb-2" style="color: rgba(255,255,255,0.7)">
-            Saldo {{ current_year }}
-          </div>
-          <div class="h1 mb-0 flex-grow-1">{{ year_balance|de_number }} €</div>
-          <div class="mt-3 small" style="color: rgba(255,255,255,0.7)">
-            <i class="fas fa-balance-scale me-1"></i> Jahresbericht &rarr;
-          </div>
+
+  <div class="col-6 col-lg">
+    <a href="{{ url_for('accounting.open_items') }}" class="card card-link h-100 text-decoration-none">
+      <div class="card-body">
+        <div class="text-muted small text-uppercase fw-semibold mb-1">Offene Posten</div>
+        <div class="h1 mb-1 {{ 'text-danger' if total_open > 0 else 'text-success' }}">{{ total_open|de_number }} €</div>
+        <div class="text-muted small">{{ open_invoices }} Rechnungen</div>
+      </div>
+    </a>
+  </div>
+
+  <div class="col-6 col-lg">
+    <a href="{{ url_for('meters.readings', period_id=active_period.id if active_period else none) }}"
+       class="card card-link h-100 text-decoration-none">
+      <div class="card-body">
+        <div class="text-muted small text-uppercase fw-semibold mb-1">Fehlende Ablesungen</div>
+        <div class="h1 mb-1 {{ 'text-warning' if missing_readings > 0 else 'text-success' }}">{{ missing_readings }}</div>
+        <div class="text-muted small">
+          {% if active_period %}{{ active_period.name }}{% else %}keine aktive Periode{% endif %}
         </div>
       </div>
     </a>
+  </div>
+
+  <div class="col-6 col-lg">
+    <a href="{{ url_for('accounting.report', year=current_year) }}" class="card card-link h-100 text-decoration-none">
+      <div class="card-body">
+        <div class="text-muted small text-uppercase fw-semibold mb-1">Saldo {{ current_year }}</div>
+        <div class="h1 mb-1 {{ 'text-success' if year_balance >= 0 else 'text-danger' }}">{{ year_balance|de_number }} €</div>
+        <div class="text-muted small">Jahresbericht &rarr;</div>
+      </div>
+    </a>
+  </div>
+
+</div>
+
+{# ── Verbrauch über die Jahre ───────────────────────────────────────────── #}
+<div class="card mb-3">
+  <div class="card-header">
+    <h3 class="card-title"><i class="fas fa-chart-area me-1"></i> Wasserverbrauch über die Jahre</h3>
+  </div>
+  <div class="card-body">
+    {% if consumption_history %}
+    {% set max_val = consumption_history | map(attribute='value') | max %}
+    <div class="d-flex align-items-end justify-content-around gap-3" style="height: 220px;">
+      {% for row in consumption_history %}
+      {% set pct = (row.value / max_val * 100) if max_val and max_val > 0 else 0 %}
+      <div class="d-flex flex-column align-items-center justify-content-end flex-fill" style="height: 100%;">
+        <div class="small fw-semibold mb-1">{{ row.value|de_number(decimals=0) }}</div>
+        <div class="w-100 rounded-top"
+             title="{{ row.label }}: {{ row.value|de_number(decimals=0) }} m³"
+             style="height: {{ pct }}%; min-height: 3px; max-width: 64px; margin: 0 auto;
+                    background: linear-gradient(180deg, #4a8cb2 0%, #2f6a93 100%);"></div>
+        <div class="text-muted small mt-2 text-center">{{ row.label }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    <div class="text-muted small mt-2 text-end">Verbrauch in m³ je Abrechnungsperiode</div>
+    {% else %}
+    <p class="text-muted text-center mb-0 py-4">Noch keine Verbrauchsdaten erfasst.</p>
+    {% endif %}
   </div>
 </div>
 
-<!-- Einnahmen/Ausgaben -->
+<div class="row row-cards mb-3">
+
+  {# ── Offene Posten mit Mahnstufe ──────────────────────────────────────── #}
+  <div class="col-lg-7">
+    <div class="card h-100">
+      <div class="card-header">
+        <h3 class="card-title"><i class="fas fa-file-invoice-dollar me-1"></i> Offene Posten</h3>
+        <div class="card-options">
+          <a href="{{ url_for('accounting.open_items') }}" class="btn btn-sm btn-outline-secondary">Alle anzeigen</a>
+        </div>
+      </div>
+      <div class="card-body p-0">
+        <div style="max-height: 360px; overflow-y: auto;">
+          <table class="table table-hover table-vcenter mb-0">
+            <thead>
+              <tr>
+                <th>Kunde</th>
+                <th>Fällig</th>
+                <th class="text-end">Betrag</th>
+                <th>Mahnstufe</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in open_item_rows %}
+              {% set inv = row.invoice %}
+              {% set overdue = inv.due_date and inv.due_date < today %}
+              <tr>
+                <td>
+                  <a href="{{ url_for('invoices.detail', invoice_id=inv.id) }}" class="text-reset text-decoration-none">
+                    {{ inv.customer.name if inv.customer else '–' }}
+                  </a>
+                  <div class="text-muted small">{{ inv.invoice_number }}</div>
+                </td>
+                <td class="{{ 'text-danger fw-semibold' if overdue }}">
+                  {{ inv.due_date.strftime('%d.%m.%Y') if inv.due_date else '–' }}
+                </td>
+                <td class="text-end fw-bold">{{ inv.total_amount|de_number }} €</td>
+                <td>
+                  {% if row.level > 0 %}
+                    <span class="badge bg-warning text-dark">{{ row.level }}. Mahnung</span>
+                  {% endif %}
+                  {% if row.needs_dunning %}
+                    <span class="badge bg-danger text-white">
+                      <i class="fas fa-exclamation-triangle me-1"></i>Mahnung fällig
+                    </span>
+                  {% elif row.level == 0 %}
+                    <span class="badge bg-secondary-lt">offen</span>
+                  {% endif %}
+                </td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="4" class="text-center text-muted py-4">Keine offenen Posten.</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ── Zähler heuer zu tauschen ─────────────────────────────────────────── #}
+  <div class="col-lg-5">
+    <div class="card h-100">
+      <div class="card-header">
+        <h3 class="card-title"><i class="fas fa-sync-alt me-1"></i> Zählertausch fällig</h3>
+        <div class="card-options text-muted small">Intervall: {{ meter_interval }} Jahre</div>
+      </div>
+      <div class="card-body p-0">
+        <div style="max-height: 360px; overflow-y: auto;">
+          <table class="table table-hover table-vcenter mb-0">
+            <thead>
+              <tr>
+                <th>Zähler</th>
+                <th>Fällig</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in meters_to_swap %}
+              {% set m = row.meter %}
+              <tr>
+                <td>
+                  <a href="{{ url_for('meters.meter_replace', meter_id=m.id) }}" class="text-reset text-decoration-none">
+                    {{ m.meter_number }}
+                  </a>
+                  <div class="text-muted small">{{ m.property.address_display() or m.property.label() }}</div>
+                </td>
+                <td>
+                  {{ row.due_year }}
+                  <div class="text-muted small">
+                    {{ 'Eichjahr' if row.based_on_eichjahr else 'Einbau' }} {{ row.base_year }}
+                  </div>
+                </td>
+                <td>
+                  {% if row.overdue %}
+                    <span class="badge bg-danger text-white">überfällig</span>
+                  {% else %}
+                    <span class="badge bg-warning text-dark">heuer</span>
+                  {% endif %}
+                </td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="3" class="text-center text-muted py-4">Heuer kein Zählertausch fällig.</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+{# ── Einnahmen / Ausgaben ───────────────────────────────────────────────── #}
 <div class="row row-cards mb-3">
   <div class="col-md-6">
     <div class="card">
@@ -81,14 +241,12 @@
   </div>
 </div>
 
-<!-- Letzte Buchungen -->
+{# ── Letzte Buchungen ───────────────────────────────────────────────────── #}
 <div class="card">
   <div class="card-header">
     <h3 class="card-title"><i class="fas fa-clock me-1"></i> Letzte Buchungen {{ current_year }}</h3>
     <div class="card-options">
-      <a href="{{ url_for('accounting.bookings') }}" class="btn btn-sm btn-outline-secondary">
-        Alle anzeigen
-      </a>
+      <a href="{{ url_for('accounting.bookings') }}" class="btn btn-sm btn-outline-secondary">Alle anzeigen</a>
     </div>
   </div>
   <div class="card-body p-0">
