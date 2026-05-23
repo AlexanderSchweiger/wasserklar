@@ -170,17 +170,34 @@
               <td>{{ ow.valid_from.strftime('%d.%m.%Y') }}</td>
               <td>{{ ow.valid_to.strftime('%d.%m.%Y') if ow.valid_to else '<strong>aktiv</strong>' | safe }}</td>
               <td class="text-end">
-                {% if not ow.valid_to %}
-                <form method="post"
-                      action="{{ url_for('properties.ownership_end', property_id=property.id, ownership_id=ow.id) }}"
-                      style="display:inline">
-                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                  <button type="submit" class="btn btn-sm btn-outline-secondary"
-                    onclick="return confirm('Besitzverhältnis heute beenden?')">
-                    <i class="fas fa-stop-circle me-1"></i> Beenden
-                  </button>
-                </form>
-                {% endif %}
+                <div class="btn-group btn-group-sm">
+                  {% if not ow.valid_to %}
+                  <form method="post"
+                        action="{{ url_for('properties.ownership_end', property_id=property.id, ownership_id=ow.id) }}"
+                        style="display:inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-sm btn-outline-secondary"
+                      onclick="return confirm('Besitzverhältnis heute beenden?')"
+                      title="Heute beenden">
+                      <i class="fas fa-stop-circle"></i>
+                    </button>
+                  </form>
+                  {% endif %}
+                  <a href="{{ url_for('properties.ownership_edit', property_id=property.id, ownership_id=ow.id) }}"
+                     class="btn btn-sm btn-outline-secondary" title="Bearbeiten">
+                    <i class="fas fa-edit"></i>
+                  </a>
+                  <form method="post"
+                        action="{{ url_for('properties.ownership_delete', property_id=property.id, ownership_id=ow.id) }}"
+                        style="display:inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-sm btn-outline-danger"
+                      onclick="return confirm('Besitzverhältnis WIRKLICH LÖSCHEN?\n\nDie Historie geht damit verloren. Empfehlung: Stattdessen „Beenden“ verwenden — dann bleibt das Besitzverhältnis nachvollziehbar.')"
+                      title="Löschen (Historie geht verloren — besser „Beenden“ verwenden)">
+                      <i class="fas fa-trash"></i>
+                    </button>
+                  </form>
+                </div>
               </td>
             </tr>
             {% else %}

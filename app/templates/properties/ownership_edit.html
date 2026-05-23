@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Besitzer bearbeiten – {{ property.label() }}{% endblock %}
+{% block page_title %}
+  <i class="fas fa-user-edit me-2"></i> Besitzer bearbeiten
+{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="card-header">
+    <h3 class="card-title">Besitzverhältnis bearbeiten für {{ property.label() }}</h3>
+  </div>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="card-body">
+      <div class="mb-3">
+        <label class="form-label">Kunde <span class="text-danger">*</span></label>
+        <select name="customer_id" class="form-select tom-select" required>
+          {% for c in customers %}
+          <option value="{{ c.id }}" {% if c.id == ownership.customer_id %}selected{% endif %}>{{ c.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Gültig ab <span class="text-danger">*</span></label>
+        <input type="date" name="valid_from" class="form-control" required
+          value="{{ ownership.valid_from.isoformat() }}">
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Gültig bis</label>
+        <input type="date" name="valid_to" class="form-control"
+          value="{{ ownership.valid_to.isoformat() if ownership.valid_to else '' }}">
+        <small class="form-hint">Leer lassen, wenn das Besitzverhältnis aktiv ist.</small>
+      </div>
+    </div>
+    <div class="card-footer">
+      <button type="submit" class="btn btn-primary">
+        <i class="fas fa-save me-1"></i> Speichern
+      </button>
+      <a href="{{ url_for('properties.detail', property_id=property.id) }}"
+         class="btn btn-secondary ms-2">Abbrechen</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

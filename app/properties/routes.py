@@ -158,6 +158,57 @@ def ownership_end(property_id, ownership_id):
     return redirect(url_for("properties.detail", property_id=property_id))
 
 
+@bp.route("/<int:property_id>/ownerships/<int:ownership_id>/edit", methods=["GET", "POST"])
+@login_required
+def ownership_edit(property_id, ownership_id):
+    ownership = db.get_or_404(PropertyOwnership, ownership_id)
+    customers = Customer.query.filter_by(active=True).order_by(Customer.name).all()
+    if request.method == "POST":
+        customer_id = int(request.form["customer_id"])
+        valid_from_str = request.form.get("valid_from", "").strip()
+        if not valid_from_str:
+            flash("Bitte ein Startdatum angeben.", "danger")
+            return render_template(
+                "properties/ownership_edit.html",
+                property=ownership.property,
+                ownership=ownership,
+                customers=customers,
+            )
+        valid_to_str = request.form.get("valid_to", "").strip()
+        valid_from = date.fromisoformat(valid_from_str)
+        valid_to = date.fromisoformat(valid_to_str) if valid_to_str else None
+        if valid_to and valid_to < valid_from:
+            flash("Das Bis-Datum darf nicht vor dem Von-Datum liegen.", "danger")
+            return render_template(
+                "properties/ownership_edit.html",
+                property=ownership.property,
+                ownership=ownership,
+                customers=customers,
+            )
+        ownership.customer_id = customer_id
+        ownership.valid_from = valid_from
+        ownership.valid_to = valid_to
+        db.session.commit()
+        flash("Besitzverhältnis aktualisiert.", "success")
+        return redirect(url_for("properties.detail", property_id=property_id))
+    return render_template(
+        "properties/ownership_edit.html",
+        property=ownership.property,
+        ownership=ownership,
+        customers=customers,
+    )
+
+
+@bp.route("/<int:property_id>/ownerships/<int:ownership_id>/delete", methods=["POST"])
+@login_required
+def ownership_delete(property_id, ownership_id):
+    ownership = db.get_or_404(PropertyOwnership, ownership_id)
+    db.session.delete(ownership)
+    db.session.commit()
+    flash("Besitzverhältnis gelöscht.", "info")
+    return redirect(url_for("properties.detail", property_id=property_id))
+
+
 def _apply_property_sort(query, sort: str, direction: str):
     """Haengt die ORDER-BY-Klausel passend zum gewaehlten Spalten-Sort an.
 
