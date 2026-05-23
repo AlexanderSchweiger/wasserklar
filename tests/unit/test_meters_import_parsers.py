@@ -101,6 +101,13 @@ class TestDetectDateFormat:
         s = pd.Series(["12/31/2024", "12/15/2024", "01/02/2024"])
         assert detect_date_format(s) == "us"
 
+    def test_iso_with_time_component(self):
+        # pd.read_excel(dtype=str) wandelt native Excel-Datumszellen in
+        # 'YYYY-MM-DD HH:MM:SS' um -- diese Variante muss als ISO erkannt
+        # werden, sonst greift der dayfirst-Fallback und dreht Tag/Monat.
+        s = pd.Series(["2026-04-05 00:00:00", "2026-03-12 00:00:00"])
+        assert detect_date_format(s) == "iso"
+
 
 # ---------------------------------------------------------------------------
 # parse_number
@@ -178,6 +185,15 @@ class TestParseDate:
 
     def test_auto_picks_de(self):
         assert parse_date("31.12.2024", "auto") == date(2024, 12, 31)
+
+    def test_iso_with_time_component(self):
+        # 'YYYY-MM-DD HH:MM:SS' aus pd.read_excel(dtype=str) muss als ISO
+        # geparst werden -- nicht ueber den dayfirst-Fallback gehen, der
+        # Tag/Monat dreht.
+        assert parse_date("2026-04-05 00:00:00", "iso") == date(2026, 4, 5)
+
+    def test_auto_iso_with_time_component(self):
+        assert parse_date("2026-04-05 00:00:00", "auto") == date(2026, 4, 5)
 
     def test_pd_timestamp_passthrough(self):
         ts = pd.Timestamp("2024-12-31")

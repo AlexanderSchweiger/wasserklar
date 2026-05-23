@@ -209,8 +209,9 @@ _RE_PURE_INT = re.compile(r"^-?\d+$")
 _RE_NUM_AT_DE_END = re.compile(r",\d{1,3}$")
 _RE_NUM_US_END = re.compile(r"\.\d{1,3}$")
 _RE_NUM_HAS_DOT_3 = re.compile(r"\.\d{3}$")
-_RE_DATE_ISO = re.compile(r"^\d{4}-\d{1,2}-\d{1,2}$")
-_RE_DATE_DEUS = re.compile(r"^(\d{1,2})[./](\d{1,2})[./](\d{2,4})$")
+_RE_DATE_ISO = re.compile(r"^\d{4}-\d{1,2}-\d{1,2}(?:[ T]\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?)?$")
+_RE_DATE_DEUS = re.compile(r"^(\d{1,2})[./](\d{1,2})[./](\d{2,4})(?:[ T]\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?)?$")
+_RE_TRAILING_TIME = re.compile(r"[ T]\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?$")
 
 
 def _series_strings(series: pd.Series, limit: int | None = None) -> list[str]:
@@ -384,6 +385,12 @@ def parse_date(raw: Any, fmt: str) -> date | None:
     if not s or s.lower() in ("nan", "none", "nat"):
         return None
 
+    # Excel-Datumszellen kommen bei pd.read_excel(dtype=str) als
+    # 'YYYY-MM-DD HH:MM:SS' an -- der Zeitanteil ist fuer eine Ablesung
+    # irrelevant und wuerde alle strptime-Varianten brechen. Einmal
+    # abschneiden, danach normal weiter parsen.
+    s = _RE_TRAILING_TIME.sub("", s).strip()
+
     if fmt == "iso":
         try:
             return datetime.strptime(s, "%Y-%m-%d").date()
@@ -536,18 +543,40 @@ CONSUMPTION_TOLERANCE = Decimal("0.5")
 
 def compute_prior_and_consumption(
     meter: WaterMeter, reading_date: date | None, value: Decimal | None,
+    *, billing_period: BillingPeriod | None = None,
 ) -> tuple[Decimal | None, str, Decimal | None, str]:
     """Liefert (prior_value, prior_label, consumption, replacement_info).
 
     prior_value = Wert der vorigen Ablesung des Meters (chronologisch nach
     ``reading_date``), sonst ``initial_value``. consumption = value - prior.
 
+    Bei einem Zaehlerwechsel innerhalb der Importperiode wird die Kette ueber
+    den Vorgaengerzaehler aufgeloest (gleiche Logik wie auf der
+    Zaehlerablesungen-Seite, vgl. ``meters.routes._build_replacement_map``):
+    prior_value = Vorperioden-Ablesung des Altzaehlers, consumption =
+    (Abschluss-Ablesung Alt - prior) + (value - initial_value Neu).
+
     Reine Vorschau-Berechnung — der tatsaechlich gespeicherte Verbrauch wird
-    beim Commit ueber ``recompute_meter_chain`` gesetzt. ``replacement_info``
-    bleibt leer (Beibehaltung der 4er-Tupel-Signatur fuer Template-Kompat).
+    beim Commit ueber ``recompute_meter_chain`` gesetzt.
     """
     if value is None or reading_date is None:
         return (None, "—", None, "")
+
+    # Zaehlerwechsel-Pfad: Wenn der Zaehler in der Importperiode neu eingebaut
+    # wurde und ein passender Altzaehler existiert, ueber dessen Kette laufen.
+    if (
+        billing_period is not None
+        and meter.installed_from is not None
+        and billing_period.start_date <= meter.installed_from <= billing_period.end_date
+    ):
+        old_meter = (
+            WaterMeter.query
+            .filter_by(property_id=meter.property_id, active=False)
+            .filter(WaterMeter.installed_to == meter.installed_from)
+            .first()
+        )
+        if old_meter is not None:
+            return _compute_swap_chain(meter, value, old_meter, billing_period)
 
     prev = previous_reading(meter, reading_date)
     if prev is not None:
@@ -566,6 +595,77 @@ def compute_prior_and_consumption(
         return (meter.initial_value, label, value - meter.initial_value, "")
 
     return (None, "—", None, "")
+
+
+def _compute_swap_chain(
+    new_meter: WaterMeter, new_value: Decimal,
+    old_meter: WaterMeter, period: BillingPeriod,
+) -> tuple[Decimal | None, str, Decimal | None, str]:
+    """Swap-aware Vorjahresstand + Verbrauch.
+
+    prior_value = Vorperioden-Ablesung des Altzaehlers (Fallback:
+    ``initial_value`` des Altzaehlers). consumption = (Altz.-Schluss -
+    prior_value) + (new_value - new_meter.initial_value); fehlt eine
+    Komponente, ist consumption None.
+    """
+    old_closing = MeterReading.query.filter_by(
+        meter_id=old_meter.id, billing_period_id=period.id,
+    ).first()
+    prev_period = (
+        BillingPeriod.query
+        .filter(BillingPeriod.start_date < period.start_date)
+        .order_by(BillingPeriod.start_date.desc())
+        .first()
+    )
+    old_prev = (
+        MeterReading.query.filter_by(
+            meter_id=old_meter.id, billing_period_id=prev_period.id,
+        ).first()
+        if prev_period is not None else None
+    )
+
+    if old_prev is not None:
+        prior_value = old_prev.value
+        prior_label = (
+            f"Vorjahr {prev_period.name} (Altz. {old_meter.meter_number})"
+        )
+    elif old_meter.initial_value is not None:
+        prior_value = old_meter.initial_value
+        prior_label = f"Anfang Altz. {old_meter.meter_number}"
+    else:
+        prior_value = None
+        prior_label = f"Altz. {old_meter.meter_number} — kein Vorwert"
+
+    new_initial = new_meter.initial_value
+    new_part = (new_value - new_initial) if new_initial is not None else None
+    old_part = (
+        (old_closing.value - prior_value)
+        if (old_closing is not None and prior_value is not None) else None
+    )
+
+    if old_part is not None and new_part is not None:
+        consumption = old_part + new_part
+    else:
+        consumption = None
+
+    swap_date = new_meter.installed_from.strftime("%d.%m.%Y") if new_meter.installed_from else "?"
+    info_parts = [f"Zählerwechsel am {swap_date}: Altz. {old_meter.meter_number}"]
+    if old_closing is not None and prior_value is not None:
+        info_parts.append(
+            f"({format_value_de(prior_value)} → {format_value_de(old_closing.value)}, "
+            f"Verbrauch {format_value_de(old_part)})"
+        )
+    elif old_closing is None:
+        info_parts.append("(Abschluss-Ablesung Altz. fehlt)")
+    if new_part is not None:
+        info_parts.append(
+            f"+ Neu {new_meter.meter_number} "
+            f"({format_value_de(new_initial)} → {format_value_de(new_value)}, "
+            f"Verbrauch {format_value_de(new_part)})"
+        )
+    replacement_info = " ".join(info_parts)
+
+    return (prior_value, prior_label, consumption, replacement_info)
 
 
 def _check_mismatch(computed: Decimal | None, imported: Decimal | None) -> bool:
@@ -656,7 +756,9 @@ def build_resolved_rows(df: pd.DataFrame, cfg: MappingConfig) -> list[ResolvedRo
         replacement_info = ""
         if resolve.chosen is not None and value is not None and rdate is not None:
             prior_value, prior_label, computed_cons, replacement_info = (
-                compute_prior_and_consumption(resolve.chosen, rdate, value)
+                compute_prior_and_consumption(
+                    resolve.chosen, rdate, value, billing_period=period,
+                )
             )
 
         rows.append(ResolvedRow(

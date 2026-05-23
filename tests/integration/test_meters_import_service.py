@@ -636,6 +636,79 @@ class TestComputePriorAndConsumption:
         assert prior == Decimal("0")
         assert cons == Decimal("350")
 
+    def test_swap_uses_old_meter_chain(self, app):
+        # Zaehlerwechsel mitten in der Importperiode: prior_value = Vorperiode
+        # des Altzaehlers, Verbrauch = (Altz.-Schluss - prior) + (neu - initial).
+        # Spiegelt das Verhalten der Zaehlerablesungen-Seite.
+        prev_period = _make_period(2023)
+        period = _make_period(2024)
+        c = _make_customer(name="A")
+        p = _make_property("P-1", c)
+        old = _make_meter(p, "Z-OLD", active=False,
+                          installed_from=date(2020, 1, 1),
+                          installed_to=date(2024, 6, 15))
+        new = _make_meter(p, "Z-NEW", active=True,
+                          installed_from=date(2024, 6, 15),
+                          initial_value=Decimal("0"))
+        _make_reading(old, prev_period, Decimal("100"))  # Vorjahr
+        _make_reading(old, period, Decimal("180"))       # Abschluss bei Tausch
+        db.session.commit()
+
+        prior, label, cons, info = svc.compute_prior_and_consumption(
+            new, date(2024, 12, 31), Decimal("50"), billing_period=period,
+        )
+        # prior = Altz.-Vorjahresstand
+        assert prior == Decimal("100")
+        assert "Z-OLD" in label
+        # Verbrauch = (180-100) + (50-0) = 130
+        assert cons == Decimal("130")
+        assert "Zählerwechsel" in info
+        assert "Z-OLD" in info
+        assert "Z-NEW" in info
+
+    def test_swap_without_old_prev_falls_back_to_old_initial(self, app):
+        # Kein Altz.-Vorjahres-Eintrag, aber Altz. hat initial_value -> Fallback.
+        period = _make_period(2024)
+        c = _make_customer(name="A")
+        p = _make_property("P-1", c)
+        old = _make_meter(p, "Z-OLD", active=False,
+                          installed_from=date(2020, 1, 1),
+                          installed_to=date(2024, 6, 15),
+                          initial_value=Decimal("20"))
+        new = _make_meter(p, "Z-NEW", active=True,
+                          installed_from=date(2024, 6, 15),
+                          initial_value=Decimal("0"))
+        _make_reading(old, period, Decimal("180"))
+        db.session.commit()
+
+        prior, label, cons, info = svc.compute_prior_and_consumption(
+            new, date(2024, 12, 31), Decimal("50"), billing_period=period,
+        )
+        assert prior == Decimal("20")
+        assert "Anfang Altz." in label
+        # (180-20) + (50-0) = 210
+        assert cons == Decimal("210")
+
+    def test_swap_ignored_without_billing_period(self, app):
+        # Ohne billing_period laeuft die alte Logik (initial_value-Fallback).
+        period = _make_period(2024)
+        c = _make_customer(name="A")
+        p = _make_property("P-1", c)
+        _make_meter(p, "Z-OLD", active=False,
+                    installed_from=date(2020, 1, 1),
+                    installed_to=date(2024, 6, 15))
+        new = _make_meter(p, "Z-NEW", active=True,
+                          installed_from=date(2024, 6, 15),
+                          initial_value=Decimal("0"))
+        db.session.commit()
+
+        prior, label, cons, info = svc.compute_prior_and_consumption(
+            new, date(2024, 12, 31), Decimal("50"),
+        )
+        assert prior == Decimal("0")
+        assert cons == Decimal("50")
+        assert info == ""
+
 
 # ---------------------------------------------------------------------------
 # build_resolved_rows -- prior/consumption-Felder + Mismatch
