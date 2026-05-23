@@ -162,6 +162,24 @@
   </div>
 
   <div class="card">
+    <div class="card-body border-bottom py-2">
+      <div class="row g-2 align-items-center">
+        <div class="col-md-4">
+          <input type="text" id="filter-customer" class="form-control form-control-sm"
+                 placeholder="Filter: Kunde / Eigentümer" autocomplete="off">
+        </div>
+        <div class="col-md-4">
+          <input type="text" id="filter-meter" class="form-control form-control-sm"
+                 placeholder="Filter: Zählernummer / Lookup-Wert" autocomplete="off">
+        </div>
+        <div class="col-md-4 d-flex align-items-center gap-2">
+          <button type="button" id="filter-reset" class="btn btn-outline-secondary btn-sm">
+            <i class="fas fa-times me-1"></i> Zurücksetzen
+          </button>
+          <small class="text-muted ms-auto"><span id="filter-count">{{ rows | length }}</span> / {{ rows | length }} Zeilen</small>
+        </div>
+      </div>
+    </div>
     <div class="card-body p-0">
       <div class="table-responsive">
         <table class="table table-sm table-hover mb-0 align-middle">
@@ -185,7 +203,12 @@
           <tbody>
             {% for r in rows %}
             {% set badge_label, badge_cls = status_badge(r.status) %}
-            <tr class="{{ status_row_class(r.status) }}">
+            {% set chosen_meter = meters_by_id.get(r.chosen_meter_id) if r.chosen_meter_id else none %}
+            {% set row_customer = (owners_by_meter.get(r.chosen_meter_id) if r.chosen_meter_id else '') or '' %}
+            {% set row_meter = (chosen_meter.meter_number if chosen_meter else '') or (r.lookup_value or '') %}
+            <tr class="{{ status_row_class(r.status) }}"
+                data-filter-customer="{{ row_customer | lower }}"
+                data-filter-meter="{{ row_meter | lower }}">
               <td class="text-muted">{{ r.idx + 2 }}</td>
               <td>
                 <input type="checkbox" class="form-check-input"
@@ -300,4 +323,40 @@
     </div>
   </div>
 </form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const inputCustomer = document.getElementById('filter-customer');
+  const inputMeter    = document.getElementById('filter-meter');
+  const btnReset      = document.getElementById('filter-reset');
+  const countEl       = document.getElementById('filter-count');
+  const rows = document.querySelectorAll('tr[data-filter-customer]');
+  if (!rows.length) return;
+
+  function apply() {
+    const qc = (inputCustomer.value || '').trim().toLowerCase();
+    const qm = (inputMeter.value    || '').trim().toLowerCase();
+    let visible = 0;
+    rows.forEach(tr => {
+      const okC = !qc || tr.dataset.filterCustomer.includes(qc);
+      const okM = !qm || tr.dataset.filterMeter.includes(qm);
+      const show = okC && okM;
+      tr.style.display = show ? '' : 'none';
+      if (show) visible++;
+    });
+    countEl.textContent = visible;
+  }
+
+  inputCustomer.addEventListener('input', apply);
+  inputMeter.addEventListener('input', apply);
+  btnReset.addEventListener('click', () => {
+    inputCustomer.value = '';
+    inputMeter.value    = '';
+    apply();
+    inputCustomer.focus();
+  });
+})();
+</script>
 {% endblock %}

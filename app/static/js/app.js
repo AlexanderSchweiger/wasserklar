@@ -111,6 +111,7 @@
   }
   function spinnerStart() { if (++pending === 1) spinnerShow(); }
   function spinnerEnd()   { if (--pending <= 0) { pending = 0; spinnerHide(); } }
+  function spinnerReset() { pending = 0; spinnerHide(); }
 
   // --- Event-Listener (einmalig im head, bleiben ueber hx-boost-Swaps) -----
 
@@ -183,17 +184,20 @@
     }
   }, true);
 
-  // Zurueck/Vorwaerts-Navigation: Seite aus bfcache wiederhergestellt →
-  // Spinner zuruecksetzen (Download-Fallback-Timer lief evtl. noch).
-  window.addEventListener('pageshow', function (e) {
-    if (e.persisted) {
-      pending = 0;
-      clearTimeout(timer);
-      timer = null;
-      var el = document.getElementById('global-spinner');
-      if (el) el.classList.remove('active');
-    }
-  });
+  // Zurueck/Vorwaerts-Navigation: Spinner ist nach einem pageshow nie
+  // legitim aktiv — Seite wurde gerade frisch (oder aus bfcache) angezeigt.
+  // Immer hart resetten, nicht nur bei e.persisted: bei einem hx-boost
+  // "Zurueck" mit history-cache-miss feuert HTMX einen internen Fetch ueber
+  // loadHistoryFromServer, der den htmx:beforeRequest/afterRequest-Lifecycle
+  // NICHT durchlaeuft → unser `pending` wuerde nie dekrementiert, der
+  // Spinner haengt.
+  window.addEventListener('pageshow', spinnerReset);
+
+  // HTMX-History-Restore (hx-boost Zurueck/Vorwaerts, sowohl Cache-Hit als
+  // auch Cache-Miss). Setzt den Spinner zurueck, falls in dem Loch zwischen
+  // popstate und Body-Swap noch eine alte Request-Spur haengt.
+  document.addEventListener('htmx:historyRestore', spinnerReset);
+  document.addEventListener('htmx:historyCacheMissLoad', spinnerReset);
 
   // Erst-Init, nachdem alle defer-Scripte (TomSelect, HTMX) geladen sind.
   // defer-Scripte laufen vor DOMContentLoaded; daher beim Erst-Lauf einmal
