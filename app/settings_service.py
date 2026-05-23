@@ -257,4 +257,7 @@ def send_mail(msg):
             or ''
         )
 
+    msg.extra_headers = getattr(msg, 'extra_headers', {}) or {}
+    msg.extra_headers['X-PM-Message-Stream'] = 'outbound'
+
     mail.send(msg)
