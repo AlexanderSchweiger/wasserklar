@@ -427,6 +427,7 @@
       <!-- Top Navbar -->
       <header class="navbar navbar-expand-md d-none d-lg-flex d-print-none">
         <div class="container-fluid">
+          {% block saas_navbar_search %}{% endblock %}
           <div class="navbar-nav flex-row order-md-last ms-auto">
             {% block saas_navbar_extra %}{% endblock %}
             <div class="nav-item dropdown">
