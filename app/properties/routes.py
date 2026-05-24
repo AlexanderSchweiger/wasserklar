@@ -1,6 +1,8 @@
 from datetime import date, timedelta
 
-from flask import render_template, redirect, url_for, flash, request
+import json
+
+from flask import render_template, redirect, url_for, flash, request, make_response
 from flask_login import login_required
 from sqlalchemy import case as sa_case, exists, func as sa_func
 
@@ -74,17 +76,83 @@ def new():
 @bp.route("/<int:property_id>")
 @login_required
 def detail(property_id):
+    from app.models import Invoice, OpenItem, Booking
+
     prop = db.get_or_404(Property, property_id)
     customers = Customer.query.filter_by(active=True).order_by(Customer.name).all()
-    from app.models import Invoice
     invoices = Invoice.query.filter_by(property_id=property_id).order_by(
         Invoice.date.desc()
     ).all()
+
+    # Aktive Eigentuemer — laut Datenmodell sind mehrere parallele Ownerships
+    # erlaubt (Ehepaare, Erbengemeinschaften). Offene Posten und Buchungen
+    # aller aktuell aktiven Eigentuemer-Kunden zusammenziehen.
+    active_customer_ids = [
+        o.customer_id
+        for o in PropertyOwnership.query.filter_by(
+            property_id=property_id, valid_to=None
+        ).all()
+    ]
+
+    open_items_pag = _mini_paginate(
+        OpenItem.query.filter(
+            OpenItem.customer_id.in_(active_customer_ids),
+            OpenItem.status.in_([OpenItem.STATUS_OPEN, OpenItem.STATUS_PARTIAL]),
+        ).order_by(OpenItem.date.asc(), OpenItem.id.asc()),
+        page_param="op_page",
+        per_page=5,
+    ) if active_customer_ids else None
+
+    bookings_pag = _mini_paginate(
+        Booking.query.filter(Booking.customer_id.in_(active_customer_ids))
+        .order_by(Booking.date.desc(), Booking.id.desc()),
+        page_param="bk_page",
+        per_page=5,
+    ) if active_customer_ids else None
+
     return render_template(
         "properties/detail.html",
         property=prop,
         customers=customers,
         invoices=invoices,
+        open_items_pag=open_items_pag,
+        bookings_pag=bookings_pag,
+        has_active_owner=bool(active_customer_ids),
+        today=date.today(),
+    )
+
+
+def _mini_paginate(query, *, page_param: str, per_page: int):
+    """Schlanke Pagination fuer mehrere Listen auf einer Seite.
+
+    ``paginate_query`` aus ``app.pagination`` belegt fix den URL-Param
+    ``page`` — auf der Properties-Detail-Seite teilen sich aber zwei Listen
+    (offene Posten + Buchungen) eine URL. Daher hier ein separater Param pro
+    Liste (``op_page`` / ``bk_page``).
+    """
+    try:
+        page = max(1, int(request.args.get(page_param, 1)))
+    except (TypeError, ValueError):
+        page = 1
+    total = query.count()
+    pages = max(1, (total + per_page - 1) // per_page)
+    if page > pages:
+        page = pages
+    items = query.limit(per_page).offset((page - 1) * per_page).all()
+    # SimpleNamespace statt dict — sonst kollidiert ``.items`` in Jinja mit
+    # der dict.items()-Methode (Attribut-Lookup hat Vorrang vor Item-Lookup).
+    from types import SimpleNamespace
+    return SimpleNamespace(
+        items=items,
+        page=page,
+        pages=pages,
+        total=total,
+        per_page=per_page,
+        param=page_param,
+        has_prev=page > 1,
+        has_next=page < pages,
+        first_index=0 if total == 0 else (page - 1) * per_page + 1,
+        last_index=min(page * per_page, total),
     )
 
 
@@ -92,11 +160,23 @@ def detail(property_id):
 @login_required
 def edit(property_id):
     prop = db.get_or_404(Property, property_id)
+    is_modal = bool(request.headers.get("X-From-Modal"))
+
     if request.method == "POST":
         _property_from_form(prop)
         db.session.commit()
+        if is_modal:
+            resp = make_response("", 204)
+            resp.headers["HX-Trigger"] = json.dumps({
+                "closePropertyEditModal": True,
+                "propertyEdited": {"property_id": prop.id},
+            })
+            return resp
         flash("Objekt aktualisiert.", "success")
         return redirect(url_for("properties.detail", property_id=prop.id))
+
+    if is_modal:
+        return render_template("properties/_property_edit_form_body.html", property=prop)
     return render_template("properties/form.html", property=prop)
 
 

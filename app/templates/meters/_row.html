@@ -58,10 +58,15 @@
 
   <td>{{ reading.reading_date.strftime('%d.%m.%Y') if reading else '—' }}</td>
   <td class="text-end">
-    <a href="{{ url_for('meters.add_reading', meter_id=meter.id, period_id=period.id if period else none) }}"
+    {# Stand bearbeiten/anlegen ueber das zentrale Reading-Edit-Modal —
+       konsistent mit dem Subtable in meters/index.html und der Zaehler-
+       Liste in properties/detail.html. #}
+    <button type="button"
+       data-url="{{ url_for('meters.add_reading', meter_id=meter.id, period_id=period.id if period else none) }}"
+       onclick="openReadingModal(this)"
        class="btn btn-sm {{ 'btn-outline-secondary' if reading else 'btn-warning' }}">
       <i class="fas fa-{{ 'edit' if reading else 'plus' }} me-1"></i>
       {{ 'Bearbeiten' if reading else 'Ablesen' }}
-    </a>
+    </button>
   </td>
 </tr>

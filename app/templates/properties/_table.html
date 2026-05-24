@@ -51,9 +51,16 @@
       </td>
       <td class="text-end">
         <a href="{{ url_for('properties.detail', property_id=prop.id) }}"
-           class="btn btn-sm btn-outline-secondary">
-          <i class="fas fa-eye"></i>
+           class="btn btn-sm btn-outline-primary" title="Objektdetails">
+          <i class="fas fa-home"></i>
         </a>
+        <button type="button"
+           data-url="{{ url_for('properties.edit', property_id=prop.id) }}"
+           onclick="openPropertyEditModal(this)"
+           class="btn btn-sm btn-outline-secondary"
+           title="Bearbeiten">
+          <i class="fas fa-edit"></i>
+        </button>
       </td>
     </tr>
     {% else %}

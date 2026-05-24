@@ -1,0 +1,112 @@
+{# Zentrale JS-Helfer fuer die drei Meter-Modale:
+   - Reading-Edit-Modal   (Zaehlerstand bearbeiten/anlegen)  → openReadingModal
+   - Meter-Replace-Modal  (Zaehlerwechsel)                   → openReplaceModal
+   - Meter-Edit-Modal     (Zaehler-Stammdaten bearbeiten)    → openMeterEditModal
+
+   Per Inkludieren im {% block scripts %} der jeweiligen Seite verfuegbar
+   machen -- erwartet, dass die zugehoerigen Modal-Partials (eines oder mehrere)
+   in {% block modals %} eingebunden sind. Fehlende Modale werden uebersprungen.
+
+   Refresh-Strategie:
+   - Die Routes (POST mit `X-From-Modal: 1`) liefern 204 + HX-Trigger-Events
+     (`readingSaved` / `meterReplaced` / `meterEdited`) zurueck -- der Server
+     entscheidet NICHT, wie die aufrufende Seite zu refreshen ist.
+   - Jede Seite kann ihren eigenen Handler definieren:
+     window.onReadingSaved(e) / onMeterReplaced(e) / onMeterEdited(e).
+     Default (kein Handler gesetzt): window.location.reload().
+#}
+<script>
+(function () {
+  // Generischer Modal-Setup-Helper. Vermeidet die dreifache Code-Duplikation
+  // (Reading / Replace / Edit unterscheiden sich nur in IDs, Trigger-Events
+  // und optionalem Confirm-Dialog).
+  function setupModal(cfg) {
+    // cfg = {
+    //   formId, bodyId, modalId,
+    //   closeEvent, saveEvent, savedHandlerName,
+    //   getHeaders,            // optional, fuer GETs die X-From-Modal brauchen
+    //   confirmText,           // optional
+    // }
+    var form = document.getElementById(cfg.formId);
+    if (!form) { return null; }  // Modal nicht eingebunden auf dieser Seite
+
+    var openFn = function (btn) {
+      var url = btn.dataset.url;
+      form.dataset.actionUrl = url;
+      document.getElementById(cfg.bodyId).innerHTML =
+        '<div class="text-center text-muted py-4">' +
+        '<div class="spinner-border spinner-border-sm" role="status"></div></div>';
+      bootstrap.Modal.getOrCreateInstance(document.getElementById(cfg.modalId)).show();
+      var opts = {target: '#' + cfg.bodyId, swap: 'innerHTML'};
+      if (cfg.getHeaders) opts.headers = cfg.getHeaders;
+      htmx.ajax('GET', url, opts);
+    };
+
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var url = this.dataset.actionUrl;
+      if (!url) { return; }
+      if (cfg.confirmText && !confirm(cfg.confirmText)) { return; }
+      var values = {};
+      new FormData(this).forEach(function (v, k) { values[k] = v; });
+      htmx.ajax('POST', url, {
+        target: '#' + cfg.bodyId, swap: 'innerHTML',
+        values: values, headers: {'X-From-Modal': '1'},
+      });
+    });
+
+    document.addEventListener(cfg.closeEvent, function () {
+      var el = document.getElementById(cfg.modalId);
+      if (!el) { return; }
+      var modal = bootstrap.Modal.getInstance(el);
+      if (modal) modal.hide();
+    });
+
+    document.addEventListener(cfg.saveEvent, function (e) {
+      var fn = window[cfg.savedHandlerName];
+      if (typeof fn === 'function') { fn(e); }
+      else { window.location.reload(); }
+    });
+
+    return openFn;
+  }
+
+  // ─── Reading-Edit-Modal ──────────────────────────────────────────────
+  var openReading = setupModal({
+    formId: 'readingEditForm',
+    bodyId: 'readingEditModalBody',
+    modalId: 'readingEditModal',
+    closeEvent: 'closeReadingModal',
+    saveEvent: 'readingSaved',
+    savedHandlerName: 'onReadingSaved',
+    // GET nutzt regulaeres HX-Request (kein X-From-Modal noetig, da der Route-
+    // Handler in add_reading auf HX-Request prueft).
+  });
+  if (openReading) window.openReadingModal = openReading;
+
+  // ─── Meter-Replace-Modal ─────────────────────────────────────────────
+  var openReplace = setupModal({
+    formId: 'meterReplaceForm',
+    bodyId: 'meterReplaceModalBody',
+    modalId: 'meterReplaceModal',
+    closeEvent: 'closeReplaceModal',
+    saveEvent: 'meterReplaced',
+    savedHandlerName: 'onMeterReplaced',
+    getHeaders: {'X-From-Modal': '1'},
+    confirmText: 'Zählerwechsel durchführen? Dieser Vorgang kann nicht rückgängig gemacht werden.',
+  });
+  if (openReplace) window.openReplaceModal = openReplace;
+
+  // ─── Meter-Edit-Modal ────────────────────────────────────────────────
+  var openEdit = setupModal({
+    formId: 'meterEditForm',
+    bodyId: 'meterEditModalBody',
+    modalId: 'meterEditModal',
+    closeEvent: 'closeMeterEditModal',
+    saveEvent: 'meterEdited',
+    savedHandlerName: 'onMeterEdited',
+    getHeaders: {'X-From-Modal': '1'},
+  });
+  if (openEdit) window.openMeterEditModal = openEdit;
+})();
+</script>

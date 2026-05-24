@@ -80,17 +80,21 @@
         {% endif %}
       </td>
       <td class="text-end" style="white-space:nowrap">
-        <a href="{{ url_for('meters.meter_edit', meter_id=meter.id) }}"
+        <button type="button"
+           data-url="{{ url_for('meters.meter_edit', meter_id=meter.id) }}"
+           onclick="openMeterEditModal(this)"
            class="btn btn-sm btn-outline-secondary"
            title="Bearbeiten">
           <i class="fas fa-edit"></i>
-        </a>
+        </button>
         {% if meter.active %}
-        <a href="{{ url_for('meters.meter_replace', meter_id=meter.id, **{'from': 'list'}) }}"
+        <button type="button"
+           data-url="{{ url_for('meters.meter_replace', meter_id=meter.id) }}"
+           onclick="openReplaceModal(this)"
            class="btn btn-sm btn-outline-warning"
            title="Zähler tauschen">
           <i class="fas fa-exchange-alt"></i>
-        </a>
+        </button>
         {% endif %}
         {% if readings_count == 0 %}
         <form method="post"

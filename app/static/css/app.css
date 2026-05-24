@@ -48,6 +48,44 @@
   color: #fff !important;
 }
 
+/* Icon-only Buttons in Tabellen: Tabler-`btn-icon`-Look ohne Massen-Replace
+   in ~40 Templates. Greift, wenn der Button-Inhalt ein einzelnes <i>- oder
+   <svg>-Element ist — Buttons mit Icon + Text bleiben unangetastet.
+   - Quadratisch (Breite = Höhe), sonst wirken die Ecken je nach Icon-Breite
+     (fa-edit schmaler als fa-trash etc.) mal "rund" und mal "kantig".
+   - 2rem (~32px) Klickfläche: größer als Default btn-sm (~25px),
+     kleiner als Tabler-Default btn-icon (~36px).
+   - Rahmen transparent, der Hover-Fill von btn-outline-* bleibt sichtbar
+     als Interaktivitäts-Feedback. */
+/* Diskriminator zwischen Icon-only und Icon+Text:
+   CSS :only-child ignoriert Textknoten — d.h. `<button><i></i> Bearbeiten</button>`
+   würde fälschlich als icon-only matchen. Konvention im Codebase: Icon+Text-
+   Buttons haben am <i> eine Margin-Klasse (`me-1` / `me-2` für Abstand zum
+   folgenden Text); reine Icon-Buttons haben das nicht. Wir filtern darüber. */
+.table td .btn:has(> i:only-child:not([class*=" me-"]):not([class^="me-"]):not([class*=" ms-"]):not([class^="ms-"]):not([class*=" mx-"]):not([class^="mx-"])),
+.table td .btn:has(> svg:only-child) {
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-color: transparent;
+  border-radius: var(--tblr-border-radius, 4px);
+  vertical-align: middle;
+}
+
+/* Minimaler Abstand zwischen benachbarten Icon-Buttons. Berücksichtigt
+   <form class="d-inline">-Wrapper, in denen viele Lösch-Buttons stecken.
+   Selektor-Discriminator analog oben — sonst greift der Abstand auch zwischen
+   Icon+Text-Buttons (Bearbeiten/Abschließen), die mehr Luft brauchen als 2px. */
+.table td .btn:has(> i:only-child:not([class*=" me-"]):not([class^="me-"]):not([class*=" ms-"]):not([class^="ms-"]):not([class*=" mx-"]):not([class^="mx-"])) + .btn,
+.table td .btn:has(> i:only-child:not([class*=" me-"]):not([class^="me-"]):not([class*=" ms-"]):not([class^="ms-"]):not([class*=" mx-"]):not([class^="mx-"])) + form,
+.table td form + .btn:has(> i:only-child:not([class*=" me-"]):not([class^="me-"]):not([class*=" ms-"]):not([class^="ms-"]):not([class*=" mx-"]):not([class^="mx-"])),
+.table td form + form {
+  margin-left: 0.125rem;
+}
+
 /* Überfällige Zeilen */
 tr.overdue { background-color: #fff3cd !important; }
 

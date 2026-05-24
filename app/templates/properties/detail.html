@@ -9,10 +9,12 @@
       <div class="card-header">
         <h3 class="card-title">Objektdaten</h3>
         <div class="card-options">
-          <a href="{{ url_for('properties.edit', property_id=property.id) }}"
+          <button type="button"
+             data-url="{{ url_for('properties.edit', property_id=property.id) }}"
+             onclick="openPropertyEditModal(this)"
              class="btn btn-sm btn-outline-primary">
             <i class="fas fa-edit"></i> Bearbeiten
-          </a>
+          </button>
         </div>
       </div>
       <div class="card-body">
@@ -95,12 +97,17 @@
                 {% endif %}
                 {% set readings = meter.readings|sort(attribute='reading_date') %}
                 {% if readings %}
+                {# Stand in m³ ohne Nachkommastellen (Konvention im OSS — sowohl
+                   _readings_subtable als auch _row.html runden via |int).
+                   Edit-Button pro Zeile oeffnet das Reading-Edit-Modal
+                   (wiederverwendet aus meters/index.html). #}
                 <table class="table table-sm table-borderless mb-0 mt-2">
                   <thead>
                     <tr class="text-muted">
                       <th class="fw-normal py-0">Ablesedatum</th>
                       <th class="fw-normal py-0">Periode</th>
                       <th class="fw-normal py-0 text-end">Stand</th>
+                      <th class="fw-normal py-0 text-end" style="width:30px"></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -108,23 +115,47 @@
                     <tr>
                       <td class="py-0"><small>{{ r.reading_date.strftime('%d.%m.%Y') }}</small></td>
                       <td class="py-0"><small class="text-muted">{{ r.billing_period.name if r.billing_period else '—' }}</small></td>
-                      <td class="py-0 text-end"><small>{{ r.value|de_number }} m³</small></td>
+                      <td class="py-0 text-end"><small>{{ r.value|int }} m³</small></td>
+                      <td class="py-0 text-end">
+                        <button type="button"
+                          data-url="{{ url_for('meters.add_reading', meter_id=meter.id, period_id=r.billing_period_id) }}"
+                          onclick="openReadingModal(this)"
+                          class="btn btn-xs btn-outline-secondary"
+                          title="Stand bearbeiten">
+                          <i class="fas fa-edit"></i>
+                        </button>
+                      </td>
                     </tr>
                     {% endfor %}
                   </tbody>
                 </table>
                 {% endif %}
               </span>
-              <div class="btn-group btn-group-sm">
-                <a href="{{ url_for('meters.meter_edit', meter_id=meter.id) }}"
-                   class="btn btn-outline-secondary btn-sm">
+              {# Buttons in derselben Groesse wie im Zaehler-Listing-Table
+                 (_manage_table.html): einzelne `btn btn-sm`, KEIN
+                 `btn-group btn-group-sm`-Wrapper (der drueckt sie nochmal
+                 kleiner). Icon-only mit title-Tooltip. #}
+              <div class="text-nowrap">
+                <a href="{{ url_for('meters.readings', q=meter.meter_number) }}"
+                   class="btn btn-sm btn-outline-secondary"
+                   title="Ablesungen anzeigen">
+                  <i class="fas fa-eye"></i>
+                </a>
+                <button type="button"
+                   data-url="{{ url_for('meters.meter_edit', meter_id=meter.id) }}"
+                   onclick="openMeterEditModal(this)"
+                   class="btn btn-sm btn-outline-secondary"
+                   title="Zähler bearbeiten">
                   <i class="fas fa-edit"></i>
-                </a>
+                </button>
                 {% if meter.active %}
-                <a href="{{ url_for('meters.meter_replace', meter_id=meter.id) }}"
-                   class="btn btn-outline-danger btn-sm" title="Zähler wechseln">
+                <button type="button"
+                   data-url="{{ url_for('meters.meter_replace', meter_id=meter.id) }}"
+                   onclick="openReplaceModal(this)"
+                   class="btn btn-sm btn-outline-warning"
+                   title="Zähler wechseln">
                   <i class="fas fa-exchange-alt"></i>
-                </a>
+                </button>
                 {% endif %}
               </div>
             </div>
@@ -208,6 +239,156 @@
       </div>
     </div>
 
+    {# ---------------- Offene Posten + Buchungen des aktiven Eigentuemers ---------------- #}
+    {# Eigene Pagination-Parameter (op_page / bk_page) statt dem globalen ``page``,
+       weil zwei voneinander unabhaengige Listen auf derselben URL paginieren. #}
+    {% macro mini_pagination(pag) %}
+    {% if pag and pag.pages > 1 %}
+    <div class="card-footer d-flex flex-wrap align-items-center justify-content-between gap-2">
+      <small class="text-secondary m-0">
+        Zeige <strong>{{ pag.first_index }}</strong>–<strong>{{ pag.last_index }}</strong>
+        von <strong>{{ pag.total }}</strong>
+      </small>
+      <ul class="pagination pagination-sm m-0">
+        <li class="page-item {{ 'disabled' if not pag.has_prev }}">
+          {% if pag.has_prev %}
+          <a class="page-link" href="{{ page_url(**{pag.param: pag.page - 1}) }}"><i class="fas fa-chevron-left"></i></a>
+          {% else %}
+          <span class="page-link"><i class="fas fa-chevron-left"></i></span>
+          {% endif %}
+        </li>
+        {% for p in range(1, pag.pages + 1) %}
+          {% if p == pag.page %}
+          <li class="page-item active"><span class="page-link">{{ p }}</span></li>
+          {% else %}
+          <li class="page-item"><a class="page-link" href="{{ page_url(**{pag.param: p}) }}">{{ p }}</a></li>
+          {% endif %}
+        {% endfor %}
+        <li class="page-item {{ 'disabled' if not pag.has_next }}">
+          {% if pag.has_next %}
+          <a class="page-link" href="{{ page_url(**{pag.param: pag.page + 1}) }}"><i class="fas fa-chevron-right"></i></a>
+          {% else %}
+          <span class="page-link"><i class="fas fa-chevron-right"></i></span>
+          {% endif %}
+        </li>
+      </ul>
+    </div>
+    {% endif %}
+    {% endmacro %}
+
+    {% if has_active_owner %}
+    <!-- Offene Posten des aktiven Eigentuemers -->
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title"><i class="fas fa-exclamation-circle me-2"></i>Offene Posten des aktiven Eigentümers</h3>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-hover mb-0">
+          <thead>
+            <tr>
+              <th>Beschreibung</th>
+              <th>Kunde</th>
+              <th>Datum</th>
+              <th>Fällig</th>
+              <th>Status</th>
+              <th class="text-end">Gesamt</th>
+              <th class="text-end">Offen</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in open_items_pag.items %}
+            {% set bal = item.open_balance %}
+            <tr class="{{ 'table-warning' if item.due_date and item.due_date < today }}">
+              <td>
+                {% if item.invoice_id %}
+                <a href="{{ url_for('invoices.detail', invoice_id=item.invoice_id) }}">
+                  <code>{{ item.description }}</code>
+                </a>
+                {% else %}
+                {{ item.description }}
+                {% endif %}
+              </td>
+              <td>
+                <a href="{{ url_for('customers.detail', customer_id=item.customer_id) }}">
+                  {{ item.customer.name }}
+                </a>
+              </td>
+              <td>{{ item.date.strftime('%d.%m.%Y') }}</td>
+              <td>
+                {{ item.due_date.strftime('%d.%m.%Y') if item.due_date else '—' }}
+                {% if item.due_date and item.due_date < today %}
+                <span class="badge bg-danger text-white ms-1">überfällig</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if item.status == 'Offen' %}<span class="badge bg-warning text-dark">Offen</span>
+                {% elif item.status == 'Teilbezahlt' %}<span class="badge bg-info text-white">Teilbezahlt</span>
+                {% endif %}
+              </td>
+              <td class="text-end" style="white-space:nowrap">{{ item.amount|de_number }} €</td>
+              <td class="text-end" style="white-space:nowrap"><strong>{{ bal|de_number }} €</strong></td>
+            </tr>
+            {% else %}
+            <tr><td colspan="7" class="text-center text-muted py-3">
+              <i class="fas fa-check-circle text-success me-2"></i>Keine offenen Posten.
+            </td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {{ mini_pagination(open_items_pag) }}
+    </div>
+
+    <!-- Letzte Buchungen des aktiven Eigentuemers -->
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title"><i class="fas fa-book me-2"></i>Letzte Buchungen des aktiven Eigentümers</h3>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-hover mb-0">
+          <thead>
+            <tr>
+              <th>Datum</th>
+              <th>Beschreibung</th>
+              <th>Kunde</th>
+              <th>Konto</th>
+              <th>Status</th>
+              <th class="text-end">Betrag</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for bk in bookings_pag.items %}
+            <tr class="{{ 'table-secondary' if bk.status == 'Storniert' }}">
+              <td>{{ bk.date.strftime('%d.%m.%Y') }}</td>
+              <td>{{ bk.description }}{% if bk.reference %} <small class="text-muted">({{ bk.reference }})</small>{% endif %}</td>
+              <td>
+                <a href="{{ url_for('customers.detail', customer_id=bk.customer_id) }}">
+                  {{ bk.customer.name }}
+                </a>
+              </td>
+              <td><small class="text-muted">{% if bk.account.code %}[{{ bk.account.code }}] {% endif %}{{ bk.account.name }}</small></td>
+              <td>
+                {% if bk.status == 'Offen' %}<span class="badge bg-warning text-dark">Offen</span>
+                {% elif bk.status == 'Verbucht' %}<span class="badge bg-success text-white">Verbucht</span>
+                {% elif bk.status == 'Storniert' %}<span class="badge bg-secondary text-white">Storniert</span>
+                {% endif %}
+              </td>
+              <td class="text-end" style="white-space:nowrap">
+                <strong class="{{ 'text-danger' if bk.amount < 0 else 'text-success' }}">
+                  {{ bk.amount|de_number }} €
+                </strong>
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="text-center text-muted py-3">Noch keine Buchungen.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {{ mini_pagination(bookings_pag) }}
+    </div>
+    {% endif %}
+
     <!-- Rechnungen -->
     <div class="card">
       <div class="card-header">
@@ -257,4 +438,19 @@
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block modals %}
+{% include "properties/_property_edit_modal.html" %}
+{# Drei Meter-Modale — wiederverwendet aus meters/. Alle per HTMX lazy-loaded;
+   Submit fired HX-Trigger-Event, Default-Handler in _modal_scripts.html ruft
+   window.location.reload(). #}
+{% include "meters/_reading_edit_modal.html" %}
+{% include "meters/_meter_replace_modal.html" %}
+{% include "meters/_meter_edit_modal.html" %}
+{% endblock %}
+
+{% block scripts %}
+{% include "properties/_property_modal_scripts.html" %}
+{% include "meters/_modal_scripts.html" %}
 {% endblock %}

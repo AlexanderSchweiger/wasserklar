@@ -281,6 +281,7 @@ def readings():
                 Property.strasse.ilike(f"%{q}%"),
                 Property.ort.ilike(f"%{q}%"),
                 Customer.name.ilike(f"%{q}%"),
+                WaterMeter.meter_number.ilike(f"%{q}%"),
             )
         )
     if only_missing and period is not None:
@@ -400,22 +401,20 @@ def add_reading(meter_id):
         )
 
         if is_modal:
-            # Aktualisiertes Subtable direkt in das offene Panel schreiben,
-            # dann Modal per HX-Trigger schließen.
-            readings = (
-                MeterReading.query
-                .filter_by(meter_id=meter_id)
-                .join(BillingPeriod, MeterReading.billing_period_id == BillingPeriod.id)
-                .order_by(BillingPeriod.start_date.desc(), MeterReading.reading_date.desc())
-                .all()
-            )
-            resp = make_response(render_template(
-                "meters/_readings_subtable.html",
-                meter=meter, readings=readings,
-            ))
-            resp.headers["HX-Retarget"] = f"#readings-content-{meter_id}"
-            resp.headers["HX-Reswap"] = "innerHTML"
-            resp.headers["HX-Trigger"] = json.dumps({"closeReadingModal": True})
+            # Modal-POST: keine konkrete Antwort-HTML, sondern nur Events fuer
+            # die aufrufende Seite. Jede Seite bindet `readingSaved` und ent-
+            # scheidet selbst, was zu refreshen ist (Subtable / meters-table /
+            # full reload). Der frueher hier eingebaute HX-Retarget auf
+            # `#readings-content-<id>` hat das Modal an die meters/index-Seite
+            # gekoppelt -- jetzt portabel.
+            resp = make_response("", 204)
+            resp.headers["HX-Trigger"] = json.dumps({
+                "closeReadingModal": True,
+                "readingSaved": {
+                    "meter_id": meter.id,
+                    "period_id": period.id,
+                },
+            })
             return resp
 
         if request.headers.get("HX-Request"):
@@ -586,9 +585,26 @@ def meter_new():
 @login_required
 def meter_edit(meter_id):
     meter = db.get_or_404(WaterMeter, meter_id)
+    is_modal = bool(request.headers.get("X-From-Modal"))
     properties = Property.query.filter_by(active=True).order_by(
         Property.object_number, Property.ort
     ).all()
+
+    def _render_form(template: str):
+        """Helper — Form (Modal-Body-Partial oder Vollseite) mit aktuellem
+        State rendern. Wiederverwendung fuer GET, POST-Validierungsfehler und
+        den Standalone-Fallback."""
+        return render_template(
+            template, meter=meter, properties=properties,
+            selected_property_id=None,
+            main_meters=_active_main_meters_excluding(exclude_id=meter.id),
+        )
+
+    # GET im Modal: nur Form-Body-Partial zurueckgeben (HTMX swappt in
+    # meterEditModalBody).
+    if request.method == "GET" and is_modal:
+        return _render_form("meters/_meter_edit_form_body.html")
+
     if request.method == "POST":
         installed_from_str = request.form.get("installed_from", "")
         initial_value_str = request.form.get("initial_value", "").replace(",", ".")
@@ -600,11 +616,10 @@ def meter_edit(meter_id):
             WaterMeter.id != meter.id,
         ).first():
             flash(f"Zählernummer '{new_meter_number}' ist bereits vergeben.", "danger")
-            return render_template(
-                "meters/meter_form.html", meter=meter, properties=properties,
-                selected_property_id=None,
-                main_meters=_active_main_meters_excluding(exclude_id=meter.id),
-            )
+            # Modal-User soll im offenen Modal bleiben → Form-Body neu rendern.
+            if is_modal:
+                return _render_form("meters/_meter_edit_form_body.html")
+            return _render_form("meters/meter_form.html")
         meter.property_id = int(request.form["property_id"])
         meter.meter_number = new_meter_number
         meter.location = request.form.get("location", "").strip()
@@ -619,12 +634,20 @@ def meter_edit(meter_id):
         meter.parent_meter_id = parent_id
         db.session.commit()
         flash("Zähler aktualisiert.", "success")
+        if is_modal:
+            # Analog zu add_reading/meter_replace: 204 + Events, aufrufende
+            # Seite refresht sich selbst (Default-Handler: location.reload()).
+            resp = make_response("", 204)
+            resp.headers["HX-Trigger"] = json.dumps({
+                "closeMeterEditModal": True,
+                "meterEdited": {
+                    "meter_id": meter.id,
+                    "property_id": meter.property_id,
+                },
+            })
+            return resp
         return redirect(url_for("meters.index"))
-    return render_template(
-        "meters/meter_form.html", meter=meter, properties=properties,
-        selected_property_id=None,
-        main_meters=_active_main_meters_excluding(exclude_id=meter.id),
-    )
+    return _render_form("meters/meter_form.html")
 
 
 # ---------------------------------------------------------------------------
@@ -903,21 +926,51 @@ def _suggest_consumption_column(columns: list[str]) -> str:
 @login_required
 def meter_replace(meter_id):
     old_meter = db.get_or_404(WaterMeter, meter_id)
+    is_modal = bool(request.headers.get("X-From-Modal"))
     from_view = (
         request.form.get("from") if request.method == "POST"
         else request.args.get("from", "property")
     )
     if not old_meter.active:
+        # Auch im Modal-Pfad signalisieren wir das per Flash + Reload;
+        # Modal sieht nur den 409, der via HX-Trigger zum Reload fuehrt.
         flash("Dieser Zähler ist bereits ausgebaut.", "warning")
+        if is_modal:
+            resp = make_response("", 409)
+            resp.headers["HX-Trigger"] = json.dumps({
+                "closeReplaceModal": True, "meterReplaced": {"meter_id": meter_id},
+            })
+            return resp
         if from_view == "list":
             return redirect(url_for("meters.index"))
         return redirect(url_for("properties.detail", property_id=old_meter.property_id))
 
+    # GET im Modal: nur Form-Body partial liefern, der vom Client in den
+    # geoeffneten Modal-Body geswappt wird.
+    if request.method == "GET" and is_modal:
+        return render_template(
+            "meters/_meter_replace_form_body.html",
+            meter=old_meter, today=date.today(),
+            periods=_all_periods(), active_period=BillingPeriod.current(),
+        )
+
     if request.method == "POST":
+        def _modal_error(message: str):
+            """Validierungsfehler aus dem Modal: Form-Body neu rendern und
+            den User mit Inline-Hinweis im offenen Modal lassen."""
+            flash(message, "danger")
+            return render_template(
+                "meters/_meter_replace_form_body.html",
+                meter=old_meter, today=date.today(),
+                periods=_all_periods(), active_period=BillingPeriod.current(),
+            )
+
         period = db.session.get(
             BillingPeriod, request.form.get("billing_period_id", type=int)
         )
         if period is None:
+            if is_modal:
+                return _modal_error("Bitte eine Abrechnungsperiode für den Zählertausch wählen.")
             flash("Bitte eine Abrechnungsperiode für den Zählertausch wählen.", "danger")
             return redirect(url_for("meters.meter_replace", meter_id=meter_id,
                                     **{"from": from_view}))
@@ -935,6 +988,8 @@ def meter_replace(meter_id):
         new_eichjahr = int(new_eichjahr_str) if new_eichjahr_str else None
 
         if WaterMeter.query.filter_by(meter_number=new_meter_number).first():
+            if is_modal:
+                return _modal_error(f"Zählernummer '{new_meter_number}' ist bereits vergeben.")
             flash(f"Zählernummer '{new_meter_number}' ist bereits vergeben.", "danger")
             return redirect(url_for("meters.meter_replace", meter_id=meter_id,
                                     **{"from": from_view}))
@@ -981,6 +1036,18 @@ def meter_replace(meter_id):
             f"neuer Zähler '{new_meter_number}' eingebaut.",
             "success",
         )
+        if is_modal:
+            # Wie bei add_reading: 204 + Events, die aufrufende Seite refresht
+            # sich selbst (Default-Handler: window.location.reload()).
+            resp = make_response("", 204)
+            resp.headers["HX-Trigger"] = json.dumps({
+                "closeReplaceModal": True,
+                "meterReplaced": {
+                    "meter_id": old_meter.id, "new_meter_id": new_meter.id,
+                    "property_id": old_meter.property_id,
+                },
+            })
+            return resp
         if from_view == "list":
             return redirect(url_for("meters.index"))
         return redirect(url_for("properties.detail", property_id=old_meter.property_id))

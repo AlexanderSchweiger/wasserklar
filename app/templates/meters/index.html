@@ -52,47 +52,34 @@
    Bootstrap-Backdrop über dem Modal ab. Siehe base.html. #}
 {% block modals %}
 {% include "meters/_reading_edit_modal.html" %}
+{% include "meters/_meter_replace_modal.html" %}
+{% include "meters/_meter_edit_modal.html" %}
 {% endblock %}
 
 {% block scripts %}
 <script>
-// Edit-Button im Subtable ruft diese Funktion direkt auf (onclick).
-function openReadingModal(btn) {
-  var url = btn.dataset.url;
-  var form = document.getElementById('readingEditForm');
-  form.dataset.actionUrl = url;
-
-  // Spinner zurücksetzen, damit alter Inhalt nicht aufblitzt.
-  document.getElementById('readingEditModalBody').innerHTML =
-    '<div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm" role="status"></div></div>';
-
-  // Modal sofort öffnen — Inhalt lädt im Hintergrund nach.
-  bootstrap.Modal.getOrCreateInstance(document.getElementById('readingEditModal')).show();
-
-  // Formularfelder per HTMX in den Modal-Body laden.
-  htmx.ajax('GET', url, {target: '#readingEditModalBody', swap: 'innerHTML'});
-}
-
-// Submit via htmx.ajax, damit HX-Retarget + HX-Trigger aus der Server-Antwort wirken.
-document.getElementById('readingEditForm').addEventListener('submit', function (e) {
-  e.preventDefault();
-  var form = this;
-  var url = form.dataset.actionUrl;
-  var values = {};
-  new FormData(form).forEach(function (v, k) { values[k] = v; });
-  htmx.ajax('POST', url, {
-    target: '#readingEditModalBody',
-    swap: 'innerHTML',
-    values: values,
-    headers: {'X-From-Modal': '1'},
+// Seiten-spezifische Refresh-Handler — werden vom _modal_scripts.html-Default
+// statt window.location.reload() aufgerufen, wenn definiert.
+//
+// readingSaved: das offene Subtable des betroffenen Zaehlers nachladen (statt
+// die ganze Seite zu reloaden, die den Subtable-Open-State verlieren wuerde).
+window.onReadingSaved = function (e) {
+  var meterId = e.detail && e.detail.meter_id;
+  if (!meterId) { window.location.reload(); return; }
+  var content = document.getElementById('readings-content-' + meterId);
+  if (!content || !content.dataset.loaded) {
+    // Subtable war nicht offen — nichts zu tun, der naechste Toggle laedt frisch.
+    return;
+  }
+  htmx.ajax('GET', '/meters/' + meterId + '/readings-partial', {
+    target: '#readings-content-' + meterId, swap: 'innerHTML',
   });
-});
+};
 
-// Fired by HX-Trigger on successful modal save → close modal.
-document.addEventListener('closeReadingModal', function () {
-  var modal = bootstrap.Modal.getInstance(document.getElementById('readingEditModal'));
-  if (modal) modal.hide();
-});
+// meterReplaced: Zaehlerwechsel beruehrt mehrere Zeilen (alter Zaehler wird
+// inaktiv, neuer kommt dazu) — full reload ist sauberer als das Mergen.
+// Default-Handler reicht; kein Override noetig.
 </script>
+{% include "meters/_modal_scripts.html" %}
 {% endblock %}
 

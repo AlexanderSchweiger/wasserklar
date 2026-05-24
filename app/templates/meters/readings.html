@@ -25,7 +25,7 @@
       </div>
       <div class="input-group input-group-sm" style="width:240px">
         <input type="search" name="q" value="{{ q }}" class="form-control"
-          placeholder="Objekt oder Besitzer suchen…"
+          placeholder="Objekt, Besitzer oder Zählernr. suchen…"
           hx-get="{{ url_for('meters.readings') }}"
           hx-trigger="input changed delay:300ms"
           hx-target="#meters-table"
@@ -101,5 +101,29 @@ function toggleQuickMode(btn) {
     btn.classList.replace('btn-secondary', 'btn-info');
   }
 }
+
+// Nach einem Modal-Save: nur die Tabelle nachladen, nicht die ganze Seite —
+// so bleiben Filter (q, period, only_missing, mode) erhalten.
+window.onReadingSaved = function () {
+  htmx.ajax('GET', "{{ url_for('meters.readings') }}", {
+    target: '#meters-table', swap: 'innerHTML',
+    values: {
+      q: document.querySelector("[name='q']").value || '',
+      period_id: document.getElementById('period-select').value || '',
+      mode: document.getElementById('mode-input').value || 'normal',
+      only_missing: document.getElementById('only-missing-check').checked ? '1' : '',
+    },
+  });
+};
 </script>
+{% endblock %}
+
+{% block modals %}
+{# Reading-Edit-Modal wird aus _row.html via onclick="openReadingModal(this)"
+   getriggert. Replace nicht noetig auf dieser Seite (kein Wechseln-Button). #}
+{% include "meters/_reading_edit_modal.html" %}
+{% endblock %}
+
+{% block scripts %}
+{% include "meters/_modal_scripts.html" %}
 {% endblock %}

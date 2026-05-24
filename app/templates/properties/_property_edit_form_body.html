@@ -1,0 +1,93 @@
+{# Form-Body fuer den Property-Edit — per HTMX in den propertyEditModalBody
+   geladen. TomSelect wird vom globalen htmx:afterSwap-Listener in app.js
+   re-initialisiert, kein zusaetzlicher Init-Code noetig. #}
+<div class="row">
+  <div class="col-md-6">
+    <div class="mb-3">
+      <label class="form-label">Objektnummer</label>
+      <input type="text" name="object_number" class="form-control"
+        value="{{ property.object_number or '' }}"
+        placeholder="z.B. OBJ-001">
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="mb-3">
+      <label class="form-label">Typ <span class="text-danger">*</span></label>
+      <select name="object_type" class="form-select tom-select" required>
+        {% for t in ['Haus', 'Garten', 'Sonstiges'] %}
+        <option value="{{ t }}" {{ 'selected' if property.object_type == t }}>{{ t }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+</div>
+<div class="row">
+  <div class="col-md-8">
+    <div class="mb-3">
+      <label class="form-label">Straße</label>
+      <input type="text" name="strasse" class="form-control"
+        value="{{ property.strasse or '' }}">
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="mb-3">
+      <label class="form-label">Hausnummer</label>
+      <input type="text" name="hausnummer" class="form-control"
+        value="{{ property.hausnummer or '' }}">
+    </div>
+  </div>
+</div>
+<div class="row">
+  <div class="col-md-3">
+    <div class="mb-3">
+      <label class="form-label">PLZ</label>
+      <input type="text" name="plz" class="form-control"
+        value="{{ property.plz or '' }}">
+    </div>
+  </div>
+  <div class="col-md-5">
+    <div class="mb-3">
+      <label class="form-label">Ort / Stadt</label>
+      <input type="text" name="ort" class="form-control"
+        value="{{ property.ort or '' }}">
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="mb-3">
+      <label class="form-label">Land</label>
+      <input type="text" name="land" class="form-control"
+        value="{{ property.land or 'Österreich' }}">
+    </div>
+  </div>
+</div>
+<div class="mb-3">
+  <label class="form-label">Notizen</label>
+  <textarea name="notes" class="form-control" rows="3">{{ property.notes or '' }}</textarea>
+</div>
+<hr>
+<h6 class="text-muted mb-1">Abrechnungseinstellungen</h6>
+<p class="text-muted small mb-3">Überschreibt Kunden- und Tarif-Gebühren für dieses Objekt (stärkste Priorität). Leer lassen = Kunden- oder Tarif-Wert verwenden.</p>
+<div class="row">
+  <div class="col-md-6">
+    <div class="mb-3">
+      <label class="form-label">Grundgebühr – Objektwert (€/Jahr)</label>
+      <div class="input-group">
+        <input type="number" name="base_fee_override" step="0.01" class="form-control"
+          placeholder="Kunden-/Tarif-Standard"
+          value="{{ '%.2f'|format(property.base_fee_override) if property.base_fee_override is not none else '' }}">
+        <span class="input-group-text">€</span>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="mb-3">
+      <label class="form-label">Zusatzgebühr – Objektwert (€/Jahr)</label>
+      <div class="input-group">
+        <input type="number" name="additional_fee_override" step="0.01" class="form-control"
+          placeholder="Kunden-/Tarif-Standard"
+          value="{{ '%.2f'|format(property.additional_fee_override) if property.additional_fee_override is not none else '' }}">
+        <span class="input-group-text">€</span>
+      </div>
+    </div>
+  </div>
+</div>
