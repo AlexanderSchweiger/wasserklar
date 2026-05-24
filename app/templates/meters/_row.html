@@ -64,9 +64,9 @@
     <button type="button"
        data-url="{{ url_for('meters.add_reading', meter_id=meter.id, period_id=period.id if period else none) }}"
        onclick="openReadingModal(this)"
-       class="btn btn-sm {{ 'btn-outline-secondary' if reading else 'btn-warning' }}">
-      <i class="fas fa-{{ 'edit' if reading else 'plus' }} me-1"></i>
-      {{ 'Bearbeiten' if reading else 'Ablesen' }}
+       class="btn {{ 'btn-outline-secondary' if reading else 'btn-warning' }}"
+       title="{{ 'Stand ändern' if reading else 'Stand ablesen' }}">
+      <i class="fas fa-{{ 'edit' if reading else 'plus' }}"></i>
     </button>
   </td>
 </tr>

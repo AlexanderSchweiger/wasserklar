@@ -1,0 +1,26 @@
+{# Inline-Flash-Messages fuer Modal-Form-Bodies.
+   Hintergrund: base.html rendert get_flashed_messages() nur beim Full-Page-
+   Render. Wenn ein Modal-POST per HTMX nur den Form-Body zurueckliefert (z.B.
+   bei Validierungsfehlern wie "Zaehlernummer schon vergeben"), bleibt der
+   Flash in der Session liegen und ist im Modal unsichtbar — er erscheint
+   erst beim naechsten Full-Reload hinter dem geoeffneten Modal.
+
+   Loesung: Dieses Partial am Anfang jedes Modal-Form-Bodys einbinden. Es
+   konsumiert die wartenden Flashes (get_flashed_messages leert die Queue)
+   und rendert sie als Alerts im Modal.
+
+   Mapping der Flask-Kategorien auf Bootstrap-Alert-Varianten ist
+   identisch zur base.html: danger/warning/info/success, alles andere → info.
+#}
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% for category, message in messages %}
+    {% set variant = 'danger' if category == 'danger'
+      else ('warning' if category == 'warning'
+      else ('success' if category == 'success'
+      else 'info')) %}
+    <div class="alert alert-{{ variant }} alert-dismissible" role="alert">
+      {{ message }}
+      <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Schließen"></button>
+    </div>
+  {% endfor %}
+{% endwith %}

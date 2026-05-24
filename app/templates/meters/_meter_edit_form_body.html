@@ -10,6 +10,7 @@
    sobald HTMX den Inhalt in den Modal-Body geswappt hat — kein zusaetzlicher
    Init-Code noetig.
 #}
+{% include "_flash_inline.html" %}
 <div class="mb-3">
   <label class="form-label">Objekt <span class="text-danger">*</span></label>
   <select name="property_id" class="form-select tom-select" required>
@@ -72,7 +73,14 @@
   <div class="col-md-6" id="parent_meter_wrap">
     <div class="mb-3">
       <label class="form-label">Übergeordneter Hauptzähler</label>
-      <select name="parent_meter_id" class="form-select tom-select">
+      {# disabled-Attribut bewusst serverseitig setzen, NICHT spaeter per JS.
+         TomSelect 2.x rendert das Original-<select> nicht zuverlaessig versteckt,
+         wenn man `disabled = true` zwischen Insert und TomSelect-Init schreibt
+         (Folge: Doppel-Dropdown im Modal). Server-state ist Truth, JS-sync nur
+         fuer User-Toggles. #}
+      {% set _is_sub = meter and meter.meter_type == 'sub' %}
+      <select name="parent_meter_id" class="form-select tom-select" id="parent_meter_select"
+        {{ 'disabled' if not _is_sub }}>
         <option value="">— keiner —</option>
         {% for pm in main_meters or [] %}
         <option value="{{ pm.id }}" {{ 'selected' if meter and meter.parent_meter_id == pm.id }}>
@@ -80,6 +88,8 @@
         </option>
         {% endfor %}
       </select>
+      <small class="text-muted" id="parent_meter_hint"
+        {{ 'style=display:none' if _is_sub }}>Nur für Subzähler — Typ links umstellen, um zuzuordnen.</small>
     </div>
   </div>
 </div>
@@ -88,14 +98,27 @@
   <textarea name="notes" class="form-control" rows="3">{{ meter.notes if meter else '' }}</textarea>
 </div>
 <script>
-  // Parent-Dropdown nur sichtbar, wenn Typ = Subzähler. Laeuft auch im Modal,
-  // weil das <script> beim HTMX-Swap erneut ausgewertet wird.
+  // Parent-Dropdown wird disabled, wenn Typ = Hauptzähler. Initialer
+  // disabled-Status kommt aus dem Server-Render (oben), damit TomSelect beim
+  // Init den korrekten Zustand sieht und das Original-<select> sauber
+  // versteckt. Bei User-Toggle nur noch ueber die TomSelect-API umschalten —
+  // NICHT mehr `parent.disabled` direkt setzen (das hat das "doppelte
+  // Dropdown" verursacht, weil TomSelect die Hidden-Class nicht zuverlaessig
+  // nachzieht, wenn `disabled` zwischen Insert und Init wechselt).
   (function () {
     var sel = document.getElementById('meter_type_select');
-    var wrap = document.getElementById('parent_meter_wrap');
-    if (!sel || !wrap) return;
-    var sync = function () { wrap.style.display = (sel.value === 'sub') ? '' : 'none'; };
-    sel.addEventListener('change', sync);
-    sync();
+    var parent = document.getElementById('parent_meter_select');
+    var hint = document.getElementById('parent_meter_hint');
+    if (!sel || !parent) return;
+    sel.addEventListener('change', function () {
+      var isSub = sel.value === 'sub';
+      if (parent.tomselect) {
+        if (isSub) parent.tomselect.enable();
+        else parent.tomselect.disable();
+      } else {
+        parent.disabled = !isSub;
+      }
+      if (hint) hint.style.display = isSub ? 'none' : '';
+    });
   })();
 </script>

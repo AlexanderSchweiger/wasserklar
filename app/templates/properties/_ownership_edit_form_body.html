@@ -1,0 +1,46 @@
+{# Form-Body fuer Besitzer-Anlage/-Bearbeitung — entweder im Modal (per HTMX
+   in den ownershipEditModalBody geladen) oder als Fallback in den Standalone-
+   Seiten ownership_form.html / ownership_edit.html eingebunden.
+
+   Erwartete Context-Variablen:
+     ownership   — das zu bearbeitende Besitzverhaeltnis (None = Neuanlage)
+     customers   — Liste aktiver Kunden fuer das Dropdown
+     today       — date.today(), fuer Default valid_from beim Neuanlegen
+
+   TomSelect wird vom globalen htmx:afterSwap-Listener in app.js re-initialisiert,
+   kein zusaetzlicher Init-Code noetig.
+#}
+{% include "_flash_inline.html" %}
+<div class="mb-3">
+  <label class="form-label">Kunde <span class="text-danger">*</span></label>
+  <select name="customer_id" class="form-select tom-select" required>
+    {% for c in customers %}
+    <option value="{{ c.id }}"
+      {{ 'selected' if ownership and c.id == ownership.customer_id }}>
+      {{ c.name }}
+    </option>
+    {% endfor %}
+  </select>
+</div>
+<div class="row g-2">
+  <div class="col-md-6">
+    <div class="mb-3">
+      <label class="form-label">Gültig ab <span class="text-danger">*</span></label>
+      <input type="date" name="valid_from" class="form-control" required
+        value="{{ ownership.valid_from.isoformat() if ownership else (today.isoformat() if today else '') }}">
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="mb-3">
+      <label class="form-label">Gültig bis</label>
+      <input type="date" name="valid_to" class="form-control"
+        value="{{ ownership.valid_to.isoformat() if ownership and ownership.valid_to else '' }}">
+      <small class="form-hint">Leer = Besitzverhältnis aktiv.</small>
+    </div>
+  </div>
+</div>
+{% if not ownership %}
+<div class="alert alert-info mb-0">
+  Ein bereits aktiver Besitzer wird automatisch zum Vortag des neuen Startdatums beendet.
+</div>
+{% endif %}

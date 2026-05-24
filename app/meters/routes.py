@@ -539,19 +539,78 @@ def meter_new():
     properties = Property.query.filter_by(active=True).order_by(
         Property.object_number, Property.ort
     ).all()
+    is_modal = bool(request.headers.get("X-From-Modal"))
+
+    def _render_form(template: str, selected_property_id=None):
+        return render_template(
+            template, meter=None, properties=properties,
+            selected_property_id=selected_property_id,
+            main_meters=_active_main_meters_excluding(),
+        )
+
+    # GET im Modal: nur Form-Body-Partial — exakt wie meter_edit. Pre-Selection
+    # via ?property_id= (z.B. vom "+ Neuer Zaehler"-Button auf der Objekt-
+    # Detailseite).
+    if request.method == "GET" and is_modal:
+        selected_property_id = request.args.get("property_id", type=int)
+        return _render_form(
+            "meters/_meter_edit_form_body.html",
+            selected_property_id=selected_property_id,
+        )
+
     if request.method == "POST":
         installed_from_str = request.form.get("installed_from", "")
         initial_value_str = request.form.get("initial_value", "").replace(",", ".")
         eichjahr_str = request.form.get("eichjahr", "").strip()
         meter_type, parent_id = _read_type_and_parent(meter_id=None)
         new_meter_number = request.form.get("meter_number", "").strip()
+
+        def _build_form_meter():
+            """Transienter WaterMeter mit den User-Eingaben — wird auf
+            Validierungsfehler ans Template gegeben, damit das Modal die
+            Werte behaelt (statt geleert zu werden). NICHT zur Session
+            hinzufuegen!"""
+            def _parse_date(s):
+                try:
+                    return datetime.strptime(s, "%Y-%m-%d").date() if s else None
+                except ValueError:
+                    return None
+            def _parse_decimal(s):
+                try:
+                    return Decimal(s) if s else None
+                except Exception:
+                    return None
+            def _parse_int(s):
+                try:
+                    return int(s) if s else None
+                except ValueError:
+                    return None
+            return WaterMeter(
+                property_id=request.form.get("property_id", type=int),
+                meter_number=new_meter_number,
+                location=request.form.get("location", "").strip(),
+                notes=request.form.get("notes", "").strip(),
+                installed_from=_parse_date(installed_from_str),
+                initial_value=_parse_decimal(initial_value_str),
+                eichjahr=_parse_int(eichjahr_str),
+                meter_type=meter_type,
+                parent_meter_id=parent_id,
+            )
+
         if WaterMeter.query.filter_by(meter_number=new_meter_number).first():
             flash(f"Zählernummer '{new_meter_number}' ist bereits vergeben.", "danger")
-            selected_property_id = request.form.get("property_id", type=int)
+            form_meter = _build_form_meter()
+            if is_modal:
+                return render_template(
+                    "meters/_meter_edit_form_body.html",
+                    meter=form_meter, properties=properties,
+                    selected_property_id=None,
+                    main_meters=_active_main_meters_excluding(),
+                )
             return render_template(
                 "meters/meter_form.html",
-                meter=None, properties=properties,
-                selected_property_id=selected_property_id,
+                meter=form_meter, properties=properties,
+                selected_property_id=None,
                 main_meters=_active_main_meters_excluding(),
             )
         m = WaterMeter(
@@ -571,13 +630,22 @@ def meter_new():
         db.session.add(m)
         db.session.commit()
         flash("Zähler angelegt.", "success")
+        if is_modal:
+            resp = make_response("", 204)
+            resp.headers["HX-Trigger"] = json.dumps({
+                "closeMeterEditModal": True,
+                "meterEdited": {
+                    "meter_id": m.id,
+                    "property_id": m.property_id,
+                    "created": True,
+                },
+            })
+            return resp
         return redirect(url_for("meters.index"))
     selected_property_id = request.args.get("property_id", type=int)
-    return render_template(
+    return _render_form(
         "meters/meter_form.html",
-        meter=None, properties=properties,
         selected_property_id=selected_property_id,
-        main_meters=_active_main_meters_excluding(),
     )
 
 
@@ -616,10 +684,51 @@ def meter_edit(meter_id):
             WaterMeter.id != meter.id,
         ).first():
             flash(f"Zählernummer '{new_meter_number}' ist bereits vergeben.", "danger")
-            # Modal-User soll im offenen Modal bleiben → Form-Body neu rendern.
+            # Modal-User soll im offenen Modal bleiben → Form-Body mit
+            # User-Eingaben neu rendern. Wir bauen eine transiente Kopie
+            # (gleiche id, aber Form-Werte) statt das DB-Objekt zu mutieren,
+            # damit ein versehentlicher Flush nicht halbe Edits persistiert.
+            def _parse_date(s):
+                try:
+                    return datetime.strptime(s, "%Y-%m-%d").date() if s else None
+                except ValueError:
+                    return None
+            def _parse_decimal(s):
+                try:
+                    return Decimal(s) if s else None
+                except Exception:
+                    return None
+            def _parse_int(s):
+                try:
+                    return int(s) if s else None
+                except ValueError:
+                    return None
+            db.session.expunge(meter)
+            form_meter = WaterMeter(
+                property_id=request.form.get("property_id", type=int),
+                meter_number=new_meter_number,
+                location=request.form.get("location", "").strip(),
+                notes=request.form.get("notes", "").strip(),
+                installed_from=_parse_date(installed_from_str),
+                initial_value=_parse_decimal(initial_value_str),
+                eichjahr=_parse_int(eichjahr_str),
+                meter_type=meter_type,
+                parent_meter_id=parent_id,
+            )
+            form_meter.id = meter.id
             if is_modal:
-                return _render_form("meters/_meter_edit_form_body.html")
-            return _render_form("meters/meter_form.html")
+                return render_template(
+                    "meters/_meter_edit_form_body.html",
+                    meter=form_meter, properties=properties,
+                    selected_property_id=None,
+                    main_meters=_active_main_meters_excluding(exclude_id=meter.id),
+                )
+            return render_template(
+                "meters/meter_form.html",
+                meter=form_meter, properties=properties,
+                selected_property_id=None,
+                main_meters=_active_main_meters_excluding(exclude_id=meter.id),
+            )
         meter.property_id = int(request.form["property_id"])
         meter.meter_number = new_meter_number
         meter.location = request.form.get("location", "").strip()
@@ -792,6 +901,9 @@ def import_preview():
     all_meters = import_service.all_active_meters()
     meters_by_id = {m.id: m for m in all_meters}
     owners_by_meter = {m.id: import_service.owner_name_for(m) for m in all_meters}
+    object_numbers_by_meter = {
+        m.id: (m.property.object_number or "") for m in all_meters
+    }
 
     return render_template(
         "meters/import_preview.html",
@@ -802,6 +914,7 @@ def import_preview():
         all_meters=all_meters,
         meters_by_id=meters_by_id,
         owners_by_meter=owners_by_meter,
+        object_numbers_by_meter=object_numbers_by_meter,
         modes=import_service.MAPPING_MODES,
         duplicate_modes=import_service.DUPLICATE_MODES,
         periods=_all_periods(),

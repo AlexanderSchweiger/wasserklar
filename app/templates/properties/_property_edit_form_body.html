@@ -1,6 +1,7 @@
 {# Form-Body fuer den Property-Edit — per HTMX in den propertyEditModalBody
    geladen. TomSelect wird vom globalen htmx:afterSwap-Listener in app.js
    re-initialisiert, kein zusaetzlicher Init-Code noetig. #}
+{% include "_flash_inline.html" %}
 <div class="row">
   <div class="col-md-6">
     <div class="mb-3">

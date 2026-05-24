@@ -72,61 +72,55 @@
               </div>
             </div>
           </div>
+          <hr class="my-2">
+          <h6 class="text-muted mb-2"><i class="fas fa-id-card me-2"></i>Stammdaten</h6>
           <div class="row">
-            <div class="col-md-2">
+            <div class="col-md-3">
               <div class="mb-3">
                 <label class="form-label" for="customer_number">Kundennr.</label>
-                <input type="number" name="customer_number" id="customer_number"
-                  class="form-control" min="1" step="1"
-                  value="{{ kdnr_value }}"
-                  {% if suggested_nr is defined and suggested_nr is not none %}data-suggested="{{ suggested_nr }}"{% endif %}>
+                <div class="input-group">
+                  <span class="input-group-text"><i class="fas fa-hashtag text-muted"></i></span>
+                  <input type="number" name="customer_number" id="customer_number"
+                    class="form-control" min="1" step="1"
+                    value="{{ kdnr_value }}"
+                    {% if suggested_nr is defined and suggested_nr is not none %}data-suggested="{{ suggested_nr }}"{% endif %}>
+                </div>
                 <small class="text-muted" id="kdnr-hint"
                   {% if customer or not is_cust_checked %}style="display:none"{% endif %}>
                   Vorgeschlagen — überschreibbar.
                 </small>
               </div>
             </div>
-            <div class="col-md-6">
+            <div class="col-md-9">
               <div class="mb-3">
                 <label class="form-label">Name <span class="text-danger">*</span></label>
-                <input type="text" name="name" id="cust-name" class="form-control"
-                  value="{{ fval('name') }}" required
-                  hx-get="{{ url_for('customers.check_duplicates') }}"
-                  hx-trigger="keyup changed delay:500ms, change"
-                  hx-target="#cust-duplicates"
-                  hx-include="#cust-plz, #cust-ort{% if customer %}, [name=exclude_id]{% endif %}">
+                <div class="input-group">
+                  <span class="input-group-text"><i class="fas fa-user text-primary"></i></span>
+                  <input type="text" name="name" id="cust-name" class="form-control"
+                    value="{{ fval('name') }}" required
+                    hx-get="{{ url_for('customers.check_duplicates') }}"
+                    hx-trigger="keyup changed delay:500ms, change"
+                    hx-target="#cust-duplicates"
+                    hx-include="#cust-plz, #cust-ort{% if customer %}, [name=exclude_id]{% endif %}">
+                </div>
                 {% if customer %}
                 <input type="hidden" name="exclude_id" value="{{ customer.id }}">
                 {% endif %}
               </div>
             </div>
-            <div class="col-md-4">
-              <div class="mb-3">
-                <label class="form-label">Telefon</label>
-                <input type="tel" name="phone" class="form-control"
-                  value="{{ fval('phone') }}">
-              </div>
-            </div>
           </div>
+
+          <hr class="my-2">
+          <h6 class="text-muted mb-2"><i class="fas fa-map-marker-alt me-2"></i>Adresse</h6>
           <div class="row">
-            <div class="col-md-4">
-              <div class="mb-3">
-                <label class="form-label">Externe Kennung</label>
-                <input type="text" name="externe_kennung" class="form-control"
-                  placeholder="optional"
-                  value="{{ fval('externe_kennung') }}">
-              </div>
-            </div>
-          </div>
-          <div class="row">
-            <div class="col-md-8">
+            <div class="col-md-9">
               <div class="mb-3">
                 <label class="form-label">Straße</label>
                 <input type="text" name="strasse" class="form-control"
                   value="{{ fval('strasse') }}">
               </div>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
               <div class="mb-3">
                 <label class="form-label">Hausnummer</label>
                 <input type="text" name="hausnummer" class="form-control"
@@ -153,7 +147,57 @@
               <div class="mb-3">
                 <label class="form-label">Land</label>
                 <input type="text" name="land" class="form-control"
+                  list="land-suggestions" autocomplete="off"
                   value="{{ fval('land', 'Österreich') }}">
+                <datalist id="land-suggestions">
+                  <option value="Österreich"></option>
+                  <option value="Deutschland"></option>
+                  <option value="Schweiz"></option>
+                  <option value="Liechtenstein"></option>
+                  <option value="Italien"></option>
+                  <option value="Frankreich"></option>
+                  <option value="Belgien"></option>
+                  <option value="Niederlande"></option>
+                  <option value="Luxemburg"></option>
+                  <option value="Spanien"></option>
+                  <option value="Portugal"></option>
+                  <option value="Vereinigtes Königreich"></option>
+                  <option value="Irland"></option>
+                  <option value="Dänemark"></option>
+                  <option value="Schweden"></option>
+                  <option value="Norwegen"></option>
+                  <option value="Finnland"></option>
+                  <option value="Island"></option>
+                  <option value="Polen"></option>
+                  <option value="Tschechien"></option>
+                  <option value="Slowakei"></option>
+                  <option value="Ungarn"></option>
+                  <option value="Slowenien"></option>
+                  <option value="Kroatien"></option>
+                  <option value="Bosnien und Herzegowina"></option>
+                  <option value="Serbien"></option>
+                  <option value="Montenegro"></option>
+                  <option value="Albanien"></option>
+                  <option value="Nordmazedonien"></option>
+                  <option value="Kosovo"></option>
+                  <option value="Bulgarien"></option>
+                  <option value="Rumänien"></option>
+                  <option value="Griechenland"></option>
+                  <option value="Türkei"></option>
+                  <option value="Estland"></option>
+                  <option value="Lettland"></option>
+                  <option value="Litauen"></option>
+                  <option value="Ukraine"></option>
+                  <option value="Belarus"></option>
+                  <option value="Russland"></option>
+                  <option value="Moldau"></option>
+                  <option value="Malta"></option>
+                  <option value="Zypern"></option>
+                  <option value="Andorra"></option>
+                  <option value="Monaco"></option>
+                  <option value="San Marino"></option>
+                  <option value="Vatikanstadt"></option>
+                </datalist>
               </div>
             </div>
           </div>
@@ -161,25 +205,33 @@
           {# Live-Dubletten-Vorschläge (HTMX) #}
           <div id="cust-duplicates"></div>
 
+          <hr class="my-2">
+          <h6 class="text-muted mb-2">Kontakt</h6>
           <div class="row">
+            <div class="col-md-4">
+              <div class="mb-3">
+                <label class="form-label">Telefon</label>
+                <div class="input-group">
+                  <span class="input-group-text"><i class="fas fa-phone text-success"></i></span>
+                  <input type="tel" name="phone" class="form-control"
+                    value="{{ fval('phone') }}">
+                </div>
+              </div>
+            </div>
             <div class="col-md-5">
               <div class="mb-3">
                 <label class="form-label">E-Mail</label>
-                <input type="email" name="email" class="form-control"
-                  value="{{ fval('email') }}">
-              </div>
-            </div>
-            <div class="col-md-4">
-              <div class="mb-3">
-                <label class="form-label">Mitglied seit</label>
-                <input type="date" name="member_since" class="form-control"
-                  value="{% if form_data is defined and form_data %}{{ form_data.get('member_since', '') }}{% elif customer and customer.member_since %}{{ customer.member_since.isoformat() }}{% endif %}">
+                <div class="input-group">
+                  <span class="input-group-text"><i class="fas fa-envelope text-primary"></i></span>
+                  <input type="email" name="email" class="form-control"
+                    value="{{ fval('email') }}">
+                </div>
               </div>
             </div>
             <div class="col-md-3">
               <div class="mb-3">
-                <label class="form-label">&nbsp;</label>
-                <div class="form-check mt-2">
+                <label class="form-label d-block">&nbsp;</label>
+                <div class="form-check form-switch">
                   <input type="checkbox" class="form-check-input"
                          id="rechnung_per_email" name="rechnung_per_email" value="1"
                          {% if form_data is defined and form_data %}{{ 'checked' if form_data.get('rechnung_per_email') == '1' }}{% elif customer and customer.rechnung_per_email %}checked{% endif %}>
@@ -190,14 +242,36 @@
               </div>
             </div>
           </div>
+
+          <hr class="my-2">
+          <h6 class="text-muted mb-2">Weitere Informationen</h6>
+          <div class="row">
+            <div class="col-md-4">
+              <div class="mb-3">
+                <label class="form-label">Mitglied seit</label>
+                <input type="date" name="member_since" class="form-control"
+                  value="{% if form_data is defined and form_data %}{{ form_data.get('member_since', '') }}{% elif customer and customer.member_since %}{{ customer.member_since.isoformat() }}{% endif %}">
+              </div>
+            </div>
+          </div>
           <div class="mb-3">
             <label class="form-label">Notizen</label>
             <textarea name="notes" class="form-control" rows="3">{{ fval('notes') }}</textarea>
           </div>
+          <div class="row">
+            <div class="col-md-6">
+              <div class="mb-3">
+                <label class="form-label">Externe Kennung</label>
+                <input type="text" name="externe_kennung" class="form-control"
+                  placeholder="optional"
+                  value="{{ fval('externe_kennung') }}">
+              </div>
+            </div>
+          </div>
 
-          <hr>
-          <h6 class="text-muted mb-1">Abrechnungseinstellungen</h6>
-          <p class="text-muted small mb-3">Überschreibt die Tarif-Gebühren für diesen Kunden beim Rechnungslauf. Leer lassen = Tarif-Standardwert verwenden.</p>
+          <hr class="my-2">
+          <h6 class="text-muted mb-1"><i class="fas fa-file-invoice-dollar me-2"></i>Abrechnungseinstellungen</h6>
+          <p class="text-muted small mb-2">Überschreibt die Tarif-Gebühren für diesen Kunden beim Rechnungslauf. Leer lassen = Tarif-Standardwert verwenden.</p>
           <div class="row">
             <div class="col-md-6">
               <div class="mb-3">

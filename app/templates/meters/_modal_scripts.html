@@ -33,10 +33,20 @@
     var openFn = function (btn) {
       var url = btn.dataset.url;
       form.dataset.actionUrl = url;
+      // Optionalen Titel-Override (data-modal-title) auf das
+      // [data-modal-title-text]-Span im Modal-Header schreiben. Erlaubt einem
+      // Modal-Skelett, je nach Auslöser unterschiedliche Titel zu zeigen
+      // (z.B. "Neuer Zähler" vs. "Zähler bearbeiten") ohne pro Variante ein
+      // eigenes Modal zu pflegen.
+      var modalEl = document.getElementById(cfg.modalId);
+      if (modalEl && btn.dataset.modalTitle) {
+        var titleEl = modalEl.querySelector('[data-modal-title-text]');
+        if (titleEl) titleEl.textContent = btn.dataset.modalTitle;
+      }
       document.getElementById(cfg.bodyId).innerHTML =
         '<div class="text-center text-muted py-4">' +
         '<div class="spinner-border spinner-border-sm" role="status"></div></div>';
-      bootstrap.Modal.getOrCreateInstance(document.getElementById(cfg.modalId)).show();
+      bootstrap.Modal.getOrCreateInstance(modalEl).show();
       var opts = {target: '#' + cfg.bodyId, swap: 'innerHTML'};
       if (cfg.getHeaders) opts.headers = cfg.getHeaders;
       htmx.ajax('GET', url, opts);

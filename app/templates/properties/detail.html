@@ -13,7 +13,7 @@
              data-url="{{ url_for('properties.edit', property_id=property.id) }}"
              onclick="openPropertyEditModal(this)"
              class="btn btn-sm btn-outline-primary">
-            <i class="fas fa-edit"></i> Bearbeiten
+            <i class="fas fa-edit me-1"></i> Bearbeiten
           </button>
         </div>
       </div>
@@ -65,9 +65,14 @@
       <div class="card-header">
         <h3 class="card-title">Wasserzähler</h3>
         <div class="card-options">
-          <a href="{{ url_for('meters.meter_new', property_id=property.id) }}" class="btn btn-sm btn-outline-secondary">
+          <button type="button"
+             data-url="{{ url_for('meters.meter_new', property_id=property.id) }}"
+             data-modal-title="Neuer Zähler"
+             onclick="openMeterEditModal(this)"
+             class="btn btn-sm btn-outline-secondary"
+             title="Neuer Zähler">
             <i class="fas fa-plus"></i>
-          </a>
+          </button>
         </div>
       </div>
       <div class="card-body p-0">
@@ -143,6 +148,7 @@
                 </a>
                 <button type="button"
                    data-url="{{ url_for('meters.meter_edit', meter_id=meter.id) }}"
+                   data-modal-title="Zähler bearbeiten"
                    onclick="openMeterEditModal(this)"
                    class="btn btn-sm btn-outline-secondary"
                    title="Zähler bearbeiten">
@@ -174,10 +180,13 @@
       <div class="card-header">
         <h3 class="card-title">Besitzer</h3>
         <div class="card-options">
-          <a href="{{ url_for('properties.ownership_new', property_id=property.id) }}"
+          <button type="button"
+             data-url="{{ url_for('properties.ownership_new', property_id=property.id) }}"
+             data-modal-title="Neuer Besitzer"
+             onclick="openOwnershipEditModal(this)"
              class="btn btn-sm btn-outline-secondary">
             <i class="fas fa-plus me-1"></i> Neuer Besitzer
-          </a>
+          </button>
         </div>
       </div>
       <div class="card-body p-0">
@@ -214,10 +223,13 @@
                     </button>
                   </form>
                   {% endif %}
-                  <a href="{{ url_for('properties.ownership_edit', property_id=property.id, ownership_id=ow.id) }}"
+                  <button type="button"
+                     data-url="{{ url_for('properties.ownership_edit', property_id=property.id, ownership_id=ow.id) }}"
+                     data-modal-title="Besitzer bearbeiten"
+                     onclick="openOwnershipEditModal(this)"
                      class="btn btn-sm btn-outline-secondary" title="Bearbeiten">
                     <i class="fas fa-edit"></i>
-                  </a>
+                  </button>
                   <form method="post"
                         action="{{ url_for('properties.ownership_delete', property_id=property.id, ownership_id=ow.id) }}"
                         style="display:inline">
@@ -442,6 +454,7 @@
 
 {% block modals %}
 {% include "properties/_property_edit_modal.html" %}
+{% include "properties/_ownership_edit_modal.html" %}
 {# Drei Meter-Modale — wiederverwendet aus meters/. Alle per HTMX lazy-loaded;
    Submit fired HX-Trigger-Event, Default-Handler in _modal_scripts.html ruft
    window.location.reload(). #}
@@ -452,5 +465,6 @@
 
 {% block scripts %}
 {% include "properties/_property_modal_scripts.html" %}
+{% include "properties/_ownership_modal_scripts.html" %}
 {% include "meters/_modal_scripts.html" %}
 {% endblock %}

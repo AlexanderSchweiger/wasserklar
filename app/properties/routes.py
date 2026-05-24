@@ -195,13 +195,25 @@ def deactivate(property_id):
 def ownership_new(property_id):
     prop = db.get_or_404(Property, property_id)
     customers = Customer.query.filter_by(active=True).order_by(Customer.name).all()
+    is_modal = bool(request.headers.get("X-From-Modal"))
+
+    def _render_form(template: str):
+        return render_template(
+            template, property=prop, ownership=None,
+            customers=customers, today=date.today(),
+        )
+
+    if request.method == "GET" and is_modal:
+        return _render_form("properties/_ownership_edit_form_body.html")
+
     if request.method == "POST":
         customer_id = int(request.form["customer_id"])
         valid_from_str = request.form.get("valid_from", "")
         if not valid_from_str:
             flash("Bitte ein Startdatum angeben.", "danger")
-            return render_template("properties/ownership_form.html",
-                                   property=prop, customers=customers)
+            if is_modal:
+                return _render_form("properties/_ownership_edit_form_body.html")
+            return _render_form("properties/ownership_form.html")
         valid_from = date.fromisoformat(valid_from_str)
 
         # Bestehenden aktiven Besitzer beenden
@@ -218,10 +230,19 @@ def ownership_new(property_id):
         db.session.add(ownership)
         db.session.commit()
         flash("Besitzer zugewiesen.", "success")
+        if is_modal:
+            resp = make_response("", 204)
+            resp.headers["HX-Trigger"] = json.dumps({
+                "closeOwnershipEditModal": True,
+                "ownershipEdited": {
+                    "ownership_id": ownership.id,
+                    "property_id": prop.id,
+                    "created": True,
+                },
+            })
+            return resp
         return redirect(url_for("properties.detail", property_id=prop.id))
-    return render_template("properties/ownership_form.html",
-                           property=prop, customers=customers,
-                           today=date.today())
+    return _render_form("properties/ownership_form.html")
 
 
 @bp.route("/<int:property_id>/ownerships/<int:ownership_id>/end", methods=["POST"])
@@ -243,40 +264,51 @@ def ownership_end(property_id, ownership_id):
 def ownership_edit(property_id, ownership_id):
     ownership = db.get_or_404(PropertyOwnership, ownership_id)
     customers = Customer.query.filter_by(active=True).order_by(Customer.name).all()
+    is_modal = bool(request.headers.get("X-From-Modal"))
+
+    def _render_form(template: str):
+        return render_template(
+            template, property=ownership.property,
+            ownership=ownership, customers=customers,
+            today=date.today(),
+        )
+
+    if request.method == "GET" and is_modal:
+        return _render_form("properties/_ownership_edit_form_body.html")
+
     if request.method == "POST":
         customer_id = int(request.form["customer_id"])
         valid_from_str = request.form.get("valid_from", "").strip()
         if not valid_from_str:
             flash("Bitte ein Startdatum angeben.", "danger")
-            return render_template(
-                "properties/ownership_edit.html",
-                property=ownership.property,
-                ownership=ownership,
-                customers=customers,
-            )
+            if is_modal:
+                return _render_form("properties/_ownership_edit_form_body.html")
+            return _render_form("properties/ownership_edit.html")
         valid_to_str = request.form.get("valid_to", "").strip()
         valid_from = date.fromisoformat(valid_from_str)
         valid_to = date.fromisoformat(valid_to_str) if valid_to_str else None
         if valid_to and valid_to < valid_from:
             flash("Das Bis-Datum darf nicht vor dem Von-Datum liegen.", "danger")
-            return render_template(
-                "properties/ownership_edit.html",
-                property=ownership.property,
-                ownership=ownership,
-                customers=customers,
-            )
+            if is_modal:
+                return _render_form("properties/_ownership_edit_form_body.html")
+            return _render_form("properties/ownership_edit.html")
         ownership.customer_id = customer_id
         ownership.valid_from = valid_from
         ownership.valid_to = valid_to
         db.session.commit()
         flash("Besitzverhältnis aktualisiert.", "success")
+        if is_modal:
+            resp = make_response("", 204)
+            resp.headers["HX-Trigger"] = json.dumps({
+                "closeOwnershipEditModal": True,
+                "ownershipEdited": {
+                    "ownership_id": ownership.id,
+                    "property_id": property_id,
+                },
+            })
+            return resp
         return redirect(url_for("properties.detail", property_id=property_id))
-    return render_template(
-        "properties/ownership_edit.html",
-        property=ownership.property,
-        ownership=ownership,
-        customers=customers,
-    )
+    return _render_form("properties/ownership_edit.html")
 
 
 @bp.route("/<int:property_id>/ownerships/<int:ownership_id>/delete", methods=["POST"])

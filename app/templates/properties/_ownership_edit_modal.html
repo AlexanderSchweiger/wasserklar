@@ -1,21 +1,23 @@
-{# Modal-Skelett fuer den Zähler-Edit. Body wird per HTMX vom
-   `meters.meter_edit`-Endpoint (X-From-Modal-GET) geladen, Submit per
-   HTMX-POST → 204 + HX-Trigger (closeMeterEditModal + meterEdited). #}
-<div class="modal fade" id="meterEditModal" tabindex="-1" aria-hidden="true">
+{# Modal-Skelett fuer Besitzer-Anlage/-Bearbeitung. Body wird per HTMX vom
+   properties.ownership_new bzw. properties.ownership_edit-Endpoint geladen
+   (X-From-Modal-GET). Submit per HTMX-POST → 204 + HX-Trigger
+   (closeOwnershipEditModal + ownershipEdited).
+
+   Titel wird per JS aus data-modal-title des aufrufenden Buttons gesetzt
+   (z.B. "Neuer Besitzer" vs. "Besitzer bearbeiten").
+#}
+<div class="modal fade" id="ownershipEditModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
       <div class="modal-header">
-        {# Titel wird per JS aus data-modal-title des aufrufenden Buttons
-           gesetzt — Default "Zähler" greift, wenn kein Override mitgegeben
-           wurde. Trennt Modal-Skelett von "Neu"/"Bearbeiten"-Semantik. #}
         <h5 class="modal-title">
-          <i class="fas fa-tachometer-alt me-2"></i><span data-modal-title-text>Zähler</span>
+          <i class="fas fa-user-edit me-2"></i><span data-modal-title-text>Besitzer</span>
         </h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
       </div>
-      <form id="meterEditForm" method="post">
+      <form id="ownershipEditForm" method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <div class="modal-body" id="meterEditModalBody">
+        <div class="modal-body" id="ownershipEditModalBody">
           <div class="text-center text-muted py-4">
             <div class="spinner-border spinner-border-sm" role="status"></div>
           </div>

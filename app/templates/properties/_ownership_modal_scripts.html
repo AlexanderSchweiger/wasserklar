@@ -1,0 +1,61 @@
+{# JS fuer den Ownership-Edit-Modal (Besitzer anlegen/bearbeiten).
+   Per Inkludieren im {% block scripts %} der jeweiligen Seite verfuegbar
+   machen — erwartet, dass _ownership_edit_modal.html in {% block modals %}
+   eingebunden ist.
+
+   Refresh-Strategie wie bei Meter-Modalen: Server liefert 204 + HX-Trigger
+   ('ownershipEdited'); aufrufende Seite kann window.onOwnershipEdited setzen,
+   Default ist window.location.reload().
+#}
+<script>
+(function () {
+  var form = document.getElementById('ownershipEditForm');
+  if (!form) { return; }
+
+  window.openOwnershipEditModal = function (btn) {
+    var url = btn.dataset.url;
+    form.dataset.actionUrl = url;
+    var modalEl = document.getElementById('ownershipEditModal');
+    if (modalEl && btn.dataset.modalTitle) {
+      var titleEl = modalEl.querySelector('[data-modal-title-text]');
+      if (titleEl) titleEl.textContent = btn.dataset.modalTitle;
+    }
+    document.getElementById('ownershipEditModalBody').innerHTML =
+      '<div class="text-center text-muted py-4">' +
+      '<div class="spinner-border spinner-border-sm" role="status"></div></div>';
+    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    htmx.ajax('GET', url, {
+      target: '#ownershipEditModalBody',
+      swap: 'innerHTML',
+      headers: {'X-From-Modal': '1'},
+    });
+  };
+
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var url = this.dataset.actionUrl;
+    if (!url) { return; }
+    var values = {};
+    new FormData(this).forEach(function (v, k) { values[k] = v; });
+    htmx.ajax('POST', url, {
+      target: '#ownershipEditModalBody',
+      swap: 'innerHTML',
+      values: values,
+      headers: {'X-From-Modal': '1'},
+    });
+  });
+
+  document.addEventListener('closeOwnershipEditModal', function () {
+    var el = document.getElementById('ownershipEditModal');
+    if (!el) { return; }
+    var modal = bootstrap.Modal.getInstance(el);
+    if (modal) { modal.hide(); }
+  });
+
+  document.addEventListener('ownershipEdited', function (e) {
+    var fn = window.onOwnershipEdited;
+    if (typeof fn === 'function') { fn(e); }
+    else { window.location.reload(); }
+  });
+})();
+</script>
