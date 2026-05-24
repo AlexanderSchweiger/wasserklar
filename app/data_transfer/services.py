@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
-from flask import current_app
+from flask import current_app, g
 from sqlalchemy import and_, func, inspect as sa_inspect, or_, text
 
 from app.extensions import db
@@ -47,6 +47,20 @@ from app.__version__ import __version__ as APP_VERSION
 
 
 FORMAT_VERSION = "1.0"
+
+
+def _active_schema() -> str | None:
+    """Aktives Tenant-Schema (SaaS) oder None (OSS).
+
+    Im SaaS-Kontext setzt der Pool-Checkout-Event den search_path frischer
+    Engine-Connections auf 'public' zurueck — der Inspector wuerde sonst die
+    Tenant-Tabellen nicht finden. Deshalb dem Inspector das Schema explizit
+    mitgeben.
+    """
+    try:
+        return g.get("tenant_schema")
+    except (RuntimeError, AttributeError):
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +211,8 @@ def export_to_zip(selection: dict, fileobj, *, exported_by: str = "system") -> d
     include_pdfs = bool(selection.get("include_pdfs", True))
     models = models_for_selection(selection)
 
-    existing_tables_pre = set(sa_inspect(db.engine).get_table_names())
+    schema = _active_schema()
+    existing_tables_pre = set(sa_inspect(db.engine).get_table_names(schema=schema))
     invoice_ids = (_filtered_invoice_ids(years)
                    if (years and any(m in models for m in (Invoice, InvoiceItem, DunningNotice))
                        and Invoice.__tablename__ in existing_tables_pre)
@@ -210,7 +225,7 @@ def export_to_zip(selection: dict, fileobj, *, exported_by: str = "system") -> d
     table_meta = []
     pdf_files = []  # list of (zip_path, source_path)
     insp = sa_inspect(db.engine)
-    existing_tables = set(insp.get_table_names())
+    existing_tables = set(insp.get_table_names(schema=schema))
     checksum = hashlib.sha256()
 
     with zipfile.ZipFile(fileobj, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
@@ -226,7 +241,7 @@ def export_to_zip(selection: dict, fileobj, *, exported_by: str = "system") -> d
             # Schema-Drift: nur Spalten selektieren, die wirklich in der DB
             # existieren. Aelterer Schema-Stand hat ggf. weniger Columns als
             # das Model — ORM-Query mit allen Modell-Columns wuerde scheitern.
-            actual_cols = {c["name"] for c in insp.get_columns(tname)}
+            actual_cols = {c["name"] for c in insp.get_columns(tname, schema=schema)}
             q = _build_query_filtered(
                 model, years, invoice_ids, booking_group_ids, actual_cols,
             )

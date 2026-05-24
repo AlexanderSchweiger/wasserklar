@@ -51,15 +51,16 @@ def _parse_form():
     return dict(name=name, start_date=start_date, end_date=end_date, notes=notes), None
 
 
-def _validate_timeline(name, start_date, end_date, exclude_id=None):
-    """Prueft, dass die Periode mit allen anderen eine lueckenlose,
+def _timeline_warnings(name, start_date, end_date, exclude_id=None):
+    """Prueft, ob die Periode mit allen anderen eine lueckenlose,
     ueberschneidungsfreie Zeitachse bildet.
 
     Erlaubt sind beide gaengigen Konventionen am Periodenrand: ein
     gemeinsamer Ablesetag (Ende == naechster Start) ODER taggenaues
-    Anschliessen (naechster Start == Ende + 1 Tag). Echte Ueberlappungen
-    und echte Luecken werden abgelehnt. Gibt eine deutsche Fehlermeldung
-    zurueck oder ``None``.
+    Anschliessen (naechster Start == Ende + 1 Tag). Luecken und
+    Ueberlappungen werden als Warnungen zurueckgegeben — der Caller darf
+    trotzdem speichern, damit der User beim Umbauen der Zeitachse nicht
+    blockiert ist.
     """
     q = BillingPeriod.query
     if exclude_id is not None:
@@ -68,21 +69,21 @@ def _validate_timeline(name, start_date, end_date, exclude_id=None):
     spans.append((name, start_date, end_date))
     spans.sort(key=lambda s: (s[1], s[2]))
 
+    warnings = []
     for (pname, pstart, pend), (nname, nstart, _nend) in zip(spans, spans[1:]):
         if nstart < pend:
-            return (
-                f"Die Periode überschneidet sich mit '{pname}' "
-                f"({pstart.strftime('%d.%m.%Y')}–{pend.strftime('%d.%m.%Y')}). "
-                "Abrechnungsperioden dürfen sich zeitlich nicht überlappen."
+            warnings.append(
+                f"Hinweis: Die Periode '{nname}' überschneidet sich mit "
+                f"'{pname}' ({pstart.strftime('%d.%m.%Y')}–"
+                f"{pend.strftime('%d.%m.%Y')})."
             )
-        if nstart > pend + timedelta(days=1):
-            return (
-                f"Zwischen '{pname}' (endet {pend.strftime('%d.%m.%Y')}) und "
-                f"'{nname}' (beginnt {nstart.strftime('%d.%m.%Y')}) entsteht "
-                "eine Lücke. Abrechnungsperioden müssen lückenlos aneinander "
-                "anschließen."
+        elif nstart > pend + timedelta(days=1):
+            warnings.append(
+                f"Hinweis: Zwischen '{pname}' (endet "
+                f"{pend.strftime('%d.%m.%Y')}) und '{nname}' (beginnt "
+                f"{nstart.strftime('%d.%m.%Y')}) entsteht eine Lücke."
             )
-    return None
+    return warnings
 
 
 @bp.route("/neu", methods=["GET", "POST"])
@@ -96,10 +97,8 @@ def new():
         if BillingPeriod.query.filter_by(name=data["name"]).first():
             flash(f"Eine Periode mit dem Namen '{data['name']}' existiert bereits.", "danger")
             return render_template("periods/form.html", period=None, form=request.form)
-        terr = _validate_timeline(data["name"], data["start_date"], data["end_date"])
-        if terr:
-            flash(terr, "danger")
-            return render_template("periods/form.html", period=None, form=request.form)
+        for w in _timeline_warnings(data["name"], data["start_date"], data["end_date"]):
+            flash(w, "warning")
 
         # Erste Periode ueberhaupt wird automatisch aktiv — es muss immer
         # genau eine aktive Periode geben.
@@ -131,12 +130,10 @@ def edit(period_id):
         if existing and existing.id != period.id:
             flash(f"Eine Periode mit dem Namen '{data['name']}' existiert bereits.", "danger")
             return render_template("periods/form.html", period=period, form=request.form)
-        terr = _validate_timeline(
+        for w in _timeline_warnings(
             data["name"], data["start_date"], data["end_date"], exclude_id=period.id
-        )
-        if terr:
-            flash(terr, "danger")
-            return render_template("periods/form.html", period=period, form=request.form)
+        ):
+            flash(w, "warning")
         period.name = data["name"]
         period.start_date = data["start_date"]
         period.end_date = data["end_date"]
@@ -191,13 +188,10 @@ def delete(period_id):
     ).count() > 0
     if has_earlier and has_later:
         flash(
-            f"Periode '{period.name}' liegt zwischen anderen Perioden und kann "
-            "nicht gelöscht werden — dadurch entstünde eine Lücke in der "
-            "Zeitachse. Es lassen sich nur die älteste oder die neueste Periode "
-            "löschen.",
-            "danger",
+            f"Hinweis: Periode '{period.name}' lag zwischen anderen Perioden — "
+            "in der Zeitachse ist jetzt eine Lücke.",
+            "warning",
         )
-        return redirect(url_for("periods.index"))
     name = period.name
     db.session.delete(period)
     db.session.commit()
