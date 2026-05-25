@@ -1,39 +1,32 @@
 # wasserklar — Wassergenossenschaft Verwaltung
 
 Flask + HTMX Verwaltungssystem für Wassergenossenschaften.
-Design: **AdminLTE 3** (Bootstrap 4 + Font Awesome)
+Design: **Tabler 1.0.0** (Bootstrap 5 + Font Awesome)
 
 **Funktionen:** Kundenverwaltung · Zählerablesungen (+ CSV/Excel-Import) · Rechnungsgenerierung (PDF, E-Mail) · Buchhaltung (EÜR, Offene Posten, Jahresbericht)
 
 ---
 
-## Environments
+## Lokale Entwicklung
 
-| Environment | FLASK_ENV     | Datenbank              | Deployment              |
-|-------------|---------------|------------------------|-------------------------|
-| dev         | `development` | `wasserklar_dev`    | lokal (Flask dev-server)|
-| test        | `testing`     | `wasserklar_test`   | Docker                  |
-| prod        | `production`  | `wasserklar_prod`   | Docker                  |
-
-Jedes Environment hat eine eigene Konfigurationsdatei: `.env`, `.env.test`, `.env.prod`.
-
----
-
-## Lokale Entwicklung (dev)
+Lokale Flask-Instanz verbindet sich gegen den **Docker-Postgres-Container** — dieselbe Datenbank wie beim echten Deployment, kein separates SQLite nötig.
 
 ```bash
-# 1. Virtuelle Umgebung erstellen
-python -m venv .venv
-
-# 2. Abhängigkeiten installieren (ohne WeasyPrint – kein GTK auf Windows benötigt)
-.venv/Scripts/pip install -r requirements-dev.txt
-
-# 3. Konfiguration anlegen
+# 1. Konfiguration anlegen
 cp .env.example .env
-#    → .env anpassen: DATABASE_URL (wasserklar_dev), WG_NAME, IBAN, SECRET_KEY
-#    → FLASK_ENV=development bleibt gesetzt
+#    → POSTGRES_PASSWORD setzen (beliebig, muss nur konsistent sein)
+#    → DATABASE_URL anpassen: "change-me" durch dasselbe Passwort ersetzen
+#    → WG_NAME, IBAN, SECRET_KEY setzen
 
-# 4. Datenbank + Standard-Konten erstellen
+# 2. Postgres-Container starten (nur DB, ohne App)
+docker compose up -d postgres
+
+# 3. Virtuelle Umgebung + Abhängigkeiten
+python -m venv .venv
+.venv/Scripts/pip install -r requirements-dev.txt
+#    (requirements-dev.txt lässt WeasyPrint/GTK weg — läuft auf Windows)
+
+# 4. Datenbank initialisieren
 .venv/Scripts/flask --app run init-db
 
 # 5. Ersten Admin-Benutzer anlegen
@@ -46,51 +39,53 @@ cp .env.example .env
 
 ---
 
-## Produktions-Deployment (Docker)
+## Deployment (Docker)
 
-Verbindet sich mit `wasserklar_prod`. Vollständige Produktionskonfiguration (DEBUG=False).
+Ein einziges `docker-compose.yml` bringt Postgres, App und Scheduler hoch.
 
 ```bash
 # 1. Konfiguration anlegen
-cp .env.example .env.prod
+cp .env.example .env
 #    → FLASK_ENV=production
-#    → DATABASE_URL auf wasserklar_prod setzen
+#    → POSTGRES_PASSWORD (langer, zufälliger Wert!)
+#    → DATABASE_URL: "change-me" durch dasselbe Passwort ersetzen
 #    → SECRET_KEY (langer, zufälliger Wert!), Mail-Daten anpassen
 
 # 2. Container bauen und starten
-docker compose -f docker-compose.prod.yml up -d --build
+docker compose up -d --build
 
 # 3. Datenbank initialisieren (einmalig bei Erstinstallation)
-docker compose -f docker-compose.prod.yml exec wkoss flask --app run init-db
+docker compose exec wkoss flask --app run init-db
 
 # 4. Admin-Benutzer anlegen (einmalig bei Erstinstallation)
-docker compose -f docker-compose.prod.yml exec wkoss flask --app run create-admin
+docker compose exec wkoss flask --app run create-admin
 #    → https://deine-domain.at  (oder http://SERVER-IP:5000)
-
-# Update auf eine neue Version (ohne Datenverlust):
-git pull                                                                            # 1. neuen Code holen
-docker compose -f docker-compose.prod.yml up -d --build                             # 2. Image neu bauen + Container neu starten
-docker compose -f docker-compose.prod.yml exec wkoss flask --app run upgrade-db     # 3. Schema-Migrations + Daten-Seeds nachziehen
 ```
 
-`upgrade-db` ist **idempotent** und deckt alle Faelle ab:
+**Update auf eine neue Version** (ohne Datenverlust):
+```bash
+git pull                                              # 1. neuen Code holen
+docker compose up -d --build                          # 2. Image neu bauen + Container neu starten
+docker compose exec wkoss flask --app run upgrade-db  # 3. Schema-Migrations + Daten-Seeds nachziehen
+```
 
-- **Frisch installiert (Alembic-stamped)** → laeuft `flask db upgrade` und zieht alle neuen Migrations.
-- **Pre-Alembic-Bestand** (z.B. erste Installation vor v1.0.0) → ergaenzt fehlende v1.0.0-Spalten via internem Fallback, stempelt auf die Initial-Revision und zieht danach alle nachfolgenden Migrations regulaer durch.
+`upgrade-db` ist **idempotent** und deckt alle Fälle ab:
 
-Wenn `upgrade-db` mit `Unknown column …` o.ae. crashed, ist der Alembic-Stempel inkonsistent zur DB (Bug aus aelteren Versionen). Diagnose und manueller Fix:
+- **Frisch installiert (Alembic-stamped)** → zieht alle neuen Migrations.
+- **Pre-Alembic-Bestand** (z.B. erste Installation vor v1.0.0) → ergänzt fehlende Spalten via internem Fallback, stempelt auf die Initial-Revision und zieht danach alle nachfolgenden Migrations regulär durch.
+
+Wenn `upgrade-db` mit `Unknown column …` o.ä. crasht, ist der Alembic-Stempel inkonsistent zur DB. Diagnose und manueller Fix:
 
 ```bash
 # Zeigt aktuell gestempelte Revision
-docker compose -f docker-compose.prod.yml exec wkoss flask --app run db current
+docker compose exec wkoss flask --app run db current
 
-# Migrationsverlauf (Reihenfolge der Revisions)
-docker compose -f docker-compose.prod.yml exec wkoss flask --app run db history
+# Migrationsverlauf
+docker compose exec wkoss flask --app run db history
 
-# Wenn der Stempel "lueft" (Alembic sagt head, DB hat fehlende Spalten):
-# Auf eine Vorrevision zuruecksetzen und nur die fehlenden Migrations ziehen.
-docker compose -f docker-compose.prod.yml exec wkoss flask --app run db stamp <vor-revision>
-docker compose -f docker-compose.prod.yml exec wkoss flask --app run db upgrade <ziel-revision>
+# Auf eine Vorrevision zurücksetzen und nur fehlende Migrations ziehen:
+docker compose exec wkoss flask --app run db stamp <vor-revision>
+docker compose exec wkoss flask --app run db upgrade <ziel-revision>
 ```
 
 ---
@@ -172,10 +167,9 @@ Alle Befehle werden mit `flask --app run <befehl>` aufgerufen (lokal: `.venv/Scr
 ## Hinweise
 
 - **PDF-Export** benötigt WeasyPrint mit GTK3. Lokal unter Windows entfällt diese Funktion (Fehlermeldung statt Absturz). Im Docker-Container ist WeasyPrint vollständig enthalten.
-- **E-Mail-Versand** erfordert einen konfigurierten SMTP-Server in der jeweiligen `.env`-Datei.
-- **SECRET_KEY** muss in `.env.test` und `.env.prod` durch einen langen, zufälligen Wert ersetzt werden.
-- Generierte PDFs und Datenbankdaten liegen in `instance/` (als Docker-Volume gemountet — überleben Container-Neustarts).
-- **Test und Prod gleichzeitig** können auf demselben Host betrieben werden: Test läuft auf Port **5001**, Prod auf Port **5000**. Die Docker-Projektnamen (`wg-test` / `wg-prod`) verhindern Container-Namenskonflikte.
+- **E-Mail-Versand** erfordert einen konfigurierten SMTP-Server in der `.env`-Datei.
+- **SECRET_KEY** und **POSTGRES_PASSWORD** müssen für Produktiv-Deployments durch lange, zufällige Werte ersetzt werden.
+- Generierte PDFs und Datenbankdaten liegen in `instance/` bzw. im Docker-Volume `postgres_data` (überleben Container-Neustarts).
 
 ---
 
