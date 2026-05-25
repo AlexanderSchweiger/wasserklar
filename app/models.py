@@ -1107,3 +1107,98 @@ class DunningNotice(db.Model):
 
     def __repr__(self):
         return f"<DunningNotice invoice={self.invoice_id} L{self.level_snapshot}>"
+
+
+# ---------------------------------------------------------------------------
+# Bank-Auszuege (Import + Matching)
+# ---------------------------------------------------------------------------
+
+class BankStatement(db.Model):
+    __tablename__ = "bank_statements"
+
+    STATUS_PENDING = "pending"
+    STATUS_COMMITTED = "committed"
+    STATUS_PARTIAL = "partial"
+
+    FORMAT_CAMT053 = "camt053"
+    FORMAT_MT940 = "mt940"
+    FORMAT_MT942 = "mt942"
+
+    id = db.Column(db.Integer, primary_key=True)
+    format = db.Column(db.String(20), nullable=False)
+    filename = db.Column(db.String(255), nullable=False)
+    file_hash = db.Column(db.String(64), nullable=False, index=True)
+    real_account_id = db.Column(db.Integer, db.ForeignKey("real_accounts.id"), nullable=False)
+    statement_reference = db.Column(db.String(100))
+    booking_date_from = db.Column(db.Date)
+    booking_date_to = db.Column(db.Date)
+    opening_balance = db.Column(db.Numeric(12, 2))
+    closing_balance = db.Column(db.Numeric(12, 2))
+    currency = db.Column(db.String(3), default="EUR")
+    status = db.Column(db.String(20), default=STATUS_PENDING, nullable=False)
+    uploaded_at = db.Column(db.DateTime, default=datetime.utcnow)
+    uploaded_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    committed_at = db.Column(db.DateTime, nullable=True)
+
+    real_account = db.relationship("RealAccount", foreign_keys=[real_account_id])
+    uploaded_by = db.relationship("User", foreign_keys=[uploaded_by_id])
+    lines = db.relationship(
+        "BankStatementLine",
+        backref="statement",
+        lazy="dynamic",
+        cascade="all, delete-orphan",
+        order_by="BankStatementLine.line_index",
+    )
+
+    __table_args__ = (
+        db.UniqueConstraint("real_account_id", "file_hash", name="uq_stmt_hash"),
+    )
+
+    def __repr__(self):
+        return f"<BankStatement {self.id} {self.format} {self.filename}>"
+
+
+class BankStatementLine(db.Model):
+    __tablename__ = "bank_statement_lines"
+
+    MATCH_INVOICE_NUMBER = "invoice_number"
+    MATCH_NAME = "name"
+    MATCH_MANUAL = "manual"
+
+    STATUS_PENDING = "pending"
+    STATUS_COMMITTED = "committed"
+    STATUS_SKIPPED = "skipped"
+
+    id = db.Column(db.Integer, primary_key=True)
+    statement_id = db.Column(db.Integer, db.ForeignKey("bank_statements.id"), nullable=False)
+    line_index = db.Column(db.Integer, nullable=False)
+    booking_date = db.Column(db.Date, nullable=False)
+    value_date = db.Column(db.Date)
+    amount = db.Column(db.Numeric(12, 2), nullable=False)
+    currency = db.Column(db.String(3), default="EUR")
+    counterparty_name = db.Column(db.String(200))
+    counterparty_iban = db.Column(db.String(34))
+    purpose = db.Column(db.Text)
+    end_to_end_id = db.Column(db.String(100))
+    tx_id = db.Column(db.String(100))
+
+    matched_invoice_id = db.Column(db.Integer, db.ForeignKey("invoices.id"), nullable=True)
+    matched_open_item_id = db.Column(db.Integer, db.ForeignKey("open_items.id"), nullable=True)
+    matched_customer_id = db.Column(db.Integer, db.ForeignKey("customers.id"), nullable=True)
+    match_type = db.Column(db.String(20))
+
+    override_account_id = db.Column(db.Integer, db.ForeignKey("accounts.id"), nullable=True)
+    selected = db.Column(db.Boolean, default=False, nullable=False)
+    line_status = db.Column(db.String(20), default=STATUS_PENDING, nullable=False)
+    booking_id = db.Column(db.Integer, db.ForeignKey("bookings.id"), nullable=True)
+    booking_group_id = db.Column(db.Integer, db.ForeignKey("booking_groups.id"), nullable=True)
+
+    matched_invoice = db.relationship("Invoice", foreign_keys=[matched_invoice_id])
+    matched_open_item = db.relationship("OpenItem", foreign_keys=[matched_open_item_id])
+    matched_customer = db.relationship("Customer", foreign_keys=[matched_customer_id])
+    override_account = db.relationship("Account", foreign_keys=[override_account_id])
+    booking = db.relationship("Booking", foreign_keys=[booking_id])
+    booking_group = db.relationship("BookingGroup", foreign_keys=[booking_group_id])
+
+    def __repr__(self):
+        return f"<BankStatementLine {self.id} {self.booking_date} {self.amount}>"

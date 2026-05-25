@@ -105,8 +105,7 @@
             {% set _nav_zaehlertausch     = request.endpoint in ('meters.swap_import_upload','meters.swap_import_preview','meters.swap_import_result') %}
             {% set _nav_import         = request.blueprint == 'import_csv' %}
 
-            {# Buchhaltung – SaaS-Erweiterungen (aktiv-Flag via is_saas-Guard, url_for im SaaS-Block) #}
-            {% set _nav_bankimport     = is_saas is defined and is_saas and request.blueprint == 'bank_import' %}
+            {% set _nav_bankimport     = request.blueprint == 'bank_import' %}
 
             {# Verwaltung #}
             {% set _nav_benutzer       = request.blueprint == 'auth' and request.endpoint != 'auth.login' %}
@@ -249,6 +248,12 @@
                     <a class="nav-link {% if _nav_projekte %}active{% endif %}"
                       href="{{ url_for('projects.index') }}">
                       <i class="fas fa-project-diagram me-2"></i>Projekte
+                    </a>
+                  </li>
+                  <li class="nav-item">
+                    <a class="nav-link {% if _nav_bankimport %}active{% endif %}"
+                      href="{{ url_for('bank_import.index') }}">
+                      <i class="fas fa-file-invoice me-2"></i>Import Bankauszüge
                     </a>
                   </li>
                   {% block saas_buchhaltung_extra %}{% endblock %}

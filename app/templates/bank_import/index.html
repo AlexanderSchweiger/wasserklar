@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block page_title %}Import Bankauszüge{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <p class="text-muted mb-0">
+      Importieren Sie Kontoauszüge im Format camt.053 (XML), MT940 oder MT942.
+      Buchungen werden automatisch mit passenden offenen Posten verknüpft.
+    </p>
+  </div>
+  <a class="btn btn-primary" href="{{ url_for('bank_import.upload') }}">
+    <i class="fas fa-upload me-2"></i>Neuen Auszug importieren
+  </a>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h3 class="card-title">Importierte Bankauszüge</h3>
+  </div>
+  {% if statements %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table">
+      <thead>
+        <tr>
+          <th>Hochgeladen</th>
+          <th>Format</th>
+          <th>Bankkonto</th>
+          <th>Zeitraum</th>
+          <th class="text-end">Buchungen</th>
+          <th>Status</th>
+          <th>Datei</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in statements %}
+        {% set total = s.lines.count() %}
+        {% set committed = s.lines.filter_by(line_status='committed').count() %}
+        <tr>
+          <td>{{ s.uploaded_at.strftime('%d.%m.%Y %H:%M') }}</td>
+          <td><span class="badge bg-secondary">{{ s.format }}</span></td>
+          <td>{{ s.real_account.name if s.real_account else '—' }}</td>
+          <td>
+            {% if s.booking_date_from and s.booking_date_to %}
+              {{ s.booking_date_from.strftime('%d.%m.%Y') }} – {{ s.booking_date_to.strftime('%d.%m.%Y') }}
+            {% else %}—{% endif %}
+          </td>
+          <td class="text-end">
+            {{ committed }} / {{ total }}
+          </td>
+          <td>
+            {% if s.status == 'committed' %}
+              <span class="badge bg-success">Vollständig verbucht</span>
+            {% elif s.status == 'partial' %}
+              <span class="badge bg-warning">Teilweise verbucht</span>
+            {% else %}
+              <span class="badge bg-azure">Offen</span>
+            {% endif %}
+          </td>
+          <td class="text-muted small">{{ s.filename }}</td>
+          <td class="text-end">
+            <a class="btn btn-sm btn-outline-primary"
+               href="{{ url_for('bank_import.preview', statement_id=s.id) }}">
+              Details
+            </a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="card-body text-center text-muted py-5">
+    <i class="fas fa-file-invoice fa-3x mb-3"></i>
+    <p>Noch keine Bankauszüge importiert.</p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

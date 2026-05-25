@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block page_title %}Bankauszug hochladen{% endblock %}
+
+{% block content %}
+<div class="row">
+  <div class="col-lg-8 col-xl-6">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Neuen Bankauszug importieren</h3>
+      </div>
+      <form method="post" enctype="multipart/form-data"
+            action="{{ url_for('bank_import.upload') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="card-body">
+          <div class="mb-3">
+            <label class="form-label required">Datei (camt.053 XML, MT940 oder MT942)</label>
+            <input type="file" name="file" class="form-control"
+                   accept=".xml,.txt,.sta,.mt940,.mt942,.camt" required>
+            <small class="form-hint">
+              Maximale Dateigröße 10 MB. Das Format wird automatisch erkannt.
+            </small>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label {% if require_manual_account %}required{% endif %}">
+              Bankkonto
+              <small class="text-muted">(wird normalerweise automatisch aus der Datei übernommen)</small>
+            </label>
+            <select name="real_account_id" class="form-select">
+              {% for ra in real_accounts %}
+                <option value="{{ ra.id }}"
+                        {% if default_ra and ra.id == default_ra.id %}selected{% endif %}>
+                  {{ ra.name }}{% if ra.iban %} · {{ ra.iban }}{% endif %}
+                </option>
+              {% endfor %}
+            </select>
+            <small class="form-hint">
+              Wird nur verwendet, wenn die IBAN in der Datei keinem angelegten
+              Bankkonto entspricht.
+            </small>
+          </div>
+        </div>
+        <div class="card-footer text-end">
+          <a class="btn btn-link" href="{{ url_for('bank_import.index') }}">Abbrechen</a>
+          <button class="btn btn-primary" type="submit">
+            <i class="fas fa-upload me-2"></i>Hochladen & analysieren
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
