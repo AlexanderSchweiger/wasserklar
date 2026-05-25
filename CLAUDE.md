@@ -25,8 +25,8 @@ flask --app run create-admin
 # Migrate existing database after model changes (production updates)
 flask --app run upgrade-db
 
-# Run dev server (http://127.0.0.1:5000)
-flask --app run run
+# Run dev server — Port 5002 (FLASK_RUN_PORT in .env), Docker belegt 5000
+python run.py   # → http://127.0.0.1:5002
 
 # Docker (production, z.B. Hetzner-Server)
 docker compose up -d --build

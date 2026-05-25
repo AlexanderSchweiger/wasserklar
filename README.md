@@ -32,9 +32,12 @@ python -m venv .venv
 # 5. Ersten Admin-Benutzer anlegen
 .venv/Scripts/flask --app run create-admin
 
-# 6. Dev-Server starten
-.venv/Scripts/flask --app run run
-#    → http://127.0.0.1:5000
+# 6. Dev-Server starten (Port aus .env: FLASK_RUN_PORT=5002)
+.venv/Scripts/python run.py
+#    → http://127.0.0.1:5002
+#
+# Hinweis: Docker-Container belegt Port 5000. Nativer Flask-Debug läuft
+# bewusst auf 5002, damit beide gleichzeitig laufen können ohne Verwechslung.
 ```
 
 ---
