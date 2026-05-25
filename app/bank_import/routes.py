@@ -1,4 +1,5 @@
 import hashlib
+from decimal import Decimal, ROUND_HALF_UP
 
 from flask import (
     abort,
@@ -21,6 +22,13 @@ from app.models import (
 
 from app.bank_import import bp
 from app.bank_import import matching, parsers, services
+
+
+_CENT = Decimal("0.01")
+
+
+def _round2(value) -> Decimal:
+    return Decimal(str(value or 0)).quantize(_CENT, rounding=ROUND_HALF_UP)
 
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
@@ -175,14 +183,50 @@ def preview(statement_id):
         for op in ops:
             open_items_by_customer.setdefault(op.customer_id, []).append(op)
 
+    # Komplette Liste aller offenen Posten (fuer das Tom-Select-Dropdown in
+    # Zeilen, bei denen kein Kunde automatisch erkannt wurde — der Nutzer
+    # kann dann manuell durchsuchen statt einen Workaround zu basteln).
+    all_open_items = (
+        OpenItem.query.filter(
+            OpenItem.status.in_([OpenItem.STATUS_OPEN, OpenItem.STATUS_PARTIAL]),
+        )
+        .join(OpenItem.customer)
+        .order_by(OpenItem.date.desc())
+        .all()
+    )
+
+    # Pro Zeile: Beziehung Bankbetrag <-> offener Posten (auf Cent gerundet,
+    # sonst loest ein Decimal('100.00') vs. Decimal('100.000') faelschlich
+    # eine Ueberzahlungs-Warnung aus). Wert ist eine Tuple
+    # (kind, diff, op_open_balance) mit kind in {'match','over','under'}.
+    payment_status = {}
+    for l in lines:
+        if l.line_status != BankStatementLine.STATUS_PENDING:
+            # Nach dem Verbuchen ist der OP auf 0 — eine Diff-Warnung waere
+            # irrefuehrend ("Ueberzahlung um den vollen Eingangsbetrag").
+            continue
+        if l.matched_open_item_id and l.matched_open_item is not None:
+            amt = _round2(l.amount)
+            bal = _round2(l.matched_open_item.open_balance)
+            diff = amt - bal
+            if diff == 0:
+                kind = "match"
+            elif diff > 0:
+                kind = "over"
+            else:
+                kind = "under"
+            payment_status[l.id] = (kind, abs(diff), bal)
+
     return render_template(
         "bank_import/preview.html",
         stmt=stmt,
         lines=lines,
         accounts=accounts,
         open_items_by_customer=open_items_by_customer,
+        all_open_items=all_open_items,
         total_in=total_in,
         total_out=total_out,
+        payment_status=payment_status,
     )
 
 
@@ -201,10 +245,20 @@ def update_line(statement_id, line_id):
         line.selected = request.form.get("selected") == "1"
 
     elif action == "clear_match":
+        # Nur OP/Invoice loesen — der erkannte Kunde bleibt, damit der Nutzer
+        # einen anderen OP desselben Kunden auswaehlen kann.
         line.matched_invoice_id = None
         line.matched_open_item_id = None
         line.match_type = BankStatementLine.MATCH_MANUAL
-        line.selected = False
+
+    elif action == "clear_customer":
+        # Kompletter Reset der automatischen Zuordnung. Danach erscheint die
+        # Zeile als "keine Zuordnung" mit dem grossen OP-TomSelect ueber alle
+        # offenen Posten.
+        line.matched_invoice_id = None
+        line.matched_open_item_id = None
+        line.matched_customer_id = None
+        line.match_type = BankStatementLine.MATCH_MANUAL
 
     elif action == "set_open_item":
         op_id = request.form.get("open_item_id", type=int)

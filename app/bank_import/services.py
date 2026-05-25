@@ -25,36 +25,60 @@ def _commit_with_op(line: BankStatementLine, stmt: BankStatement, user_id: int) 
     op = OpenItem.query.get(line.matched_open_item_id)
     if op is None:
         raise ValueError(f"Offener Posten #{line.matched_open_item_id} nicht gefunden")
-    invoice = op.invoice
-    if invoice is None:
-        raise ValueError(
-            f"Offener Posten #{op.id} ist mit keiner Rechnung verknüpft — "
-            "manueller Import noch nicht unterstützt."
-        )
 
     amount = _as_decimal(line.amount)
-    group, children = booking_group_from_invoice_payment(
-        invoice=invoice,
-        amount=amount,
-        payment_date=line.booking_date,
-        real_account_id=stmt.real_account_id,
-        created_by_id=user_id,
-        open_item=op,
-        reference=invoice.invoice_number or line.end_to_end_id,
-    )
+    invoice = op.invoice
 
-    line.booking_group_id = group.id if group else None
-    line.booking_id = children[0].id if (not group and children) else None
+    # override_account_id aus der Vorschau hat Vorrang vor op.account_id
+    effective_account_id = line.override_account_id or op.account_id
+
+    if invoice is not None:
+        group, children = booking_group_from_invoice_payment(
+            invoice=invoice,
+            amount=amount,
+            payment_date=line.booking_date,
+            real_account_id=stmt.real_account_id,
+            created_by_id=user_id,
+            open_item=op,
+            reference=invoice.invoice_number or line.end_to_end_id,
+            fallback_account_id=effective_account_id,
+        )
+        line.booking_group_id = group.id if group else None
+        line.booking_id = children[0].id if (not group and children) else None
+    else:
+        # Manueller OP ohne Rechnung: einfache Einzelbuchung
+        if effective_account_id is None:
+            raise ValueError(
+                f"Offener Posten #{op.id} hat kein Buchungskonto — "
+                "bitte in der Vorschau ein Konto zuordnen."
+            )
+        description = (op.description or line.purpose or line.counterparty_name or "Bankauszug-Import").strip()[:500]
+        booking = Booking(
+            date=line.booking_date,
+            account_id=effective_account_id,
+            amount=amount,
+            description=description,
+            reference=line.end_to_end_id or None,
+            real_account_id=stmt.real_account_id,
+            customer_id=op.customer_id,
+            open_item_id=op.id,
+            created_by_id=user_id,
+        )
+        db.session.add(booking)
+        db.session.flush()
+        line.booking_id = booking.id
 
     db.session.flush()
 
     balance = op.open_balance
     if balance == 0:
         op.status = OpenItem.STATUS_PAID
-        invoice.status = Invoice.STATUS_PAID
+        if invoice is not None:
+            invoice.status = Invoice.STATUS_PAID
     elif balance < 0:
         op.status = OpenItem.STATUS_CREDIT
-        invoice.status = Invoice.STATUS_CREDIT
+        if invoice is not None:
+            invoice.status = Invoice.STATUS_CREDIT
     else:
         op.status = OpenItem.STATUS_PARTIAL
         # Invoice-Status nicht ueberschreiben (Versendet/Entwurf bleibt)

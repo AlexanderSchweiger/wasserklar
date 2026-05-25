@@ -48,11 +48,9 @@ _SCHEMA_UPGRADE_COLUMNS = [
     ("invoices",      "billing_run_id INTEGER REFERENCES billing_runs(id)",           "billing_run_id"),
     ("fiscal_years",  "is_vat_liable INTEGER NOT NULL DEFAULT 0",                     "is_vat_liable"),
     ("open_items",    "account_id INTEGER REFERENCES accounts(id)",                   "account_id"),
-    ("billing_runs",  "account_id INTEGER REFERENCES accounts(id)",                   "account_id"),
     # ADR-002: Sammelbuchung. booking_groups kommt ueber db.create_all();
     # hier nur die ALTER-Spalten auf bestehenden Tabellen ergaenzen.
     ("bookings",      "group_id INTEGER REFERENCES booking_groups(id)",               "group_id"),
-    ("invoice_items", "account_id INTEGER REFERENCES accounts(id)",                   "account_id"),
     ("invoice_items", "project_id INTEGER REFERENCES projects(id)",                   "project_id"),
     # ADR-003: Mahnwesen. dunning_* kommen ueber db.create_all();
     # hier nur die ALTER-Spalten auf bestehenden Tabellen ergaenzen.
@@ -287,6 +285,80 @@ def run_data_migrations(db, *, verbose=False):
             print(f"  {len(kunden_ohne_nr)} Kunden mit Kundennummern versehen.")
         if sent_no_oi:
             print(f"  {len(sent_no_oi)} Rechnungen -> OpenItem migriert.")
+
+
+def _assert_demo_seed_allowed(app, *, yes: bool) -> None:
+    """Mehrstufiges Sicherheitsnetz fuer demo-seed: niemals in Prod.
+
+    Drei unabhaengige Gates:
+      1. ``app.debug`` muss True sein (Prod-Configs setzen DEBUG=False).
+      2. Env-Var ``WASSERKLAR_ALLOW_DEMO_SEED=1`` muss gesetzt sein.
+      3. Interaktive Bestaetigung 'SEED' (mit ``--yes`` ueberspringbar).
+
+    Bei Fehlschlag: ``click.ClickException``. Caller bricht den Command ab.
+    """
+    import os
+    import click
+
+    if not app.debug:
+        raise click.ClickException(
+            "demo-seed nur im Development-Modus erlaubt (app.debug muss True sein).\n"
+            "FLASK_ENV=development setzen und den Command erneut ausfuehren."
+        )
+
+    if os.environ.get("WASSERKLAR_ALLOW_DEMO_SEED") != "1":
+        raise click.ClickException(
+            "Sicherheits-Gate: Env-Var WASSERKLAR_ALLOW_DEMO_SEED=1 muss gesetzt sein, "
+            "bevor der Demo-Seed laeuft. Schuetzt vor versehentlichem Wipe einer Prod-DB."
+        )
+
+    if not yes:
+        antwort = input(
+            "WARNUNG: Alle Geschaefts-Daten werden geloescht und durch Demo-Daten ersetzt.\n"
+            "Zur Bestaetigung bitte 'SEED' eingeben: "
+        ).strip()
+        if antwort != "SEED":
+            raise click.ClickException("Abgebrochen.")
+
+
+def _wipe_business_data(db, *, verbose: bool = False) -> None:
+    """Loescht alle Geschaefts-Daten (Tabellen behalten), re-seeded Defaults.
+
+    Identisches Verhalten wie ``clear-db --full``, aber ohne interaktiven Prompt.
+    Schutzliste: tax_rates, dunning_policies, dunning_stages. Defaults
+    (Steuersaetze, Mahnvorlage, Abrechnungsperiode, Rollen) werden danach
+    idempotent neu eingespielt.
+    """
+    schutz = {"tax_rates", "dunning_policies", "dunning_stages"}
+    dialect = db.engine.dialect.name
+    existing = set(sa.inspect(db.engine).get_table_names())
+    tables = [t for t in db.metadata.tables.values()
+              if t.name not in schutz and t.name in existing]
+
+    with db.engine.begin() as conn:
+        if dialect == "mysql":
+            conn.execute(sa.text("SET FOREIGN_KEY_CHECKS=0"))
+        elif dialect == "sqlite":
+            conn.execute(sa.text("PRAGMA foreign_keys=OFF"))
+
+        for table in tables:
+            if dialect == "postgresql":
+                conn.execute(sa.text(f"TRUNCATE TABLE {table.name} RESTART IDENTITY CASCADE"))
+            else:
+                conn.execute(table.delete())
+
+        if dialect == "mysql":
+            conn.execute(sa.text("SET FOREIGN_KEY_CHECKS=1"))
+        elif dialect == "sqlite":
+            conn.execute(sa.text("PRAGMA foreign_keys=ON"))
+
+    if verbose:
+        print(f"  {len(tables)} Tabelle(n) geleert.")
+
+    seed_default_tax_rates(db, verbose=verbose)
+    seed_default_dunning_policy(db, verbose=verbose)
+    seed_default_billing_period(db, verbose=verbose)
+    seed_default_roles(db, verbose=verbose)
 
 
 def register_commands(app):
@@ -780,6 +852,41 @@ def register_commands(app):
             seed_default_billing_period(db)
             seed_default_roles(db)
             print("Standard-Defaults neu eingespielt.")
+
+    @app.cli.command("seed-demo")
+    @click.option("--yes", is_flag=True, default=False,
+                  help="Bestaetigungs-Prompt 'SEED' ueberspringen (fuer CI / Test-Setup).")
+    def seed_demo(yes):
+        """Reproduzierbaren Demo-Datensatz erzeugen (100 Kunden, 150 Zaehler, ...).
+
+        Wirft alle Geschaefts-Daten weg und erzeugt einen deterministischen
+        Datensatz (gleicher Befehl, gleiche Daten) fuer manuelle Tests,
+        Screenshots oder Bug-Reproduktion.
+
+        SICHERHEIT: Drei Gates schuetzen vor versehentlichem Lauf gegen Prod:
+          1. ``app.debug`` muss True sein
+          2. Env-Var ``WASSERKLAR_ALLOW_DEMO_SEED=1`` muss gesetzt sein
+          3. Interaktives 'SEED'-Bestaetigung (mit ``--yes`` ueberspringbar)
+
+        Erzeugt: 100 Kunden, 120 Objekte, 150 Zaehler, Vorjahres-Periode
+        (abgeschlossen) mit Ablesungen, aktuelle Periode mit ~20 Zaehlertauschen,
+        20 Rechnungen (gemischte Status), 4 Mahnungen (Stufen 1-4),
+        2 Bankkonten + 3 Umbuchungen, 12 Sammelbuchungen mit Projekten und
+        verschiedenen Steuersaetzen, passende Tarife.
+
+        Login: admin / demo1234.
+        """
+        from app.seed.demo import seed_demo_data
+
+        _assert_demo_seed_allowed(app, yes=yes)
+
+        print("Wipe und Demo-Seed laeuft...")
+        _wipe_business_data(db, verbose=True)
+        seed_demo_data(db, verbose=True)
+        # OpenItems fuer SENT-Rechnungen + ggf. Kundennummern nachziehen
+        run_data_migrations(db, verbose=True)
+        db.session.commit()
+        print("Demo-Daten erfolgreich erzeugt. Login: admin / demo1234")
 
     @app.cli.command("create-admin")
     def create_admin():

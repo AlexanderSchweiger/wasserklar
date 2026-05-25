@@ -30,6 +30,12 @@ def match_line(line: BankStatementLine) -> None:
     Aendert die Felder matched_invoice_id, matched_open_item_id,
     matched_customer_id, match_type und selected am Line-Objekt. Kein commit.
     """
+    # Default: alle Zeilen sind vorausgewaehlt — der Nutzer waehlt explizit
+    # ab, was er NICHT verbuchen will (Zinsen, Spesen, manuell-zu-pruefende
+    # Sonderfaelle). Mehr Zeilen sind "Standardfall verbuchen" als
+    # "manuell triagen".
+    line.selected = True
+
     if _as_decimal(line.amount) <= 0:
         return
 

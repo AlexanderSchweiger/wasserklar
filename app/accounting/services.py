@@ -572,11 +572,11 @@ def recompute_group_total(group_id):
 
 
 def _split_invoice_by_dimensions(invoice, gross_amount, fallback_account_id=None):
-    """Splittet den Brutto-Zahlbetrag einer Rechnung nach (account_id, project_id, tax_rate).
+    """Splittet den Brutto-Zahlbetrag einer Rechnung nach (project_id, tax_rate).
 
-    Die Rechnungs-Positionen werden über ihren Nettobetrag gewichtet, der
-    letzte Split-Eintrag gleicht Rundungsdifferenzen aus, damit die Summe
-    exakt dem Zahlbetrag entspricht.
+    Das Buchungskonto gilt einheitlich für alle Splits: expliziter Parameter,
+    sonst OpenItem.account_id. Der letzte Split-Eintrag gleicht Rundungs-
+    differenzen aus, damit die Summe exakt dem Zahlbetrag entspricht.
 
     Liefert eine Liste ``[{account_id, project_id, tax_rate, amount, description}, ...]``
     mit den gruppierten Zeilen (Reihenfolge stabil nach Einfügen). ``description``
@@ -585,17 +585,14 @@ def _split_invoice_by_dimensions(invoice, gross_amount, fallback_account_id=None
     """
     gross_amount = Decimal(str(gross_amount))
 
-    # Fallback-Konto: expliziter Parameter > OpenItem > BillingRun.
+    # Konto: expliziter Parameter > OpenItem.account_id.
     default_account_id = fallback_account_id
     if not default_account_id and invoice.open_item and invoice.open_item.account_id:
         default_account_id = invoice.open_item.account_id
-    if not default_account_id and getattr(invoice, "billing_run", None) and invoice.billing_run.account_id:
-        default_account_id = invoice.billing_run.account_id
 
-    # Erst: Positionen gruppieren, Netto & Brutto je Dimension sammeln.
+    # Positionen gruppieren, Netto & Brutto je (project_id, tax_rate) sammeln.
     groups = OrderedDict()
     for item in invoice.items:
-        acc_id = item.account_id or default_account_id
         proj_id = item.project_id
         rate = item.tax_rate if item.tax_rate is not None else Decimal("0")
         net = Decimal(str(item.amount or 0))
@@ -603,10 +600,10 @@ def _split_invoice_by_dimensions(invoice, gross_amount, fallback_account_id=None
             gross = net + (net * Decimal(str(rate)) / Decimal("100")).quantize(Decimal("0.01"))
         else:
             gross = net
-        key = (acc_id, proj_id, Decimal(str(rate)))
+        key = (proj_id, Decimal(str(rate)))
         if key not in groups:
             groups[key] = {
-                "account_id": acc_id,
+                "account_id": default_account_id,
                 "project_id": proj_id,
                 "tax_rate": Decimal(str(rate)),
                 "net": Decimal("0"),

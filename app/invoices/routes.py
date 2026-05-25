@@ -249,8 +249,6 @@ def generate():
         tariff_id = int(request.form["tariff_id"])
         tariff = db.get_or_404(WaterTariff, tariff_id)
         due_days = int(request.form.get("due_days", 30))
-        account_id_raw = request.form.get("account_id") or None
-        billing_account_id = int(account_id_raw) if account_id_raw else None
 
         # Rechnungsdatum für den Rechnungslauf ist heute.
         invoice_date = date.today()
@@ -291,7 +289,6 @@ def generate():
             tariff_additional_fee_label=tariff.additional_fee_label or "Zusatzgebühr",
             tariff_price_per_m3=tariff.price_per_m3,
             tariff_notes=tariff.notes,
-            account_id=billing_account_id,
         )
         db.session.add(billing_run)
         db.session.flush()
@@ -457,7 +454,6 @@ def new():
     from app.accounting import services as acc_svc
     customers = Customer.query.order_by(Customer.name).all()
     tariffs = WaterTariff.query.order_by(WaterTariff.valid_from.desc()).all()
-    editor_accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
     editor_projects = Project.query.filter_by(closed=False).order_by(Project.name).all()
 
     if request.method == "POST":
@@ -526,7 +522,6 @@ def new():
         customers=customers,
         tariffs=tariffs,
         today=date.today(),
-        editor_accounts=editor_accounts,
         editor_projects=editor_projects,
     )
 
@@ -536,11 +531,6 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
     zur Rechnung hinzu. Shared zwischen ``invoices.new`` und
     ``accounting.open_item_invoice`` (dort noch inline), damit die
     Parse-Logik nur einmal existiert.
-
-    Leere ``row_account_id[]`` / ``row_project_id[]`` bleiben als NULL
-    erhalten — die Vererbung auf ``open_item.account_id`` /
-    ``billing_run.account_id`` passiert später im Service-Layer
-    (``booking_group_from_invoice_payment``).
     """
     row_types = form.getlist("row_type[]")
     row_tariff_ids = form.getlist("row_tariff_id[]")
@@ -550,7 +540,6 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
     row_units = form.getlist("row_unit[]")
     row_unit_prices = form.getlist("row_unit_price[]")
     row_tax_rates = form.getlist("row_tax_rate[]")
-    row_account_ids = form.getlist("row_account_id[]")
     row_project_ids = form.getlist("row_project_id[]")
 
     def _dec(lst, idx, default="0"):
@@ -574,9 +563,6 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
     water_tax = Decimal("10") if is_vat_liable_year else None
 
     for i, rtype in enumerate(row_types):
-        # Dimensionen sind pro Zeile gleich, auch wenn eine Tarif-Zeile
-        # mehrere Items erzeugt (Grundgebühr/Zusatz/Verbrauch).
-        row_account_id = _int_or_none(row_account_ids, i)
         row_project_id = _int_or_none(row_project_ids, i)
 
         if rtype == "tariff":
@@ -600,7 +586,6 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
                     unit_price=tariff.base_fee,
                     amount=tariff.base_fee,
                     tax_rate=water_tax,
-                    account_id=row_account_id,
                     project_id=row_project_id,
                 ))
             if tariff.additional_fee is not None:
@@ -612,7 +597,6 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
                     unit_price=tariff.additional_fee,
                     amount=tariff.additional_fee,
                     tax_rate=water_tax,
-                    account_id=row_account_id,
                     project_id=row_project_id,
                 ))
             amount = (consumption * tariff.price_per_m3).quantize(Decimal("0.01"))
@@ -624,7 +608,6 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
                 unit_price=tariff.price_per_m3,
                 amount=amount,
                 tax_rate=water_tax,
-                account_id=row_account_id,
                 project_id=row_project_id,
             ))
         elif rtype == "water":
@@ -644,7 +627,6 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
                 unit_price=unit_price,
                 amount=amount,
                 tax_rate=water_tax,
-                account_id=row_account_id,
                 project_id=row_project_id,
             ))
         else:  # free
@@ -664,7 +646,6 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
                 unit_price=unit_price,
                 amount=amount,
                 tax_rate=tax_rate if tax_rate > 0 else None,
-                account_id=row_account_id,
                 project_id=row_project_id,
             ))
 
@@ -696,7 +677,6 @@ def detail(invoice_id):
         fy_vat_liable=fy_vat_liable,
         tax_rates=tax_rates,
         tariffs=tariffs,
-        editor_accounts=accounts,
         editor_projects=editor_projects,
         tax_summary=invoice.tax_breakdown,
         invoice_gross_total=invoice.total_amount,

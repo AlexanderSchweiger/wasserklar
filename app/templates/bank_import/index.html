@@ -51,11 +51,11 @@
           </td>
           <td>
             {% if s.status == 'committed' %}
-              <span class="badge bg-success">Vollständig verbucht</span>
+              <span class="badge bg-success text-white">Vollständig verbucht</span>
             {% elif s.status == 'partial' %}
-              <span class="badge bg-warning">Teilweise verbucht</span>
+              <span class="badge bg-warning text-dark">Teilweise verbucht</span>
             {% else %}
-              <span class="badge bg-azure">Offen</span>
+              <span class="badge bg-azure text-white">Offen</span>
             {% endif %}
           </td>
           <td class="text-muted small">{{ s.filename }}</td>

@@ -28,11 +28,10 @@ def _booking(**kwargs):
     return types.SimpleNamespace(**defaults)
 
 
-def _invoice(items, open_item_account=None, billing_run_account=None):
+def _invoice(items, open_item_account=None):
     """Mock-Invoice mit Items für Split-Tests."""
     mock_items = [
         types.SimpleNamespace(
-            account_id=it.get("account_id"),
             project_id=it.get("project_id"),
             tax_rate=Decimal(str(it["tax_rate"])) if it.get("tax_rate") is not None else None,
             amount=Decimal(str(it.get("amount", "0"))),
@@ -41,8 +40,7 @@ def _invoice(items, open_item_account=None, billing_run_account=None):
         for it in items
     ]
     open_item = types.SimpleNamespace(account_id=open_item_account) if open_item_account else None
-    billing_run = types.SimpleNamespace(account_id=billing_run_account) if billing_run_account else None
-    return types.SimpleNamespace(items=mock_items, open_item=open_item, billing_run=billing_run)
+    return types.SimpleNamespace(items=mock_items, open_item=open_item)
 
 
 # ---------------------------------------------------------------------------
@@ -147,78 +145,69 @@ class TestUstPeriod:
 # ---------------------------------------------------------------------------
 
 class TestSplitInvoiceByDimensions:
-    def test_single_dimension_one_result(self):
-        inv = _invoice([{"account_id": 1, "amount": "100.00"}])
+    def test_single_item_uses_open_item_account(self):
+        inv = _invoice([{"amount": "100.00"}], open_item_account=1)
         result = _split_invoice_by_dimensions(inv, Decimal("100.00"))
         assert len(result) == 1
         assert result[0]["amount"] == Decimal("100.00")
         assert result[0]["account_id"] == 1
 
-    def test_two_accounts_two_splits(self):
+    def test_two_projects_two_splits(self):
         inv = _invoice([
-            {"account_id": 1, "amount": "50.00", "description": "A"},
-            {"account_id": 2, "amount": "50.00", "description": "B"},
-        ])
+            {"project_id": 1, "amount": "50.00", "description": "A"},
+            {"project_id": 2, "amount": "50.00", "description": "B"},
+        ], open_item_account=10)
         result = _split_invoice_by_dimensions(inv, Decimal("100.00"))
         assert len(result) == 2
         assert sum(r["amount"] for r in result) == Decimal("100.00")
 
     def test_same_dimension_merged_into_one(self):
-        # Beide Items haben gleiche (account, project, tax_rate) → 1 Split
+        # Beide Items haben gleiche (project_id, tax_rate) → 1 Split
         inv = _invoice([
-            {"account_id": 5, "amount": "30.00"},
-            {"account_id": 5, "amount": "70.00"},
-        ])
+            {"amount": "30.00"},
+            {"amount": "70.00"},
+        ], open_item_account=5)
         result = _split_invoice_by_dimensions(inv, Decimal("100.00"))
         assert len(result) == 1
         assert result[0]["amount"] == Decimal("100.00")
 
     def test_rounding_invariant_three_splits(self):
-        # 3 ungleiche Positionen → letzte gleicht Rundungsdifferenz aus
+        # 3 verschiedene Projekte → letzte gleicht Rundungsdifferenz aus
         inv = _invoice([
-            {"account_id": 1, "amount": "33.33"},
-            {"account_id": 2, "amount": "33.33"},
-            {"account_id": 3, "amount": "33.34"},
-        ])
+            {"project_id": 1, "amount": "33.33"},
+            {"project_id": 2, "amount": "33.33"},
+            {"project_id": 3, "amount": "33.34"},
+        ], open_item_account=10)
         gross = Decimal("100.00")
         result = _split_invoice_by_dimensions(inv, gross)
         assert sum(r["amount"] for r in result) == gross
 
     def test_rounding_invariant_partial_payment(self):
-        # Teilzahlung 60,01 auf 2 Positionen → kein Cent verloren
+        # Teilzahlung 60,01 auf 2 verschiedene Steuersätze → kein Cent verloren
         inv = _invoice([
-            {"account_id": 1, "amount": "60.00"},
-            {"account_id": 2, "amount": "40.00"},
-        ])
+            {"tax_rate": "10", "amount": "60.00"},
+            {"tax_rate": "0", "amount": "40.00"},
+        ], open_item_account=10)
         partial = Decimal("60.01")
         result = _split_invoice_by_dimensions(inv, partial)
         assert sum(r["amount"] for r in result) == partial
 
-    def test_fallback_to_billing_run_account(self):
-        # Item ohne account_id → Fallback auf billing_run.account_id
-        inv = _invoice(
-            [{"account_id": None, "amount": "100.00"}],
-            billing_run_account=99,
-        )
-        result = _split_invoice_by_dimensions(inv, Decimal("100.00"))
-        assert result[0]["account_id"] == 99
-
     def test_fallback_to_open_item_account(self):
-        # open_item.account_id hat Vorrang vor billing_run.account_id
-        inv = _invoice(
-            [{"account_id": None, "amount": "100.00"}],
-            open_item_account=77,
-            billing_run_account=99,
-        )
+        inv = _invoice([{"amount": "100.00"}], open_item_account=77)
         result = _split_invoice_by_dimensions(inv, Decimal("100.00"))
         assert result[0]["account_id"] == 77
 
+    def test_explicit_fallback_overrides_open_item(self):
+        inv = _invoice([{"amount": "100.00"}], open_item_account=77)
+        result = _split_invoice_by_dimensions(inv, Decimal("100.00"), fallback_account_id=99)
+        assert result[0]["account_id"] == 99
+
     def test_different_tax_rates_different_splits(self):
-        # Gleicher Account, verschiedene Steuersätze → 2 Splits
+        # Verschiedene Steuersätze → 2 Splits
         inv = _invoice([
-            {"account_id": 1, "tax_rate": "10", "amount": "100.00"},
-            {"account_id": 1, "tax_rate": "0", "amount": "100.00"},
-        ])
+            {"tax_rate": "10", "amount": "100.00"},
+            {"tax_rate": "0", "amount": "100.00"},
+        ], open_item_account=1)
         # Gross-Beträge: 110 + 100 = 210
         gross = Decimal("210.00")
         result = _split_invoice_by_dimensions(inv, gross)

@@ -1247,7 +1247,6 @@ def open_item_invoice(item_id):
     """Rechnung aus einem manuellen offenen Posten generieren."""
     item = db.get_or_404(OpenItem, item_id)
     tariffs = WaterTariff.query.order_by(WaterTariff.valid_from.desc()).all()
-    editor_accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
     editor_projects = Project.query.filter_by(closed=False).order_by(Project.name).all()
 
     if request.method == "POST":
@@ -1293,7 +1292,6 @@ def open_item_invoice(item_id):
         item=item,
         tariffs=tariffs,
         today=date.today(),
-        editor_accounts=editor_accounts,
         editor_projects=editor_projects,
     )
 

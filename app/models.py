@@ -491,11 +491,9 @@ class BillingRun(db.Model):
 
     invoices_created = db.Column(db.Integer, default=0, nullable=False)
     invoices_skipped = db.Column(db.Integer, default=0, nullable=False)
-    account_id = db.Column(db.Integer, db.ForeignKey("accounts.id"), nullable=True)
 
     created_by = db.relationship("User", foreign_keys=[created_by_id])
     invoices = db.relationship("Invoice", backref="billing_run", lazy="dynamic")
-    account = db.relationship("Account", foreign_keys=[account_id])
     billing_period = db.relationship("BillingPeriod")
 
     def __repr__(self):
@@ -654,17 +652,12 @@ class InvoiceItem(db.Model):
     unit_price = db.Column(db.Numeric(10, 4), nullable=False)
     amount = db.Column(db.Numeric(10, 2), nullable=False)
     tax_rate = db.Column(db.Numeric(5, 2), nullable=True)  # MwSt in %; None = keine MwSt
-    # Optionale Zuordnung pro Position. Bei Zahlung splittet die Sammelbuchung
-    # nach (account_id, project_id, tax_rate). Leeres account_id erbt vom
-    # OpenItem/BillingRun, leeres project_id bleibt NULL (siehe ADR-002).
-    account_id = db.Column(db.Integer, db.ForeignKey("accounts.id"), nullable=True)
     project_id = db.Column(db.Integer, db.ForeignKey("projects.id"), nullable=True)
 
     # Mahnwesen (ADR-003): Mahngebühr-Items
     is_dunning_fee = db.Column(db.Integer, default=0, nullable=False)
     dunning_notice_id = db.Column(db.Integer, db.ForeignKey("dunning_notices.id"), nullable=True)
 
-    account = db.relationship("Account", foreign_keys=[account_id])
     project = db.relationship("Project", foreign_keys=[project_id])
 
     def __repr__(self):

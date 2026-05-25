@@ -131,10 +131,10 @@ FOREIGN_KEYS = {
     MeterReadingAccessCode: {"customer_id": Customer, "billing_period_id": BillingPeriod},
     MeterReading: {"meter_id": WaterMeter, "self_service_code_id": MeterReadingAccessCode,
                    "billing_period_id": BillingPeriod},
-    BillingRun: {"account_id": Account, "billing_period_id": BillingPeriod},
+    BillingRun: {"billing_period_id": BillingPeriod},
     Invoice: {"customer_id": Customer, "property_id": Property, "billing_run_id": BillingRun,
               "billing_period_id": BillingPeriod},
-    InvoiceItem: {"invoice_id": Invoice, "account_id": Account, "project_id": Project,
+    InvoiceItem: {"invoice_id": Invoice, "project_id": Project,
                   "dunning_notice_id": DunningNotice},  # zweiter Pass
     OpenItem: {"customer_id": Customer, "invoice_id": Invoice, "account_id": Account},
     BookingGroup: {"invoice_id": Invoice, "customer_id": Customer},
