@@ -134,6 +134,20 @@ def create_app(config_name=None):
         except Exception:
             return dict(has_vat_fiscal_year=False)
 
+    # WASSERKLAR_MAIL_KEY-Warnung: ohne Key kann das DB-gespeicherte
+    # SMTP-Passwort nicht entschluesselt werden. Hart-failen will man nicht
+    # (Erststart ohne Mail-Konfig soll laufen), aber lautlos schweigen auch
+    # nicht. Wenn in der DB schon ein verschluesseltes Passwort liegt, kommt
+    # spaeter beim send_mail() ein RuntimeError aus _fernet() — der ist
+    # absichtlich nicht abgefangen.
+    if not app.config.get("WASSERKLAR_MAIL_KEY"):
+        app.logger.warning(
+            "WASSERKLAR_MAIL_KEY ist nicht gesetzt — gespeicherte SMTP-Passwoerter "
+            "koennen nicht entschluesselt werden. Generieren: "
+            "python -c \"from cryptography.fernet import Fernet; "
+            "print(Fernet.generate_key().decode())\""
+        )
+
     # Mail-Einstellungen aus DB laden (überschreibt .env-Werte)
     with app.app_context():
         try:

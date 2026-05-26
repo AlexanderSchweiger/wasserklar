@@ -2,11 +2,12 @@
 Einstellungs-Service: liefert WG-Kontaktdaten und Mail-Konfiguration,
 wobei Datenbankwerte (AppSetting) Vorrang vor .env-Variablen haben.
 
-Mail-Passwort wird verschlüsselt in der DB gespeichert (Fernet/AES128,
-Key wird aus SECRET_KEY abgeleitet). Wer nur die DB hat, kann es nicht lesen.
+Mail-Passwort wird Fernet-verschluesselt in der DB gespeichert. Der Schluessel
+``WASSERKLAR_MAIL_KEY`` kommt aus der .env (separat vom SECRET_KEY: andere
+Vertrauenszone als Session-Cookies / Reset-Tokens). Comma-separated mehrere
+Keys = MultiFernet fuer Key-Rotation; erster Key = primary (encrypt), weitere
+= Decrypt-Fallback.
 """
-import base64
-import hashlib
 import re
 from html import escape
 from html.parser import HTMLParser
@@ -47,12 +48,25 @@ _MAIL_RESET = [
 
 
 def _fernet():
-    """Gibt eine Fernet-Instanz zurück, deren Key aus SECRET_KEY abgeleitet wird."""
-    from cryptography.fernet import Fernet
-    secret = current_app.config['SECRET_KEY']
-    # SHA-256 → 32 Bytes → URL-safe Base64 → gültiger Fernet-Key
-    key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest())
-    return Fernet(key)
+    """Liefert eine MultiFernet-/Fernet-Instanz aus WASSERKLAR_MAIL_KEY.
+
+    Comma-separated mehrere Keys -> MultiFernet (erster encrypt, alle decrypt).
+    Fehlt der Key komplett, faellt die App lieber laut auf die Nase, als ein
+    Passwort gar nicht oder mit einer schwachen Ableitung zu speichern.
+    """
+    from cryptography.fernet import Fernet, MultiFernet
+    raw = current_app.config.get('WASSERKLAR_MAIL_KEY')
+    if not raw:
+        raise RuntimeError(
+            "WASSERKLAR_MAIL_KEY ist nicht gesetzt. Erzeugen: "
+            "python -c \"from cryptography.fernet import Fernet; "
+            "print(Fernet.generate_key().decode())\""
+        )
+    parts = [k.strip().encode() for k in str(raw).split(',') if k.strip()]
+    if not parts:
+        raise RuntimeError("WASSERKLAR_MAIL_KEY ist leer oder nur Whitespace.")
+    fernets = [Fernet(k) for k in parts]
+    return MultiFernet(fernets) if len(fernets) > 1 else fernets[0]
 
 
 def encrypt_password(plaintext: str) -> str:

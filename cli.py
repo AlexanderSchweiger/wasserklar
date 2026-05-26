@@ -995,3 +995,50 @@ def register_commands(app):
         total_u = sum(s["updated"] for s in stats.values())
         total_s = sum(s["skipped"] for s in stats.values())
         print(f"Import fertig: {total_i} neu, {total_u} aktualisiert, {total_s} uebersprungen.")
+
+    @app.cli.command("rotate-mail-key")
+    def rotate_mail_key():
+        """Gespeichertes mail.password mit aktuellem primary WASSERKLAR_MAIL_KEY re-encrypten.
+
+        Voraussetzung: WASSERKLAR_MAIL_KEY enthaelt den neuen Key als ersten
+        Eintrag, gefolgt vom alten (comma-separated). MultiFernet
+        entschluesselt mit allen Keys, encrypt-ed aber nur mit dem ersten.
+
+        Idempotent — zweite Ausfuehrung ist no-op.
+        """
+        from app.extensions import db
+        from app.models import AppSetting
+        from app.settings_service import decrypt_password, encrypt_password
+
+        rec = AppSetting.query.filter_by(key="mail.password").first()
+        if rec is None or not rec.value:
+            print("Kein mail.password gespeichert — nichts zu rotieren.")
+            return
+        try:
+            plaintext = decrypt_password(rec.value)
+        except Exception as e:
+            print(f"FEHLER: Decrypt fehlgeschlagen: {e}")
+            return
+        if not plaintext:
+            print("WARNUNG: Decrypt liefert leeren String — Eintrag bleibt unveraendert.")
+            return
+        rec.value = encrypt_password(plaintext)
+        db.session.commit()
+        print("mail.password re-encrypted.")
+
+    @app.cli.command("reset-mail-passwords")
+    def reset_mail_passwords():
+        """Gespeichertes mail.password loeschen (Cleanup nach Crypto-Cutover).
+
+        Tenant traegt das Passwort danach in den Settings neu ein.
+        """
+        from app.extensions import db
+        from app.models import AppSetting
+
+        rec = AppSetting.query.filter_by(key="mail.password").first()
+        if rec is None or not rec.value:
+            print("Kein mail.password gespeichert — nichts zu loeschen.")
+            return
+        rec.value = None
+        db.session.commit()
+        print("mail.password geloescht. Bitte in /settings neu eintragen.")

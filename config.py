@@ -25,6 +25,12 @@ class Config:
     # statt ueber per-Tenant-mail.*-Overrides. OSS-Standalone: aus, SaaS: an.
     MAIL_PLATFORM_RELAY = os.environ.get("MAIL_PLATFORM_RELAY", "false").lower() == "true"
 
+    # Fernet-Key fuer das in der DB gespeicherte SMTP-Passwort. Bewusst separat
+    # vom SECRET_KEY: SMTP-Secrets duerfen nicht entschluesselt werden, wenn
+    # nur SECRET_KEY (Session-Cookies, Reset-Tokens) leaked. Comma-separated
+    # = Key-Rotation via MultiFernet (erster Key = primary).
+    WASSERKLAR_MAIL_KEY = os.environ.get("WASSERKLAR_MAIL_KEY")
+
     # PDF-Ausgabeverzeichnis
     PDF_DIR = os.path.join(BASE_DIR, "instance", "pdfs")
 
@@ -52,6 +58,9 @@ class TestingConfig(Config):
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
     WTF_CSRF_ENABLED = False
     SECRET_KEY = "test-secret-key"
+    # Fester Test-Key (32-Byte urlsafe-base64) — Tests duerfen nicht von der
+    # User-.env abhaengen.
+    WASSERKLAR_MAIL_KEY = "Q3hUYjBkbGRZWG41ZXM0SUtYRG1MRzJaRWxudFYzeTI="
 
 
 class StagingConfig(Config):
