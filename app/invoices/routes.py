@@ -1373,9 +1373,15 @@ def send_email_ajax(invoice_id):
 def email_events(invoice_id):
     """Read-only Audit-Trail aller E-Mail-Versand-/Webhook-Events zur Rechnung."""
     invoice = db.get_or_404(Invoice, invoice_id)
+    # Tiebreaker auf id desc: Postmark-Timestamps (DeliveredAt/BouncedAt) sind
+    # nur sekundengenau, unsere Sent-Events haben datetime.utcnow()-Mikrosekunden.
+    # Bei Zustellung binnen weniger ms ist Postmark.DeliveredAt zwar konzeptionell
+    # juenger, vergleicht aber als kleiner — ohne Tiebreaker wuerde Delivery
+    # unter Sent rutschen.
     events = (InvoiceEmailEvent.query
               .filter_by(invoice_id=invoice.id)
-              .order_by(InvoiceEmailEvent.occurred_at.desc())
+              .order_by(InvoiceEmailEvent.occurred_at.desc(),
+                        InvoiceEmailEvent.id.desc())
               .all())
     return render_template("invoices/email_events.html", invoice=invoice, events=events)
 

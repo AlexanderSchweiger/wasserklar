@@ -564,7 +564,8 @@ class Invoice(db.Model):
         "InvoiceEmailEvent",
         backref="invoice",
         cascade="all, delete-orphan",
-        order_by="InvoiceEmailEvent.occurred_at.desc()",
+        # Tiebreaker auf id desc — siehe Kommentar in invoices.email_events-Route.
+        order_by="(InvoiceEmailEvent.occurred_at.desc(), InvoiceEmailEvent.id.desc())",
         lazy="select",
     )
 
