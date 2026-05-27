@@ -58,7 +58,12 @@
         {% if cons %}{{ "%.3g"|format(cons|float) }} m³{% else %}—{% endif %}
       </td>
       <td class="text-end"><strong>{{ inv.total_amount|de_number }} €</strong></td>
-      <td>{% with invoice = inv %}{% include "invoices/_status_badge.html" %}{% endwith %}</td>
+      <td>
+        {% with invoice = inv %}{% include "invoices/_status_badge.html" %}{% endwith %}
+        {% if inv.last_email_status and inv.last_email_status != 'sent' %}
+          <br>{% with invoice = inv %}{% include "invoices/_email_status_badge.html" %}{% endwith %}
+        {% endif %}
+      </td>
       <td class="text-center">
         {% set cur_dunning = namespace(level=0, color='', icon='', name='') %}
         {% for n in inv.dunning_notices if n.status == 'Aktiv' %}

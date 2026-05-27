@@ -37,6 +37,16 @@
           <dd class="col-sm-7"><strong>{{ invoice.total_amount|de_number }} €</strong></dd>
           <dt class="col-sm-5">Status</dt>
           <dd class="col-sm-7" id="status-badge">{% include "invoices/_status_badge.html" %}</dd>
+          {% if invoice.last_email_status %}
+          <dt class="col-sm-5">E-Mail-Status</dt>
+          <dd class="col-sm-7">
+            {% include "invoices/_email_status_badge.html" %}
+            <a href="{{ url_for('invoices.email_events', invoice_id=invoice.id) }}"
+               class="ms-1 text-muted small" title="Versand-Verlauf anzeigen">
+              <i class="fa fa-history"></i>
+            </a>
+          </dd>
+          {% endif %}
         </dl>
         {% if invoice.notes %}
         <hr>
@@ -67,13 +77,17 @@
           <i class="fas fa-file-word me-1"></i> Word
         </a>
         {% endif %}
-        <form method="post" action="{{ url_for('invoices.send_email', invoice_id=invoice.id) }}"
-              style="display:inline">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button type="submit" class="btn btn-sm btn-outline-primary ms-1">
-            <i class="fas fa-envelope me-1"></i> E-Mail
-          </button>
-        </form>
+        {% if invoice.customer.email %}
+        <button type="button" class="btn btn-sm btn-outline-primary ms-1"
+                data-bs-toggle="modal" data-bs-target="#sendEmailModal">
+          <i class="fas fa-envelope me-1"></i> E-Mail
+        </button>
+        {% else %}
+        <button type="button" class="btn btn-sm btn-outline-primary ms-1" disabled
+                title="Kunde hat keine E-Mail-Adresse hinterlegt">
+          <i class="fas fa-envelope me-1"></i> E-Mail
+        </button>
+        {% endif %}
       </div>
     </div>
 
@@ -246,6 +260,73 @@
     </table>
   </div>
 </div>
+{% endif %}
+
+{% endblock %}
+
+{% block modals %}
+{% if invoice.customer.email %}
+<div class="modal fade" id="sendEmailModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <form method="post" action="{{ url_for('invoices.send_email', invoice_id=invoice.id) }}"
+          class="modal-content">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="test_mode" id="sendEmailTestModeInput" value="0">
+      <div class="modal-header">
+        <h5 class="modal-title">
+          <i class="fas fa-envelope me-1"></i> Rechnung per E-Mail versenden
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <div class="modal-body">
+        <dl class="row mb-3">
+          <dt class="col-sm-4">Rechnung</dt>
+          <dd class="col-sm-8">{{ invoice.invoice_number }}</dd>
+          <dt class="col-sm-4">Kunde</dt>
+          <dd class="col-sm-8">{{ invoice.customer.name }}</dd>
+          <dt class="col-sm-4">Empfänger</dt>
+          <dd class="col-sm-8" id="sendEmailRecipient">{{ invoice.customer.email }}</dd>
+        </dl>
+        <div class="form-check">
+          <input type="checkbox" class="form-check-input" id="sendEmailTestMode">
+          <label class="form-check-label text-warning" for="sendEmailTestMode">
+            <i class="fas fa-flask me-1"></i> Testmodus
+            {% if current_user.email %}
+            (Mail an {{ current_user.email }})
+            {% else %}
+            <span class="text-danger">(keine eigene E-Mail-Adresse hinterlegt)</span>
+            {% endif %}
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+        <button type="submit" class="btn btn-primary">
+          <i class="fas fa-paper-plane me-1"></i> Senden
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if invoice.customer.email %}
+<script>
+(function () {
+  const cb = document.getElementById('sendEmailTestMode');
+  const hidden = document.getElementById('sendEmailTestModeInput');
+  const recipient = document.getElementById('sendEmailRecipient');
+  const customerEmail = {{ invoice.customer.email|tojson }};
+  const adminEmail = {{ (current_user.email or '')|tojson }};
+  if (!cb || !hidden || !recipient) return;
+  cb.addEventListener('change', function () {
+    hidden.value = cb.checked ? '1' : '0';
+    recipient.textContent = cb.checked && adminEmail ? adminEmail : customerEmail;
+  });
+})();
+</script>
 {% endif %}
 
 {% if invoice.status == 'Entwurf' %}

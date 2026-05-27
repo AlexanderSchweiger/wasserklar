@@ -307,7 +307,7 @@ def generate_docx(invoice, wg: dict, design: dict | None = None,
         p_intro = doc.add_paragraph()
         p_intro.add_run("Wir stellen für das Objekt ")
         prop_display = invoice.property.address_display() or invoice.property.label()
-        p_intro.add_run(f”„{prop_display}””).bold = True
+        p_intro.add_run(f"„{prop_display}”").bold = True
         p_intro.add_run(" wie folgt in Rechnung:")
     else:
         doc.add_paragraph("Wir stellen wie folgt in Rechnung:")

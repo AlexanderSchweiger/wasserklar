@@ -1,0 +1,21 @@
+{# E-Mail-Versand-Status-Badge. Erwartet `invoice`. Rendert nichts, wenn nie versendet. #}
+{% if invoice.last_email_status %}
+  {% set _email_class = {
+    'sent': 'bg-info-lt',
+    'delivered': 'bg-success text-white',
+    'bounced_hard': 'bg-danger text-white',
+    'bounced_soft': 'bg-warning text-dark',
+    'spam_complaint': 'bg-danger text-white',
+    'failed': 'bg-danger text-white',
+  }.get(invoice.last_email_status, 'bg-secondary text-white') %}
+  <span class="badge {{ _email_class }}"
+        {% if invoice.last_email_bounce_detail %}
+          data-bs-toggle="tooltip"
+          title="{{ invoice.last_email_bounce_detail }}"
+        {% elif invoice.last_email_status_at %}
+          data-bs-toggle="tooltip"
+          title="{{ invoice.last_email_status_at.strftime('%d.%m.%Y %H:%M') }}{% if invoice.email_recipient %} an {{ invoice.email_recipient }}{% endif %}"
+        {% endif %}>
+    <i class="fa fa-envelope me-1"></i>{{ invoice.last_email_status_de }}
+  </span>
+{% endif %}

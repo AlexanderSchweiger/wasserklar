@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}E-Mail-Verlauf {{ invoice.invoice_number }}{% endblock %}
+{% block page_title %}
+  <i class="fas fa-envelope-open-text me-2"></i>
+  E-Mail-Verlauf — {{ invoice.invoice_number }}
+{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <div>
+      <strong>{{ invoice.invoice_number }}</strong>
+      <span class="text-muted">an {{ invoice.email_recipient or invoice.customer.email or '—' }}</span>
+    </div>
+    <a href="{{ url_for('invoices.detail', invoice_id=invoice.id) }}" class="btn btn-sm btn-secondary">
+      <i class="fa fa-arrow-left me-1"></i> Zurück zur Rechnung
+    </a>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-vcenter">
+      <thead>
+        <tr>
+          <th>Zeitpunkt</th>
+          <th>Ereignis</th>
+          <th>Empfänger</th>
+          <th>Bounce-Typ</th>
+          <th>Beschreibung</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for ev in events %}
+        <tr>
+          <td class="text-nowrap">{{ ev.occurred_at.strftime('%d.%m.%Y %H:%M') }}</td>
+          <td>
+            {% set _cls = {
+              'Sent': 'bg-info-lt',
+              'Delivery': 'bg-success text-white',
+              'Bounce': 'bg-danger text-white',
+              'SpamComplaint': 'bg-danger text-white',
+            }.get(ev.record_type, 'bg-secondary text-white') %}
+            <span class="badge {{ _cls }}">{{ ev.record_type }}</span>
+          </td>
+          <td>{{ ev.recipient or '—' }}</td>
+          <td>{{ ev.bounce_type or '—' }}</td>
+          <td><small class="text-muted">{{ ev.description or '—' }}</small></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="text-center text-muted">Noch keine Versand-Ereignisse.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

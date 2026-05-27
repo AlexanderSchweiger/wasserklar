@@ -1,5 +1,5 @@
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from flask import (
@@ -9,8 +9,9 @@ from flask import (
 from flask_login import login_required, current_user
 
 from app.invoices import bp
+from app.invoices.send_email_hooks import run_before_send, read_message_id
 from app.extensions import db
-from app.models import Invoice, InvoiceItem, Customer, WaterMeter, MeterReading, WaterTariff, Booking, Account, Property, OpenItem, Project, RealAccount, InvoiceCounter, AppSetting, BillingRun, BillingPeriod
+from app.models import Invoice, InvoiceItem, InvoiceEmailEvent, Customer, WaterMeter, MeterReading, WaterTariff, Booking, Account, Property, OpenItem, Project, RealAccount, InvoiceCounter, AppSetting, BillingRun, BillingPeriod
 from app.utils import next_invoice_number as _next_invoice_number
 from app.settings_service import get_wg, send_mail, wg_settings, get_contact_info
 from app.invoices.design import get_design
@@ -1161,6 +1162,34 @@ def pdf_preview(invoice_id):
     return _render_pdf_html(invoice)
 
 
+def _record_invoice_sent(invoice, msg, recipient):
+    """Setzt Versand-Status + Tracking-Felder am Invoice und legt ein Sent-Event an.
+
+    Wird sowohl von der klassischen send_email-Route als auch von send_email_ajax
+    nach erfolgreichem ``send_mail(msg)`` aufgerufen. ``read_message_id`` liefert
+    die Postmark-MessageID, sofern der SaaS-Hook sie vorbelegt hat — bei
+    reinem SMTP bleibt sie None.
+    """
+    now = datetime.utcnow()
+    message_id = read_message_id(msg)
+    invoice.status = Invoice.STATUS_SENT
+    invoice.email_sent_at = now
+    invoice.email_recipient = recipient
+    invoice.email_message_id = message_id
+    invoice.last_email_status = Invoice.EMAIL_STATUS_SENT
+    invoice.last_email_status_at = now
+    invoice.last_email_bounce_detail = None
+
+    db.session.add(InvoiceEmailEvent(
+        invoice_id=invoice.id,
+        record_type="Sent",
+        postmark_message_id=message_id,
+        recipient=recipient,
+        occurred_at=now,
+        received_at=now,
+    ))
+
+
 @bp.route("/<int:invoice_id>/send-email", methods=["POST"])
 @login_required
 def send_email(invoice_id):
@@ -1172,21 +1201,28 @@ def send_email(invoice_id):
         flash("Keine E-Mail-Adresse beim Kunden hinterlegt.", "danger")
         return redirect(url_for("invoices.detail", invoice_id=invoice.id))
 
+    test_mode = request.form.get("test_mode") == "1"
+    if test_mode:
+        recipient = current_user.email
+        if not recipient:
+            flash("Kein eigener E-Mail-Account für Testmodus hinterlegt.", "danger")
+            return redirect(url_for("invoices.detail", invoice_id=invoice.id))
+    else:
+        recipient = invoice.customer.email
+
     fmt = _get_document_format()
 
-    msg = Message(
-        subject=f"Rechnung {invoice.invoice_number}",
-        recipients=[invoice.customer.email],
-        body=_render_email_body(invoice),
-    )
+    subject = f"Rechnung {invoice.invoice_number}"
+    body = _render_email_body(invoice)
+    if test_mode:
+        subject = f"[TEST – an: {invoice.customer.email}] {subject}"
+        body = f"[TESTMODUS – eigentlicher Empfänger: {invoice.customer.email}]\n\n{body}"
+
+    msg = Message(subject=subject, recipients=[recipient], body=body)
 
     doc_data = None
     pdf_path = None
-
-    if fmt in ("docx", "both"):
-        from app.invoices.document_service import generate_docx
-        doc_data = generate_docx(invoice, wg_settings(), design=_current_design())
-        msg.attach(f"{invoice.invoice_number}.docx", _DOCX_MIME, doc_data)
+    pdf_ok = False
 
     if fmt in ("pdf", "both"):
         try:
@@ -1196,22 +1232,37 @@ def send_email(invoice_id):
             weasyprint.HTML(string=html_content).write_pdf(pdf_path)
             with open(pdf_path, "rb") as fp:
                 msg.attach(f"{invoice.invoice_number}.pdf", "application/pdf", fp.read())
+            pdf_ok = True
         except (ImportError, OSError):
+            pdf_path = None
             if fmt == "pdf":
-                if current_app.debug:
-                    flash("WeasyPrint nicht verfügbar. "
-                          "PDF-Vorschau unter /invoices/{}/pdf-preview.".format(invoice_id), "info")
-                    return redirect(url_for("invoices.pdf_preview", invoice_id=invoice_id))
-                flash("WeasyPrint ist nicht installiert. E-Mail-Versand nur im Docker-Container verfügbar.", "danger")
+                flash("WeasyPrint ist nicht installiert. E-Mail-Versand mit PDF-Anhang "
+                      "nur im Docker-Container verfügbar.", "danger")
                 return redirect(url_for("invoices.detail", invoice_id=invoice_id))
-            # bei 'both': PDF-Anhang überspringen, .docx wurde bereits angehängt
+            # bei 'both': docx-Fallback unten
+
+    if fmt == "docx" or (fmt == "both" and not pdf_ok):
+        from app.invoices.document_service import generate_docx
+        doc_data = generate_docx(invoice, wg_settings(), design=_current_design())
+        msg.attach(f"{invoice.invoice_number}.docx", _DOCX_MIME, doc_data)
 
     if not msg.attachments:
         flash("Kein Dokument konnte generiert werden.", "danger")
         return redirect(url_for("invoices.detail", invoice_id=invoice.id))
 
-    send_mail(msg)
-    invoice.status = Invoice.STATUS_SENT
+    run_before_send(invoice, msg)
+    try:
+        send_mail(msg)
+    except Exception as exc:
+        current_app.logger.exception("E-Mail-Versand fehlgeschlagen")
+        flash(f"E-Mail-Versand fehlgeschlagen: {exc}", "danger")
+        return redirect(url_for("invoices.detail", invoice_id=invoice.id))
+
+    if test_mode:
+        flash(f"Test-Mail an {recipient} versendet (eigentlicher Empfänger: {invoice.customer.email}).", "info")
+        return redirect(url_for("invoices.detail", invoice_id=invoice.id))
+
+    _record_invoice_sent(invoice, msg, recipient=recipient)
 
     if doc_data and _invoice_is_locked(invoice):
         doc_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "docx")
@@ -1226,7 +1277,7 @@ def send_email(invoice_id):
     account_id = _resolve_open_item_account_id(invoice, form_account_id)
     _create_or_update_open_item(invoice, account_id=account_id)
     db.session.commit()
-    flash(f"Rechnung an {invoice.customer.email} versendet.", "success")
+    flash(f"Rechnung an {recipient} versendet.", "success")
     return redirect(url_for("invoices.detail", invoice_id=invoice.id))
 
 
@@ -1265,11 +1316,7 @@ def send_email_ajax(invoice_id):
 
         doc_data = None
         pdf_path = None
-
-        if fmt in ("docx", "both"):
-            from app.invoices.document_service import generate_docx
-            doc_data = generate_docx(invoice, wg_settings(), design=_current_design())
-            msg.attach(f"{invoice.invoice_number}.docx", _DOCX_MIME, doc_data)
+        pdf_ok = False
 
         if fmt in ("pdf", "both"):
             try:
@@ -1279,20 +1326,28 @@ def send_email_ajax(invoice_id):
                 weasyprint.HTML(string=html_content).write_pdf(pdf_path)
                 with open(pdf_path, "rb") as fp:
                     msg.attach(f"{invoice.invoice_number}.pdf", "application/pdf", fp.read())
+                pdf_ok = True
             except (ImportError, OSError):
+                pdf_path = None
                 if fmt == "pdf":
                     preview_url = url_for("invoices.pdf_preview", invoice_id=invoice_id)
                     return jsonify({"ok": False, "error": "WeasyPrint nicht verfügbar",
                                     "preview_url": preview_url if current_app.debug else None}), 503
-                # bei 'both': PDF-Anhang überspringen, .docx wurde bereits angehängt
+                # bei 'both': docx-Fallback unten
+
+        if fmt == "docx" or (fmt == "both" and not pdf_ok):
+            from app.invoices.document_service import generate_docx
+            doc_data = generate_docx(invoice, wg_settings(), design=_current_design())
+            msg.attach(f"{invoice.invoice_number}.docx", _DOCX_MIME, doc_data)
 
         if not msg.attachments:
             return jsonify({"ok": False, "error": "Kein Dokument konnte generiert werden"}), 500
 
+        run_before_send(invoice, msg)
         send_mail(msg)
 
         if not test_mode:
-            invoice.status = Invoice.STATUS_SENT
+            _record_invoice_sent(invoice, msg, recipient=recipient)
             if doc_data and _invoice_is_locked(invoice):
                 doc_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "docx")
                 with open(doc_path, "wb") as f:
@@ -1311,6 +1366,18 @@ def send_email_ajax(invoice_id):
     except Exception as exc:
         db.session.rollback()
         return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@bp.route("/<int:invoice_id>/email-events")
+@login_required
+def email_events(invoice_id):
+    """Read-only Audit-Trail aller E-Mail-Versand-/Webhook-Events zur Rechnung."""
+    invoice = db.get_or_404(Invoice, invoice_id)
+    events = (InvoiceEmailEvent.query
+              .filter_by(invoice_id=invoice.id)
+              .order_by(InvoiceEmailEvent.occurred_at.desc())
+              .all())
+    return render_template("invoices/email_events.html", invoice=invoice, events=events)
 
 
 @bp.route("/email-einstellungen", methods=["GET", "POST"])

@@ -514,6 +514,22 @@ class Invoice(db.Model):
     STATUS_CREDIT = "Guthaben"
     ALL_STATUSES = [STATUS_DRAFT, STATUS_SENT, STATUS_PAID, STATUS_CANCELLED, STATUS_CREDIT]
 
+    EMAIL_STATUS_SENT = "sent"
+    EMAIL_STATUS_DELIVERED = "delivered"
+    EMAIL_STATUS_BOUNCED_HARD = "bounced_hard"
+    EMAIL_STATUS_BOUNCED_SOFT = "bounced_soft"
+    EMAIL_STATUS_SPAM = "spam_complaint"
+    EMAIL_STATUS_FAILED = "failed"
+
+    EMAIL_STATUS_DE = {
+        EMAIL_STATUS_SENT: "Versendet",
+        EMAIL_STATUS_DELIVERED: "Zugestellt",
+        EMAIL_STATUS_BOUNCED_HARD: "Unzustellbar",
+        EMAIL_STATUS_BOUNCED_SOFT: "Verzögert",
+        EMAIL_STATUS_SPAM: "Als Spam markiert",
+        EMAIL_STATUS_FAILED: "Fehlgeschlagen",
+    }
+
     id = db.Column(db.Integer, primary_key=True)
     invoice_number = db.Column(db.String(50), unique=True, nullable=False)
     customer_id = db.Column(db.Integer, db.ForeignKey("customers.id"), nullable=False)
@@ -530,11 +546,33 @@ class Invoice(db.Model):
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+    # E-Mail-Versand-Tracking — Postmark-Webhooks (SaaS) bzw. SMTP (OSS-Standalone).
+    # Bei SMTP bleibt email_message_id NULL; last_email_status ist dann immer "sent".
+    email_message_id = db.Column(db.String(128), nullable=True, index=True)
+    email_sent_at = db.Column(db.DateTime, nullable=True)
+    email_recipient = db.Column(db.String(255), nullable=True)
+    last_email_status = db.Column(db.String(32), nullable=True)
+    last_email_status_at = db.Column(db.DateTime, nullable=True)
+    last_email_bounce_detail = db.Column(db.String(512), nullable=True)
+
     items = db.relationship("InvoiceItem", backref="invoice", lazy="select",
                             cascade="all, delete-orphan")
     created_by = db.relationship("User", foreign_keys=[created_by_id])
     bookings = db.relationship("Booking", backref="invoice", lazy="dynamic")
     billing_period = db.relationship("BillingPeriod")
+    email_events = db.relationship(
+        "InvoiceEmailEvent",
+        backref="invoice",
+        cascade="all, delete-orphan",
+        order_by="InvoiceEmailEvent.occurred_at.desc()",
+        lazy="select",
+    )
+
+    @property
+    def last_email_status_de(self):
+        if not self.last_email_status:
+            return None
+        return self.EMAIL_STATUS_DE.get(self.last_email_status, self.last_email_status)
 
     def recalculate_total(self):
         """Berechnet den Bruttobetrag (netto + USt) und speichert ihn in ``total_amount``.
@@ -639,6 +677,49 @@ class Invoice(db.Model):
 
     def __repr__(self):
         return f"<Invoice {self.invoice_number}>"
+
+
+class InvoiceEmailEvent(db.Model):
+    """Audit-Trail der E-Mail-Zustellungsereignisse pro Rechnung.
+
+    Im OSS-Standalone-Betrieb (SMTP) entsteht nur ein "Sent"-Event beim
+    Versand. Im SaaS-Betrieb über Postmark feuert die Platform-Webhook
+    zusätzlich Delivery-/Bounce-/SpamComplaint-Events nach.
+
+    Idempotenz: Postmark retried Webhooks bei 5xx-Antworten. Der UNIQUE-
+    Constraint (postmark_message_id, record_type) sorgt dafür, dass derselbe
+    Event nicht doppelt landet. Mehrere unterschiedliche Record-Types zur
+    selben MessageID sind erlaubt (Soft- → Hard-Bounce-Eskalation).
+    """
+
+    __tablename__ = "invoice_email_events"
+
+    id = db.Column(db.Integer, primary_key=True)
+    invoice_id = db.Column(
+        db.Integer,
+        db.ForeignKey("invoices.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    record_type = db.Column(db.String(32), nullable=False)  # Sent, Delivery, Bounce, SpamComplaint
+    postmark_message_id = db.Column(db.String(128), nullable=True, index=True)
+    recipient = db.Column(db.String(255), nullable=True)
+    occurred_at = db.Column(db.DateTime, nullable=False)
+    received_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    bounce_type = db.Column(db.String(64), nullable=True)  # HardBounce, SoftBounce, Transient ...
+    description = db.Column(db.String(512), nullable=True)
+    payload_json = db.Column(db.Text, nullable=True)  # roher Postmark-Payload für Debugging
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "postmark_message_id",
+            "record_type",
+            name="uq_invoice_email_events_msgid_type",
+        ),
+    )
+
+    def __repr__(self):
+        return f"<InvoiceEmailEvent invoice={self.invoice_id} type={self.record_type}>"
 
 
 class InvoiceItem(db.Model):
