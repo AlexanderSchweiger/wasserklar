@@ -410,17 +410,26 @@ document.querySelector('[name=invoice_document_format]')?.addEventListener('chan
   const editor = document.getElementById('contactInfoEditor');
   const input = document.getElementById('contactInfoInput');
   if (!editor || !input) return;
+  // Editor-Inhalt LIVE ins versteckte Feld spiegeln — NICHT erst beim Submit:
+  // hx-boost (auf <body>) serialisiert das Formular im Submit-Handler von htmx,
+  // BEVOR ein eigener submit-Listener den Wert nachziehen koennte. Verifiziert:
+  // ein submit-Listener feuert hier gar nicht mehr, der Kontakttext kam leer am
+  // Server an und wurde als None gespeichert. Daher bei jeder Aenderung syncen.
+  function syncContactInfo() { input.value = editor.innerHTML; }
+  syncContactInfo();
+  editor.addEventListener('input', syncContactInfo);
+  editor.addEventListener('blur', syncContactInfo);
   try { document.execCommand('styleWithCSS', false, false); } catch (e) { /* ignore */ }
   document.querySelectorAll('[data-rt-cmd]').forEach(function (btn) {
     btn.addEventListener('click', function () {
       editor.focus();
       document.execCommand(btn.getAttribute('data-rt-cmd'), false, null);
+      syncContactInfo();  // execCommand-Aenderung sofort uebernehmen
     });
   });
-  // Editor-Inhalt vor dem Absenden in das versteckte Feld spiegeln.
-  editor.closest('form').addEventListener('submit', function () {
-    input.value = editor.innerHTML;
-  });
+  // Backup, falls doch einmal nativ (ohne htmx) abgesendet wird.
+  const form = editor.closest('form');
+  if (form) form.addEventListener('submit', syncContactInfo);
 })();
 
 // ── Test-Mail ─────────────────────────────────────────────────────────────
