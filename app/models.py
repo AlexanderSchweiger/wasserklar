@@ -394,6 +394,149 @@ class MeterReadingAccessCode(db.Model):
                 f"period={self.billing_period_id}>")
 
 
+class InvoiceEmailOptInCode(db.Model):
+    """SaaS-Self-Service: Persistenter, kunden-gebundener Code, der (in einem
+    zweiten Schritt) auf der gedruckten Rechnung steht — als Magic-Link + QR.
+
+    Der Kunde meldet damit den elektronischen Rechnungsversand selbst an.
+    Anders als ``MeterReadingAccessCode`` ist dieser Code **kunden-gebunden,
+    persistent und laeuft NICHT ab** (er steht auf Papier, das der Kunde
+    behaelt). Sicherheits-Anker ist der **Double-Opt-In per Mail**; der Code
+    selbst verhindert nur Kunden-Enumeration. ``code`` enthaelt eine
+    Luhn-mod-32-Pruefziffer (Format ``XXXX-XXXX-K``), die Tippfehler abfaengt,
+    bevor ueberhaupt die DB befragt wird. ``code_hash`` dient als
+    Revocation-Anker fuer die signierten Verwaltungs-Tokens. Tenant-isoliert.
+    """
+    __tablename__ = "invoice_email_optin_codes"
+
+    id = db.Column(db.Integer, primary_key=True)
+    customer_id = db.Column(
+        db.Integer,
+        db.ForeignKey("customers.id", ondelete="CASCADE"),
+        nullable=False, unique=True, index=True,
+    )
+    code = db.Column(db.String(20), nullable=False)        # Format XXXX-XXXX-K
+    code_hash = db.Column(db.String(255), nullable=False)
+    failed_attempts = db.Column(
+        db.Integer, default=0, nullable=False, server_default=db.text("0"),
+    )
+    locked_until = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+
+    customer = db.relationship(
+        "Customer",
+        backref=db.backref(
+            "invoice_email_optin_code",
+            uselist=False,
+            cascade="all, delete-orphan",
+        ),
+    )
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+
+    def __repr__(self):
+        return f"<InvoiceEmailOptInCode customer={self.customer_id}>"
+
+
+class CustomerEmailConsentLog(db.Model):
+    """Append-only DSGVO-Nachweis fuer Einwilligung/Abmeldung zum elektronischen
+    Rechnungsversand. Eine Zeile pro Aktion. Tenant-isoliert.
+    """
+    __tablename__ = "customer_email_consent_log"
+
+    # erlaubte Werte fuer `action`
+    OPT_IN = "opt_in_confirmed"
+    UNSUBSCRIBED = "unsubscribed"
+    EMAIL_CHANGED = "email_changed"
+
+    id = db.Column(db.Integer, primary_key=True)
+    customer_id = db.Column(
+        db.Integer,
+        db.ForeignKey("customers.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    action = db.Column(db.String(32), nullable=False)
+    email = db.Column(db.String(120), nullable=True)
+    consent_text_version = db.Column(db.String(20), nullable=True)
+    ip = db.Column(db.String(64), nullable=True)
+    user_agent = db.Column(db.String(255), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    customer = db.relationship(
+        "Customer",
+        backref=db.backref(
+            "email_consent_log",
+            lazy="dynamic",
+            cascade="all, delete-orphan",
+        ),
+    )
+
+    def __repr__(self):
+        return (f"<CustomerEmailConsentLog customer={self.customer_id} "
+                f"{self.action}>")
+
+
+class AdminNotification(db.Model):
+    """Tenant-interne In-App-Benachrichtigung an die Tenant-Admins.
+
+    Lebt im **Tenant-Schema** (nicht in der Platform-DB) — der Platform-Admin
+    sieht sie deshalb nicht. Wird in der SaaS-Glocke neben den
+    Platform-Notifications eingemischt (siehe saas/notifications). Lesestatus
+    pro User in ``AdminNotificationRead`` (mehr-Admin-faehig).
+    """
+    __tablename__ = "admin_notifications"
+
+    id = db.Column(db.Integer, primary_key=True)
+    kind = db.Column(db.String(50), nullable=False)   # z.B. 'invoice_email_optin'
+    title = db.Column(db.String(200), nullable=False)
+    body = db.Column(db.Text, nullable=False, default="")
+    level = db.Column(
+        db.String(20), nullable=False, default="info", server_default="info",
+    )
+    link_url = db.Column(db.String(500), nullable=True)
+    created_at = db.Column(
+        db.DateTime, default=datetime.utcnow, nullable=False, index=True,
+    )
+
+    reads = db.relationship(
+        "AdminNotificationRead",
+        backref="notification",
+        lazy="dynamic",
+        cascade="all, delete-orphan",
+    )
+
+    def __repr__(self):
+        return f"<AdminNotification {self.kind} #{self.id}>"
+
+
+class AdminNotificationRead(db.Model):
+    """Pro-User-Lesestatus fuer ``AdminNotification``."""
+    __tablename__ = "admin_notification_reads"
+
+    id = db.Column(db.Integer, primary_key=True)
+    notification_id = db.Column(
+        db.Integer,
+        db.ForeignKey("admin_notifications.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    read_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "notification_id", "user_id", name="uq_admin_notif_read_user",
+        ),
+    )
+
+    def __repr__(self):
+        return (f"<AdminNotificationRead notif={self.notification_id} "
+                f"user={self.user_id}>")
+
+
 # ---------------------------------------------------------------------------
 # Abrechnungsperioden
 # ---------------------------------------------------------------------------
