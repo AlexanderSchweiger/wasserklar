@@ -56,6 +56,13 @@ def index():
         print_swap = 'true' if request.form.get('invoice_print_meter_swap') else 'false'
         AppSetting.set('invoice.print_meter_swap', print_swap)
 
+        # „Rechnung per E-Mail?"-Block auf gedruckten Rechnungen (Checkbox).
+        # Nur relevant im SaaS-Kontext (Selbstregistrierung) + wenn das Design
+        # diesen Block unterstützt; der Block erscheint nie auf per Mail
+        # versendeten Rechnungen.
+        show_email_signup = 'true' if request.form.get('invoice_show_email_signup') else 'false'
+        AppSetting.set('invoice.show_email_signup', show_email_signup)
+
         # Rechnungs-Kontakttext (Rich-Text, auf <b>/<i>/<u>/<br> normalisiert)
         contact_info = sanitize_rich_text(request.form.get('invoice_contact_info', ''))
         AppSetting.set('invoice.contact_info', contact_info if contact_info else None)
@@ -138,6 +145,7 @@ def index():
         invoice_design = 'classic'
     contact_info = AppSetting.get('invoice.contact_info') or ''
     print_meter_swap = AppSetting.get('invoice.print_meter_swap') == 'true'
+    show_email_signup = AppSetting.get('invoice.show_email_signup') == 'true'
     return render_template('settings/index.html', wg=wg, mail=mail_cfg, mail_raw=mail_raw,
                            db_info=db_info,
                            doc_format=doc_format,
@@ -145,6 +153,7 @@ def index():
                            invoice_designs=available_designs(),
                            invoice_contact_info=contact_info,
                            invoice_print_meter_swap=print_meter_swap,
+                           invoice_show_email_signup=show_email_signup,
                            meter_replacement_interval=meter_replacement_interval())
 
 

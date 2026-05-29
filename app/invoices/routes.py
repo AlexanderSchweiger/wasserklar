@@ -10,6 +10,7 @@ from flask_login import login_required, current_user
 
 from app.invoices import bp
 from app.invoices.send_email_hooks import run_before_send, read_message_id
+from app.invoices.render_hooks import build_pdf_context
 from app.extensions import db
 from app.models import Invoice, InvoiceItem, InvoiceEmailEvent, Customer, WaterMeter, MeterReading, WaterTariff, Booking, Account, Property, OpenItem, Project, RealAccount, InvoiceCounter, AppSetting, BillingRun, BillingPeriod
 from app.utils import next_invoice_number as _next_invoice_number
@@ -23,13 +24,26 @@ def _current_design():
     return get_design(AppSetting.get("invoice.design", "classic"))
 
 
-def _render_pdf_html(invoice):
-    """Rendert die HTML-Vorlage für WeasyPrint mit aktuellem Design."""
+def _render_pdf_html(invoice, *, for_email=False):
+    """Rendert die HTML-Vorlage für WeasyPrint mit aktuellem Design.
+
+    ``for_email``: True, wenn das PDF als E-Mail-Anhang erzeugt wird. Damit
+    koennen Provider Inhalte unterdruecken, die nur auf der gedruckten Rechnung
+    Sinn ergeben (z.B. der „Rechnung per E-Mail?"-Block).
+
+    Das Design kann ein eigenes Template ueber den Schluessel ``template``
+    vorgeben (z.B. das SaaS-„wasserklar"-Design); sonst die OSS-Standardvorlage.
+    """
+    design = _current_design()
+    template_name = design.get("template", "invoices/pdf_template.html")
+    extra = build_pdf_context(invoice, for_email=for_email)
     return render_template(
-        "invoices/pdf_template.html",
+        template_name,
         invoice=invoice,
-        design=_current_design(),
+        design=design,
         contact_info=get_contact_info(),
+        for_email=for_email,
+        **extra,
     )
 
 
@@ -1227,7 +1241,7 @@ def send_email(invoice_id):
     if fmt in ("pdf", "both"):
         try:
             import weasyprint
-            html_content = _render_pdf_html(invoice)
+            html_content = _render_pdf_html(invoice, for_email=True)
             pdf_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "pdf")
             weasyprint.HTML(string=html_content).write_pdf(pdf_path)
             with open(pdf_path, "rb") as fp:
@@ -1321,7 +1335,7 @@ def send_email_ajax(invoice_id):
         if fmt in ("pdf", "both"):
             try:
                 import weasyprint
-                html_content = _render_pdf_html(invoice)
+                html_content = _render_pdf_html(invoice, for_email=True)
                 pdf_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "pdf")
                 weasyprint.HTML(string=html_content).write_pdf(pdf_path)
                 with open(pdf_path, "rb") as fp:

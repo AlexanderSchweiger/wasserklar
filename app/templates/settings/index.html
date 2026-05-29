@@ -228,6 +228,11 @@
               Bereits erzeugte (gesperrte) Dokumente behalten ihr bisheriges Design.
             </div>
           </div>
+
+          {# Erweiterungspunkt: die SaaS-Variante haengt hier den Pro-Plan-
+             gegateten „Rechnung per E-Mail?"-Schalter ein. OSS-Standalone
+             rendert nichts. #}
+          {% block invoice_design_extra %}{% endblock %}
         </div>
       </div>
     </div>
