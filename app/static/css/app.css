@@ -201,16 +201,26 @@ tr.overdue { background-color: #fff3cd !important; }
 .filter-bar select,
 .filter-bar input { margin-bottom: 0; }
 
-/* Wenn der card-header eine filter-bar enthält, soll auch die rechts
-   stehende card-options am unteren Rand ausgerichtet werden — sonst
-   sitzen "+ Neue X"-Buttons auf Label-Höhe statt auf Input-Höhe.
-   margin-bottom 1rem spiegelt das margin-bottom der filter-bar, damit
-   beide Content-Bottom-Kanten auf einer Linie liegen. */
+/* card-header mit filter-bar: Aktions-Buttons und Filter trennen.
+   card-options bekommt order:-1 → erscheint in eigener Zeile ÜBER der
+   filter-bar; filter-bar nimmt volle Breite (flex: 0 0 100%).
+   So konkurrieren viele Filter-Items nicht mehr horizontal mit den
+   Buttons — das behebt das Scaling-Problem auf schmalen Viewports. */
 .card-header:has(.filter-bar) {
+  flex-wrap: wrap;
   align-items: flex-end;
+  row-gap: 0.25rem;
+  padding-top: 0.625rem;
+  padding-bottom: 0.625rem;
+}
+.card-header:has(.filter-bar) > .filter-bar {
+  flex: 0 0 100%;
+  margin-bottom: 0 !important;
 }
 .card-header:has(.filter-bar) > .card-options {
-  margin-bottom: 1rem;
+  order: -1;
+  margin-left: auto;
+  margin-bottom: 0;
 }
 
 /* Seiten-Transitions

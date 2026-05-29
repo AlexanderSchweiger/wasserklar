@@ -6,7 +6,8 @@ from app.extensions import db
 from app.models import AppSetting
 from app.settings_service import (_WG_MAP, _MAIL_MAP, send_mail, encrypt_password,
                                   apply_mail_settings, platform_relay_active, get_wg,
-                                  sanitize_rich_text, meter_replacement_interval)
+                                  sanitize_rich_text, meter_replacement_interval,
+                                  validate_logo_data_uri)
 from app.invoices.design import INVOICE_DESIGNS, available_designs
 
 
@@ -19,6 +20,17 @@ def index():
         for attr in _WG_MAP:
             val = request.form.get(f'wg_{attr}', '').strip()
             AppSetting.set(f'wg.{attr}', val if val else None)
+
+        # WG-Logo (Data-URI aus dem Cropper). "Entfernen" hat Vorrang vor einem
+        # neu hochgeladenen Bild.
+        if request.form.get('wg_logo_remove'):
+            AppSetting.set('wg.logo', None)
+        else:
+            data_uri, logo_err = validate_logo_data_uri(request.form.get('wg_logo_data', ''))
+            if logo_err:
+                flash(logo_err, 'danger')
+            elif data_uri:
+                AppSetting.set('wg.logo', data_uri)
 
         # Mail-Versandmodus (Checkbox). Bei aktivem Plattform-Relay sind die
         # SMTP-Felder im UI disabled und werden nicht mitgesendet — der
@@ -94,6 +106,7 @@ def index():
         return current_app.config.get(config_key, default)
 
     wg = {attr: _get(f'wg.{attr}', cfg_key) for attr, cfg_key in _WG_MAP.items()}
+    wg['logo'] = AppSetting.get('wg.logo') or ''
 
     mail_cfg = {}
     mail_defaults = {

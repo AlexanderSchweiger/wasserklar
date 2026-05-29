@@ -89,7 +89,46 @@ def wg_settings():
     for attr, config_key in _WG_MAP.items():
         db_val = AppSetting.get(f'wg.{attr}')
         result[attr] = db_val if db_val is not None else current_app.config.get(config_key, '')
+    # Logo (Data-URI) hat keinen .env-Fallback, daher separat — nicht in _WG_MAP,
+    # das auch im Settings-POST-Loop iteriert wird und Config-Keys voraussetzt.
+    result['logo'] = AppSetting.get('wg.logo') or ''
     return result
+
+
+# Maximale dekodierte Logo-Groesse (Safety-Net — der Cropper verkleinert bereits
+# client-seitig; der Server lehnt nur exzessiv grosse oder falsch typisierte
+# Uploads ab).
+LOGO_MAX_BYTES = 256 * 1024
+_LOGO_DATA_URI_RE = re.compile(r'^data:image/(?:png|jpeg|webp);base64,')
+
+
+def validate_logo_data_uri(raw):
+    """Validiert ein Logo-Data-URI aus dem Cropper.
+
+    Gibt ``(data_uri, None)`` bei Erfolg zurück, sonst ``(None, fehlermeldung)``.
+    Ein leerer/whitespace-Input liefert ``(None, None)`` (= nichts zu tun).
+    """
+    import base64
+    import binascii
+
+    if not raw or not raw.strip():
+        return None, None
+    data_uri = raw.strip()
+    if not _LOGO_DATA_URI_RE.match(data_uri):
+        return None, 'Logo muss ein PNG-, JPEG- oder WebP-Bild sein.'
+    try:
+        b64 = data_uri.split(',', 1)[1]
+    except IndexError:
+        return None, 'Ungültiges Logo-Format.'
+    try:
+        raw_bytes = base64.b64decode(b64, validate=True)
+    except (binascii.Error, ValueError):
+        return None, 'Logo konnte nicht dekodiert werden.'
+    if not raw_bytes:
+        return None, 'Logo ist leer.'
+    if len(raw_bytes) > LOGO_MAX_BYTES:
+        return None, f'Logo ist zu groß (max. {LOGO_MAX_BYTES // 1024} KB).'
+    return data_uri, None
 
 
 def get_wg(key):

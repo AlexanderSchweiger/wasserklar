@@ -89,6 +89,32 @@
             <input type="text" name="wg_phone" class="form-control"
                    value="{{ wg.phone }}" placeholder="+43 1234 5678">
           </div>
+
+          <hr class="my-3">
+
+          {# ── Logo ─────────────────────────────────────────────────────── #}
+          <div class="mb-2">
+            <label class="form-label">Logo</label>
+            <p class="text-muted small mb-2">
+              Erscheint auf der Rechnung und – wenn aktiviert – links im Menü.
+              Querformat (länglich) empfohlen. Beim Hochladen lässt sich ein
+              Ausschnitt wählen.
+            </p>
+            <div id="logoPreviewWrap" class="mb-2 {% if not wg.logo %}d-none{% endif %}">
+              <img id="logoPreview" src="{{ wg.logo }}" alt="Logo-Vorschau"
+                   style="max-height:64px;max-width:240px;border:1px solid var(--tblr-border-color);border-radius:4px;padding:4px;background:#fff;">
+            </div>
+            <input type="file" id="logoFileInput" class="form-control"
+                   accept="image/png,image/jpeg,image/webp">
+            <div class="form-text">PNG, JPEG oder WebP – wird automatisch verkleinert (max. 256 KB).</div>
+
+            <label class="form-check mt-3 {% if not wg.logo %}d-none{% endif %}" id="logoRemoveWrap">
+              <input type="checkbox" class="form-check-input" name="wg_logo_remove" value="1">
+              <span class="form-check-label text-danger">Logo entfernen</span>
+            </label>
+
+            <input type="hidden" name="wg_logo_data" id="logoDataInput">
+          </div>
         </div>
       </div>
     </div>
@@ -345,23 +371,32 @@
 
 <script>
 // ── Tab-Persistenz via URL-Hash ──────────────────────────────────────────
+// WICHTIG: bootstrap kommt per defer aus dem <head> und ist bei einem harten
+// Reload zum Ausführungszeitpunkt dieses Inline-Skripts evtl. noch nicht da.
+// Jede ungeschützte bootstrap-Nutzung würde hier werfen und das GESAMTE Skript
+// abbrechen — inkl. der weiter unten registrierten Editor-Spiegelung, wodurch
+// die Kontaktinformationen leer abgesendet würden. Darum defensiv absichern.
 (function () {
-  const hash = window.location.hash;
-  if (hash) {
-    const tab = document.querySelector('#settingsTabs a[href="' + hash + '"]');
-    if (tab) bootstrap.Tab.getOrCreateInstance(tab).show();
+  function activateHashTab() {
+    const hash = window.location.hash;
+    if (hash) {
+      const tab = document.querySelector('#settingsTabs a[href="' + hash + '"]');
+      if (tab && window.bootstrap) bootstrap.Tab.getOrCreateInstance(tab).show();
+    }
+    const saveRow = document.getElementById('saveRow');
+    if (hash === '#pane-db' && saveRow) saveRow.style.display = 'none';
   }
+  if (window.bootstrap) { activateHashTab(); }
+  else { window.addEventListener('load', activateHashTab); }
+
   document.querySelectorAll('#settingsTabs a[data-bs-toggle="tab"]').forEach(function (el) {
     el.addEventListener('shown.bs.tab', function (e) {
       history.replaceState(null, '', e.target.getAttribute('href'));
-      document.getElementById('saveRow').style.display =
+      const saveRow = document.getElementById('saveRow');
+      if (saveRow) saveRow.style.display =
         e.target.getAttribute('href') === '#pane-db' ? 'none' : '';
     });
   });
-  // Initialer Zustand für DB-Tab
-  if (hash === '#pane-db') {
-    document.getElementById('saveRow').style.display = 'none';
-  }
 })();
 
 // ── Docx-Warnung ─────────────────────────────────────────────────────────
@@ -389,7 +424,9 @@ document.querySelector('[name=invoice_document_format]')?.addEventListener('chan
 })();
 
 // ── Test-Mail ─────────────────────────────────────────────────────────────
-document.getElementById('btnTestMail').addEventListener('click', function () {
+// btnTestMail fehlt z.B. bei aktivem Custom-Postmark (SaaS) — dann nichts tun,
+// statt mit einem Null-Zugriff das Skript zu sprengen.
+document.getElementById('btnTestMail')?.addEventListener('click', function () {
   const btn = this;
   const result = document.getElementById('testMailResult');
   btn.disabled = true;
@@ -424,5 +461,137 @@ document.getElementById('btnTestMail').addEventListener('click', function () {
   })
   .finally(() => { clearTimeout(timeout); btn.disabled = false; });
 });
+</script>
+{% endblock %}
+
+{# Crop-Modal gehoert in block modals (direkt vor </body>), sonst landet der
+   Bootstrap-Backdrop wegen des Content-Stacking-Contexts ueber dem Modal. #}
+{% block modals %}
+<div class="modal modal-blur fade" id="logoCropModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="fas fa-crop-alt me-2"></i>Logo zuschneiden</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small">
+          Ziehe den Rahmen, um den Ausschnitt zu wählen. Für ein längliches
+          Logo den Rahmen breit ziehen.
+        </p>
+        <div style="max-height:60vh;overflow:hidden;">
+          <img id="logoCropImage" style="max-width:100%;display:block;">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">Abbrechen</button>
+        <button type="button" class="btn btn-primary" id="logoCropApply">
+          <i class="fas fa-check me-1"></i> Übernehmen
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── Logo-Upload + Cropper ────────────────────────────────────────────────
+// Cropper.js wird erst bei Bedarf vom CDN nachgeladen (nicht global, um andere
+// Seiten nicht zu belasten). Zuschnitt + Verkleinerung passieren client-seitig;
+// das Ergebnis landet als Data-URI im versteckten Feld wg_logo_data.
+(function () {
+  const fileInput = document.getElementById('logoFileInput');
+  if (!fileInput) return;
+
+  const CROPPER_CSS = 'https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.css';
+  const CROPPER_JS  = 'https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.js';
+  const MAX_WIDTH = 600;            // Export-Breite (Verkleinerung)
+  const MAX_BYTES = 256 * 1024;     // muss zum Server-Cap passen
+
+  let cropper = null;
+  let cropperLoading = null;
+  function ensureCropper() {
+    if (window.Cropper) return Promise.resolve();
+    if (cropperLoading) return cropperLoading;
+    cropperLoading = new Promise(function (resolve, reject) {
+      if (!document.querySelector('link[data-cropper]')) {
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = CROPPER_CSS;
+        link.setAttribute('data-cropper', '1');
+        document.head.appendChild(link);
+      }
+      const s = document.createElement('script');
+      s.src = CROPPER_JS;
+      s.onload = resolve;
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+    return cropperLoading;
+  }
+
+  const modalEl = document.getElementById('logoCropModal');
+  const cropImg = document.getElementById('logoCropImage');
+  // bootstrap erst bei Bedarf referenzieren — bei einem harten Reload laeuft
+  // dieses Inline-Skript ggf. vor dem deferred Tabler/Bootstrap-Bundle.
+  function getModal() {
+    return modalEl ? bootstrap.Modal.getOrCreateInstance(modalEl) : null;
+  }
+
+  fileInput.addEventListener('change', function () {
+    const file = this.files && this.files[0];
+    if (!file) return;
+    if (!/^image\/(png|jpe?g|webp)$/.test(file.type)) {
+      alert('Bitte ein PNG-, JPEG- oder WebP-Bild wählen.');
+      this.value = '';
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = function (e) {
+      ensureCropper().then(function () {
+        cropImg.src = e.target.result;
+        getModal().show();
+      }).catch(function () {
+        alert('Bildbearbeitung konnte nicht geladen werden (keine Internetverbindung?).');
+      });
+    };
+    reader.readAsDataURL(file);
+  });
+
+  if (modalEl) {
+    // Cropper erst initialisieren, wenn das Modal sichtbar ist (Container braucht
+    // Dimensionen, sonst startet Cropper mit 0×0).
+    modalEl.addEventListener('shown.bs.modal', function () {
+      if (cropper) { cropper.destroy(); cropper = null; }
+      cropper = new Cropper(cropImg, { viewMode: 1, autoCropArea: 1, background: false });
+    });
+    modalEl.addEventListener('hidden.bs.modal', function () {
+      if (cropper) { cropper.destroy(); cropper = null; }
+      fileInput.value = '';
+    });
+  }
+
+  const applyBtn = document.getElementById('logoCropApply');
+  if (applyBtn) {
+    applyBtn.addEventListener('click', function () {
+      if (!cropper) return;
+      const canvas = cropper.getCroppedCanvas({ maxWidth: MAX_WIDTH, imageSmoothingQuality: 'high' });
+      if (!canvas) return;
+      // PNG bevorzugen; bei zu grossem Resultat (fotografische Logos) auf JPEG ausweichen.
+      let dataUrl = canvas.toDataURL('image/png');
+      if (dataUrl.length * 0.75 > MAX_BYTES) {
+        dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      }
+      document.getElementById('logoDataInput').value = dataUrl;
+      document.getElementById('logoPreview').src = dataUrl;
+      document.getElementById('logoPreviewWrap').classList.remove('d-none');
+      // Neues Logo gewinnt: ein evtl. gesetztes "entfernen" zuruecksetzen.
+      const rm = document.querySelector('[name=wg_logo_remove]');
+      if (rm) rm.checked = false;
+      getModal().hide();
+    });
+  }
+})();
 </script>
 {% endblock %}
