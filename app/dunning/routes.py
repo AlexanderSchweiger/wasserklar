@@ -328,6 +328,11 @@ def notice_send_email(notice_id):
     customer = notice.invoice.customer
     if not customer.email:
         return jsonify(ok=False, error="Kunde hat keine E-Mail-Adresse."), 400
+    if not customer.rechnung_per_email:
+        return jsonify(
+            ok=False,
+            error="Der Kunde hat den Schriftverkehr per E-Mail nicht aktiviert.",
+        ), 400
 
     from app.settings_service import wg_settings, send_mail
     from flask_mail import Message

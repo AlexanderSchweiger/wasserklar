@@ -12,7 +12,8 @@ from app.invoices import bp
 from app.invoices.send_email_hooks import run_before_send, read_message_id
 from app.invoices.render_hooks import build_pdf_context
 from app.extensions import db
-from app.models import Invoice, InvoiceItem, InvoiceEmailEvent, Customer, WaterMeter, MeterReading, WaterTariff, Booking, Account, Property, OpenItem, Project, RealAccount, InvoiceCounter, AppSetting, BillingRun, BillingPeriod
+from app.models import Invoice, InvoiceItem, EmailEvent, Customer, WaterMeter, MeterReading, WaterTariff, Booking, Account, Property, OpenItem, Project, RealAccount, InvoiceCounter, AppSetting, BillingRun, BillingPeriod
+from app.email_tracking import record_email_sent
 from app.utils import next_invoice_number as _next_invoice_number
 from app.settings_service import get_wg, send_mail, wg_settings, get_contact_info
 from app.invoices.design import get_design
@@ -1184,24 +1185,8 @@ def _record_invoice_sent(invoice, msg, recipient):
     die Postmark-MessageID, sofern der SaaS-Hook sie vorbelegt hat — bei
     reinem SMTP bleibt sie None.
     """
-    now = datetime.utcnow()
-    message_id = read_message_id(msg)
     invoice.status = Invoice.STATUS_SENT
-    invoice.email_sent_at = now
-    invoice.email_recipient = recipient
-    invoice.email_message_id = message_id
-    invoice.last_email_status = Invoice.EMAIL_STATUS_SENT
-    invoice.last_email_status_at = now
-    invoice.last_email_bounce_detail = None
-
-    db.session.add(InvoiceEmailEvent(
-        invoice_id=invoice.id,
-        record_type="Sent",
-        postmark_message_id=message_id,
-        recipient=recipient,
-        occurred_at=now,
-        received_at=now,
-    ))
+    record_email_sent(invoice, recipient, read_message_id(msg))
 
 
 @bp.route("/<int:invoice_id>/send-email", methods=["POST"])
@@ -1216,6 +1201,11 @@ def send_email(invoice_id):
         return redirect(url_for("invoices.detail", invoice_id=invoice.id))
 
     test_mode = request.form.get("test_mode") == "1"
+    # Einwilligung pruefen: ohne aktivierten Schalter „Schriftverkehr per
+    # E-Mail" darf nur der Test an die eigene Admin-Adresse gehen.
+    if not test_mode and not invoice.customer.rechnung_per_email:
+        flash("Der Kunde hat den Schriftverkehr per E-Mail nicht aktiviert.", "danger")
+        return redirect(url_for("invoices.detail", invoice_id=invoice.id))
     if test_mode:
         recipient = current_user.email
         if not recipient:
@@ -1392,10 +1382,10 @@ def email_events(invoice_id):
     # Bei Zustellung binnen weniger ms ist Postmark.DeliveredAt zwar konzeptionell
     # juenger, vergleicht aber als kleiner — ohne Tiebreaker wuerde Delivery
     # unter Sent rutschen.
-    events = (InvoiceEmailEvent.query
-              .filter_by(invoice_id=invoice.id)
-              .order_by(InvoiceEmailEvent.occurred_at.desc(),
-                        InvoiceEmailEvent.id.desc())
+    events = (EmailEvent.query
+              .filter_by(subject_type="invoice", subject_id=invoice.id)
+              .order_by(EmailEvent.occurred_at.desc(),
+                        EmailEvent.id.desc())
               .all())
     return render_template("invoices/email_events.html", invoice=invoice, events=events)
 

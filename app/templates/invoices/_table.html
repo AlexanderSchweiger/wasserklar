@@ -61,7 +61,7 @@
       <td>
         {% with invoice = inv %}{% include "invoices/_status_badge.html" %}{% endwith %}
         {% if inv.last_email_status and inv.last_email_status != 'sent' %}
-          <br>{% with invoice = inv %}{% include "invoices/_email_status_badge.html" %}{% endwith %}
+          <br>{% with subject = inv %}{% include "invoices/_email_status_badge.html" %}{% endwith %}
         {% endif %}
       </td>
       <td class="text-center">

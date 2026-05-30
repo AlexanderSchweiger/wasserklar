@@ -103,7 +103,7 @@
                        class="btn btn-outline-primary">
                         <i class="fas fa-file-pdf me-1"></i> PDF
                     </a>
-                    {% if notice.status == 'Aktiv' and notice.invoice.customer.email %}
+                    {% if notice.status == 'Aktiv' and notice.invoice.customer.wants_email %}
                     <form method="post" action="{{ url_for('dunning.notice_send_email', notice_id=notice.id) }}"
                           class="d-inline"
                           onsubmit="return confirm('Mahnung per E-Mail an {{ notice.invoice.customer.email }} senden?')">
@@ -112,6 +112,11 @@
                             <i class="fas fa-envelope me-1"></i> Per E-Mail senden
                         </button>
                     </form>
+                    {% elif notice.status == 'Aktiv' %}
+                    <button type="button" class="btn btn-outline-success" disabled
+                            title="{{ 'Kunde hat keine E-Mail-Adresse hinterlegt' if not notice.invoice.customer.email else 'Kunde hat den Schriftverkehr per E-Mail nicht aktiviert' }}">
+                        <i class="fas fa-envelope me-1"></i> Per E-Mail senden
+                    </button>
                     {% endif %}
                 </div>
             </div>

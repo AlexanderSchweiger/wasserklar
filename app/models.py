@@ -5,6 +5,55 @@ from app.extensions import db, login_manager
 
 
 # ---------------------------------------------------------------------------
+# E-Mail-Versand-Tracking (generisch, mehrere Versandarten)
+# ---------------------------------------------------------------------------
+
+class EmailTrackableMixin:
+    """Gemeinsame Tracking-Felder fuer alles, was per E-Mail verschickt wird
+    (Rechnung, Self-Service-Zugangscode, kuenftig Mahnung ...).
+
+    Subklassen setzen ``EMAIL_SUBJECT_TYPE`` — der Diskriminator, ueber den
+    ``EmailEvent`` und die Postmark-Webhook-Zuordnung den Datensatz finden.
+    Bei reinem SMTP bleibt ``email_message_id`` NULL und ``last_email_status``
+    immer ``"sent"``; ueber Postmark feuern Delivery-/Bounce-Webhooks nach.
+
+    Die sechs Spalten werden als plain ``db.Column`` pro Subklassen-Tabelle
+    kopiert (SQLAlchemy-Mixin-Konvention).
+    """
+
+    EMAIL_SUBJECT_TYPE = None  # von Subklasse gesetzt
+
+    EMAIL_STATUS_SENT = "sent"
+    EMAIL_STATUS_DELIVERED = "delivered"
+    EMAIL_STATUS_BOUNCED_HARD = "bounced_hard"
+    EMAIL_STATUS_BOUNCED_SOFT = "bounced_soft"
+    EMAIL_STATUS_SPAM = "spam_complaint"
+    EMAIL_STATUS_FAILED = "failed"
+
+    EMAIL_STATUS_DE = {
+        EMAIL_STATUS_SENT: "Versendet",
+        EMAIL_STATUS_DELIVERED: "Zugestellt",
+        EMAIL_STATUS_BOUNCED_HARD: "Unzustellbar",
+        EMAIL_STATUS_BOUNCED_SOFT: "Verzögert",
+        EMAIL_STATUS_SPAM: "Als Spam markiert",
+        EMAIL_STATUS_FAILED: "Fehlgeschlagen",
+    }
+
+    email_message_id = db.Column(db.String(128), nullable=True, index=True)
+    email_sent_at = db.Column(db.DateTime, nullable=True)
+    email_recipient = db.Column(db.String(255), nullable=True)
+    last_email_status = db.Column(db.String(32), nullable=True)
+    last_email_status_at = db.Column(db.DateTime, nullable=True)
+    last_email_bounce_detail = db.Column(db.String(512), nullable=True)
+
+    @property
+    def last_email_status_de(self):
+        if not self.last_email_status:
+            return None
+        return self.EMAIL_STATUS_DE.get(self.last_email_status, self.last_email_status)
+
+
+# ---------------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------------
 
@@ -134,6 +183,16 @@ class Customer(db.Model):
 
     invoices = db.relationship("Invoice", backref="customer", lazy="dynamic")
     ownerships = db.relationship("PropertyOwnership", backref="customer", lazy="dynamic")
+
+    @property
+    def wants_email(self):
+        """Master-Gate fuer jeden Kunden-Mailversand (Rechnung, Mahnung,
+        Zaehlerablesungs-Zugangscode): True nur, wenn der Kunde den
+        Schriftverkehr per E-Mail aktiviert hat UND eine Adresse hinterlegt
+        ist. ``rechnung_per_email`` ist die Einwilligung, ``email`` die
+        technische Voraussetzung — beides muss zutreffen, sonst wird der
+        Mailversand weder angeboten noch durchgefuehrt."""
+        return bool(self.email) and bool(self.rechnung_per_email)
 
     def address_display(self):
         parts = []
@@ -323,15 +382,20 @@ class MeterReading(db.Model):
         return f"<MeterReading {self.meter.meter_number} {self.reading_date}: {self.value}>"
 
 
-class MeterReadingAccessCode(db.Model):
+class MeterReadingAccessCode(EmailTrackableMixin, db.Model):
     """SaaS-Self-Service: Kurzer Zugangscode pro Kunde+Abrechnungsperiode
     fuer die Zaehlerstands-Selbsteingabe ohne User-Account.
 
     Klartext-Code (`code`) wird gespeichert, damit der Admin Briefe
     nachdrucken kann; Hash (`code_hash`) ist der Anker fuer den
     Constant-Time-Login-Check. Tenant-Schema-isoliert.
+
+    Erbt ``EmailTrackableMixin`` → E-Mail-Versand-Status wird wie bei
+    Rechnungen getrackt (Sent-Event + Postmark-Webhooks).
     """
     __tablename__ = "meter_reading_access_codes"
+
+    EMAIL_SUBJECT_TYPE = "access_code"
 
     id = db.Column(db.Integer, primary_key=True)
     customer_id = db.Column(
@@ -367,6 +431,17 @@ class MeterReadingAccessCode(db.Model):
     )
     created_by = db.relationship("User", foreign_keys=[created_by_id])
     billing_period = db.relationship("BillingPeriod")
+    # Polymorphe E-Mail-Events (kein FK → viewonly, Aufraeumen explizit beim Loeschen).
+    email_events = db.relationship(
+        "EmailEvent",
+        primaryjoin=(
+            "and_(foreign(EmailEvent.subject_id) == MeterReadingAccessCode.id, "
+            "EmailEvent.subject_type == 'access_code')"
+        ),
+        order_by="(EmailEvent.occurred_at.desc(), EmailEvent.id.desc())",
+        viewonly=True,
+        lazy="select",
+    )
 
     __table_args__ = (
         db.UniqueConstraint("customer_id", "billing_period_id",
@@ -647,8 +722,10 @@ class BillingRun(db.Model):
 # Rechnungen
 # ---------------------------------------------------------------------------
 
-class Invoice(db.Model):
+class Invoice(EmailTrackableMixin, db.Model):
     __tablename__ = "invoices"
+
+    EMAIL_SUBJECT_TYPE = "invoice"
 
     STATUS_DRAFT = "Entwurf"
     STATUS_SENT = "Versendet"
@@ -656,22 +733,6 @@ class Invoice(db.Model):
     STATUS_CANCELLED = "Storniert"
     STATUS_CREDIT = "Guthaben"
     ALL_STATUSES = [STATUS_DRAFT, STATUS_SENT, STATUS_PAID, STATUS_CANCELLED, STATUS_CREDIT]
-
-    EMAIL_STATUS_SENT = "sent"
-    EMAIL_STATUS_DELIVERED = "delivered"
-    EMAIL_STATUS_BOUNCED_HARD = "bounced_hard"
-    EMAIL_STATUS_BOUNCED_SOFT = "bounced_soft"
-    EMAIL_STATUS_SPAM = "spam_complaint"
-    EMAIL_STATUS_FAILED = "failed"
-
-    EMAIL_STATUS_DE = {
-        EMAIL_STATUS_SENT: "Versendet",
-        EMAIL_STATUS_DELIVERED: "Zugestellt",
-        EMAIL_STATUS_BOUNCED_HARD: "Unzustellbar",
-        EMAIL_STATUS_BOUNCED_SOFT: "Verzögert",
-        EMAIL_STATUS_SPAM: "Als Spam markiert",
-        EMAIL_STATUS_FAILED: "Fehlgeschlagen",
-    }
 
     id = db.Column(db.Integer, primary_key=True)
     invoice_number = db.Column(db.String(50), unique=True, nullable=False)
@@ -689,34 +750,25 @@ class Invoice(db.Model):
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-    # E-Mail-Versand-Tracking — Postmark-Webhooks (SaaS) bzw. SMTP (OSS-Standalone).
-    # Bei SMTP bleibt email_message_id NULL; last_email_status ist dann immer "sent".
-    email_message_id = db.Column(db.String(128), nullable=True, index=True)
-    email_sent_at = db.Column(db.DateTime, nullable=True)
-    email_recipient = db.Column(db.String(255), nullable=True)
-    last_email_status = db.Column(db.String(32), nullable=True)
-    last_email_status_at = db.Column(db.DateTime, nullable=True)
-    last_email_bounce_detail = db.Column(db.String(512), nullable=True)
+    # E-Mail-Versand-Tracking-Spalten kommen aus EmailTrackableMixin.
 
     items = db.relationship("InvoiceItem", backref="invoice", lazy="select",
                             cascade="all, delete-orphan")
     created_by = db.relationship("User", foreign_keys=[created_by_id])
     bookings = db.relationship("Booking", backref="invoice", lazy="dynamic")
     billing_period = db.relationship("BillingPeriod")
+    # Polymorphe E-Mail-Events (kein FK mehr → viewonly, Aufraeumen explizit).
+    # Tiebreaker auf id desc — siehe Kommentar in invoices.email_events-Route.
     email_events = db.relationship(
-        "InvoiceEmailEvent",
-        backref="invoice",
-        cascade="all, delete-orphan",
-        # Tiebreaker auf id desc — siehe Kommentar in invoices.email_events-Route.
-        order_by="(InvoiceEmailEvent.occurred_at.desc(), InvoiceEmailEvent.id.desc())",
+        "EmailEvent",
+        primaryjoin=(
+            "and_(foreign(EmailEvent.subject_id) == Invoice.id, "
+            "EmailEvent.subject_type == 'invoice')"
+        ),
+        order_by="(EmailEvent.occurred_at.desc(), EmailEvent.id.desc())",
+        viewonly=True,
         lazy="select",
     )
-
-    @property
-    def last_email_status_de(self):
-        if not self.last_email_status:
-            return None
-        return self.EMAIL_STATUS_DE.get(self.last_email_status, self.last_email_status)
 
     def recalculate_total(self):
         """Berechnet den Bruttobetrag (netto + USt) und speichert ihn in ``total_amount``.
@@ -823,8 +875,9 @@ class Invoice(db.Model):
         return f"<Invoice {self.invoice_number}>"
 
 
-class InvoiceEmailEvent(db.Model):
-    """Audit-Trail der E-Mail-Zustellungsereignisse pro Rechnung.
+class EmailEvent(db.Model):
+    """Audit-Trail der E-Mail-Zustellungsereignisse — polymorph ueber
+    ``subject_type``/``subject_id`` (z.B. ``invoice`` oder ``access_code``).
 
     Im OSS-Standalone-Betrieb (SMTP) entsteht nur ein "Sent"-Event beim
     Versand. Im SaaS-Betrieb über Postmark feuert die Platform-Webhook
@@ -834,17 +887,16 @@ class InvoiceEmailEvent(db.Model):
     Constraint (postmark_message_id, record_type) sorgt dafür, dass derselbe
     Event nicht doppelt landet. Mehrere unterschiedliche Record-Types zur
     selben MessageID sind erlaubt (Soft- → Hard-Bounce-Eskalation).
+
+    Kein FK auf die Subjekt-Tabelle (waere bei Polymorphie nicht eindeutig) —
+    Loeschen des Subjekts muss die Events explizit mit aufraeumen.
     """
 
-    __tablename__ = "invoice_email_events"
+    __tablename__ = "email_events"
 
     id = db.Column(db.Integer, primary_key=True)
-    invoice_id = db.Column(
-        db.Integer,
-        db.ForeignKey("invoices.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
+    subject_type = db.Column(db.String(32), nullable=False)  # invoice, access_code, ...
+    subject_id = db.Column(db.Integer, nullable=False)
     record_type = db.Column(db.String(32), nullable=False)  # Sent, Delivery, Bounce, SpamComplaint
     postmark_message_id = db.Column(db.String(128), nullable=True, index=True)
     recipient = db.Column(db.String(255), nullable=True)
@@ -858,12 +910,31 @@ class InvoiceEmailEvent(db.Model):
         db.UniqueConstraint(
             "postmark_message_id",
             "record_type",
-            name="uq_invoice_email_events_msgid_type",
+            name="uq_email_events_msgid_type",
         ),
+        db.Index("ix_email_events_subject", "subject_type", "subject_id"),
     )
 
     def __repr__(self):
-        return f"<InvoiceEmailEvent invoice={self.invoice_id} type={self.record_type}>"
+        return (f"<EmailEvent {self.subject_type}={self.subject_id} "
+                f"type={self.record_type}>")
+
+
+# Registry: Diskriminator → Model. Wird von der Platform-Webhook und den
+# E-Mail-Verlauf-Views genutzt, um aus (subject_type, subject_id) den Datensatz
+# aufzuloesen. Neue Mail-Versandarten hier eintragen.
+EMAIL_SUBJECT_MODELS = {
+    Invoice.EMAIL_SUBJECT_TYPE: Invoice,
+    MeterReadingAccessCode.EMAIL_SUBJECT_TYPE: MeterReadingAccessCode,
+}
+
+
+def resolve_email_subject(session, subject_type, subject_id):
+    """Laedt das E-Mail-Subjekt fuer (subject_type, subject_id) oder None."""
+    model = EMAIL_SUBJECT_MODELS.get(subject_type)
+    if model is None:
+        return None
+    return session.get(model, subject_id)
 
 
 class InvoiceItem(db.Model):

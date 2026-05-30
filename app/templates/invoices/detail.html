@@ -40,7 +40,7 @@
           {% if invoice.last_email_status %}
           <dt class="col-sm-5">E-Mail-Status</dt>
           <dd class="col-sm-7">
-            {% include "invoices/_email_status_badge.html" %}
+            {% with subject = invoice %}{% include "invoices/_email_status_badge.html" %}{% endwith %}
             <a href="{{ url_for('invoices.email_events', invoice_id=invoice.id) }}"
                class="ms-1 text-muted small" title="Versand-Verlauf anzeigen">
               <i class="fa fa-history"></i>
@@ -77,14 +77,14 @@
           <i class="fas fa-file-word me-1"></i> Word
         </a>
         {% endif %}
-        {% if invoice.customer.email %}
+        {% if invoice.customer.wants_email %}
         <button type="button" class="btn btn-sm btn-outline-primary ms-1"
                 data-bs-toggle="modal" data-bs-target="#sendEmailModal">
           <i class="fas fa-envelope me-1"></i> E-Mail
         </button>
         {% else %}
         <button type="button" class="btn btn-sm btn-outline-primary ms-1" disabled
-                title="Kunde hat keine E-Mail-Adresse hinterlegt">
+                title="{{ 'Kunde hat keine E-Mail-Adresse hinterlegt' if not invoice.customer.email else 'Kunde hat den Schriftverkehr per E-Mail nicht aktiviert' }}">
           <i class="fas fa-envelope me-1"></i> E-Mail
         </button>
         {% endif %}
@@ -265,7 +265,7 @@
 {% endblock %}
 
 {% block modals %}
-{% if invoice.customer.email %}
+{% if invoice.customer.wants_email %}
 <div class="modal fade" id="sendEmailModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
     <form method="post" action="{{ url_for('invoices.send_email', invoice_id=invoice.id) }}"
