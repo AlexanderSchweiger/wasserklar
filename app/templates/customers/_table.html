@@ -3,7 +3,7 @@
 {% macro sort_header(key, label) %}
   {% set active = sort == key %}
   {% set new_dir = 'desc' if (active and dir == 'asc') else 'asc' %}
-  <a href="{{ url_for('customers.index', type=type_filter, q=q or none, sort=key, dir=new_dir) }}"
+  <a href="{{ url_for('customers.index', type=type_filter, q=q or none, sort=key, dir=new_dir, country=country_filter or none) }}"
      class="text-reset text-decoration-none d-inline-flex align-items-center gap-1">
     {{ label }}
     {% if active %}
@@ -70,7 +70,7 @@
               class="d-inline"
               onsubmit="return confirm('Kontakt {{ c.name|e }} wirklich löschen? Nur möglich, wenn keine Rechnungen, Buchungen oder Eigentümerverhältnisse verknüpft sind.');">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <input type="hidden" name="next" value="{{ url_for('customers.index', type=type_filter or none, q=q or none, sort=sort, dir=dir) }}">
+          <input type="hidden" name="next" value="{{ url_for('customers.index', type=type_filter or none, q=q or none, sort=sort, dir=dir, country=country_filter or none) }}">
           <button type="submit" class="btn btn-sm btn-outline-danger" title="Löschen">
             <i class="fas fa-trash"></i>
           </button>

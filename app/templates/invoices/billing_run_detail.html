@@ -30,6 +30,12 @@
           <dt class="col-5">Abrechnungsperiode</dt>
           <dd class="col-7"><strong>{{ run.billing_period.name if run.billing_period else '—' }}</strong></dd>
 
+          {% if run.sort_order %}
+          {% set sort_label = dict(run.SORT_ORDER_CHOICES).get(run.sort_order, run.sort_order) %}
+          <dt class="col-5">Sortierung</dt>
+          <dd class="col-7"><span class="text-muted">{{ sort_label }}</span></dd>
+          {% endif %}
+
           <dt class="col-5">Erstellt</dt>
           <dd class="col-7">
             <span class="badge bg-success text-white">{{ run.invoices_created }} Rechnungen</span>
@@ -177,6 +183,10 @@
                 <a href="{{ url_for('properties.detail', property_id=inv.property_id) }}">
                   {{ inv.property.object_number or inv.property_id }}
                 </a>
+                {% set addr = [inv.property.strasse, inv.property.hausnummer] | select | join(' ') %}
+                {% if addr %}
+                <br><small class="text-muted">{{ addr }}</small>
+                {% endif %}
                 {% else %}—{% endif %}
               </td>
               <td class="text-end">{{ inv.total_amount | de_number }} €</td>

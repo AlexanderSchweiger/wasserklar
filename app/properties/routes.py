@@ -1,6 +1,6 @@
-from datetime import date, timedelta
-
 import json
+import re
+from datetime import date, timedelta
 
 from flask import render_template, redirect, url_for, flash, request, make_response
 from flask_login import login_required
@@ -59,6 +59,53 @@ def index():
     if request.headers.get("HX-Request"):
         return render_template("properties/_table.html", **ctx)
     return render_template("properties/index.html", **ctx)
+
+
+@bp.route("/fix-housenumbers", methods=["POST"])
+@login_required
+def fix_housenumbers():
+    """Extrahiert Hausnummern aus dem Straßenfeld für alle Objekte,
+    bei denen das Hausnummer-Feld leer ist.
+
+    Alles ab der ersten Ziffer in ``strasse`` wird nach ``hausnummer``
+    verschoben; der Rest (ohne nachfolgende Leerzeichen) bleibt in ``strasse``.
+    """
+    candidates = Property.query.filter(
+        Property.active.is_(True),
+        Property.strasse.isnot(None),
+        Property.strasse != "",
+        (Property.hausnummer.is_(None)) | (Property.hausnummer == ""),
+    ).all()
+
+    changed = 0
+    skipped = []
+    for prop in candidates:
+        m = re.search(r"\d", prop.strasse)
+        if m:
+            pos = m.start()
+            hausnummer = prop.strasse[pos:].strip()
+            if len(hausnummer) > 20:
+                skipped.append(f"{prop.label()} – „{prop.strasse}"")
+                continue
+            prop.hausnummer = hausnummer
+            prop.strasse = prop.strasse[:pos].strip()
+            changed += 1
+
+    if changed:
+        db.session.commit()
+    if changed:
+        flash(f"Hausnummern korrigiert: {changed} Objekt{'e' if changed != 1 else ''} aktualisiert.", "success")
+    if skipped:
+        skipped_list = "; ".join(skipped)
+        flash(
+            f"{len(skipped)} Objekt{'e' if len(skipped) != 1 else ''} übersprungen "
+            f"(Hausnummer-Teil zu lang, bitte manuell korrigieren): {skipped_list}",
+            "warning",
+        )
+    if not changed and not skipped:
+        flash("Keine Objekte gefunden, bei denen eine Hausnummer in der Straße stand.", "info")
+
+    return redirect(url_for("properties.index"))
 
 
 @bp.route("/new", methods=["GET", "POST"])

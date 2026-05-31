@@ -7,19 +7,19 @@
     <ul class="nav nav-pills" role="tablist">
       <li class="nav-item">
         <a class="nav-link btn-sm {% if type_filter == 'customer' %}active{% endif %}"
-           href="{{ url_for('customers.index', type='customer', q=q or none, sort=sort, dir=dir) }}">
+           href="{{ url_for('customers.index', type='customer', q=q or none, sort=sort, dir=dir, country=country_filter or none) }}">
           <i class="fas fa-user me-1"></i> Kunden
         </a>
       </li>
       <li class="nav-item">
         <a class="nav-link btn-sm {% if type_filter == 'supplier' %}active{% endif %}"
-           href="{{ url_for('customers.index', type='supplier', q=q or none, sort=sort, dir=dir) }}">
+           href="{{ url_for('customers.index', type='supplier', q=q or none, sort=sort, dir=dir, country=country_filter or none) }}">
           <i class="fas fa-truck me-1"></i> Lieferanten
         </a>
       </li>
       <li class="nav-item">
         <a class="nav-link btn-sm {% if type_filter == 'all' %}active{% endif %}"
-           href="{{ url_for('customers.index', type='all', q=q or none, sort=sort, dir=dir) }}">
+           href="{{ url_for('customers.index', type='all', q=q or none, sort=sort, dir=dir, country=country_filter or none) }}">
           <i class="fas fa-list me-1"></i> Alle
         </a>
       </li>
@@ -30,23 +30,85 @@
         hx-get="{{ url_for('customers.index') }}"
         hx-trigger="input changed delay:300ms, search"
         hx-target="#customer-table"
-        hx-include="[name='q'], [name='type'], [name='sort'], [name='dir']">
+        hx-include="[name='q'], [name='type'], [name='sort'], [name='dir'], [name='country']">
       <span class="input-group-text"><i class="fas fa-search"></i></span>
     </div>
+    {% if countries | length > 1 %}
+    <select name="country" class="form-select form-select-sm" style="width:180px"
+      hx-get="{{ url_for('customers.index') }}"
+      hx-trigger="change"
+      hx-target="#customer-table"
+      hx-include="[name='q'], [name='type'], [name='sort'], [name='dir'], [name='country']">
+      <option value="">Alle Länder</option>
+      {% for c in countries %}
+      <option value="{{ c }}" {% if c == country_filter %}selected{% endif %}>{{ c }}</option>
+      {% endfor %}
+    </select>
+    {% endif %}
     <input type="hidden" name="type" value="{{ type_filter }}">
     <input type="hidden" name="sort" value="{{ sort }}">
     <input type="hidden" name="dir" value="{{ dir }}">
     <a href="{{ url_for('customers.index', type=type_filter, sort=sort, dir=dir) }}" class="btn btn-sm btn-outline-secondary">
       <i class="fas fa-times me-1"></i> Zurücksetzen
     </a>
-    <div class="ms-auto">
+    <div class="ms-auto d-flex gap-2 align-items-center">
       <a href="{{ url_for('customers.new') }}" class="btn btn-primary">
         <i class="fas fa-plus me-1"></i> Neuer Kontakt
       </a>
+      <div class="dropdown">
+        <button class="btn btn-outline-secondary" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+          <i class="fas fa-ellipsis-h"></i>
+        </button>
+        <ul class="dropdown-menu dropdown-menu-end">
+          <li>
+            <button type="button" class="dropdown-item" data-bs-toggle="modal" data-bs-target="#fixHousenumbersModal">
+              <i class="fas fa-map-marker-alt me-2"></i> Hausnummern korrigieren
+            </button>
+          </li>
+        </ul>
+      </div>
     </div>
   </div>
   <div id="customer-table">
     {% include "customers/_table.html" %}
+  </div>
+</div>
+{% endblock %}
+
+{% block modals %}
+<div class="modal fade" id="fixHousenumbersModal" tabindex="-1" aria-labelledby="fixHousenumbersModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="fixHousenumbersModalLabel">
+          <i class="fas fa-map-marker-alt me-2"></i> Hausnummern korrigieren
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <div class="modal-body">
+        <p>
+          Bei einigen Kontakten wurde die Hausnummer direkt im Straßenfeld eingetragen (z.&nbsp;B.
+          <em>„Hauptstraße 12a"</em> statt Straße <em>„Hauptstraße"</em> + Hausnummer <em>„12a"</em>).
+        </p>
+        <p>
+          Beim Bestätigen wird für alle Kontakte, bei denen das Hausnummer-Feld noch leer ist,
+          alles ab der ersten Ziffer im Straßenfeld automatisch in das Hausnummer-Feld übertragen.
+          Der Rest verbleibt als Straßenname.
+        </p>
+        <p class="mb-0 text-muted small">
+          Kontakte mit bereits befülltem Hausnummer-Feld werden nicht verändert.
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+        <form method="post" action="{{ url_for('customers.fix_housenumbers') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-primary">
+            <i class="fas fa-check me-1"></i> Korrigieren
+          </button>
+        </form>
+      </div>
+    </div>
   </div>
 </div>
 {% endblock %}

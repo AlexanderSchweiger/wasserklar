@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
@@ -249,6 +250,40 @@ def index():
     )
 
 
+_HAUSNUMMER_RE = re.compile(r"(\d+)")
+
+
+def _billing_run_sort_key(prop_readings, sort_order):
+    """Sort-Key für einen property_readings-Eintrag im Rechnungslauf.
+
+    Fehlende Werte (kein Besitzer, keine Nummer, kein Ort) kommen ans Ende.
+    """
+    prop = prop_readings[0].meter.property
+    ownership = prop.current_owner()
+    customer = db.session.get(Customer, ownership.customer_id) if ownership else None
+
+    if sort_order == "customer_name":
+        return ((customer.name.casefold() if customer else "\xff"),)
+
+    if sort_order == "customer_number":
+        cn = customer.customer_number if customer else None
+        return (1 if cn is None else 0, cn if cn is not None else 999_999_999)
+
+    if sort_order == "object_number":
+        on = prop.object_number or ""
+        m = _HAUSNUMMER_RE.match(on)
+        num = int(m.group(1)) if m else 999_999_999
+        rest = on[m.end():].casefold() if m else on.casefold()
+        return (1 if not on else 0, num, rest)
+
+    # "address": Ort alphabetisch, dann Hausnummer numerisch (Zusätze ignorieren)
+    ort = (prop.ort or "\xff").casefold()
+    hn = prop.hausnummer or ""
+    m = _HAUSNUMMER_RE.match(hn)
+    hn_num = int(m.group(1)) if m else 999_999_999
+    return (ort, hn_num)
+
+
 @bp.route("/generate", methods=["GET", "POST"])
 @login_required
 def generate():
@@ -265,6 +300,10 @@ def generate():
         tariff_id = int(request.form["tariff_id"])
         tariff = db.get_or_404(WaterTariff, tariff_id)
         due_days = int(request.form.get("due_days", 30))
+        valid_sort_orders = {k for k, _ in BillingRun.SORT_ORDER_CHOICES}
+        sort_order = request.form.get("sort_order", "customer_name")
+        if sort_order not in valid_sort_orders:
+            sort_order = "customer_name"
 
         # Rechnungsdatum für den Rechnungslauf ist heute.
         invoice_date = date.today()
@@ -305,13 +344,19 @@ def generate():
             tariff_additional_fee_label=tariff.additional_fee_label or "Zusatzgebühr",
             tariff_price_per_m3=tariff.price_per_m3,
             tariff_notes=tariff.notes,
+            sort_order=sort_order,
         )
         db.session.add(billing_run)
         db.session.flush()
 
+        sorted_items = sorted(
+            property_readings.items(),
+            key=lambda kv: _billing_run_sort_key(kv[1], sort_order),
+        )
+
         created = 0
         skipped = 0
-        for property_id, prop_readings in property_readings.items():
+        for property_id, prop_readings in sorted_items:
             prop = prop_readings[0].meter.property
             ownership = prop.current_owner()
             if not ownership:
@@ -454,6 +499,7 @@ def generate():
         tariffs=tariffs,
         periods=_billing_period_list(),
         active_period=BillingPeriod.current(),
+        sort_order_choices=BillingRun.SORT_ORDER_CHOICES,
     )
 
 
@@ -1422,7 +1468,7 @@ def billing_runs():
 @login_required
 def billing_run_detail(run_id):
     run = db.get_or_404(BillingRun, run_id)
-    invoices = run.invoices.order_by(Invoice.invoice_number).all()
+    invoices = run.invoices.order_by(Invoice.invoice_number, Invoice.id).all()
     doc_format = AppSetting.get("invoice.document_format", "pdf")
     return render_template("invoices/billing_run_detail.html", run=run, invoices=invoices, doc_format=doc_format)
 

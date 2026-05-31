@@ -1,3 +1,5 @@
+import re
+
 from flask import render_template, redirect, url_for, flash, request, jsonify
 from flask_login import login_required
 from sqlalchemy import case as sa_case, func as sa_func
@@ -40,6 +42,7 @@ def index():
     direction = request.args.get("dir", "asc")
     if direction not in ("asc", "desc"):
         direction = "asc"
+    country_filter = request.args.get("country", "").strip()
 
     query = Customer.query.filter_by(active=True)
     if type_filter == "customer":
@@ -48,11 +51,20 @@ def index():
         query = query.filter(Customer.is_supplier.is_(True))
     if q:
         query = query.filter(Customer.name.ilike(f"%{q}%"))
+    if country_filter:
+        query = query.filter(Customer.land == country_filter)
 
     query = _apply_customer_sort(query, sort, direction)
 
     pagination = paginate_query(query, page_key="customers")
     customers = pagination.items
+
+    # Distinct-Laender fuer den Filter-Dropdown.
+    countries = [
+        r[0] for r in db.session.query(Customer.land)
+        .filter(Customer.active.is_(True), Customer.land.isnot(None), Customer.land != "")
+        .distinct().order_by(Customer.land).all()
+    ]
 
     # Property-Map fuer Anzeige aufbauen — nur fuer die aktuell sichtbaren Kunden.
     if customers:
@@ -80,6 +92,8 @@ def index():
         sort=sort,
         dir=direction,
         back_url=back_url,
+        country_filter=country_filter,
+        countries=countries,
     )
     # HTMX: nur Tabellen-Fragment zurueckgeben
     if request.headers.get("HX-Request"):
@@ -273,6 +287,53 @@ def delete(customer_id):
     next_url = request.form.get("next", "")
     if next_url.startswith("/customers"):
         return redirect(next_url)
+    return redirect(url_for("customers.index"))
+
+
+@bp.route("/fix-housenumbers", methods=["POST"])
+@login_required
+def fix_housenumbers():
+    """Extrahiert Hausnummern aus dem Straßenfeld für alle Kontakte,
+    bei denen das Hausnummer-Feld leer ist.
+
+    Alles ab der ersten Ziffer in ``strasse`` wird nach ``hausnummer``
+    verschoben; der Rest (ohne nachfolgende Leerzeichen) bleibt in ``strasse``.
+    """
+    candidates = Customer.query.filter(
+        Customer.active.is_(True),
+        Customer.strasse.isnot(None),
+        Customer.strasse != "",
+        (Customer.hausnummer.is_(None)) | (Customer.hausnummer == ""),
+    ).all()
+
+    changed = 0
+    skipped = []
+    for customer in candidates:
+        m = re.search(r"\d", customer.strasse)
+        if m:
+            pos = m.start()
+            hausnummer = customer.strasse[pos:].strip()
+            if len(hausnummer) > 20:
+                skipped.append(f'{customer.name} – „{customer.strasse}"')
+                continue
+            customer.hausnummer = hausnummer
+            customer.strasse = customer.strasse[:pos].strip()
+            changed += 1
+
+    if changed:
+        db.session.commit()
+    if changed:
+        flash(f"Hausnummern korrigiert: {changed} Kontakt{'e' if changed != 1 else ''} aktualisiert.", "success")
+    if skipped:
+        skipped_list = "; ".join(skipped)
+        flash(
+            f"{len(skipped)} Kontakt{'e' if len(skipped) != 1 else ''} übersprungen "
+            f"(Hausnummer-Teil zu lang, bitte manuell korrigieren): {skipped_list}",
+            "warning",
+        )
+    if not changed and not skipped:
+        flash("Keine Kontakte gefunden, bei denen eine Hausnummer in der Straße stand.", "info")
+
     return redirect(url_for("customers.index"))
 
 

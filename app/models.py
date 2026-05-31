@@ -709,6 +709,14 @@ class BillingRun(db.Model):
 
     invoices_created = db.Column(db.Integer, default=0, nullable=False)
     invoices_skipped = db.Column(db.Integer, default=0, nullable=False)
+    sort_order = db.Column(db.String(20), nullable=True)
+
+    SORT_ORDER_CHOICES = [
+        ("customer_name",   "Kundenname"),
+        ("customer_number", "Kundennummer"),
+        ("object_number",   "Objektnummer"),
+        ("address",         "Objektadresse (Ort, Hausnummer)"),
+    ]
 
     created_by = db.relationship("User", foreign_keys=[created_by_id])
     invoices = db.relationship("Invoice", backref="billing_run", lazy="dynamic")

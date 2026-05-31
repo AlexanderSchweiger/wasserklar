@@ -40,6 +40,17 @@
                   value="30" min="1" max="365">
               </div>
             </div>
+            <div class="col-md-6">
+              <div class="mb-3">
+                <label class="form-label">Sortierreihenfolge</label>
+                <select name="sort_order" class="form-select">
+                  {% for value, label in sort_order_choices %}
+                  <option value="{{ value }}">{{ label }}</option>
+                  {% endfor %}
+                </select>
+                <div class="form-text">Bestimmt die Reihenfolge der Rechnungsnummern.</div>
+              </div>
+            </div>
           </div>
           <div class="mb-3">
             <label class="form-label">Tarif <span class="text-danger">*</span></label>
