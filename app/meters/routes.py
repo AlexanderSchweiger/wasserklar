@@ -166,6 +166,30 @@ def _all_periods():
     )
 
 
+def _period_for_new_reading(meter):
+    """Periode fuer einen NEUEN Stand (``+``-Button, kein explizites
+    ``period_id``): die aktive Periode, falls der Zaehler dort noch keinen
+    Stand hat; sonst die juengste Periode ohne Stand fuer diesen Zaehler.
+
+    Gibt ``None`` zurueck, wenn ALLE Perioden fuer diesen Zaehler bereits einen
+    Stand haben. Dann darf NICHT auf eine bereits abgelesene Periode
+    zurueckgefallen werden -- ``save_reading`` macht pro ``(Zaehler, Periode)``
+    ein Upsert, ein "neuer" Stand wuerde den bestehenden ueberschreiben. Der
+    Aufrufer zeigt in dem Fall einen Hinweis (neue Abrechnungsperiode anlegen)
+    statt still zu ueberschreiben."""
+    read_period_ids = {
+        pid for (pid,) in db.session.query(MeterReading.billing_period_id)
+        .filter(MeterReading.meter_id == meter.id).all()
+    }
+    active = BillingPeriod.current()
+    if active is not None and active.id not in read_period_ids:
+        return active
+    for p in _all_periods():  # neueste zuerst
+        if p.id not in read_period_ids:
+            return p
+    return None
+
+
 def _build_owners_map():
     """Gibt ein Dict {property_id: customer_name} für alle aktuellen Eigentümer zurück."""
     rows = (
@@ -175,6 +199,92 @@ def _build_owners_map():
         .all()
     )
     return {row.property_id: row.name for row in rows}
+
+
+def _reading_form_context(meter, period):
+    """Template-Kontext fuer ``meters/_reading_form_body.html`` — gemeinsam
+    genutzt vom Ablese-Modal (HTMX) und der Standalone-Seite.
+
+    Enthaelt Letzter-Stand/Anfangsstand, Durchschnittsverbrauch, ggf. den
+    Altverbrauch bei Zaehlertausch sowie den/die aktuellen Eigentuemer-Namen
+    fuer die (read-only) Zaehler-Anzeige im Formular."""
+    existing = (
+        MeterReading.query.filter_by(
+            meter_id=meter.id, billing_period_id=period.id
+        ).first()
+        if period else None
+    )
+
+    # "Letzter Stand" = der vom Datum her juengste Stand des Zaehlers (Tiebreak
+    # ueber id), den gerade bearbeiteten Eintrag ausgenommen. Faellt auf den
+    # Anfangsstand zurueck, wenn es keine andere Ablesung gibt. Bewusst NICHT
+    # die Vorperioden-Ablesung (`_last_prev_reading`) — der angezeigte Bezugs-
+    # wert soll der tatsaechlich letzte erfasste Stand sein.
+    prev_q = MeterReading.query.filter(MeterReading.meter_id == meter.id)
+    if existing is not None:
+        prev_q = prev_q.filter(MeterReading.id != existing.id)
+    prev = prev_q.order_by(
+        MeterReading.reading_date.desc(), MeterReading.id.desc()
+    ).first()
+    prev_value = (
+        int(prev.value) if prev
+        else (int(meter.initial_value) if meter.initial_value is not None else None)
+    )
+    # Datum des letzten Stands (ISO fuer den JS-Vergleich, dd.mm.yyyy fuer die
+    # Anzeige). Liegt das eingegebene Ablesedatum davor, ist die Verbrauchs-
+    # vorschau obsolet (Client blendet sie dann aus).
+    prev_date = prev.reading_date.isoformat() if prev else None
+    prev_date_display = prev.reading_date.strftime("%d.%m.%Y") if prev else None
+
+    # Durchschnittsverbrauch der letzten 5 Ablesungen (mind. 3 Werte nötig)
+    past_readings = (
+        MeterReading.query
+        .filter(
+            MeterReading.meter_id == meter.id,
+            MeterReading.consumption.isnot(None),
+        )
+        .order_by(MeterReading.reading_date.desc())
+        .limit(5)
+        .all()
+    )
+    avg_consumption = None
+    avg_years = 0
+    if len(past_readings) >= 3:
+        avg_years = len(past_readings)
+        avg_consumption = round(
+            sum(float(r.consumption) for r in past_readings) / avg_years
+        )
+
+    # Bei Zählertausch: Verbrauch des alten Zählers (Abschlussablesung)
+    # mitanzeigen — analog zur Ablesungstabelle (alt + neu = gesamt).
+    repl_map = _build_replacement_map([meter], period) if period else {}
+    repl = repl_map.get(meter.id)
+    old_consumption = None
+    if repl and repl["old_reading"] and repl["old_reading"].consumption is not None:
+        old_consumption = int(repl["old_reading"].consumption)
+
+    # Aktuelle Eigentuemer (mehrere parallele Ownerships moeglich -> .all(),
+    # nie .scalar()) fuer die read-only Zaehler-Anzeige im Formular.
+    owner_names = [
+        name for (name,) in (
+            db.session.query(Customer.name)
+            .join(PropertyOwnership, PropertyOwnership.customer_id == Customer.id)
+            .filter(
+                PropertyOwnership.property_id == meter.property_id,
+                PropertyOwnership.valid_to == None,
+            )
+            .all()
+        )
+    ]
+
+    return dict(
+        meter=meter, period=period, periods=_all_periods(), existing=existing,
+        prev_value=prev_value, prev_date=prev_date,
+        prev_date_display=prev_date_display,
+        avg_consumption=avg_consumption, avg_years=avg_years,
+        old_consumption=old_consumption, today=date.today(),
+        owner_display=", ".join(owner_names) if owner_names else None,
+    )
 
 
 @bp.route("/")
@@ -370,7 +480,6 @@ def bulk_read():
 @login_required
 def add_reading(meter_id):
     meter = db.get_or_404(WaterMeter, meter_id)
-    period = _resolve_period_arg()
     is_modal = bool(request.headers.get("X-From-Modal"))
 
     if request.method == "POST":
@@ -437,52 +546,31 @@ def add_reading(meter_id):
             )
         return redirect(url_for("meters.readings", period_id=period.id))
 
-    existing = (
-        MeterReading.query.filter_by(
-            meter_id=meter_id, billing_period_id=period.id
-        ).first()
-        if period else None
-    )
+    # GET: Periode bestimmen. Mit explizitem ?period_id= (Bearbeiten eines
+    # konkreten Stands aus der Tabelle) genau diese Periode; ohne (der
+    # "+"-Button "neuer Stand") eine Periode OHNE Stand fuer diesen Zaehler --
+    # sonst wuerde "+" den letzten Stand still ueberschreiben.
+    if request.args.get("period_id", type=int):
+        period = _resolve_period_arg()
+    else:
+        period = _period_for_new_reading(meter)
+        if period is None:
+            # Alle Perioden haben fuer diesen Zaehler bereits einen Stand. Ein
+            # weiterer Stand wuerde einen bestehenden ueberschreiben (1 Stand
+            # pro Periode) -> klaren Hinweis zeigen statt still zu ueberschreiben.
+            if request.headers.get("HX-Request"):
+                return render_template(
+                    "meters/_reading_no_open_period.html", meter=meter,
+                )
+            flash(
+                "Für diesen Zähler ist in allen Abrechnungsperioden bereits ein "
+                "Stand erfasst. Lege eine neue Abrechnungsperiode an, um einen "
+                "weiteren Stand zu erfassen.",
+                "info",
+            )
+            return redirect(url_for("meters.readings"))
 
-    # Vorperiodenwert oder Anfangsstand als Basis
-    prev = _last_prev_reading(meter_id, period) if period else None
-    prev_value = (
-        int(prev.value) if prev
-        else (int(meter.initial_value) if meter.initial_value is not None else None)
-    )
-
-    # Durchschnittsverbrauch der letzten 5 Ablesungen (mind. 3 Werte nötig)
-    past_readings = (
-        MeterReading.query
-        .filter(
-            MeterReading.meter_id == meter_id,
-            MeterReading.consumption.isnot(None),
-        )
-        .order_by(MeterReading.reading_date.desc())
-        .limit(5)
-        .all()
-    )
-    avg_consumption = None
-    avg_years = 0
-    if len(past_readings) >= 3:
-        avg_years = len(past_readings)
-        avg_consumption = round(
-            sum(float(r.consumption) for r in past_readings) / avg_years
-        )
-
-    # Bei Zählertausch: Verbrauch des alten Zählers (Abschlussablesung)
-    # mitanzeigen — analog zur Ablesungstabelle (alt + neu = gesamt).
-    repl_map = _build_replacement_map([meter], period) if period else {}
-    repl = repl_map.get(meter.id)
-    old_consumption = None
-    if repl and repl["old_reading"] and repl["old_reading"].consumption is not None:
-        old_consumption = int(repl["old_reading"].consumption)
-
-    form_ctx = dict(
-        meter=meter, period=period, periods=_all_periods(), existing=existing,
-        prev_value=prev_value, avg_consumption=avg_consumption, avg_years=avg_years,
-        old_consumption=old_consumption, today=date.today(),
-    )
+    form_ctx = _reading_form_context(meter, period)
 
     # HTMX-GET (vom Edit-Button im Subtable): nur den Form-Body zurückgeben,
     # der dann via HTMX in den Modal-Body geswappt wird.
@@ -490,6 +578,43 @@ def add_reading(meter_id):
         return render_template("meters/_reading_form_body.html", **form_ctx)
 
     return render_template("meters/reading_form.html", **form_ctx)
+
+
+@bp.route("/reading/<int:reading_id>/delete", methods=["POST"])
+@login_required
+def reading_delete(reading_id):
+    """Loescht einen einzelnen Zaehlerstand.
+
+    Nach dem Loeschen wird die Verbrauchskette des Zaehlers neu gerechnet
+    (``recompute_meter_chain``): die naechste Ablesung ueberbrueckt dann den
+    geloeschten Stand (Delta gegen die nun davor liegende Ablesung bzw. gegen
+    ``initial_value``, wenn der erste Stand entfernt wurde). Ohne diesen
+    Schritt bliebe der eingefrorene ``consumption``-Wert der Folge-Ablesung
+    falsch."""
+    reading = db.get_or_404(MeterReading, reading_id)
+    meter = reading.meter
+    period_id = reading.billing_period_id
+    is_modal = bool(request.headers.get("X-From-Modal"))
+
+    db.session.delete(reading)
+    db.session.flush()
+    recompute_meter_chain(meter)
+    db.session.commit()
+    flash("Zählerstand gelöscht.", "success")
+
+    if is_modal:
+        # Gleiche Event-Semantik wie add_reading (Modal-Save): aufrufende Seite
+        # schliesst das Modal und refresht sich ueber `readingSaved` selbst.
+        resp = make_response("", 204)
+        resp.headers["HX-Trigger"] = json.dumps({
+            "closeReadingModal": True,
+            "readingSaved": {
+                "meter_id": meter.id,
+                "period_id": period_id,
+            },
+        })
+        return resp
+    return redirect(url_for("meters.readings", period_id=period_id))
 
 
 def _read_type_and_parent(meter_id: int | None) -> tuple[str, int | None]:
@@ -1113,10 +1238,16 @@ def meter_replace(meter_id):
 
         # 2. Abschlussablesung des alten Zählers anlegen/aktualisieren —
         #    Verbrauch wird unten ueber recompute_meter_chain gesetzt.
+        #    Existiert fuer (alter Zaehler, Periode) bereits ein Stand mit
+        #    abweichendem Wert, wird er ersetzt -> der alte Wert wird gemerkt,
+        #    um danach analog zum Tausch-Import zu warnen (kein stiller Verlust).
         existing_reading = MeterReading.query.filter_by(
             meter_id=old_meter.id, billing_period_id=period.id
         ).first()
+        overwritten_value = None
         if existing_reading:
+            if existing_reading.value != final_value:
+                overwritten_value = existing_reading.value
             existing_reading.value = final_value
             existing_reading.reading_date = replacement_date
             existing_reading.created_by_id = current_user.id
@@ -1149,6 +1280,15 @@ def meter_replace(meter_id):
             f"neuer Zähler '{new_meter_number}' eingebaut.",
             "success",
         )
+        if overwritten_value is not None:
+            flash(
+                f"Hinweis: In Periode '{period.name}' existierte für Zähler "
+                f"'{old_meter.meter_number}' bereits ein Stand "
+                f"({import_service.format_value_de(overwritten_value)} m³) — er wurde "
+                f"durch den Ausbau-Stand "
+                f"({import_service.format_value_de(final_value)} m³) ersetzt.",
+                "warning",
+            )
         if is_modal:
             # Wie bei add_reading: 204 + Events, die aufrufende Seite refresht
             # sich selbst (Default-Handler: window.location.reload()).
@@ -1273,13 +1413,18 @@ def swap_import_preview():
         session[_SESSION_SWAP_RESULT_KEY] = stats.to_dict()
 
         done = stats.swapped + stats.created
-        category = "warning" if (stats.errors or done == 0) else "success"
-        flash(
+        category = (
+            "warning" if (stats.errors or stats.warnings or done == 0)
+            else "success"
+        )
+        msg = (
             f"Import abgeschlossen: {stats.swapped} Tausch(e), "
             f"{stats.created} Neuanlage(n), {stats.skipped} übersprungen, "
-            f"{stats.skipped_error} fehlerhaft.",
-            category,
+            f"{stats.skipped_error} fehlerhaft."
         )
+        if stats.warnings:
+            msg += f" {len(stats.warnings)} Hinweis(e) — bitte Ergebnis prüfen."
+        flash(msg, category)
         return redirect(url_for("meters.swap_import_result"))
 
     rows, cols = swap_import_service.build_swap_rows(df)

@@ -155,6 +155,10 @@ class SwapImportStats:
     skipped: int = 0       # via Skip-Haekchen uebersprungen
     skipped_error: int = 0  # Fehler-Zeilen / kein Objekt
     errors: list[str] = field(default_factory=list)
+    # Nicht-blockierende Hinweise (z.B. ueberschriebener Bestandsstand,
+    # Tauschdatum ausserhalb der Periode) -- der Import lief, aber der User
+    # sollte die betroffenen Zeilen pruefen.
+    warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -163,6 +167,7 @@ class SwapImportStats:
             "skipped": self.skipped,
             "skipped_error": self.skipped_error,
             "errors": self.errors,
+            "warnings": self.warnings,
         }
 
 
@@ -261,6 +266,16 @@ def _classify(row: SwapRow) -> None:
             row.messages = ["Ausbau-Zählerstand fehlt oder nicht lesbar"]
             return
         row.status = STATUS_TAUSCH
+        # Plausibilitaet: der Ausbau-Stand sollte >= dem letzten erfassten Stand
+        # sein. Ist er kleiner, deutet das auf einen Tippfehler/Rueckwaerts-
+        # zaehlung hin -- nicht blockieren, aber sichtbar warnen.
+        if (row.old_last_value is not None
+                and row.dismount_value < row.old_last_value):
+            msgs.append(
+                f"Achtung: Ausbau-Stand {format_value_de(row.dismount_value)} m³ "
+                f"ist kleiner als der letzte Stand "
+                f"{format_value_de(row.old_last_value)} m³ — bitte prüfen"
+            )
         row.messages = msgs
         return
 
@@ -459,11 +474,34 @@ def commit_swap_import(rows: list[SwapRow], user_id: int,
                 old.installed_to = row.swap_date
                 old.active = False
 
-                # 2. Abschlussablesung anlegen/aktualisieren
+                # Warnung: Tauschdatum ausserhalb der gewaehlten Periode -> die
+                # Abschlussablesung bekaeme ein Datum, das nicht zur Periode passt.
+                if not (billing_period.start_date <= row.swap_date
+                        <= billing_period.end_date):
+                    stats.warnings.append(
+                        f"Zeile {row.human_row}: Tauschdatum "
+                        f"{row.swap_date.strftime('%d.%m.%Y')} liegt außerhalb der "
+                        f"Periode '{billing_period.name}' "
+                        f"({billing_period.start_date.strftime('%d.%m.%Y')}–"
+                        f"{billing_period.end_date.strftime('%d.%m.%Y')})"
+                    )
+
+                # 2. Abschlussablesung anlegen/aktualisieren. Existiert fuer
+                #    (alter Zaehler, Periode) bereits ein Stand mit ABWEICHENDEM
+                #    Wert, wird er ueberschrieben -> warnen (sonst stiller
+                #    Datenverlust, vgl. Upsert-Semantik je Zaehler+Periode).
                 existing = MeterReading.query.filter_by(
                     meter_id=old.id, billing_period_id=billing_period.id,
                 ).first()
                 if existing is not None:
+                    if existing.value != row.dismount_value:
+                        stats.warnings.append(
+                            f"Zeile {row.human_row}: bestehender Stand des alten "
+                            f"Zählers '{old.meter_number}' in Periode "
+                            f"'{billing_period.name}' überschrieben: "
+                            f"{format_value_de(existing.value)} → "
+                            f"{format_value_de(row.dismount_value)} m³"
+                        )
                     existing.value = row.dismount_value
                     existing.reading_date = row.swap_date
                     existing.created_by_id = user_id

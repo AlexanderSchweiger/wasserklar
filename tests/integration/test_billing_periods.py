@@ -149,3 +149,44 @@ class TestRecomputeMeterChain:
             meter_id=m.id, billing_period_id=p24.id).one()
         assert r23.consumption == Decimal("80")    # 80 - 0
         assert r24.consumption == Decimal("120")   # 200 - 80
+
+    def test_delete_middle_reading_bridges_following(self, app):
+        # Mittleren Stand loeschen -> Folge-Ablesung ueberbrueckt die Luecke.
+        p23 = _period("2023", date(2023, 1, 1), date(2023, 12, 31))
+        p24 = _period("2024", date(2024, 1, 1), date(2024, 12, 31))
+        p25 = _period("2025", date(2025, 1, 1), date(2025, 12, 31), active=True)
+        m = _meter(initial_value=Decimal("0"))
+        db.session.commit()
+        save_reading(m, p23, Decimal("100"), reading_date=date(2023, 12, 31))
+        save_reading(m, p24, Decimal("175"), reading_date=date(2024, 12, 31))
+        save_reading(m, p25, Decimal("230"), reading_date=date(2025, 12, 31))
+        db.session.commit()
+        # 2024 entfernen und Kette neu rechnen.
+        r24 = MeterReading.query.filter_by(
+            meter_id=m.id, billing_period_id=p24.id).one()
+        db.session.delete(r24)
+        db.session.flush()
+        recompute_meter_chain(m)
+        db.session.commit()
+        r25 = MeterReading.query.filter_by(
+            meter_id=m.id, billing_period_id=p25.id).one()
+        assert r25.consumption == Decimal("130")   # 230 - 100 (statt 230 - 175)
+
+    def test_delete_first_reading_falls_back_to_initial(self, app):
+        # Ersten Stand loeschen -> naechster rechnet gegen initial_value.
+        p23 = _period("2023", date(2023, 1, 1), date(2023, 12, 31))
+        p24 = _period("2024", date(2024, 1, 1), date(2024, 12, 31), active=True)
+        m = _meter(initial_value=Decimal("10"))
+        db.session.commit()
+        save_reading(m, p23, Decimal("100"), reading_date=date(2023, 12, 31))
+        save_reading(m, p24, Decimal("175"), reading_date=date(2024, 12, 31))
+        db.session.commit()
+        r23 = MeterReading.query.filter_by(
+            meter_id=m.id, billing_period_id=p23.id).one()
+        db.session.delete(r23)
+        db.session.flush()
+        recompute_meter_chain(m)
+        db.session.commit()
+        r24 = MeterReading.query.filter_by(
+            meter_id=m.id, billing_period_id=p24.id).one()
+        assert r24.consumption == Decimal("165")   # 175 - 10 (initial_value)

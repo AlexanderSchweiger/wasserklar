@@ -85,7 +85,7 @@ def fix_housenumbers():
             pos = m.start()
             hausnummer = prop.strasse[pos:].strip()
             if len(hausnummer) > 20:
-                skipped.append(f"{prop.label()} – „{prop.strasse}"")
+                skipped.append(f'{prop.label()} – „{prop.strasse}"')
                 continue
             prop.hausnummer = hausnummer
             prop.strasse = prop.strasse[:pos].strip()

@@ -68,6 +68,7 @@
         <form method="post"
               action="{{ url_for('customers.delete', customer_id=c.id) }}"
               class="d-inline"
+              hx-boost="false"
               onsubmit="return confirm('Kontakt {{ c.name|e }} wirklich löschen? Nur möglich, wenn keine Rechnungen, Buchungen oder Eigentümerverhältnisse verknüpft sind.');">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="next" value="{{ url_for('customers.index', type=type_filter or none, q=q or none, sort=sort, dir=dir, country=country_filter or none) }}">

@@ -74,6 +74,7 @@
       <form method="post"
             action="{{ url_for('bank_import.delete', statement_id=stmt.id) }}"
             class="d-inline"
+            hx-boost="false"
             onsubmit="return confirm('Bankauszug wirklich löschen?');">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button class="btn btn-sm btn-outline-danger" type="submit">

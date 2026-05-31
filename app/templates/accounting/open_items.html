@@ -76,6 +76,7 @@
       {% if accounts %}
       <form method="post" action="{{ url_for('accounting.open_items_set_account') }}"
             class="d-inline-flex align-items-center gap-1"
+            hx-boost="false"
             onsubmit="return confirm('Buchungskonto auf allen offenen Posten setzen?');">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <select name="account_id" class="form-select form-select-sm" style="width:200px" required

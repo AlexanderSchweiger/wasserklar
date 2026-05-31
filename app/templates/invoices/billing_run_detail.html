@@ -116,27 +116,19 @@
         <button class="btn btn-danger" disabled title="Zuerst gesperrte Rechnungen manuell entfernen">
           <i class="fas fa-trash me-1"></i> Löschen nicht möglich
         </button>
-        {% elif invoices %}
+        {% else %}
+        {% if invoices %}
         <p class="text-muted mb-3">
           Alle <strong>{{ invoices | length }} Rechnung(en)</strong> dieses Laufs sind Entwürfe und
           werden beim Löschen mit entfernt.
         </p>
-        <form method="post" action="{{ url_for('invoices.billing_run_delete', run_id=run.id) }}"
-              onsubmit="return confirm('Rechnungslauf und alle {{ invoices | length }} Entwurf-Rechnung(en) unwiderruflich löschen?')">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button type="submit" class="btn btn-danger">
-            <i class="fas fa-trash me-1"></i> Lauf + {{ invoices | length }} Rechnung(en) löschen
-          </button>
-        </form>
         {% else %}
         <p class="text-muted mb-3">Dieser Rechnungslauf enthält keine Rechnungen.</p>
-        <form method="post" action="{{ url_for('invoices.billing_run_delete', run_id=run.id) }}"
-              onsubmit="return confirm('Leeren Rechnungslauf löschen?')">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button type="submit" class="btn btn-danger">
-            <i class="fas fa-trash me-1"></i> Leeren Lauf löschen
-          </button>
-        </form>
+        {% endif %}
+        <button type="button" class="btn btn-danger" data-bs-toggle="modal" data-bs-target="#deleteLaufModal">
+          <i class="fas fa-trash me-1"></i>
+          {% if invoices %}Lauf + {{ invoices | length }} Rechnung(en) löschen{% else %}Leeren Lauf löschen{% endif %}
+        </button>
         {% endif %}
       </div>
     </div>
@@ -233,6 +225,48 @@
         </table>
       </div>
     </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block modals %}
+<div class="modal fade" id="deleteLaufModal" tabindex="-1" aria-labelledby="deleteLaufModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <form method="post" action="{{ url_for('invoices.billing_run_delete', run_id=run.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title text-danger" id="deleteLaufModalLabel">
+            <i class="fas fa-trash me-1"></i> Rechnungslauf löschen
+          </h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+        </div>
+        <div class="modal-body">
+          {% if invoices %}
+          <p>Rechnungslauf und alle <strong>{{ invoices | length }} Entwurf-Rechnung(en)</strong> werden unwiderruflich gelöscht.</p>
+          <div class="form-check mt-3">
+            <input class="form-check-input" type="checkbox" name="reset_counter" value="1"
+                   id="resetCounterCheck" checked>
+            <label class="form-check-label" for="resetCounterCheck">
+              Rechnungsnummern-Zähler zurücksetzen
+            </label>
+            <div class="form-text">
+              Der Zähler wird automatisch auf die nächste freie Nummer gesetzt
+              (höchste verbleibende Rechnungsnummer&nbsp;+&nbsp;1).
+            </div>
+          </div>
+          {% else %}
+          <p>Leeren Rechnungslauf unwiderruflich löschen?</p>
+          {% endif %}
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+          <button type="submit" class="btn btn-danger">
+            <i class="fas fa-trash me-1"></i> Löschen
+          </button>
+        </div>
+      </div>
+    </form>
   </div>
 </div>
 {% endblock %}

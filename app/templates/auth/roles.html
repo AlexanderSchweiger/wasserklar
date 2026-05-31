@@ -54,9 +54,10 @@
               <a href="{{ url_for('auth.role_edit', role_id=r.id) }}" class="btn btn-sm btn-outline-secondary">
                 <i class="fas fa-edit"></i>
               </a>
-              <form method="post" action="{{ url_for('auth.role_delete', role_id=r.id) }}"
-                    class="d-inline"
-                    onsubmit="return confirm('Rolle „{{ r.name }}“ wirklich löschen?');">
+              <form method=”post” action=”{{ url_for('auth.role_delete', role_id=r.id) }}”
+                    class=”d-inline”
+                    hx-boost=”false”
+                    onsubmit=”return confirm('Rolle „{{ r.name }}” wirklich löschen?');”>
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn btn-sm btn-outline-danger"
                         {{ 'disabled' if user_counts.get(r.id, 0) }}>

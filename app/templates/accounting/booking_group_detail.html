@@ -86,6 +86,7 @@
         </a>
         <form method="post" action="{{ url_for('accounting.booking_group_delete', group_id=group.id) }}"
               style="display:inline"
+              hx-boost="false"
               onsubmit="return confirm('Sammelbuchung wirklich löschen? Alle {{ group.children|rejectattr('storno_of_id')|list|length }} Zeilen werden entfernt.');">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button type="submit" class="btn btn-sm btn-outline-danger ms-1">

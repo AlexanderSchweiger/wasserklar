@@ -69,6 +69,7 @@
                             </form>
                             <form method="post" action="{{ url_for('dunning.policy_delete', policy_id=p.id) }}"
                                   class="d-inline"
+                                  hx-boost="false"
                                   onsubmit="return confirm('Mahnvorlage &quot;{{ p.name }}&quot; wirklich löschen?')">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                 <button type="submit" class="btn btn-sm btn-outline-danger">

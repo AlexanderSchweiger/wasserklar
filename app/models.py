@@ -715,7 +715,7 @@ class BillingRun(db.Model):
         ("customer_name",   "Kundenname"),
         ("customer_number", "Kundennummer"),
         ("object_number",   "Objektnummer"),
-        ("address",         "Objektadresse (Ort, Hausnummer)"),
+        ("address",         "Objektadresse (Straße, Hausnummer)"),
     ]
 
     created_by = db.relationship("User", foreign_keys=[created_by_id])

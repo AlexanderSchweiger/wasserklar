@@ -1,0 +1,29 @@
+{# Modal-Body fuer den "+"-Fall, in dem fuer diesen Zaehler bereits in ALLEN
+   Abrechnungsperioden ein Stand existiert. Es gibt keine Periode, in die ein
+   NEUER Stand passt (1 Stand pro Periode) -> statt still zu ueberschreiben,
+   wird hier ein Hinweis gezeigt und der Speichern-Button des Modals
+   ausgeblendet. #}
+<div class="text-center py-3">
+  <div class="mb-3 text-muted"><i class="fas fa-circle-info fa-2x"></i></div>
+  <p class="mb-1"><strong>Kein offener Abrechnungszeitraum</strong></p>
+  <p class="text-muted mb-3">
+    Für den Zähler <code>{{ meter.meter_number }}</code> ist in allen
+    Abrechnungsperioden bereits ein Stand erfasst. Um einen weiteren Stand
+    anzulegen, lege zuerst eine neue Abrechnungsperiode an. Einen bestehenden
+    Stand änderst du über den Bearbeiten-Button.
+  </p>
+  <a href="{{ url_for('periods.new') }}" class="btn btn-primary">
+    <i class="fas fa-plus me-1"></i> Neue Abrechnungsperiode
+  </a>
+</div>
+<script>
+(function () {
+  // In diesem Hinweis-Zustand gibt es nichts zu speichern -> Speichern-Button
+  // des Modals ausblenden. Beim naechsten regulaeren Formular-Load
+  // (_reading_form_body.html) wird er wieder eingeblendet.
+  var btn = document.querySelector('#readingEditForm button[type="submit"]');
+  if (btn) btn.style.display = 'none';
+  var titleEl = document.querySelector('[data-reading-modal-title]');
+  if (titleEl) titleEl.textContent = 'Zählerstand erfassen';
+})();
+</script>

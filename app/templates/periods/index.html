@@ -53,6 +53,7 @@
               </a>
               {% if not period.active %}
               <form method="post" action="{{ url_for('periods.delete', period_id=period.id) }}"
+                    hx-boost="false"
                     onsubmit="return confirm('Periode \'{{ period.name }}\' wirklich löschen?')">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn btn-outline-danger btn-sm" title="Löschen">

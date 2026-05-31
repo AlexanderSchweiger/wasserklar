@@ -112,6 +112,7 @@
           </a>
           <form method="post" action="{{ url_for('accounting.booking_group_delete', group_id=g.id) }}"
                 style="display:inline"
+                hx-boost="false"
                 onsubmit="return confirm('Sammelbuchung wirklich löschen? Alle {{ effective_children|length }} Zeilen werden entfernt.');">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-sm btn-outline-danger" title="Löschen">
@@ -362,6 +363,7 @@
         </a>
         <form method="post" action="{{ url_for('accounting.booking_delete', booking_id=b.id) }}"
               style="display:inline"
+              hx-boost="false"
               onsubmit="return confirm('Buchung wirklich löschen?')">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button type="submit" class="btn btn-sm btn-outline-danger" title="Löschen">

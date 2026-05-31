@@ -42,6 +42,7 @@
           {% if bookings|length == 0 %}
           <form method="post" action="{{ url_for('projects.delete', project_id=project.id) }}"
                 style="display:inline"
+                hx-boost="false"
                 onsubmit="return confirm('Projekt „{{ project.name }}" wirklich löschen?')">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-sm btn-outline-danger ms-1">

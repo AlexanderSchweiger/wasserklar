@@ -64,6 +64,7 @@
           <td class="text-end text-nowrap fw-bold">{{ t.amount|de_number }} €</td>
           <td class="text-end">
             <form method="post" action="{{ url_for('accounting.transfer_delete', transfer_id=t.id) }}"
+                  hx-boost="false"
                   onsubmit="return confirm('Umbuchung wirklich löschen?')">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button type="submit" class="btn btn-sm btn-outline-danger" title="Löschen">

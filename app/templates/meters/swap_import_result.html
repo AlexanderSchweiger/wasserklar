@@ -4,7 +4,7 @@
 {% block content %}
 <div class="row">
   <div class="col-md-6">
-    <div class="card {% if stats.errors %}border-danger{% elif stats.skipped_error %}border-warning{% else %}border-success{% endif %}">
+    <div class="card {% if stats.errors %}border-danger{% elif stats.skipped_error or stats.warnings %}border-warning{% else %}border-success{% endif %}">
       <div class="card-header">
         <h3 class="card-title">Import abgeschlossen</h3>
       </div>
@@ -55,6 +55,26 @@
         {% endfor %}
         {% if stats.errors|length > 50 %}
         <li><em>… und {{ stats.errors|length - 50 }} weitere Fehler.</em></li>
+        {% endif %}
+      </ul>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% if stats.warnings %}
+<div class="row mt-2">
+  <div class="col-md-10">
+    <div class="alert alert-warning">
+      <h6 class="alert-title"><i class="fas fa-exclamation-triangle me-1"></i>
+        Hinweise ({{ stats.warnings|length }}) — bitte prüfen
+      </h6>
+      <ul class="mb-0" style="font-size:.875rem">
+        {% for w in stats.warnings[:50] %}
+        <li>{{ w }}</li>
+        {% endfor %}
+        {% if stats.warnings|length > 50 %}
+        <li><em>… und {{ stats.warnings|length - 50 }} weitere Hinweise.</em></li>
         {% endif %}
       </ul>
     </div>

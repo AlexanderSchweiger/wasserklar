@@ -276,12 +276,12 @@ def _billing_run_sort_key(prop_readings, sort_order):
         rest = on[m.end():].casefold() if m else on.casefold()
         return (1 if not on else 0, num, rest)
 
-    # "address": Ort alphabetisch, dann Hausnummer numerisch (Zusätze ignorieren)
-    ort = (prop.ort or "\xff").casefold()
+    # "address": Straße alphabetisch, dann Hausnummer numerisch (Zusätze ignorieren)
+    strasse = (prop.strasse or "\xff").casefold()
     hn = prop.hausnummer or ""
-    m = _HAUSNUMMER_RE.match(hn)
+    m = _HAUSNUMMER_RE.search(hn)
     hn_num = int(m.group(1)) if m else 999_999_999
-    return (ort, hn_num)
+    return (strasse, hn_num)
 
 
 @bp.route("/generate", methods=["GET", "POST"])
@@ -1491,12 +1491,54 @@ def billing_run_delete(run_id):
         )
         return redirect(url_for("invoices.billing_run_detail", run_id=run_id))
 
+    # Jahre der gelöschten Rechnungen für optionalen Zähler-Reset merken
+    reset_counter = request.form.get("reset_counter") == "1"
+    years_to_reset = set()
+    if reset_counter and deletable:
+        for inv in deletable:
+            try:
+                years_to_reset.add(int(inv.invoice_number.split("-")[0]))
+            except (ValueError, IndexError):
+                pass
+
     # Alle löschbar
     for inv in deletable:
         db.session.delete(inv)
     db.session.delete(run)
     db.session.commit()
-    flash(f"Rechnungslauf und {len(deletable)} Rechnung(en) wurden gelöscht.", "success")
+
+    if years_to_reset:
+        reset_parts = []
+        for year in sorted(years_to_reset):
+            prefix = f"{year}-"
+            last = (
+                Invoice.query
+                .filter(Invoice.invoice_number.like(f"{prefix}%"))
+                .order_by(Invoice.invoice_number.desc())
+                .first()
+            )
+            if last:
+                try:
+                    new_seq = int(last.invoice_number.split("-")[-1]) + 1
+                except ValueError:
+                    new_seq = 1
+            else:
+                new_seq = 1
+            counter = db.session.get(InvoiceCounter, year)
+            if counter is None:
+                counter = InvoiceCounter(year=year, next_seq=new_seq)
+                db.session.add(counter)
+            else:
+                counter.next_seq = new_seq
+            reset_parts.append(f"Zähler {year} → {new_seq:05d}")
+        db.session.commit()
+        flash(
+            f"Rechnungslauf und {len(deletable)} Rechnung(en) gelöscht. "
+            f"Rechnungsnummern-Zähler zurückgesetzt: {', '.join(reset_parts)}.",
+            "success",
+        )
+    else:
+        flash(f"Rechnungslauf und {len(deletable)} Rechnung(en) wurden gelöscht.", "success")
     return redirect(url_for("invoices.billing_runs"))
 
 

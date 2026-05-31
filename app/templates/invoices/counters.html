@@ -41,6 +41,7 @@
                 <div class="d-flex" style="gap:6px; flex-wrap:wrap">
                   <form method="post"
                         action="{{ url_for('invoices.counter_reset', year=row.year) }}"
+                        hx-boost="false"
                         onsubmit="return confirm('Zähler für {{ row.year }} automatisch zurücksetzen?')">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="mode" value="auto">
@@ -51,6 +52,7 @@
                   <form method="post"
                         action="{{ url_for('invoices.counter_reset', year=row.year) }}"
                         class="d-flex" style="gap:4px"
+                        hx-boost="false"
                         onsubmit="return confirm('Zähler für {{ row.year }} manuell setzen?')">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="mode" value="manual">

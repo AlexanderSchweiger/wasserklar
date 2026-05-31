@@ -669,7 +669,7 @@ def booking_group_from_invoice_payment(
 ):
     """Erzeugt (bei Bedarf) eine Sammelbuchung für eine Rechnungs-Zahlung.
 
-    Regel (ADR-002): Liefert der Split nach ``(account_id, project_id, tax_rate)``
+    Regel (ADR-002): Liefert der Split nach ``(project_id, tax_rate)``
     genau eine Zeile, wird eine einfache Einzelbuchung angelegt (kein
     ``BookingGroup``-Eintrag). Bei ≥ 2 Zeilen wird ein Gruppen-Header plus
     pro Split-Zeile ein Kind angelegt.

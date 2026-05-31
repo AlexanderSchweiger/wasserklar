@@ -106,6 +106,7 @@
                     {% if notice.status == 'Aktiv' and notice.invoice.customer.wants_email %}
                     <form method="post" action="{{ url_for('dunning.notice_send_email', notice_id=notice.id) }}"
                           class="d-inline"
+                          hx-boost="false"
                           onsubmit="return confirm('Mahnung per E-Mail an {{ notice.invoice.customer.email }} senden?')">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button type="submit" class="btn btn-outline-success">
@@ -209,6 +210,7 @@
                 </div>
                 <div class="card-body">
                     <form method="post" action="{{ url_for('dunning.notice_reset', notice_id=notice.id) }}"
+                          hx-boost="false"
                           onsubmit="return confirm('Mahnung Stufe {{ notice.level_snapshot }} wirklich zurücksetzen?')">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <div class="mb-3">

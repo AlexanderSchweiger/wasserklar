@@ -132,8 +132,36 @@
                       </td>
                     </tr>
                     {% endfor %}
+                    {# Plus-Button direkt nach dem letzten Ablesewert: neuen
+                       Stand fuer GENAU diesen Zaehler erfassen (Ablese-Modal,
+                       data-url ohne period_id -> aktive Periode vorausgewaehlt).
+                       Auch fuer ausgebaute Zaehler verfuegbar (z.B. nachtraegliche
+                       Abschlussablesung). #}
+                    <tr>
+                      <td class="py-0" colspan="3"><small class="text-muted">Neuen Stand erfassen</small></td>
+                      <td class="py-0 text-end">
+                        <button type="button"
+                          data-url="{{ url_for('meters.add_reading', meter_id=meter.id) }}"
+                          onclick="openReadingModal(this)"
+                          class="btn btn-xs btn-outline-success"
+                          title="Neuen Zählerstand für diesen Zähler erfassen">
+                          <i class="fas fa-plus"></i>
+                        </button>
+                      </td>
+                    </tr>
                   </tbody>
                 </table>
+                {% else %}
+                {# Noch keine Ablesung — direkter Einstieg zum ersten Stand. #}
+                <div class="mt-2">
+                  <button type="button"
+                    data-url="{{ url_for('meters.add_reading', meter_id=meter.id) }}"
+                    onclick="openReadingModal(this)"
+                    class="btn btn-xs btn-outline-success"
+                    title="Ersten Zählerstand für diesen Zähler erfassen">
+                    <i class="fas fa-plus me-1"></i> Stand erfassen
+                  </button>
+                </div>
                 {% endif %}
               </span>
               {# Buttons in derselben Groesse wie im Zaehler-Listing-Table

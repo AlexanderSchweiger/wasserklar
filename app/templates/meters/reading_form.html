@@ -25,3 +25,14 @@
   </form>
 </div>
 {% endblock %}
+
+{% block scripts %}
+<script>
+// Standalone-Fallback: der Loeschen-Button im Form-Body feuert (wie der Modal-
+// Flow) ein `readingSaved`-Event. Ausserhalb des Modals gibt es dafuer keinen
+// Handler — hier einfach zurueck zur Ablesungs-Liste navigieren.
+document.addEventListener('readingSaved', function () {
+  window.location.href = "{{ url_for('meters.readings', period_id=period.id if period else none) }}";
+});
+</script>
+{% endblock %}

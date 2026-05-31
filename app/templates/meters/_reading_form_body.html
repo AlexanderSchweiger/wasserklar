@@ -1,4 +1,16 @@
 {% include "_flash_inline.html" %}
+
+{# Zaehler wird nur angezeigt (nicht waehlbar) — das Modal wird immer fuer einen
+   konkreten Zaehler geoeffnet. Anzeige: Zählernummer · Objektnummer · Kundenname. #}
+<div class="mb-3">
+  <label class="form-label">Wasserzähler</label>
+  <div class="form-control-plaintext py-0">
+    <code>{{ meter.meter_number }}</code>
+    <span class="text-muted">· Obj. {{ meter.property.object_number or '—' }}
+      · {{ owner_display or 'kein Eigentümer' }}</span>
+  </div>
+</div>
+
 {% if existing %}
 <div class="alert alert-warning">
   <div class="d-flex align-items-start gap-2">
@@ -11,10 +23,11 @@
 </div>
 {% endif %}
 
-{% if prev_value is not none %}
+{% if prev_date_display %}
 <div class="alert alert-info">
   <h6 class="alert-title">Letzter Stand</h6>
-  <p class="mb-0"><strong>{{ prev_value }} m³</strong></p>
+  <p class="mb-0"><strong>{{ prev_value }} m³</strong>
+    <small class="text-muted ms-2">vom {{ prev_date_display }}</small></p>
 </div>
 {% elif meter.initial_value is not none %}
 <div class="alert alert-warning">
@@ -77,13 +90,43 @@
   </div>
 </div>
 
+{% if existing %}
+{# Loeschen des gesamten Zaehlerstands. type=button, damit der Modal-Submit-
+   Handler (Speichern) nicht feuert; loest stattdessen einen eigenen HTMX-POST
+   aus. Antwort 204 + HX-Trigger (closeReadingModal/readingSaved) — identische
+   Refresh-Semantik wie Speichern, daher schliesst das Modal und die Seite
+   laedt nach. Serverseitig wird die Verbrauchskette neu gerechnet. #}
+<div class="mt-3 pt-3 border-top">
+  <button type="button" class="btn btn-outline-danger"
+    hx-post="{{ url_for('meters.reading_delete', reading_id=existing.id) }}"
+    hx-headers='{"X-From-Modal": "1"}'
+    hx-swap="none"
+    hx-confirm="Diesen Zählerstand wirklich löschen? Der Verbrauch der folgenden Ablesung wird neu berechnet.">
+    <i class="fas fa-trash me-1"></i> Zählerstand löschen
+  </button>
+</div>
+{% endif %}
+
 <script>
 (function () {
+  // Modal-Titel passend zu Neu/Bearbeiten setzen (nur im Modal-Kontext; auf der
+  // Standalone-Seite existiert das Element nicht).
+  var titleEl = document.querySelector('[data-reading-modal-title]');
+  if (titleEl) {
+    titleEl.textContent = {{ ('Zählerstand bearbeiten' if existing else 'Zählerstand erfassen')|tojson }};
+  }
+  // Speichern-Button wieder einblenden, falls ein vorheriger "kein offener
+  // Zeitraum"-Hinweis (_reading_no_open_period.html) ihn versteckt hat.
+  var saveBtn = document.querySelector('#readingEditForm button[type="submit"]');
+  if (saveBtn) saveBtn.style.display = '';
+
   var prevValue = {{ prev_value if prev_value is not none else 'null' }};
+  var prevDate = {{ (prev_date|tojson) if prev_date else 'null' }};
   var avgConsumption = {{ avg_consumption if avg_consumption is not none else 'null' }};
   var oldConsumption = {{ old_consumption if old_consumption is not none else 'null' }};
 
   var input = document.getElementById('valueInput');
+  var dateInput = input && input.form ? input.form.querySelector('[name="reading_date"]') : null;
   var box = document.getElementById('consumptionBox');
   var okBox = document.getElementById('consumptionOk');
   var negBox = document.getElementById('consumptionNegative');
@@ -94,6 +137,13 @@
   function update() {
     var val = parseInt(input.value, 10);
     if (isNaN(val) || prevValue === null) {
+      box.classList.add('d-none');
+      return;
+    }
+    // Obsolet: liegt das eingegebene Ablesedatum VOR dem Datum des letzten
+    // Stands, ergibt die Differenz zum letzten Stand keinen Sinn -> nichts
+    // anzeigen. (ISO-Datumsstrings vergleichen lexikografisch korrekt.)
+    if (prevDate && dateInput && dateInput.value && dateInput.value < prevDate) {
       box.classList.add('d-none');
       return;
     }
@@ -135,6 +185,7 @@
   }
 
   input.addEventListener('input', update);
+  if (dateInput) dateInput.addEventListener('change', update);
   if (input.value) update();
 })();
 </script>
