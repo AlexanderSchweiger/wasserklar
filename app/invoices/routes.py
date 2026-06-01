@@ -403,31 +403,7 @@ def generate():
             db.session.add(inv)
             db.session.flush()
 
-            # Grundgebühr (nur wenn explizit hinterlegt, auch 0 erzeugt eine Position)
-            if effective_base_fee is not None:
-                db.session.add(InvoiceItem(
-                    invoice_id=inv.id,
-                    description=base_fee_label,
-                    quantity=1,
-                    unit="Jahr",
-                    unit_price=effective_base_fee,
-                    amount=effective_base_fee,
-                    tax_rate=water_tax,
-                ))
-
-            # Zusatzgebühr (nur wenn explizit hinterlegt, auch 0 erzeugt eine Position)
-            if effective_additional_fee is not None:
-                db.session.add(InvoiceItem(
-                    invoice_id=inv.id,
-                    description=additional_fee_label,
-                    quantity=1,
-                    unit="Jahr",
-                    unit_price=effective_additional_fee,
-                    amount=effective_additional_fee,
-                    tax_rate=water_tax,
-                ))
-
-            # Verbrauchspositionen
+            # Verbrauchspositionen (immer an erster Stelle)
             is_replacement = len(prop_readings) > 1
             print_meter_swap = AppSetting.get('invoice.print_meter_swap') == 'true'
             total_consumption = sum(
@@ -462,10 +438,11 @@ def generate():
                     ))
             else:
                 # Eine Zeile mit Gesamtverbrauch (Standard)
+                price_str = str(tariff.price_per_m3).replace(".", ",")
                 desc = (
                     f"Wasserverbrauch {period.name}"
                     f" ({total_consumption.quantize(Decimal('1'))} m³"
-                    f" × {tariff.price_per_m3} €/m³)"
+                    f" × {price_str} €/m³)"
                 )
                 amount = (total_consumption * tariff.price_per_m3).quantize(Decimal("0.01"))
                 db.session.add(InvoiceItem(
@@ -475,6 +452,30 @@ def generate():
                     unit="m³",
                     unit_price=tariff.price_per_m3,
                     amount=amount,
+                    tax_rate=water_tax,
+                ))
+
+            # Grundgebühr (nur wenn explizit hinterlegt, auch 0 erzeugt eine Position)
+            if effective_base_fee is not None:
+                db.session.add(InvoiceItem(
+                    invoice_id=inv.id,
+                    description=base_fee_label,
+                    quantity=1,
+                    unit="Pauschal",
+                    unit_price=effective_base_fee,
+                    amount=effective_base_fee,
+                    tax_rate=water_tax,
+                ))
+
+            # Zusatzgebühr (nur wenn explizit hinterlegt, auch 0 erzeugt eine Position)
+            if effective_additional_fee is not None:
+                db.session.add(InvoiceItem(
+                    invoice_id=inv.id,
+                    description=additional_fee_label,
+                    quantity=1,
+                    unit="Pauschal",
+                    unit_price=effective_additional_fee,
+                    amount=effective_additional_fee,
                     tax_rate=water_tax,
                 ))
 
@@ -640,12 +641,24 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
             if not tariff:
                 continue
             consumption = _dec(row_consumptions, i)
+            price_str = str(tariff.price_per_m3).replace(".", ",")
+            amount = (consumption * tariff.price_per_m3).quantize(Decimal("0.01"))
+            db.session.add(InvoiceItem(
+                invoice_id=inv.id,
+                description=f"Wasserverbrauch ({consumption.quantize(Decimal('1'))} m³ × {price_str} €/m³)",
+                quantity=consumption,
+                unit="m³",
+                unit_price=tariff.price_per_m3,
+                amount=amount,
+                tax_rate=water_tax,
+                project_id=row_project_id,
+            ))
             if tariff.base_fee is not None:
                 db.session.add(InvoiceItem(
                     invoice_id=inv.id,
                     description=tariff.base_fee_label or "Grundgebühr",
                     quantity=Decimal("1"),
-                    unit="Jahr",
+                    unit="Pauschal",
                     unit_price=tariff.base_fee,
                     amount=tariff.base_fee,
                     tax_rate=water_tax,
@@ -656,23 +669,12 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
                     invoice_id=inv.id,
                     description=tariff.additional_fee_label or "Zusatzgebühr",
                     quantity=Decimal("1"),
-                    unit="Jahr",
+                    unit="Pauschal",
                     unit_price=tariff.additional_fee,
                     amount=tariff.additional_fee,
                     tax_rate=water_tax,
                     project_id=row_project_id,
                 ))
-            amount = (consumption * tariff.price_per_m3).quantize(Decimal("0.01"))
-            db.session.add(InvoiceItem(
-                invoice_id=inv.id,
-                description=f"Wasserverbrauch ({consumption.quantize(Decimal("1"))} m³ × {tariff.price_per_m3} €/m³)",
-                quantity=consumption,
-                unit="m³",
-                unit_price=tariff.price_per_m3,
-                amount=amount,
-                tax_rate=water_tax,
-                project_id=row_project_id,
-            ))
         elif rtype == "water":
             consumption = _dec(row_consumptions, i)
             unit_price = _dec(row_unit_prices, i)
