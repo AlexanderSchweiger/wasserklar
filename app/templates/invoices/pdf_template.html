@@ -13,7 +13,7 @@
   .invoice-logo { max-height: 60px; max-width: 220px; margin-bottom: 6px; }
   .sender-name { color: {{ design.heading_color }}; }
   .sender-info { font-size: 9pt; color: {{ design.muted_color }}; }
-  .contact-info { color: {{ design.accent_color }}; }
+  .contact-info { color: {{ design.accent_color }}; line-height: 1.15; }
   .recipient { margin-top: 0.5cm; }
   .invoice-meta { float: right; text-align: right; margin-bottom: 1cm; }
   .invoice-meta strong { color: {{ design.meta_label_color }}; }
@@ -68,13 +68,10 @@
 
 <div class="header">
   <div>
-    {% if wg.logo %}<img class="invoice-logo" src="{{ wg.logo }}" alt="{{ wg.name }}"><br>{% endif %}
-    <strong class="sender-name">{{ wg.name }}</strong><br>
-    <span class="sender-info">{{ wg.address | replace('\n', '<br>') | replace('\\n', '<br>') | safe }}</span>
+    {% if wg.logo %}<img class="invoice-logo" src="{{ wg.logo }}" alt="{{ wg.name }}">{% endif %}
   </div>
   <div class="contact-info">
-    {% if wg.email %}<div>{{ wg.email }}</div>{% endif %}
-    {% if wg.phone %}<div>{{ wg.phone }}</div>{% endif %}
+    {% if contact_info %}<div style="font-size:{{ contact_info_font_size | default(10) }}pt">{{ contact_info | safe }}</div>{% endif %}
   </div>
 </div>
 
@@ -85,7 +82,6 @@
   {% if invoice.customer.customer_number %}<strong>Kundennummer:</strong> {{ invoice.customer.customer_number }}<br>{% endif %}
   <strong>Fällig bis:</strong> {{ invoice.due_date.strftime('%d.%m.%Y') if invoice.due_date else '—' }}<br>
   {% if invoice.billing_period %}<strong>Abrechnungsperiode:</strong> {{ invoice.billing_period.name }}<br>{% endif %}
-  {% if contact_info %}<div class="contact-info-block">{{ contact_info | safe }}</div>{% endif %}
 </div>
 
 <div class="recipient">
@@ -160,7 +156,7 @@
   {% if invoice.due_date %}bis zum {{ invoice.due_date.strftime('%d.%m.%Y') }} {% endif %}auf unser Konto einzuzahlen:<br>
   {% if wg.iban %}IBAN: <strong>{{ wg.iban }}</strong><br>{% endif %}
   {% if wg.bic %}BIC: <strong>{{ wg.bic }}</strong><br>{% endif %}
-  Empfänger: {{ wg.name }}<br>
+  Empfänger: {{ wg.account_holder or wg.name }}<br>
   Verwendungszweck: <strong>{{ invoice.invoice_number }}</strong>
 </div>
 

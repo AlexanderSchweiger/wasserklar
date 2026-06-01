@@ -1,5 +1,6 @@
 """Hilfsfunktionen zur Rechnungsdokument-Generierung."""
 import io
+import re
 from decimal import Decimal
 from html.parser import HTMLParser
 
@@ -97,14 +98,22 @@ def _remove_table_borders(table):
     tblPr.append(tblBorders)
 
 
+_FONT_SIZE_RE = re.compile(r'font-size\s*:\s*(\d+(?:\.\d+)?)\s*pt', re.IGNORECASE)
+
+
 class _RichTextRunParser(HTMLParser):
-    """Parst das normalisierte Kontakttext-HTML (<b>/<i>/<u>/<br>) in Zeilen
-    von Runs: Liste von Zeilen, jede Zeile = Liste (text, bold, italic, underline)."""
+    """Parst das Kontakttext-HTML in Zeilen von Runs:
+    Liste von Zeilen, jede Zeile = Liste (text, bold, italic, underline, font_size_pt|None)."""
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.lines = [[]]
         self._b = self._i = self._u = False
+        self._font_sizes = []  # Stack für verschachtelte font-size-Spans
+
+    @property
+    def _font_size(self):
+        return self._font_sizes[-1] if self._font_sizes else None
 
     def handle_starttag(self, tag, attrs):
         if tag == "b":
@@ -115,6 +124,10 @@ class _RichTextRunParser(HTMLParser):
             self._u = True
         elif tag == "br":
             self.lines.append([])
+        elif tag == "span":
+            style = dict(attrs).get('style', '')
+            m = _FONT_SIZE_RE.search(style)
+            self._font_sizes.append(int(float(m.group(1))) if m else None)
 
     def handle_startendtag(self, tag, attrs):
         if tag == "br":
@@ -127,10 +140,12 @@ class _RichTextRunParser(HTMLParser):
             self._i = False
         elif tag == "u":
             self._u = False
+        elif tag == "span" and self._font_sizes:
+            self._font_sizes.pop()
 
     def handle_data(self, data):
         if data:
-            self.lines[-1].append((data, self._b, self._i, self._u))
+            self.lines[-1].append((data, self._b, self._i, self._u, self._font_size))
 
 
 def _parse_rich_text(html: str) -> list:
@@ -143,7 +158,8 @@ def _parse_rich_text(html: str) -> list:
 
 
 def generate_docx(invoice, wg: dict, design: dict | None = None,
-                   contact_info: str | None = None) -> bytes:
+                   contact_info: str | None = None,
+                   contact_info_font_size: int | None = None) -> bytes:
     """Erstellt ein Word-Dokument (.docx) für die übergebene Rechnung.
 
     Parameters
@@ -169,12 +185,14 @@ def generate_docx(invoice, wg: dict, design: dict | None = None,
     if contact_info is None:
         from app.settings_service import get_contact_info
         contact_info = get_contact_info()
+    if contact_info_font_size is None:
+        from app.settings_service import get_contact_info_font_size
+        contact_info_font_size = get_contact_info_font_size()
 
     font_name = design.get("docx_font", "Arial")
     text_rgb = _hex_to_rgb(design.get("text_color", "#333333"))
     muted_rgb = _hex_to_rgb(design.get("muted_color", "#666666"))
     heading_rgb = _hex_to_rgb(design.get("heading_color", "#333333"))
-    accent_rgb = _hex_to_rgb(design.get("accent_color", "#333333"))
     rule_hex = _hex_fill(design.get("rule_color", "#333333"))
     header_bg_hex = _hex_fill(design.get("header_bg", "#F0F0F0"))
     payment_bg_hex = _hex_fill(design.get("payment_bg", "#F9F9F9"))
@@ -200,29 +218,30 @@ def generate_docx(invoice, wg: dict, design: dict | None = None,
     header_tbl.columns[0].width = Cm(10)
     header_tbl.columns[1].width = Cm(6)
 
+    # Linke Spalte bleibt leer: die WG-Identitaet (Name/Adresse/E-Mail/Telefon)
+    # wird nicht mehr automatisch gesetzt — der Briefkopf besteht jetzt allein aus
+    # dem frei gestaltbaren Kontaktinfo-Block (rechts).
     left_cell = header_tbl.cell(0, 0)
-    p_name = left_cell.paragraphs[0]
-    run_name = p_name.add_run(wg.get("name", ""))
-    run_name.bold = True
-    run_name.font.size = Pt(12)
-    run_name.font.color.rgb = heading_rgb
-
-    address = wg.get("address", "")
-    if address:
-        for line in address.replace("\\n", "\n").split("\n"):
-            p_addr = left_cell.add_paragraph(line.strip())
-            p_addr.runs[0].font.size = Pt(9)
-            p_addr.runs[0].font.color.rgb = muted_rgb
+    left_cell.paragraphs[0].clear()
 
     right_cell = header_tbl.cell(0, 1)
     right_cell.paragraphs[0].clear()
-    for key, label in [("email", None), ("phone", None)]:
-        val = wg.get(key, "")
-        if val:
-            p = right_cell.add_paragraph(val)
-            p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-            p.runs[0].font.size = Pt(9)
-            p.runs[0].font.color.rgb = accent_rgb
+    rt_first = True
+    for line in _parse_rich_text(contact_info):
+        p = right_cell.paragraphs[0] if rt_first else right_cell.add_paragraph()
+        rt_first = False
+        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        # Enger Zeilenabstand im Kontaktblock (kein Absatzabstand, einfache Höhe).
+        pf = p.paragraph_format
+        pf.space_before = Pt(0)
+        pf.space_after = Pt(0)
+        pf.line_spacing = 1.0
+        for text, bold, italic, underline, run_font_size in line:
+            run = p.add_run(text)
+            run.font.size = Pt(run_font_size if run_font_size is not None else contact_info_font_size)
+            run.bold = bold
+            run.italic = italic
+            run.underline = underline
     # Leere erste Zeile in right_cell entfernen
     if not right_cell.paragraphs[0].text:
         right_cell.paragraphs[0]._element.getparent().remove(right_cell.paragraphs[0]._element)
@@ -286,16 +305,6 @@ def generate_docx(invoice, wg: dict, design: dict | None = None,
         run_lbl.bold = True
         run_lbl.font.color.rgb = heading_rgb
         p.add_run(value)
-
-    for line in _parse_rich_text(contact_info):
-        p = meta_cell.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        for text, bold, italic, underline in line:
-            run = p.add_run(text)
-            run.font.size = Pt(10)
-            run.bold = bold
-            run.italic = italic
-            run.underline = underline
 
     # ── Überschrift ───────────────────────────────────────────────────────
     heading = doc.add_heading(f"Rechnung {invoice.invoice_number}", level=1)
@@ -410,7 +419,8 @@ def generate_docx(invoice, wg: dict, design: dict | None = None,
     if wg.get("bic"):
         p_bic = payment_cell.add_paragraph("BIC: ")
         p_bic.add_run(wg["bic"]).bold = True
-    payment_cell.add_paragraph(f"Empfänger: {wg.get('name', '')}")
+    payment_cell.add_paragraph(
+        f"Empfänger: {wg.get('account_holder') or wg.get('name', '')}")
     p_ref = payment_cell.add_paragraph("Verwendungszweck: ")
     p_ref.add_run(invoice.invoice_number).bold = True
 

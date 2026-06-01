@@ -23,11 +23,6 @@
       </a>
     </li>
     <li class="nav-item" role="presentation">
-      <a class="nav-link" id="tab-briefe" data-bs-toggle="tab" href="#pane-briefe" role="tab">
-        <i class="fas fa-envelope-open-text me-1"></i> Briefe/Rechnungen
-      </a>
-    </li>
-    <li class="nav-item" role="presentation">
       <a class="nav-link" id="tab-zaehler" data-bs-toggle="tab" href="#pane-zaehler" role="tab">
         <i class="fas fa-tachometer-alt me-1"></i> Zähler
       </a>
@@ -62,22 +57,6 @@
             <label class="form-label">Adresse <small class="text-muted">(Zeilenumbruch mit \n)</small></label>
             <textarea name="wg_address" class="form-control" rows="3"
                       placeholder="Musterstraße 1\n1234 Musterdorf">{{ wg.address }}</textarea>
-          </div>
-          <div class="row g-2">
-            <div class="col-md-7">
-              <div class="mb-3">
-                <label class="form-label">IBAN</label>
-                <input type="text" name="wg_iban" class="form-control"
-                       value="{{ wg.iban }}" placeholder="AT12 3456 …">
-              </div>
-            </div>
-            <div class="col-md-5">
-              <div class="mb-3">
-                <label class="form-label">BIC</label>
-                <input type="text" name="wg_bic" class="form-control"
-                       value="{{ wg.bic }}" placeholder="XXXXATXX">
-              </div>
-            </div>
           </div>
           <div class="mb-3">
             <label class="form-label">E-Mail</label>
@@ -115,6 +94,84 @@
 
             <input type="hidden" name="wg_logo_data" id="logoDataInput">
           </div>
+        </div>
+      </div>
+
+      {# ── Bankdaten ──────────────────────────────────────────────────── #}
+      <div class="card mt-3">
+        <div class="card-header">
+          <h3 class="card-title"><i class="fas fa-university me-1"></i> Bankdaten</h3>
+        </div>
+        <div class="card-body">
+          <div class="row g-2">
+            <div class="col-md-7">
+              <div class="mb-3">
+                <label class="form-label">IBAN</label>
+                <input type="text" name="wg_iban" class="form-control"
+                       value="{{ wg.iban }}" placeholder="AT12 3456 …">
+              </div>
+            </div>
+            <div class="col-md-5">
+              <div class="mb-3">
+                <label class="form-label">BIC</label>
+                <input type="text" name="wg_bic" class="form-control"
+                       value="{{ wg.bic }}" placeholder="XXXXATXX">
+              </div>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Kontoinhaber</label>
+            <input type="text" name="wg_account_holder" class="form-control"
+                   value="{{ wg.account_holder }}" placeholder="Wassergenossenschaft Musterdorf">
+            <div class="form-text">
+              Muss exakt dem bei der Bank hinterlegten Kontoinhaber entsprechen –
+              sonst zeigen Banken bei Überweisungen eine Empfänger-Warnung an.
+            </div>
+          </div>
+          <div class="alert alert-info mb-0">
+            <i class="fas fa-info-circle me-1"></i>
+            Die Bankdaten werden ausschließlich auf Rechnungen angezeigt und haben
+            sonst keinerlei weitere Behandlung.
+          </div>
+        </div>
+      </div>
+
+      {# ── Kontaktinfo auf Rechnung ───────────────────────────────────── #}
+      <div class="card mt-3">
+        <div class="card-header">
+          <h3 class="card-title"><i class="fas fa-envelope-open-text me-1"></i> Kontaktinfo auf Rechnung</h3>
+        </div>
+        <div class="card-body">
+          <div class="form-text mb-2">
+            Erscheint auf der Rechnung im Adressblock rechts – z.&nbsp;B. Ansprechpartner
+            (Obmann, Kassier) mit Telefonnummer. Text kann <strong>fett</strong> und
+            <em>kursiv</em> formatiert werden. Die Schriftgröße gilt für den markierten
+            Text – z.&nbsp;B. eine ganze Zeile markieren, um sie größer oder kleiner zu machen.
+          </div>
+          <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+            <div class="btn-group btn-group-sm" role="group" aria-label="Formatierung">
+              <button type="button" class="btn btn-outline-secondary" data-rt-cmd="bold"
+                      title="Fett"><strong>F</strong></button>
+              <button type="button" class="btn btn-outline-secondary" data-rt-cmd="italic"
+                      title="Kursiv"><em>K</em></button>
+              <button type="button" class="btn btn-outline-secondary" data-rt-cmd="underline"
+                      title="Unterstrichen"><u>U</u></button>
+            </div>
+            <select id="contactInfoFontSize"
+                    class="form-select form-select-sm" style="width:auto"
+                    title="Schriftgröße auf den markierten Text anwenden">
+              <option value="" disabled selected>Schriftgröße …</option>
+              {% for pt in range(6, 25) %}
+              <option value="{{ pt }}">{{ pt }} pt</option>
+              {% endfor %}
+            </select>
+            <button type="button" class="btn btn-outline-secondary btn-sm" id="contactInfoAdopt">
+              <i class="fas fa-download me-1"></i> Felder übernehmen
+            </button>
+          </div>
+          <div id="contactInfoEditor" class="form-control" contenteditable="true"
+               style="min-height:8rem;line-height:1.15;font-size:{{ invoice_contact_info_font_size }}pt">{{ invoice_contact_info | safe }}</div>
+          <input type="hidden" name="invoice_contact_info" id="contactInfoInput">
         </div>
       </div>
     </div>
@@ -263,36 +320,6 @@
       </div>
     </div>
 
-    {# ── Tab: Briefe/Rechnungen ──────────────────────────────────────── #}
-    <div class="tab-pane fade" id="pane-briefe" role="tabpanel">
-      <div class="card">
-        <div class="card-header">
-          <h3 class="card-title"><i class="fas fa-envelope-open-text me-1"></i> Briefe/Rechnungen</h3>
-        </div>
-        <div class="card-body">
-          <div class="mb-1">
-            <label class="form-label">Kontaktinformation</label>
-            <div class="form-text mb-2">
-              Erscheint auf der Rechnung im Adressblock rechts – z.&nbsp;B. Ansprechpartner
-              (Obmann, Kassier) mit Telefonnummer. Text kann <strong>fett</strong> und
-              <em>kursiv</em> formatiert werden.
-            </div>
-            <div class="btn-group btn-group-sm mb-2" role="group" aria-label="Formatierung">
-              <button type="button" class="btn btn-outline-secondary" data-rt-cmd="bold"
-                      title="Fett"><strong>F</strong></button>
-              <button type="button" class="btn btn-outline-secondary" data-rt-cmd="italic"
-                      title="Kursiv"><em>K</em></button>
-              <button type="button" class="btn btn-outline-secondary" data-rt-cmd="underline"
-                      title="Unterstrichen"><u>U</u></button>
-            </div>
-            <div id="contactInfoEditor" class="form-control" contenteditable="true"
-                 style="min-height:8rem">{{ invoice_contact_info | safe }}</div>
-            <input type="hidden" name="invoice_contact_info" id="contactInfoInput">
-          </div>
-        </div>
-      </div>
-    </div>
-
     {# ── Tab: Zähler ─────────────────────────────────────────────────── #}
     <div class="tab-pane fade" id="pane-zaehler" role="tabpanel">
       <div class="card">
@@ -427,6 +454,91 @@ document.querySelector('[name=invoice_document_format]')?.addEventListener('chan
       syncContactInfo();  // execCommand-Aenderung sofort uebernehmen
     });
   });
+
+  // „Felder übernehmen" — WG-Name, Adresse, E-Mail und Telefon aus den
+  // Kontaktdaten-Feldern in den Editor schreiben (vorhandener Inhalt wird ersetzt).
+  const adoptBtn = document.getElementById('contactInfoAdopt');
+  if (adoptBtn) {
+    const esc = function (s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    };
+    adoptBtn.addEventListener('click', function () {
+      const val = function (name) {
+        const el = document.querySelector('[name="' + name + '"]');
+        return el ? el.value.trim() : '';
+      };
+      const lines = [];
+      if (val('wg_name')) lines.push('<b>' + esc(val('wg_name')) + '</b>');
+      // Adresse ist ein Textarea — Zeilenumbrueche zu <br> wandeln.
+      if (val('wg_address')) {
+        lines.push(esc(val('wg_address')).replace(/\r?\n/g, '<br>'));
+      }
+      if (val('wg_email')) lines.push(esc(val('wg_email')));
+      if (val('wg_phone')) lines.push('Tel.: ' + esc(val('wg_phone')));
+      editor.innerHTML = lines.join('<br>');
+      syncContactInfo();
+    });
+  }
+
+  // Schriftgröße auf den MARKIERTEN Text anwenden (wie Fett/Kursiv). Nutzt
+  // document.execCommand('fontSize') — das teilt die Selektion sauber über
+  // Zeilen-/Tag-Grenzen hinweg auf (robust cross-browser, egal ob der Browser
+  // Zeilen als <div> oder <br> ablegt) — und ersetzt das dabei erzeugte
+  // <font size="7"> durch unser <span style="font-size:Xpt">, das Sanitizer,
+  // DOCX-Parser und PDF gemeinsam verstehen. Eine ganze Zeile markieren wirkt
+  // damit auf die ganze Zeile, einzelne Wörter markieren nur auf diese.
+  const fontSel = document.getElementById('contactInfoFontSize');
+  if (fontSel) {
+    // Selektion merken — beim Klick aufs Dropdown verliert der Editor den Fokus,
+    // und window.getSelection() käme sonst leer/zusammengeklappt zurück.
+    let _savedRange = null;
+    function _saveRange() {
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount && editor.contains(sel.anchorNode) && editor.contains(sel.focusNode)) {
+        _savedRange = sel.getRangeAt(0).cloneRange();
+      }
+    }
+    editor.addEventListener('mouseup', _saveRange);
+    editor.addEventListener('keyup', _saveRange);
+
+    // Verschachtelte Größen-<span> im Knoten durch ihren Inhalt ersetzen, damit
+    // die neue (äußere) Größe gilt und nichts verschachtelt anwächst.
+    function _unwrapInnerSpans(root) {
+      Array.prototype.slice.call(root.querySelectorAll('span')).forEach(function (span) {
+        const parent = span.parentNode;
+        while (span.firstChild) parent.insertBefore(span.firstChild, span);
+        parent.removeChild(span);
+      });
+    }
+
+    fontSel.addEventListener('change', function () {
+      const pt = this.value;
+      this.selectedIndex = 0;                 // Dropdown zurück auf Platzhalter
+      if (!pt) return;
+      editor.focus();
+      const sel = window.getSelection();
+      if (_savedRange) { sel.removeAllRanges(); sel.addRange(_savedRange); }
+      if (!sel.rangeCount || sel.getRangeAt(0).collapsed) return;  // nichts markiert
+
+      // styleWithCSS=false => fontSize erzeugt <font size="7"> (kein span),
+      // dadurch eindeutig wiederfindbar (<font> kommt sonst nicht vor).
+      document.execCommand('styleWithCSS', false, false);
+      document.execCommand('fontSize', false, '7');
+
+      Array.prototype.slice.call(editor.querySelectorAll('font[size="7"]')).forEach(function (font) {
+        const span = document.createElement('span');
+        span.style.fontSize = pt + 'pt';
+        while (font.firstChild) span.appendChild(font.firstChild);
+        font.parentNode.replaceChild(span, font);
+        _unwrapInnerSpans(span);              // alte, jetzt innenliegende Größen entfernen
+      });
+      _savedRange = null;
+      syncContactInfo();
+    });
+  }
+
   // Backup, falls doch einmal nativ (ohne htmx) abgesendet wird.
   const form = editor.closest('form');
   if (form) form.addEventListener('submit', syncContactInfo);

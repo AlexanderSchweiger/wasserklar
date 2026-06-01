@@ -38,6 +38,8 @@ class Config:
     WG_NAME = os.environ.get("WG_NAME", "Wassergenossenschaft")
     WG_ADDRESS = os.environ.get("WG_ADDRESS", "")
     WG_IBAN = os.environ.get("WG_IBAN", "")
+    WG_BIC = os.environ.get("WG_BIC", "")
+    WG_ACCOUNT_HOLDER = os.environ.get("WG_ACCOUNT_HOLDER", "")
     WG_EMAIL = os.environ.get("WG_EMAIL", "")
     WG_PHONE = os.environ.get("WG_PHONE", "")
 

@@ -53,7 +53,7 @@
       <div class="col-md-1">
         <label class="small">Preis €</label>
         <input type="number" name="{{ _prefix }}row_unit_price[]" class="form-control form-control-sm free-price"
-               step="0.01" min="0" value="{{ item.unit_price }}" required onchange="itemsEditorCalcFree(this)">
+               step="0.01" value="{{ item.unit_price }}" required onchange="itemsEditorCalcFree(this)">
       </div>
       <div class="col-md-1">
         <label class="small">MwSt %</label>
@@ -236,7 +236,7 @@
       <div class="col-md-2">
         <label class="small">Einzelpreis € <span class="text-danger">*</span></label>
         <input type="number" name="{{ _prefix }}row_unit_price[]" class="form-control form-control-sm free-price"
-               step="0.01" min="0" placeholder="0.00" required onchange="itemsEditorCalcFree(this)">
+               step="0.01" placeholder="0.00" required onchange="itemsEditorCalcFree(this)">
       </div>
       <div class="col-md-1">
         <label class="small">MwSt %</label>
@@ -332,10 +332,14 @@
   };
   window.itemsEditorCalcFree = function (input) {
     const row = input.closest('.row-item');
-    const qty = parseFloat(row.querySelector('.free-qty').value) || 1;
-    const price = parseFloat(row.querySelector('.free-price').value) || 0;
+    // Leere Menge → 1 (Server-Default), explizite 0 bleibt 0 (Kostenerlass).
+    const qtyRaw = row.querySelector('.free-qty').value.trim();
+    const qty = qtyRaw === '' ? 1 : (parseFloat(qtyRaw) || 0);
+    // Preis darf negativ sein (Pauschalrabatt) — nur bei leerem Feld kein Betrag.
+    const priceRaw = row.querySelector('.free-price').value.trim();
+    const price = parseFloat(priceRaw) || 0;
     const amount = (qty * price).toFixed(2);
-    row.querySelector('.amount-display').value = price > 0 ? amount + ' €' : '';
+    row.querySelector('.amount-display').value = priceRaw === '' ? '' : amount + ' €';
   };
 
   // Initialen Submit-Button-Status setzen (für existing_items).

@@ -17,12 +17,13 @@ from flask import current_app
 
 # Mapping: Attributname → Flask-Config-Key
 _WG_MAP = {
-    'name':    'WG_NAME',
-    'address': 'WG_ADDRESS',
-    'iban':    'WG_IBAN',
-    'bic':     'WG_BIC',
-    'email':   'WG_EMAIL',
-    'phone':   'WG_PHONE',
+    'name':           'WG_NAME',
+    'address':        'WG_ADDRESS',
+    'iban':           'WG_IBAN',
+    'bic':            'WG_BIC',
+    'account_holder': 'WG_ACCOUNT_HOLDER',
+    'email':          'WG_EMAIL',
+    'phone':          'WG_PHONE',
 }
 
 # (State-Attribut, DB-Key, Cast-Funktion)
@@ -168,10 +169,24 @@ def platform_relay_active():
 
 _RT_INLINE = {'b': 'b', 'strong': 'b', 'i': 'i', 'em': 'i', 'u': 'u'}
 _RT_BLOCK = {'p', 'div', 'li'}
+_FONT_SIZE_STYLE_RE = re.compile(r'font-size\s*:\s*(\d+(?:\.\d+)?)\s*pt', re.IGNORECASE)
+
+
+def _span_font_size(attrs) -> 'int | None':
+    """Extrahiert font-size (pt) aus span style; None wenn ungültig oder außerhalb Grenzen."""
+    style = dict(attrs).get('style', '')
+    m = _FONT_SIZE_STYLE_RE.search(style)
+    if not m:
+        return None
+    try:
+        pt = int(float(m.group(1)))
+    except ValueError:
+        return None
+    return pt if CONTACT_INFO_FONT_MIN <= pt <= CONTACT_INFO_FONT_MAX else None
 
 
 class _RichTextSanitizer(HTMLParser):
-    """Reduziert eingehendes HTML auf <b>/<i>/<u>/<br>."""
+    """Reduziert eingehendes HTML auf <b>/<i>/<u>/<br> und <span style="font-size:Xpt">."""
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
@@ -182,6 +197,14 @@ class _RichTextSanitizer(HTMLParser):
         if self.parts and not self.parts[-1].endswith('<br>'):
             self.parts.append('<br>')
 
+    def _close_to(self, norm):
+        if norm in self._open:
+            while self._open:
+                top = self._open.pop()
+                self.parts.append(f'</{top}>')
+                if top == norm:
+                    break
+
     def handle_starttag(self, tag, attrs):
         if tag == 'br':
             self.parts.append('<br>')
@@ -189,6 +212,11 @@ class _RichTextSanitizer(HTMLParser):
             norm = _RT_INLINE[tag]
             self.parts.append(f'<{norm}>')
             self._open.append(norm)
+        elif tag == 'span':
+            pt = _span_font_size(attrs)
+            if pt is not None:
+                self.parts.append(f'<span style="font-size:{pt}pt">')
+                self._open.append('span')
         elif tag in _RT_BLOCK:
             self._line_break()
 
@@ -198,13 +226,9 @@ class _RichTextSanitizer(HTMLParser):
 
     def handle_endtag(self, tag):
         if tag in _RT_INLINE:
-            norm = _RT_INLINE[tag]
-            if norm in self._open:
-                while self._open:
-                    top = self._open.pop()
-                    self.parts.append(f'</{top}>')
-                    if top == norm:
-                        break
+            self._close_to(_RT_INLINE[tag])
+        elif tag == 'span':
+            self._close_to('span')
 
     def handle_data(self, data):
         self.parts.append(escape(data))
@@ -235,6 +259,30 @@ def get_contact_info() -> str:
         return AppSetting.get('invoice.contact_info') or ''
     except Exception:
         return ''
+
+
+# Schriftgroessen-Grenzen fuer den Rechnungs-Kontakttext (Punkt). Wirkt auf PDF
+# (inline font-size) und DOCX (Pt). Werte ausserhalb werden auf den Default
+# zurueckgesetzt.
+CONTACT_INFO_FONT_MIN = 6
+CONTACT_INFO_FONT_MAX = 24
+CONTACT_INFO_FONT_DEFAULT = 10
+
+
+def get_contact_info_font_size(default: int = CONTACT_INFO_FONT_DEFAULT) -> int:
+    """Gibt die konfigurierte Schriftgroesse des Rechnungs-Kontakttexts (Pt) zurueck."""
+    from app.models import AppSetting
+    try:
+        raw = AppSetting.get('invoice.contact_info_font_size')
+    except Exception:
+        raw = None
+    try:
+        val = int(raw)
+    except (TypeError, ValueError):
+        return default
+    if val < CONTACT_INFO_FONT_MIN or val > CONTACT_INFO_FONT_MAX:
+        return default
+    return val
 
 
 def meter_replacement_interval() -> int:

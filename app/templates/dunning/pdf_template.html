@@ -134,7 +134,7 @@
   Bitte überweisen Sie den Betrag von <strong>{{ summary.gross_total|de_number(2) }} &euro;</strong>
   bis zum {{ notice.new_due_date.strftime('%d.%m.%Y') if notice.new_due_date else '—' }}<br>
   {% if wg.iban %}IBAN: <strong>{{ wg.iban }}</strong><br>{% endif %}
-  Empfänger: {{ wg.name }}<br>
+  Empfänger: {{ wg.account_holder or wg.name }}<br>
   Verwendungszweck: <strong>{{ invoice.invoice_number }} / Mahnung</strong>
 </div>
 

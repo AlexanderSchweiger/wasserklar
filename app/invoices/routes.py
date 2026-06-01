@@ -16,7 +16,7 @@ from app.extensions import db
 from app.models import Invoice, InvoiceItem, EmailEvent, Customer, WaterMeter, MeterReading, WaterTariff, Booking, Account, Property, OpenItem, Project, RealAccount, InvoiceCounter, AppSetting, BillingRun, BillingPeriod
 from app.email_tracking import record_email_sent
 from app.utils import next_invoice_number as _next_invoice_number
-from app.settings_service import get_wg, send_mail, wg_settings, get_contact_info
+from app.settings_service import get_wg, send_mail, wg_settings, get_contact_info, get_contact_info_font_size
 from app.invoices.design import get_design
 from app.pagination import paginate_query
 
@@ -44,6 +44,7 @@ def _render_pdf_html(invoice, *, for_email=False):
         invoice=invoice,
         design=design,
         contact_info=get_contact_info(),
+        contact_info_font_size=get_contact_info_font_size(),
         for_email=for_email,
         **extra,
     )
@@ -52,10 +53,10 @@ def _render_pdf_html(invoice, *, for_email=False):
 def _resolve_open_item_account_id(invoice, form_account_id=None):
     """Ermittelt das Buchungskonto für einen aus einer Rechnung erzeugten Offenen Posten.
 
-    Priorität: Rechnungslauf-Konto > Formularwert (manuelle Rechnung).
+    Das Konto wird ausschließlich pro Offenem Posten gefuehrt (``OpenItem.account_id``);
+    der Rechnungslauf traegt kein eigenes Konto mehr. Es zaehlt daher allein der
+    Formularwert; ist keiner gesetzt, bleibt das Konto offen (``None``).
     """
-    if invoice.billing_run_id and invoice.billing_run and invoice.billing_run.account_id:
-        return invoice.billing_run.account_id
     return form_account_id
 
 
@@ -794,6 +795,12 @@ def items_save(invoice_id):
     db.session.flush()
 
     _apply_row_items_to_invoice(invoice, request.form, is_vat_liable_year)
+    # Die neuen Items werden via invoice_id-FK (nicht ueber die Relationship-
+    # Collection) angelegt. Da invoice.items oben bereits geladen wurde, ist die
+    # In-Memory-Collection veraltet — flush + expire erzwingt ein frisches Reload,
+    # damit recalculate_total die tatsaechlichen Positionen summiert.
+    db.session.flush()
+    db.session.expire(invoice, ["items"])
     invoice.recalculate_total()
     sync_message = _sync_open_item(invoice)
 
