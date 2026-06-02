@@ -471,23 +471,31 @@ def bulk_pdf_merged():
         flash("Keine Dokumente erzeugt.", "warning")
         return redirect(url_for("dunning.notices"))
 
-    # Pro Mahnung einzeln rendern und sofort an den Merger geben — haelt den
-    # Speicher bei einem Dokument statt allen gleichzeitig. Hintergrund siehe
-    # invoices.bulk_pdf_merged (copy(all_pages) sprengte bei grossen Laeufen den RAM).
+    # Chunk-weise via WeasyPrint copy() mergen (dedupliziert das geteilte Logo
+    # ueber den internen Bild-Cache), dann die Chunk-PDFs per pypdf
+    # aneinanderhaengen. Ausfuehrliche Begruendung (Dateigroesse + RAM-Schutz +
+    # Fallback) siehe invoices.bulk_pdf_merged.
+    CHUNK = 50
     writer = PdfWriter()
     design = _current_design()
-    for notice in notices:
-        summary = dunning_summary(notice.invoice)
-        html_str = render_template(
-            "dunning/pdf_template.html",
-            notice=notice, invoice=notice.invoice,
-            summary=summary, wg=wg, design=design,
-        )
-        pdf_bytes = weasyprint.HTML(string=html_str).render().write_pdf()
-        writer.append(io.BytesIO(pdf_bytes))
+    for start in range(0, len(notices), CHUNK):
+        rendered = []
+        for notice in notices[start:start + CHUNK]:
+            summary = dunning_summary(notice.invoice)
+            html_str = render_template(
+                "dunning/pdf_template.html",
+                notice=notice, invoice=notice.invoice,
+                summary=summary, wg=wg, design=design,
+            )
+            rendered.append(weasyprint.HTML(string=html_str).render())
+        all_pages = [page for d in rendered for page in d.pages]
+        try:
+            writer.append(io.BytesIO(rendered[0].copy(all_pages).write_pdf()))
+        except Exception:
+            current_app.logger.exception("Chunk-Merge via WeasyPrint fehlgeschlagen — Fallback auf Einzel-PDFs")
+            for d in rendered:
+                writer.append(io.BytesIO(d.write_pdf()))
 
-    # Byte-identische Objekte (v.a. das wiederholte Logo) zusammenfassen —
-    # siehe invoices.bulk_pdf_merged. No-Arg-Aufruf ist versions-stabil.
     writer.compress_identical_objects()
     doc_dir = os.path.join(current_app.config["PDF_DIR"], "_bulk")
     os.makedirs(doc_dir, exist_ok=True)
