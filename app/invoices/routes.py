@@ -186,7 +186,7 @@ def index():
     date_to = request.args.get("date_to", "").strip()
     q = request.args.get("q", "").strip()
     project_id_filter = request.args.get("project_id", "", type=str)
-    nur_email = request.args.get("nur_email", "") == "1"
+    mail_filter = request.args.get("mail_filter", "")
 
     query = (
         Invoice.query
@@ -218,8 +218,10 @@ def index():
                 (Booking.project_id == int(project_id_filter))
             )
         )
-    if nur_email:
+    if mail_filter == "mail":
         query = query.filter(Customer.rechnung_per_email == True)
+    elif mail_filter == "post":
+        query = query.filter(Customer.rechnung_per_email != True)
 
     pagination = paginate_query(query, page_key="invoices")
     invoices = pagination.items
@@ -244,7 +246,7 @@ def index():
         date_to=date_to,
         projects_for_filter=projects_for_filter,
         project_id_filter=project_id_filter,
-        nur_email=nur_email,
+        mail_filter=mail_filter,
         doc_format=doc_format,
         accounts=accounts,
         pagination=pagination,
