@@ -16,7 +16,7 @@ from app.extensions import db
 from app.models import Invoice, InvoiceItem, EmailEvent, Customer, WaterMeter, MeterReading, WaterTariff, Booking, Account, Property, OpenItem, Project, RealAccount, InvoiceCounter, AppSetting, BillingRun, BillingPeriod
 from app.email_tracking import record_email_sent
 from app.utils import next_invoice_number as _next_invoice_number
-from app.settings_service import get_wg, send_mail, wg_settings, get_contact_info, get_contact_info_font_size
+from app.settings_service import get_wg, send_mail, wg_settings, get_contact_info, get_contact_info_font_size, get_invoice_sender_address
 from app.invoices.design import get_design
 from app.pagination import paginate_query
 
@@ -45,6 +45,7 @@ def _render_pdf_html(invoice, *, for_email=False):
         design=design,
         contact_info=get_contact_info(),
         contact_info_font_size=get_contact_info_font_size(),
+        invoice_sender_address=get_invoice_sender_address(),
         for_email=for_email,
         **extra,
     )
@@ -906,43 +907,28 @@ def bulk_pdf_merged():
     if not invoices:
         flash("Keine Rechnungen gefunden.", "warning")
         return redirect(url_for("invoices.index"))
-    # Sammel-PDF in Chunks bauen: pro Chunk werden die Rechnungen via WeasyPrints
-    # copy() zu EINEM PDF gemerged — das dedupliziert das auf jeder Seite
-    # wiederholte Logo ueber den internen Bild-Cache. pypdf kann das nicht:
-    # transparente Logos (PNG+SMask) bekommen pro Dokument andere Objekt-Refs,
-    # darum greift compress_identical_objects() dort kaum (271 Rechnungen ~25 MB
-    # statt ~3 MB). Die Chunk-PDFs werden danach per pypdf aneinandergehaengt.
-    #
-    # Warum Chunks und nicht alles auf einmal: copy(all_pages) ueber *alle*
-    # Dokumente haelt sie samt dekodierter Bilder gleichzeitig im RAM und
-    # sprengte bei ~200 den Server (PIL.UnidentifiedImageError beim Einbetten).
-    # 50 liegt klar unter den nachweislich funktionierenden 100 → genug Reserve.
-    CHUNK = 50
+    # Jede Rechnung einzeln rendern und als fertiges PDF an den Merger haengen.
+    # WICHTIG — bewusst KEIN WeasyPrint-copy() ueber mehrere Dokumente:
+    # dessen Bild-Deduplizierung (_use_references) kippt auf dem Server
+    # reproduzierbar mit PIL.UnidentifiedImageError, sobald das geteilte Logo
+    # ueber viele Seiten referenziert wird. Schlimmer noch: der copy()-Versuch
+    # konsumiert die Bild-Buffer der beteiligten Dokumente, sodass danach auch
+    # ein Einzel-write_pdf desselben Dokuments scheitert (kein sauberer Fallback
+    # moeglich). Einzel-Render + pypdf-Concat laeuft dagegen stabil durch.
     writer = PdfWriter()
-    for start in range(0, len(invoices), CHUNK):
-        rendered = []
-        for invoice in invoices[start:start + CHUNK]:
-            html_content = _render_pdf_html(invoice)
-            doc = HTML(string=html_content).render()
-            rendered.append(doc)
-            if _invoice_is_locked(invoice):
-                pdf_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "pdf")
-                if not invoice.pdf_path or not os.path.exists(invoice.pdf_path):
-                    doc.write_pdf(pdf_path)
-                    invoice.pdf_path = pdf_path
-        all_pages = [page for d in rendered for page in d.pages]
-        try:
-            writer.append(io.BytesIO(rendered[0].copy(all_pages).write_pdf()))
-        except Exception:
-            # Sollte der WeasyPrint-Chunk-Merge je doch kippen: pro Dokument
-            # einzeln anhaengen (groesseres PDF, aber kein 500er). Einzel-
-            # write_pdf funktioniert nachweislich immer.
-            current_app.logger.exception("Chunk-Merge via WeasyPrint fehlgeschlagen — Fallback auf Einzel-PDFs")
-            for d in rendered:
-                writer.append(io.BytesIO(d.write_pdf()))
-        # rendered faellt hier aus dem Scope → RAM frei fuer den naechsten Chunk
+    for invoice in invoices:
+        html_content = _render_pdf_html(invoice)
+        pdf_bytes = HTML(string=html_content).render().write_pdf()
+        if _invoice_is_locked(invoice):
+            pdf_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "pdf")
+            if not invoice.pdf_path or not os.path.exists(invoice.pdf_path):
+                with open(pdf_path, "wb") as fh:
+                    fh.write(pdf_bytes)
+                invoice.pdf_path = pdf_path
+        writer.append(io.BytesIO(pdf_bytes))
     db.session.commit()
-    # Reststuecke zusammenfassen (greift v.a. bei deckenden Logos ohne SMask).
+    # Byte-identische Objekte zusammenfassen (hilft bei deckenden Logos; bei
+    # transparenten PNGs mit SMask greift es kaum — bekannte Einschraenkung).
     writer.compress_identical_objects()
     merged_path = os.path.join(current_app.config["PDF_DIR"], "_bulk_merged.pdf")
     os.makedirs(current_app.config["PDF_DIR"], exist_ok=True)

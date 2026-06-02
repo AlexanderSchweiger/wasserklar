@@ -285,6 +285,15 @@ def get_contact_info_font_size(default: int = CONTACT_INFO_FONT_DEFAULT) -> int:
     return val
 
 
+def get_invoice_sender_address() -> str:
+    """Gibt die einzeilige Absenderadresse zurück, die über der Empfängeradresse auf Rechnungen erscheint."""
+    from app.models import AppSetting
+    try:
+        return AppSetting.get('invoice.sender_address') or ''
+    except Exception:
+        return ''
+
+
 def meter_replacement_interval() -> int:
     """Tausch-Intervall fuer Wasserzaehler in Jahren (Default 5)."""
     from app.models import AppSetting

@@ -471,31 +471,21 @@ def bulk_pdf_merged():
         flash("Keine Dokumente erzeugt.", "warning")
         return redirect(url_for("dunning.notices"))
 
-    # Chunk-weise via WeasyPrint copy() mergen (dedupliziert das geteilte Logo
-    # ueber den internen Bild-Cache), dann die Chunk-PDFs per pypdf
-    # aneinanderhaengen. Ausfuehrliche Begruendung (Dateigroesse + RAM-Schutz +
-    # Fallback) siehe invoices.bulk_pdf_merged.
-    CHUNK = 50
+    # Pro Mahnung einzeln rendern und als fertiges PDF an den Merger haengen.
+    # Bewusst KEIN WeasyPrint-copy() ueber mehrere Dokumente — kippt auf dem
+    # Server mit PIL.UnidentifiedImageError und korrumpiert dabei die Bild-Buffer
+    # (Details siehe invoices.bulk_pdf_merged). Einzel-Render + pypdf laeuft stabil.
     writer = PdfWriter()
     design = _current_design()
-    for start in range(0, len(notices), CHUNK):
-        rendered = []
-        for notice in notices[start:start + CHUNK]:
-            summary = dunning_summary(notice.invoice)
-            html_str = render_template(
-                "dunning/pdf_template.html",
-                notice=notice, invoice=notice.invoice,
-                summary=summary, wg=wg, design=design,
-            )
-            rendered.append(weasyprint.HTML(string=html_str).render())
-        all_pages = [page for d in rendered for page in d.pages]
-        try:
-            writer.append(io.BytesIO(rendered[0].copy(all_pages).write_pdf()))
-        except Exception:
-            current_app.logger.exception("Chunk-Merge via WeasyPrint fehlgeschlagen — Fallback auf Einzel-PDFs")
-            for d in rendered:
-                writer.append(io.BytesIO(d.write_pdf()))
-
+    for notice in notices:
+        summary = dunning_summary(notice.invoice)
+        html_str = render_template(
+            "dunning/pdf_template.html",
+            notice=notice, invoice=notice.invoice,
+            summary=summary, wg=wg, design=design,
+        )
+        pdf_bytes = weasyprint.HTML(string=html_str).render().write_pdf()
+        writer.append(io.BytesIO(pdf_bytes))
     writer.compress_identical_objects()
     doc_dir = os.path.join(current_app.config["PDF_DIR"], "_bulk")
     os.makedirs(doc_dir, exist_ok=True)

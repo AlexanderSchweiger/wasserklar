@@ -9,7 +9,8 @@ from app.settings_service import (_WG_MAP, _MAIL_MAP, send_mail, encrypt_passwor
                                   sanitize_rich_text, meter_replacement_interval,
                                   validate_logo_data_uri, get_contact_info_font_size,
                                   CONTACT_INFO_FONT_MIN, CONTACT_INFO_FONT_MAX,
-                                  CONTACT_INFO_FONT_DEFAULT)
+                                  CONTACT_INFO_FONT_DEFAULT,
+                                  get_invoice_sender_address)
 from app.invoices.design import INVOICE_DESIGNS, available_designs
 
 
@@ -95,6 +96,10 @@ def index():
         if font_size < CONTACT_INFO_FONT_MIN or font_size > CONTACT_INFO_FONT_MAX:
             font_size = CONTACT_INFO_FONT_DEFAULT
         AppSetting.set('invoice.contact_info_font_size', str(font_size))
+
+        # Absenderadresse (einzeilig, Klartext)
+        sender_address = request.form.get('invoice_sender_address', '').strip()
+        AppSetting.set('invoice.sender_address', sender_address if sender_address else None)
 
         # Zähler-Tauschintervall (Jahre)
         try:
@@ -184,6 +189,7 @@ def index():
                            invoice_designs=available_designs(),
                            invoice_contact_info=contact_info,
                            invoice_contact_info_font_size=get_contact_info_font_size(),
+                           invoice_sender_address=get_invoice_sender_address(),
                            invoice_print_meter_swap=print_meter_swap,
                            invoice_show_email_signup=show_email_signup,
                            invoice_show_payment_qr=show_payment_qr,

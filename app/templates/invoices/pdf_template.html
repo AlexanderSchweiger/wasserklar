@@ -14,7 +14,17 @@
   .sender-name { color: {{ design.heading_color }}; }
   .sender-info { font-size: 9pt; color: {{ design.muted_color }}; }
   .contact-info { color: {{ design.accent_color }}; line-height: 1.15; }
-  .recipient { margin-top: 0.5cm; }
+  .recipient { margin-top: 0.3cm; }
+  .sender-return {
+    font-size: 7pt;
+    color: {{ design.muted_color }};
+    line-height: 1.2;
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    border-bottom: 0.5pt solid {{ design.border_color }};
+    padding-bottom: 3px;
+  }
   .invoice-meta { float: right; text-align: right; margin-bottom: 1cm; }
   .invoice-meta strong { color: {{ design.meta_label_color }}; }
   .contact-info-block { margin-top: 0.4cm; }
@@ -85,6 +95,7 @@
 </div>
 
 <div class="recipient">
+  {% if invoice_sender_address %}<div class="sender-return">{{ invoice_sender_address | e }}</div>{% endif %}
   {{ invoice.customer.name }}<br>
   {% set street = [invoice.customer.strasse, invoice.customer.hausnummer] | select | join(' ') %}
   {% set city = [invoice.customer.plz, invoice.customer.ort] | select | join(' ') %}

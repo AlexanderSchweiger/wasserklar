@@ -159,7 +159,8 @@ def _parse_rich_text(html: str) -> list:
 
 def generate_docx(invoice, wg: dict, design: dict | None = None,
                    contact_info: str | None = None,
-                   contact_info_font_size: int | None = None) -> bytes:
+                   contact_info_font_size: int | None = None,
+                   invoice_sender_address: str | None = None) -> bytes:
     """Erstellt ein Word-Dokument (.docx) für die übergebene Rechnung.
 
     Parameters
@@ -188,6 +189,9 @@ def generate_docx(invoice, wg: dict, design: dict | None = None,
     if contact_info_font_size is None:
         from app.settings_service import get_contact_info_font_size
         contact_info_font_size = get_contact_info_font_size()
+    if invoice_sender_address is None:
+        from app.settings_service import get_invoice_sender_address
+        invoice_sender_address = get_invoice_sender_address()
 
     font_name = design.get("docx_font", "Arial")
     text_rgb = _hex_to_rgb(design.get("text_color", "#333333"))
@@ -276,6 +280,12 @@ def generate_docx(invoice, wg: dict, design: dict | None = None,
 
     # Empfänger (linke Spalte)
     p_cust = recipient_cell.paragraphs[0]
+    if invoice_sender_address:
+        run_ret = p_cust.add_run(invoice_sender_address)
+        run_ret.font.size = Pt(7)
+        run_ret.font.color.rgb = muted_rgb
+        p_cust.paragraph_format.space_after = Pt(0)
+        p_cust = recipient_cell.add_paragraph()
     p_cust.add_run(invoice.customer.name).bold = True
 
     street_parts = [invoice.customer.strasse, invoice.customer.hausnummer]

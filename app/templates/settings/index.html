@@ -68,6 +68,16 @@
             <input type="text" name="wg_phone" class="form-control"
                    value="{{ wg.phone }}" placeholder="+43 1234 5678">
           </div>
+          <div class="mb-3">
+            <label class="form-label">Absenderadresse <small class="text-muted">(einzeilig, über der Empfängeradresse)</small></label>
+            <input type="text" name="invoice_sender_address" class="form-control"
+                   value="{{ invoice_sender_address }}"
+                   placeholder="z. B. Muster-WG · Hauptstraße 1 · 1234 Musterdorf">
+            <div class="form-text">
+              Erscheint einzeilig (max. 8&nbsp;pt) über der Kundenadresse auf Rechnungen –
+              z.&nbsp;B. Name und Adresse der Genossenschaft im DIN-Fensterbrief-Format.
+            </div>
+          </div>
 
           <hr class="my-3">
 
@@ -172,6 +182,11 @@
           <div id="contactInfoEditor" class="form-control" contenteditable="true"
                style="min-height:8rem;line-height:1.15;font-size:{{ invoice_contact_info_font_size }}pt">{{ invoice_contact_info | safe }}</div>
           <input type="hidden" name="invoice_contact_info" id="contactInfoInput">
+          <div id="contactInfoLineWarning" class="alert alert-warning mt-2 py-2 small mb-0" style="display:none">
+            <i class="fas fa-exclamation-triangle me-1"></i>
+            <strong>Zu viele Zeilen:</strong> Der Text überläuft den fixen Rechnungskopf (max. ca. 4 Zeilen bei 10&nbsp;pt).
+            Überschüssige Zeilen werden abgeschnitten.
+          </div>
         </div>
       </div>
     </div>
@@ -443,9 +458,16 @@ document.querySelector('[name=invoice_document_format]')?.addEventListener('chan
   // ein submit-Listener feuert hier gar nicht mehr, der Kontakttext kam leer am
   // Server an und wurde als None gespeichert. Daher bei jeder Aenderung syncen.
   function syncContactInfo() { input.value = editor.innerHTML; }
+  const _lineWarning = document.getElementById('contactInfoLineWarning');
+  function checkContactLines() {
+    if (!_lineWarning) return;
+    const lines = (editor.innerHTML.match(/<br\s*\/?>/gi) || []).length + 1;
+    _lineWarning.style.display = lines > 4 ? 'block' : 'none';
+  }
   syncContactInfo();
-  editor.addEventListener('input', syncContactInfo);
-  editor.addEventListener('blur', syncContactInfo);
+  checkContactLines();
+  editor.addEventListener('input', function () { syncContactInfo(); checkContactLines(); });
+  editor.addEventListener('blur', function () { syncContactInfo(); checkContactLines(); });
   try { document.execCommand('styleWithCSS', false, false); } catch (e) { /* ignore */ }
   document.querySelectorAll('[data-rt-cmd]').forEach(function (btn) {
     btn.addEventListener('click', function () {
