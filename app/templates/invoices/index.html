@@ -168,13 +168,19 @@
         <h5 class="modal-title" id="bulkDownloadModalTitle">Dokument wird erstellt</h5>
       </div>
       <div class="modal-body text-center py-3">
-        <div class="mb-3">
-          <div class="spinner-border text-primary" role="status" style="width:2.5rem;height:2.5rem">
-            <span class="visually-hidden">Bitte warten…</span>
+        <div id="bulkDownloadSpinner">
+          <div class="mb-3">
+            <div class="spinner-border text-primary" role="status" style="width:2.5rem;height:2.5rem">
+              <span class="visually-hidden">Bitte warten…</span>
+            </div>
           </div>
+          <p class="mb-1 fw-semibold">Bitte warten…</p>
+          <p class="text-muted small mb-0">Bei vielen Dokumenten kann dies einige Minuten dauern.<br>Der Download startet automatisch.</p>
         </div>
-        <p class="mb-1 fw-semibold">Bitte warten…</p>
-        <p class="text-muted small mb-0">Bei vielen Dokumenten kann dies einige Minuten dauern.<br>Der Download startet automatisch.</p>
+        <div id="bulkDownloadError" class="d-none">
+          <i class="fas fa-triangle-exclamation text-danger mb-3" style="font-size:2rem"></i>
+          <p class="mb-0" id="bulkDownloadErrorMsg"></p>
+        </div>
       </div>
       <div class="modal-footer justify-content-center">
         <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Schließen</button>
@@ -304,14 +310,7 @@ function handleBulkAction() {
       'bulk-docx-merged': 'Word-Dokument wird erstellt',
       'bulk-docx-zip':    'Word-Dateien werden als ZIP erstellt',
     };
-    document.getElementById('bulkDownloadModalTitle').textContent = titleMap[action];
-    bootstrap.Modal.getOrCreateInstance(document.getElementById('bulkDownloadModal')).show();
-    const form = document.getElementById('bulk-form');
-    form.action = urlMap[action];
-    setTimeout(function () {
-      form.submit();
-      form.action = '{{ url_for("invoices.bulk_action") }}';
-    }, 150);
+    bulkDownload(urlMap[action], titleMap[action]);
     return;
   }
   if (action === 'delete') {
@@ -320,6 +319,52 @@ function handleBulkAction() {
     if (!confirm(count + ' Rechnung(en) auf "' + action + '" setzen?')) return;
   }
   document.getElementById('bulk-form').submit();
+}
+
+// Sammel-Download per fetch statt nativem form.submit(): nur so wissen wir,
+// WANN die Datei fertig ist (bei einem Attachment-Response navigiert der Browser
+// nicht → ein form.submit() liesse das Warte-Modal ewig offen). Blob speichern,
+// Modal exakt bei Antwort schliessen, Fehler sichtbar machen statt endlos spinnen.
+async function bulkDownload(url, title) {
+  const modalEl = document.getElementById('bulkDownloadModal');
+  const spinner = document.getElementById('bulkDownloadSpinner');
+  const errBox  = document.getElementById('bulkDownloadError');
+  const errMsg  = document.getElementById('bulkDownloadErrorMsg');
+  document.getElementById('bulkDownloadModalTitle').textContent = title;
+  spinner.classList.remove('d-none');
+  errBox.classList.add('d-none');
+  const modal = window.bootstrap ? bootstrap.Modal.getOrCreateInstance(modalEl) : null;
+  if (modal) modal.show();
+
+  const form = document.getElementById('bulk-form');
+  const csrf = form.querySelector('input[name="csrf_token"]').value;
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      body: new FormData(form),
+      headers: { 'X-CSRFToken': csrf },
+    });
+    const disposition = resp.headers.get('Content-Disposition') || '';
+    if (!resp.ok || !disposition.toLowerCase().includes('attachment')) {
+      throw new Error('Das Dokument konnte nicht erstellt werden. Bitte erneut versuchen.');
+    }
+    const blob = await resp.blob();
+    const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition);
+    const name = m ? decodeURIComponent(m[1]) : 'download';
+    const objUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objUrl;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(objUrl); }, 10000);
+    if (modal) modal.hide();
+  } catch (err) {
+    spinner.classList.add('d-none');
+    errMsg.textContent = err.message || 'Fehler beim Erstellen des Dokuments.';
+    errBox.classList.remove('d-none');
+  }
 }
 
 function openMassenmailModal() {

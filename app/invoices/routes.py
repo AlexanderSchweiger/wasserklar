@@ -888,7 +888,7 @@ def bulk_action():
 @login_required
 def bulk_pdf_merged():
     """Alle markierten Rechnungen als zusammengeführtes PDF zum Download."""
-    import io as _io
+    import io
     invoice_ids = request.form.getlist("invoice_ids", type=int)
     if not invoice_ids:
         flash("Keine Rechnungen ausgewählt.", "warning")
@@ -901,21 +901,40 @@ def bulk_pdf_merged():
         else:
             flash("WeasyPrint ist nicht installiert. PDF-Export nur im Docker-Container verfügbar.", "danger")
         return redirect(url_for("invoices.index"))
+    from pypdf import PdfWriter
     invoices = Invoice.query.filter(Invoice.id.in_(invoice_ids)).order_by(Invoice.invoice_number).all()
-    rendered_docs = []
+    if not invoices:
+        flash("Keine Rechnungen gefunden.", "warning")
+        return redirect(url_for("invoices.index"))
+    # Jede Rechnung einzeln rendern und sofort als fertiges PDF an den Merger
+    # haengen. So bleibt nie mehr als EIN WeasyPrint-Dokument gleichzeitig im
+    # Speicher. Der fruehere copy(all_pages)-Ansatz hielt alle Dokumente samt
+    # ihrer dekodierten Bilder (Logo + 2 QR-PNGs pro Rechnung) bis zum Schluss
+    # und sprengte bei grossen Laeufen den RAM des Servers (UnidentifiedImage-
+    # Error beim Bild-Einbetten). pypdf kopiert nur fertige PDF-Streams, ohne
+    # Bilder neu zu dekodieren.
+    writer = PdfWriter()
     for invoice in invoices:
         html_content = _render_pdf_html(invoice)
-        rendered_docs.append(HTML(string=html_content).render())
+        pdf_bytes = HTML(string=html_content).render().write_pdf()
         if _invoice_is_locked(invoice):
             pdf_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "pdf")
             if not invoice.pdf_path or not os.path.exists(invoice.pdf_path):
-                rendered_docs[-1].write_pdf(pdf_path)
+                with open(pdf_path, "wb") as fh:
+                    fh.write(pdf_bytes)
                 invoice.pdf_path = pdf_path
+        writer.append(io.BytesIO(pdf_bytes))
     db.session.commit()
-    all_pages = [page for doc in rendered_docs for page in doc.pages]
+    # Byte-identische Objekte zusammenfassen — v.a. das auf jeder Rechnung
+    # wiederholte Logo, das append() sonst pro Dokument dupliziert. Haelt das
+    # Sammel-PDF klein. No-Arg-Aufruf bleibt ueber pypdf-Versionen stabil
+    # (die Parameter wurden in 7.0 umbenannt, die Defaults nicht).
+    writer.compress_identical_objects()
     merged_path = os.path.join(current_app.config["PDF_DIR"], "_bulk_merged.pdf")
     os.makedirs(current_app.config["PDF_DIR"], exist_ok=True)
-    rendered_docs[0].copy(all_pages).write_pdf(merged_path)
+    with open(merged_path, "wb") as fh:
+        writer.write(fh)
+    writer.close()
     return send_file(merged_path, as_attachment=True, download_name="Rechnungen_gesamt.pdf")
 
 

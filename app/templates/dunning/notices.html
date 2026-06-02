@@ -34,14 +34,14 @@
                        hx-target="#notices-table"
                        hx-include="[name='status'],[name='q']">
                 <div class="btn-group btn-group-sm ms-2">
-                    <button type="submit" formaction="{{ url_for('dunning.bulk_docx_merged') }}"
+                    <button type="button"
                             class="btn btn-outline-primary btn-sm" title="Auswahl als DOCX"
-                            onclick="showDunningBulkSpinner('Word-Dokument wird erstellt')">
+                            onclick="dunningBulkDownload('{{ url_for('dunning.bulk_docx_merged') }}', 'Word-Dokument wird erstellt')">
                         <i class="fas fa-file-word me-1"></i> DOCX
                     </button>
-                    <button type="submit" formaction="{{ url_for('dunning.bulk_pdf_merged') }}"
+                    <button type="button"
                             class="btn btn-outline-primary btn-sm" title="Auswahl als PDF"
-                            onclick="showDunningBulkSpinner('PDF wird zusammengeführt')">
+                            onclick="dunningBulkDownload('{{ url_for('dunning.bulk_pdf_merged') }}', 'PDF wird zusammengeführt')">
                         <i class="fas fa-file-pdf me-1"></i> PDF
                     </button>
                 </div>
@@ -63,13 +63,19 @@
         <h5 class="modal-title" id="dunningBulkDownloadModalTitle">Dokument wird erstellt</h5>
       </div>
       <div class="modal-body text-center py-3">
-        <div class="mb-3">
-          <div class="spinner-border text-primary" role="status" style="width:2.5rem;height:2.5rem">
-            <span class="visually-hidden">Bitte warten…</span>
+        <div id="dunningBulkSpinner">
+          <div class="mb-3">
+            <div class="spinner-border text-primary" role="status" style="width:2.5rem;height:2.5rem">
+              <span class="visually-hidden">Bitte warten…</span>
+            </div>
           </div>
+          <p class="mb-1 fw-semibold">Bitte warten…</p>
+          <p class="text-muted small mb-0">Bei vielen Dokumenten kann dies einige Minuten dauern.<br>Der Download startet automatisch.</p>
         </div>
-        <p class="mb-1 fw-semibold">Bitte warten…</p>
-        <p class="text-muted small mb-0">Bei vielen Dokumenten kann dies einige Minuten dauern.<br>Der Download startet automatisch.</p>
+        <div id="dunningBulkError" class="d-none">
+          <i class="fas fa-triangle-exclamation text-danger mb-3" style="font-size:2rem"></i>
+          <p class="mb-0" id="dunningBulkErrorMsg"></p>
+        </div>
       </div>
       <div class="modal-footer justify-content-center">
         <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Schließen</button>
@@ -81,18 +87,56 @@
 
 {% block scripts %}
 <script>
+// Sammel-Download per fetch statt nativem Submit: bei einem Attachment-Response
+// navigiert der Browser nicht, also schliesst kein Event das Warte-Modal. Wir
+// holen die Datei als Blob, schliessen das Modal bei Antwort und zeigen Fehler an.
+async function dunningBulkDownload(url, title) {
+  const modalEl = document.getElementById('dunningBulkDownloadModal');
+  const spinner = document.getElementById('dunningBulkSpinner');
+  const errBox  = document.getElementById('dunningBulkError');
+  const errMsg  = document.getElementById('dunningBulkErrorMsg');
+  document.getElementById('dunningBulkDownloadModalTitle').textContent = title;
+  spinner.classList.remove('d-none');
+  errBox.classList.add('d-none');
+  const modal = window.bootstrap ? bootstrap.Modal.getOrCreateInstance(modalEl) : null;
+  if (modal) modal.show();
+
+  const form = document.getElementById('notices-form');
+  const csrf = form.querySelector('input[name="csrf_token"]').value;
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      body: new FormData(form),
+      headers: { 'X-CSRFToken': csrf },
+    });
+    const disposition = resp.headers.get('Content-Disposition') || '';
+    if (!resp.ok || !disposition.toLowerCase().includes('attachment')) {
+      throw new Error('Das Dokument konnte nicht erstellt werden. Bitte erneut versuchen.');
+    }
+    const blob = await resp.blob();
+    const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition);
+    const name = m ? decodeURIComponent(m[1]) : 'download';
+    const objUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objUrl;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(objUrl); }, 10000);
+    if (modal) modal.hide();
+  } catch (err) {
+    spinner.classList.add('d-none');
+    errMsg.textContent = err.message || 'Fehler beim Erstellen des Dokuments.';
+    errBox.classList.remove('d-none');
+  }
+}
+
 // Select-All-Handler einmalig an document binden (dokumentlevel-Listener
 // ueberleben hx-boost-Swaps; ohne Guard wuerde sich der Handler bei jedem
 // erneuten Seitenbesuch vermehren und jeder Click-auf-Select-All wuerde
 // dieselben Checkboxen N-fach toggeln). Der Handler delegiert ueber die
 // stabile #dn-select-all-ID und funktioniert damit auch nach Body-Swap.
-function showDunningBulkSpinner(title) {
-  if (window.bootstrap) {
-    document.getElementById('dunningBulkDownloadModalTitle').textContent = title;
-    bootstrap.Modal.getOrCreateInstance(document.getElementById('dunningBulkDownloadModal')).show();
-  }
-}
-
 (function() {
     if (window.__dunningSelectAllBound) return;
     window.__dunningSelectAllBound = true;

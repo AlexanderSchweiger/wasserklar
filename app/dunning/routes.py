@@ -463,11 +463,18 @@ def bulk_pdf_merged():
                   "Verwenden Sie den DOCX-Export.", "warning")
         return redirect(url_for("dunning.notices"))
 
+    from pypdf import PdfWriter
     from app.settings_service import wg_settings
     wg = wg_settings()
     notices = DunningNotice.query.filter(DunningNotice.id.in_(notice_ids)).all()
-    rendered_docs = []
+    if not notices:
+        flash("Keine Dokumente erzeugt.", "warning")
+        return redirect(url_for("dunning.notices"))
 
+    # Pro Mahnung einzeln rendern und sofort an den Merger geben — haelt den
+    # Speicher bei einem Dokument statt allen gleichzeitig. Hintergrund siehe
+    # invoices.bulk_pdf_merged (copy(all_pages) sprengte bei grossen Laeufen den RAM).
+    writer = PdfWriter()
     design = _current_design()
     for notice in notices:
         summary = dunning_summary(notice.invoice)
@@ -476,20 +483,18 @@ def bulk_pdf_merged():
             notice=notice, invoice=notice.invoice,
             summary=summary, wg=wg, design=design,
         )
-        rendered_docs.append(weasyprint.HTML(string=html_str).render())
+        pdf_bytes = weasyprint.HTML(string=html_str).render().write_pdf()
+        writer.append(io.BytesIO(pdf_bytes))
 
-    if not rendered_docs:
-        flash("Keine Dokumente erzeugt.", "warning")
-        return redirect(url_for("dunning.notices"))
-
-    all_pages = []
-    for doc in rendered_docs:
-        all_pages.extend(doc.pages)
-
+    # Byte-identische Objekte (v.a. das wiederholte Logo) zusammenfassen —
+    # siehe invoices.bulk_pdf_merged. No-Arg-Aufruf ist versions-stabil.
+    writer.compress_identical_objects()
     doc_dir = os.path.join(current_app.config["PDF_DIR"], "_bulk")
     os.makedirs(doc_dir, exist_ok=True)
     merged_path = os.path.join(doc_dir, "Mahnungen_gesamt.pdf")
-    rendered_docs[0].copy(all_pages).write_pdf(merged_path)
+    with open(merged_path, "wb") as fh:
+        writer.write(fh)
+    writer.close()
 
     return send_file(merged_path, as_attachment=True,
                      download_name="Mahnungen_gesamt.pdf")
