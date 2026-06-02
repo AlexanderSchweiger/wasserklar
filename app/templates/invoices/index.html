@@ -160,6 +160,29 @@
 {% endblock %}
 
 {% block modals %}
+<!-- Bulk-Download Ladehinweis -->
+<div class="modal fade" id="bulkDownloadModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="bulkDownloadModalTitle">Dokument wird erstellt</h5>
+      </div>
+      <div class="modal-body text-center py-3">
+        <div class="mb-3">
+          <div class="spinner-border text-primary" role="status" style="width:2.5rem;height:2.5rem">
+            <span class="visually-hidden">Bitte warten…</span>
+          </div>
+        </div>
+        <p class="mb-1 fw-semibold">Bitte warten…</p>
+        <p class="text-muted small mb-0">Bei vielen Dokumenten kann dies einige Minuten dauern.<br>Der Download startet automatisch.</p>
+      </div>
+      <div class="modal-footer justify-content-center">
+        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Schließen</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Massenmail Modal -->
 <div class="modal fade" id="massenmailModal" tabindex="-1">
   <div class="modal-dialog modal-lg">
@@ -275,10 +298,20 @@ function handleBulkAction() {
       'bulk-docx-merged': '{{ url_for("invoices.bulk_docx_merged") }}',
       'bulk-docx-zip':    '{{ url_for("invoices.bulk_docx_zip") }}',
     };
+    const titleMap = {
+      'bulk-pdf-merged':  'PDF wird zusammengeführt',
+      'bulk-pdf-zip':     'PDFs werden als ZIP erstellt',
+      'bulk-docx-merged': 'Word-Dokument wird erstellt',
+      'bulk-docx-zip':    'Word-Dateien werden als ZIP erstellt',
+    };
+    document.getElementById('bulkDownloadModalTitle').textContent = titleMap[action];
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('bulkDownloadModal')).show();
     const form = document.getElementById('bulk-form');
     form.action = urlMap[action];
-    form.submit();
-    form.action = '{{ url_for("invoices.bulk_action") }}';
+    setTimeout(function () {
+      form.submit();
+      form.action = '{{ url_for("invoices.bulk_action") }}';
+    }, 150);
     return;
   }
   if (action === 'delete') {
