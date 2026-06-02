@@ -93,8 +93,9 @@
             {% set dunning_active      = _nav_mahnwesen or _nav_mahnungen or _nav_mahnlauf or _nav_mahnvorlagen %}
 
             {# Auswertungen #}
-            {% set _nav_jahresbericht  = request.endpoint == 'accounting.report' %}
-            {% set _nav_ust            = request.endpoint in ('accounting.ust','accounting.export_ust_csv') %}
+            {% set _nav_jahresbericht      = request.endpoint == 'accounting.report' %}
+            {% set _nav_ust                = request.endpoint in ('accounting.ust','accounting.export_ust_csv') %}
+            {% set _nav_kundenauswertung   = request.endpoint in ('accounting.kundenauswertung','accounting.kundenauswertung_export') %}
 
             {# Stammdaten #}
             {% set _nav_kunden         = request.blueprint == 'customers' %}
@@ -121,7 +122,7 @@
             {# Eltern-Aktiv aus Kinder-OR ableiten #}
             {% set accounting_active   = _nav_buchungen or _nav_umbuchungen or _nav_bankkonten or _nav_kontenplan or _nav_projekte or _nav_bankimport %}
             {% set invoices_active     = _nav_neue_rechnung or _nav_alle_rechnungen or _nav_offene_posten or _nav_rechnungslauf or _nav_rechnungslaeufe or _nav_email_settings or _nav_tarife %}
-            {% set auswertungen_active = _nav_jahresbericht or _nav_ust %}
+            {% set auswertungen_active = _nav_jahresbericht or _nav_ust or _nav_kundenauswertung %}
             {% set zaehler_active      = _nav_zaehler or _nav_ablesungen or _nav_ablesungen_import or _nav_zaehlertausch or _nav_selbsterfassung %}
             {% set stammdaten_active   = _nav_kunden or _nav_objekte or _nav_import or _nav_buchungsjahre or _nav_perioden %}
             {% set verwaltung_active   = _nav_benutzer or _nav_einstellungen or _nav_data_transfer or _nav_dokumente or _nav_export or _nav_backups or _nav_support or _nav_abonnement %}
@@ -385,6 +386,12 @@
                     </a>
                   </li>
                   {% endif %}
+                  <li class="nav-item">
+                    <a class="nav-link {% if _nav_kundenauswertung %}active{% endif %}"
+                      href="{{ url_for('accounting.kundenauswertung') }}">
+                      <i class="fas fa-users me-2"></i>Kundenauswertung
+                    </a>
+                  </li>
                 </ul>
               </div>
             </li>

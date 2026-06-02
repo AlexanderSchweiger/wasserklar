@@ -17,7 +17,7 @@ from app.accounting import bp
 from app.accounting import services as acc_svc
 from app import tax_service
 from app.extensions import db
-from app.models import Account, Booking, BookingGroup, Invoice, OpenItem, WaterTariff, Customer, Project, RealAccount, RealAccountYearBalance, FiscalYear, FiscalYearReopenLog, Transfer, BillingPeriod
+from app.models import Account, Booking, BookingGroup, Invoice, OpenItem, WaterTariff, Customer, Project, RealAccount, RealAccountYearBalance, FiscalYear, FiscalYearReopenLog, Transfer, BillingPeriod, Property, PropertyOwnership, WaterMeter
 from app.utils import next_invoice_number
 from app.pagination import paginate_list, paginate_query
 
@@ -2206,6 +2206,356 @@ def export_ust_csv():
         generate(),
         mimetype="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Kundenauswertung
+# ---------------------------------------------------------------------------
+
+import re as _re
+
+
+def _hn_sort_key(hn):
+    """Hausnummer natürlich sortieren: '2a' < '10' < '10a'."""
+    if not hn:
+        return (999999, "")
+    m = _re.match(r"^(\d+)(.*)", hn.strip())
+    if m:
+        return (int(m.group(1)), m.group(2).strip().lower())
+    return (999999, hn.lower())
+
+
+def _build_kunden_rows(q_name, q_kunden_nr, q_zaehler, q_objekt_adresse,
+                       q_rechnungsadresse, modus, sort):
+    """
+    Gibt eine Liste von (kunde, [(ownership, prop, [(meter, reading)])]) zurück.
+    """
+    import sqlalchemy as _sa
+
+    kunden_q = Customer.query.filter_by(is_customer=True, active=True)
+
+    if q_name:
+        kunden_q = kunden_q.filter(Customer.name.ilike(f"%{q_name}%"))
+
+    if q_kunden_nr:
+        try:
+            nr = int(q_kunden_nr)
+            kunden_q = kunden_q.filter(Customer.customer_number == nr)
+        except ValueError:
+            kunden_q = kunden_q.filter(_sa.false())
+
+    if q_rechnungsadresse:
+        s = f"%{q_rechnungsadresse}%"
+        kunden_q = kunden_q.filter(db.or_(
+            Customer.strasse.ilike(s),
+            Customer.hausnummer.ilike(s),
+            Customer.plz.ilike(s),
+            Customer.ort.ilike(s),
+        ))
+
+    if sort == "name":
+        kunden_q = kunden_q.order_by(Customer.name.asc())
+    else:
+        kunden_q = kunden_q.order_by(
+            _sa.case((Customer.customer_number.is_(None), 1), else_=0).asc(),
+            Customer.customer_number.asc(),
+            Customer.name.asc(),
+        )
+
+    kunden = kunden_q.all()
+
+    result = []
+    for kunde in kunden:
+        ownerships = (
+            PropertyOwnership.query
+            .filter_by(customer_id=kunde.id, valid_to=None)
+            .join(Property, PropertyOwnership.property_id == Property.id)
+            .filter(Property.active == True)  # noqa: E712
+            .all()
+        )
+
+        if q_objekt_adresse:
+            s = q_objekt_adresse.lower()
+            ownerships = [
+                o for o in ownerships
+                if s in (o.property.address_display() or "").lower()
+            ]
+            # Objekt-Filter aktiv → Kunde ohne passendes Objekt ausblenden
+            if not ownerships:
+                continue
+
+        if modus == "mit_objekt" and not ownerships:
+            continue
+
+        ownership_data = []
+        for ownership in ownerships:
+            prop = ownership.property
+            meters = prop.meters.filter(WaterMeter.active == True).all()  # noqa: E712
+
+            if q_zaehler:
+                s = q_zaehler.lower()
+                meters = [m for m in meters if s in m.meter_number.lower()]
+                # Zähler-Filter aktiv → Objekt ohne passenden Zähler überspringen
+                if not meters:
+                    continue
+
+            meters_with_reading = [(m, m.last_reading()) for m in meters]
+            ownership_data.append((ownership, prop, meters_with_reading))
+
+        # Zähler-Filter aktiv → Kunde ohne passendes Ergebnis ausblenden
+        if q_zaehler and not ownership_data:
+            continue
+
+        if modus == "aktiver_zaehler":
+            if not any(mwr for _, _, mwr in ownership_data):
+                continue
+
+        result.append((kunde, ownership_data))
+
+    if sort == "objektstrasse":
+        def _obj_key(item):
+            _, ownerships_list = item
+            if not ownerships_list:
+                return ("zzz", 999999, "")
+            p = ownerships_list[0][1]
+            return ((p.strasse or "zzz").lower(), *_hn_sort_key(p.hausnummer))
+        result.sort(key=_obj_key)
+        for _, ownerships_list in result:
+            ownerships_list.sort(
+                key=lambda t: ((t[1].strasse or "zzz").lower(), *_hn_sort_key(t[1].hausnummer))
+            )
+
+    return result
+
+
+def _flatten_rows(result):
+    """
+    Wandelt die strukturierten Daten in eine flache Liste von Dicts um,
+    mit rowspan-Infos für Kunde und Objekt.
+    """
+    flat = []
+    for kunde, ownerships_list in result:
+        kunde_total = max(sum(max(len(mwr), 1) for _, _, mwr in ownerships_list), 1)
+        first_kunde = True
+
+        if not ownerships_list:
+            flat.append(dict(
+                kunde=kunde, kunde_rowspan=1,
+                ownership=None, prop=None, prop_rowspan=1,
+                meter=None, reading=None,
+            ))
+            continue
+
+        for ownership, prop, meters_with_reading in ownerships_list:
+            prop_total = max(len(meters_with_reading), 1)
+            first_prop = True
+
+            if not meters_with_reading:
+                flat.append(dict(
+                    kunde=kunde if first_kunde else None,
+                    kunde_rowspan=kunde_total if first_kunde else 0,
+                    ownership=ownership, prop=prop, prop_rowspan=prop_total,
+                    meter=None, reading=None,
+                ))
+                first_kunde = False
+                continue
+
+            for meter, reading in meters_with_reading:
+                flat.append(dict(
+                    kunde=kunde if first_kunde else None,
+                    kunde_rowspan=kunde_total if first_kunde else 0,
+                    ownership=ownership if first_prop else None,
+                    prop=prop if first_prop else None,
+                    prop_rowspan=prop_total if first_prop else 0,
+                    meter=meter, reading=reading,
+                ))
+                first_kunde = False
+                first_prop = False
+
+    return flat
+
+
+@bp.route("/kundenauswertung")
+@login_required
+def kundenauswertung():
+    q_name = request.args.get("q_name", "").strip()
+    q_kunden_nr = request.args.get("q_kunden_nr", "").strip()
+    q_zaehler = request.args.get("q_zaehler", "").strip()
+    q_objekt_adresse = request.args.get("q_objekt_adresse", "").strip()
+    q_rechnungsadresse = request.args.get("q_rechnungsadresse", "").strip()
+    modus = request.args.get("modus", "alle")
+    sort = request.args.get("sort", "kundennummer")
+
+    result = _build_kunden_rows(
+        q_name, q_kunden_nr, q_zaehler, q_objekt_adresse,
+        q_rechnungsadresse, modus, sort,
+    )
+    flat = _flatten_rows(result)
+
+    return render_template(
+        "accounting/kunden.html",
+        flat_rows=flat,
+        total_kunden=len(result),
+        modus=modus, sort=sort,
+        q_name=q_name, q_kunden_nr=q_kunden_nr, q_zaehler=q_zaehler,
+        q_objekt_adresse=q_objekt_adresse, q_rechnungsadresse=q_rechnungsadresse,
+    )
+
+
+@bp.route("/kundenauswertung/export")
+@login_required
+def kundenauswertung_export():
+    q_name = request.args.get("q_name", "").strip()
+    q_kunden_nr = request.args.get("q_kunden_nr", "").strip()
+    q_zaehler = request.args.get("q_zaehler", "").strip()
+    q_objekt_adresse = request.args.get("q_objekt_adresse", "").strip()
+    q_rechnungsadresse = request.args.get("q_rechnungsadresse", "").strip()
+    modus = request.args.get("modus", "alle")
+    sort = request.args.get("sort", "kundennummer")
+    fmt = request.args.get("format", "csv")
+
+    result = _build_kunden_rows(
+        q_name, q_kunden_nr, q_zaehler, q_objekt_adresse,
+        q_rechnungsadresse, modus, sort,
+    )
+
+    # Flache Zeilen ohne rowspan (Export: Daten wiederholen)
+    export_rows = []
+    for kunde, ownerships_list in result:
+        if not ownerships_list:
+            export_rows.append((kunde, None, None, None, None))
+            continue
+        for ownership, prop, meters_with_reading in ownerships_list:
+            if not meters_with_reading:
+                export_rows.append((kunde, ownership, prop, None, None))
+                continue
+            for meter, reading in meters_with_reading:
+                export_rows.append((kunde, ownership, prop, meter, reading))
+
+    def _d(v):
+        return v.strftime("%d.%m.%Y") if v else ""
+
+    def _n(v, dec=3):
+        if v is None:
+            return ""
+        return str(Decimal(str(v)).quantize(Decimal("0." + "0" * dec))).replace(".", ",")
+
+    headers = [
+        # Kunde
+        "Kd.-Nr.", "Ext. Kennung", "Name",
+        "Rechnungsadr. Straße+Nr", "Rechnungsadr. PLZ/Ort",
+        "E-Mail", "Telefon", "Mitglied seit", "Rechnung p. E-Mail",
+        # Objekt
+        "Obj.-Nr.", "Obj.-Typ", "Obj. Straße+Nr", "Obj. PLZ/Ort",
+        "Eigentümer seit",
+        # Zähler
+        "Zähler-Nr.", "Zähler-Typ", "Standort",
+        "Einbaudatum", "Ausbaudatum", "Eichjahr", "Anfangswert (m³)",
+        # Zählerstand
+        "Letzter Stand Datum", "Letzter Stand (m³)", "Verbrauch (m³)",
+    ]
+
+    def _row(k, ow, p, m, r):
+        return [
+            k.customer_number or "",
+            k.externe_kennung or "",
+            k.name,
+            " ".join(filter(None, [k.strasse, k.hausnummer])),
+            " ".join(filter(None, [k.plz, k.ort])),
+            k.email or "",
+            k.phone or "",
+            _d(k.member_since),
+            "Ja" if k.rechnung_per_email else "Nein",
+            p.object_number if p else "",
+            p.object_type if p else "",
+            " ".join(filter(None, [p.strasse, p.hausnummer])) if p else "",
+            " ".join(filter(None, [p.plz, p.ort])) if p else "",
+            _d(ow.valid_from) if ow else "",
+            m.meter_number if m else "",
+            m.type_label() if m else "",
+            (m.location or "") if m else "",
+            _d(m.installed_from) if m else "",
+            _d(m.installed_to) if m else "",
+            str(m.eichjahr) if m and m.eichjahr else "",
+            _n(m.initial_value) if m else "",
+            _d(r.reading_date) if r else "",
+            _n(r.value) if r else "",
+            _n(r.consumption) if r else "",
+        ]
+
+    if fmt == "xlsx":
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment
+        import io as _io
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Kundenauswertung"
+
+        # Blockköpfe
+        blocks = [
+            ("Kunde", 9, "1F497D"),
+            ("Objekt", 5, "2F6E3B"),
+            ("Zähler", 7, "7B3F00"),
+            ("Letzter Zählerstand", 3, "4A4A4A"),
+        ]
+        col = 1
+        for label, span, color in blocks:
+            ws.merge_cells(
+                start_row=1, start_column=col,
+                end_row=1, end_column=col + span - 1,
+            )
+            c = ws.cell(row=1, column=col, value=label)
+            c.font = Font(bold=True, color="FFFFFF")
+            c.fill = PatternFill("solid", fgColor=color)
+            c.alignment = Alignment(horizontal="center")
+            col += span
+
+        # Spaltenköpfe
+        for ci, h in enumerate(headers, 1):
+            c = ws.cell(row=2, column=ci, value=h)
+            c.font = Font(bold=True)
+            c.fill = PatternFill("solid", fgColor="D9D9D9")
+
+        # Daten
+        for ri, (k, ow, p, m, r) in enumerate(export_rows, 3):
+            for ci, val in enumerate(_row(k, ow, p, m, r), 1):
+                ws.cell(row=ri, column=ci, value=val)
+
+        # Spaltenbreiten
+        col_widths = [8, 12, 25, 22, 16, 22, 14, 14, 10,
+                      10, 10, 22, 16, 14,
+                      16, 10, 16, 12, 12, 8, 14,
+                      14, 14, 14]
+        for ci, w in enumerate(col_widths, 1):
+            ws.column_dimensions[
+                openpyxl.utils.get_column_letter(ci)
+            ].width = w
+
+        buf = _io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return Response(
+            buf.read(),
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=kundenauswertung.xlsx"},
+        )
+
+    # CSV-Export
+    def generate_csv():
+        out = io.StringIO()
+        out.write("﻿")  # UTF-8 BOM für Excel
+        w = csv.writer(out, delimiter=";")
+        w.writerow(headers)
+        for k, ow, p, m, r in export_rows:
+            w.writerow(_row(k, ow, p, m, r))
+        return out.getvalue()
+
+    return Response(
+        generate_csv(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=kundenauswertung.csv"},
     )
 
 

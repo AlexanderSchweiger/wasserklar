@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Kunden importieren{% endblock %}
+{% block page_title %}<i class="fas fa-file-import me-2"></i> Kunden importieren{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="col-lg-8">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Schritt 1: Datei wählen</h3>
+      </div>
+      <form method="post" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="card-body">
+
+          <div class="alert alert-info">
+            <h4 class="alert-title"><i class="fas fa-info-circle me-1"></i> Erwartetes Format</h4>
+            <ul class="mb-2">
+              <li><strong>CSV:</strong> beliebiges Trennzeichen (Komma, Semikolon, Tab), Zeichensatz UTF-8</li>
+              <li><strong>Excel:</strong> <code>.xlsx</code> oder <code>.xls</code></li>
+              <li>Im nächsten Schritt können Sie die Spalten zuordnen und Zeilen einzeln bearbeiten.</li>
+            </ul>
+            <strong>Beispiel CSV:</strong>
+            <pre class="mb-0" style="font-size:.8rem;background:#f8f9fa;color:#1a1a1a;padding:.5rem;border-radius:4px">Kunden-Nr.;Name;Ort;E-Mail
+1;Mustermann Max;Wien;max@example.at
+2;Österreicher Anna;Graz;anna@example.at</pre>
+            <small class="text-muted">
+              Die Spalte <em>Kunden-Nr.</em> ist optional — fehlt sie, wird automatisch eine neue Nummer vergeben.
+              Zur Aktualisierung bestehender Kunden genügt die Nummer als Schlüssel.
+            </small>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">Bei bestehendem Kunden (gleiche Kunden-Nr. oder externe Kennung)</label>
+            <div>
+              <div class="form-check">
+                <input class="form-check-input" type="radio" name="duplicate_mode" id="dup_skip"
+                       value="skip" checked>
+                <label class="form-check-label" for="dup_skip">
+                  Überspringen <small class="text-muted">(Standard — bestehende Daten bleiben unverändert)</small>
+                </label>
+              </div>
+              <div class="form-check">
+                <input class="form-check-input" type="radio" name="duplicate_mode" id="dup_update"
+                       value="update">
+                <label class="form-check-label" for="dup_update">
+                  Aktualisieren <small class="text-muted">(alle gemappten Felder werden überschrieben)</small>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">Datei auswählen <span class="text-danger">*</span></label>
+            <input type="file" name="file" class="form-control"
+                   accept=".csv,.xlsx,.xls" required>
+          </div>
+
+        </div>
+        <div class="card-footer">
+          <button type="submit" class="btn btn-primary">
+            <i class="fas fa-arrow-right me-1"></i> Weiter zur Vorschau
+          </button>
+          <a href="{{ url_for('customers.index') }}" class="btn btn-secondary ms-2">
+            Abbrechen
+          </a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -2,7 +2,7 @@ import json
 import re
 from datetime import date, timedelta
 
-from flask import render_template, redirect, url_for, flash, request, make_response
+from flask import render_template, redirect, url_for, flash, request, make_response, session
 from flask_login import login_required
 from sqlalchemy import case as sa_case, exists, func as sa_func
 
@@ -10,6 +10,8 @@ from app.properties import bp
 from app.extensions import db
 from app.models import Property, PropertyOwnership, Customer
 from app.pagination import paginate_query
+from app.imports import common as import_common
+from app.properties import import_service
 
 
 # Erlaubte Sort-Keys der Objektliste (Mapping URL-Param -> ORDER-BY-Logik
@@ -436,3 +438,147 @@ def _property_from_form(prop):
     raw_add = request.form.get("additional_fee_override", "").strip().replace(",", ".")
     prop.additional_fee_override = Decimal(raw_add) if raw_add else None
     return prop
+
+
+# ---------------------------------------------------------------------------
+# Objekte-Import-Wizard (3 Routen, analog Kunden-Import)
+# ---------------------------------------------------------------------------
+# Die Session-Keys haben einen property_import_-Prefix, um Kollisionen mit
+# anderen Import-Wizards zu vermeiden.
+
+_PI_FILE_KEY = "property_import_file"
+_PI_CFG_KEY = "property_import_cfg"
+_PI_RESULT_KEY = "property_import_result"
+
+
+def _abort_to_property_import_upload(
+    reason: str = "Sitzung abgelaufen — bitte erneut hochladen.",
+    category: str = "warning",
+):
+    flash(reason, category)
+    path = session.pop(_PI_FILE_KEY, None)
+    if path:
+        import_common.delete_dataframe(path)
+    session.pop(_PI_CFG_KEY, None)
+    return redirect(url_for("properties.import_upload"))
+
+
+@bp.route("/import", methods=["GET", "POST"])
+@login_required
+def import_upload():
+    """Schritt 1: Datei hochladen + Duplikat-Modus wählen."""
+    if request.method == "POST":
+        f = request.files.get("file")
+        if not f or not f.filename:
+            flash("Bitte eine Datei auswählen.", "warning")
+            return redirect(url_for("properties.import_upload"))
+
+        try:
+            df = import_common.read_table(f)
+        except ValueError as exc:
+            flash(str(exc), "danger")
+            return redirect(url_for("properties.import_upload"))
+
+        # Alten Pickle bereinigen
+        old_path = session.pop(_PI_FILE_KEY, None)
+        if old_path:
+            import_common.delete_dataframe(old_path)
+
+        path = import_common.save_dataframe(df, prefix="property_import_")
+        session[_PI_FILE_KEY] = path
+
+        cfg = import_service.PropertyImportConfig.from_form(request.form)
+        session[_PI_CFG_KEY] = cfg.to_dict()
+
+        return redirect(url_for("properties.import_preview"))
+
+    return render_template("properties/import.html")
+
+
+@bp.route("/import/preview", methods=["GET", "POST"])
+@login_required
+def import_preview():
+    """Schritt 2: Spalten zuordnen, Vorschau prüfen, Import ausführen."""
+    path = session.get(_PI_FILE_KEY)
+    df = import_common.load_dataframe(path) if path else None
+    if df is None:
+        return _abort_to_property_import_upload()
+
+    columns = list(df.columns)
+
+    if request.method == "POST":
+        # Config immer aus dem Form übernehmen (beide Aktionen: refresh + confirm)
+        cfg = import_service.PropertyImportConfig.from_form(request.form)
+        session[_PI_CFG_KEY] = cfg.to_dict()
+
+        if request.form.get("action") == "confirm":
+            baseline = import_service.build_preview_rows(df, cfg)
+            merged = import_service.apply_edits(request.form, baseline)
+            stats = import_service.commit(merged, cfg)
+
+            # Aufräumen
+            path_to_delete = session.pop(_PI_FILE_KEY, None)
+            if path_to_delete:
+                import_common.delete_dataframe(path_to_delete)
+            session.pop(_PI_CFG_KEY, None)
+            session[_PI_RESULT_KEY] = stats.to_dict()
+
+            total = stats.created + stats.updated
+            category = "success" if total > 0 and not stats.errors else "warning"
+            flash(
+                f"Import abgeschlossen: {stats.created} angelegt, "
+                f"{stats.updated} aktualisiert, {stats.skipped} übersprungen.",
+                category,
+            )
+            return redirect(url_for("properties.import_result"))
+
+        # action=refresh: Vorschau neu rendern (durch Fall-Through zu GET-Pfad)
+    else:
+        cfg = import_service.PropertyImportConfig.from_dict(session.get(_PI_CFG_KEY))
+        # Auto-suggest leere Felder beim ersten Aufruf
+        suggested = import_service.suggest_config(columns)
+        if not cfg.col_object_number:
+            cfg.col_object_number = suggested.col_object_number
+        if not cfg.col_object_type:
+            cfg.col_object_type = suggested.col_object_type
+        if not cfg.col_strasse:
+            cfg.col_strasse = suggested.col_strasse
+        if not cfg.col_hausnummer:
+            cfg.col_hausnummer = suggested.col_hausnummer
+        if not cfg.col_plz:
+            cfg.col_plz = suggested.col_plz
+        if not cfg.col_ort:
+            cfg.col_ort = suggested.col_ort
+        if not cfg.col_land:
+            cfg.col_land = suggested.col_land
+        if not cfg.col_notes:
+            cfg.col_notes = suggested.col_notes
+        if not cfg.col_owner_customer_number:
+            cfg.col_owner_customer_number = suggested.col_owner_customer_number
+
+    rows = import_service.build_preview_rows(df, cfg)
+
+    counts = {
+        "count_new": sum(1 for r in rows if r.status == import_common.ROW_NEW),
+        "count_update": sum(1 for r in rows if r.status == import_common.ROW_UPDATE),
+        "count_exists": sum(1 for r in rows if r.status == import_common.ROW_EXISTS),
+        "count_error": sum(1 for r in rows if r.status == import_common.ROW_ERROR),
+    }
+
+    return render_template(
+        "properties/import_preview.html",
+        cfg=cfg,
+        columns=columns,
+        rows=rows,
+        counts=counts,
+    )
+
+
+@bp.route("/import/result")
+@login_required
+def import_result():
+    """Schritt 3: Ergebnis anzeigen."""
+    stats = session.pop(_PI_RESULT_KEY, None)
+    if stats is None:
+        return redirect(url_for("properties.index"))
+    return render_template("properties/import_result.html", stats=stats)

@@ -26,11 +26,13 @@ _ENDPOINT_PERMS = {
     "open_item_new": PERM_RECHNUNGEN,
     "open_item_pay": PERM_RECHNUNGEN,
     "open_item_invoice": PERM_RECHNUNGEN,
-    # Auswertungen: Jahresbericht, USt-Voranmeldung
+    # Auswertungen: Jahresbericht, USt-Voranmeldung, Kundenauswertung
     "report": PERM_AUSWERTUNGEN,
     "report_export_excel": PERM_AUSWERTUNGEN,
     "ust": PERM_AUSWERTUNGEN,
     "export_ust_csv": PERM_AUSWERTUNGEN,
+    "kundenauswertung": PERM_AUSWERTUNGEN,
+    "kundenauswertung_export": PERM_AUSWERTUNGEN,
 }
 
 

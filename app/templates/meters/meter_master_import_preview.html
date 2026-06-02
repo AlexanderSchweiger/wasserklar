@@ -1,0 +1,208 @@
+{% extends "base.html" %}
+{% block title %}Zähler-Import Vorschau{% endblock %}
+{% block page_title %}<i class="fas fa-eye me-2"></i> Zähler importieren: Vorschau{% endblock %}
+{% block content %}
+{% from "imports/_preview_macros.html" import status_cell %}
+
+{% set col_fields = [
+  ('col_meter_number', 'Zählernummer'),
+  ('col_object_number', 'Objekt-Nr.'),
+  ('col_location', 'Standort'),
+  ('col_eichjahr', 'Eichjahr'),
+  ('col_installed_from', 'Einbaudatum'),
+  ('col_initial_value', 'Anfangsstand'),
+  ('col_meter_type', 'Typ (main/sub)'),
+  ('col_notes', 'Notizen'),
+] %}
+
+<form method="post" id="preview-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="action" id="action-input" value="confirm">
+
+  {# Spalten-Mapping + Duplikat-Modus #}
+  <div class="card mb-3">
+    <div class="card-header">
+      <h3 class="card-title">Schritt 2: Spalten zuordnen und Vorschau prüfen</h3>
+    </div>
+    <div class="card-body">
+
+      <div class="row g-3">
+        {% for field_name, label in col_fields %}
+        <div class="col-md-4 col-lg-3">
+          <label class="form-label" style="font-size:.85rem">{{ label }}</label>
+          <select name="{{ field_name }}" class="form-select form-select-sm">
+            <option value="">— nicht gemappt —</option>
+            {% for c in columns %}
+            <option value="{{ c }}" {{ 'selected' if (cfg | attr(field_name)) == c }}>{{ c }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        {% endfor %}
+
+        <div class="col-md-4 col-lg-3">
+          <label class="form-label" style="font-size:.85rem">Bei Duplikat</label>
+          <select name="duplicate_mode" class="form-select form-select-sm">
+            <option value="skip" {{ 'selected' if cfg.duplicate_mode == 'skip' }}>
+              Überspringen
+            </option>
+            <option value="update" {{ 'selected' if cfg.duplicate_mode == 'update' }}>
+              Aktualisieren
+            </option>
+          </select>
+        </div>
+      </div>
+
+      <div class="mt-3">
+        <button type="submit" class="btn btn-outline-secondary btn-sm"
+                onclick="document.getElementById('action-input').value='refresh'">
+          <i class="fas fa-sync me-1"></i> Vorschau aktualisieren
+        </button>
+        <small class="text-muted ms-2">
+          Hinweis: Manuelle Änderungen in der Tabelle gehen beim Aktualisieren verloren.
+        </small>
+      </div>
+    </div>
+  </div>
+
+  {# Statistik-Banner #}
+  <div class="row g-2 mb-2">
+    <div class="col-6 col-md-3">
+      <div class="card">
+        <div class="card-body py-2">
+          <span class="badge bg-success text-white me-1">{{ counts['count_new'] }}</span>
+          Neu
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card">
+        <div class="card-body py-2">
+          <span class="badge bg-info text-white me-1">{{ counts['count_update'] }}</span>
+          Aktualisieren
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card">
+        <div class="card-body py-2">
+          <span class="badge bg-secondary-lt me-1">{{ counts['count_exists'] }}</span>
+          Bereits vorhanden
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card">
+        <div class="card-body py-2">
+          <span class="badge bg-danger text-white me-1">{{ counts['count_error'] }}</span>
+          Fehler
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# Vorschau-Tabelle #}
+  <div class="card">
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0 align-middle">
+          <thead>
+            <tr>
+              <th style="width:40px">#</th>
+              <th style="width:50px">Skip</th>
+              <th style="min-width:110px">Zählernummer</th>
+              <th style="min-width:90px">Objekt-Nr.</th>
+              <th style="min-width:120px">Standort</th>
+              <th style="min-width:70px">Eichjahr</th>
+              <th style="min-width:120px">Einbaudatum</th>
+              <th style="min-width:100px">Anfangsstand</th>
+              <th style="min-width:80px">Typ</th>
+              <th style="min-width:140px">Notizen</th>
+              <th style="min-width:160px">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in rows %}
+            <tr class="{{ status_row_class(row.status) }}">
+              <td class="text-muted">{{ row.idx + 2 }}</td>
+              <td>
+                <input type="checkbox" class="form-check-input"
+                       name="rows[{{ row.idx }}][skip]" value="on"
+                       {{ 'checked' if row.skip }}>
+              </td>
+              <td>
+                <input type="text" name="rows[{{ row.idx }}][meter_number]"
+                       class="form-control form-control-sm"
+                       value="{{ row.fields.get('meter_number', '') }}"
+                       style="min-width:90px">
+              </td>
+              <td>
+                <input type="text" name="rows[{{ row.idx }}][object_number]"
+                       class="form-control form-control-sm"
+                       value="{{ row.fields.get('object_number', '') }}"
+                       style="min-width:70px">
+              </td>
+              <td>
+                <input type="text" name="rows[{{ row.idx }}][location]"
+                       class="form-control form-control-sm"
+                       value="{{ row.fields.get('location', '') }}">
+              </td>
+              <td>
+                <input type="text" name="rows[{{ row.idx }}][eichjahr]"
+                       class="form-control form-control-sm"
+                       value="{{ row.fields.get('eichjahr', '') }}"
+                       style="width:70px">
+              </td>
+              <td>
+                {# Datum als <input type=date> — erwartet ISO-Format YYYY-MM-DD #}
+                <input type="date" name="rows[{{ row.idx }}][installed_from]"
+                       class="form-control form-control-sm"
+                       value="{{ row.fields.get('installed_from', '') }}"
+                       style="min-width:110px">
+              </td>
+              <td>
+                <input type="text" name="rows[{{ row.idx }}][initial_value]"
+                       class="form-control form-control-sm"
+                       value="{{ row.fields.get('initial_value', '') }}"
+                       style="width:90px">
+              </td>
+              <td>
+                <input type="text" name="rows[{{ row.idx }}][meter_type]"
+                       class="form-control form-control-sm"
+                       value="{{ row.fields.get('meter_type', '') }}"
+                       style="width:70px"
+                       placeholder="main">
+              </td>
+              <td>
+                <input type="text" name="rows[{{ row.idx }}][notes]"
+                       class="form-control form-control-sm"
+                       value="{{ row.fields.get('notes', '') }}">
+              </td>
+              <td>{{ status_cell(row) }}</td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="11" class="text-center text-muted py-4">
+                Keine Zeilen — bitte mindestens eine Spalte zuordnen und auf
+                „Vorschau aktualisieren" klicken.
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card-footer">
+      <button type="submit" class="btn btn-primary"
+              onclick="document.getElementById('action-input').value='confirm'"
+              {{ 'disabled' if rows | length == 0 }}>
+        <i class="fas fa-check me-1"></i>
+        Import ausführen
+        ({{ counts['count_new'] + counts['count_update'] }} Zeile{{ '' if (counts['count_new'] + counts['count_update']) == 1 else 'n' }})
+      </button>
+      <a href="{{ url_for('meters.meter_master_import_upload') }}" class="btn btn-secondary ms-2">
+        <i class="fas fa-arrow-left me-1"></i> Zurück
+      </a>
+    </div>
+  </div>
+</form>
+{% endblock %}

@@ -1,0 +1,24 @@
+{#
+  Common Jinja macros for per-entity import preview tables.
+
+  Uses ``status_badge`` and ``status_row_class`` from Jinja globals
+  (registered in app/__init__.py).  Both functions operate on the
+  ROW_* vocabulary from app.imports.common.
+
+  Expected ``row`` shape: PreviewRow (.status, .warnings, .message)
+#}
+
+{% macro status_cell(row) %}
+  {% set badge_label, badge_cls = status_badge(row.status) %}
+  <span class="badge {{ badge_cls }}" title="{{ row.message | e }}">{{ badge_label }}</span>
+  {% if row.warnings %}
+    <span class="badge bg-yellow text-dark ms-1"
+          title="{{ row.warnings | join(' | ') | e }}">
+      <i class="fas fa-exclamation-triangle me-1"></i>Warnung
+    </span>
+  {% endif %}
+  {% if row.message %}<div><small class="text-muted">{{ row.message | e }}</small></div>{% endif %}
+  {% for w in row.warnings %}<div><small class="text-yellow">{{ w | e }}</small></div>{% endfor %}
+{% endmacro %}
+
+{% macro row_class(row) %}{{ status_row_class(row.status) }}{% endmacro %}

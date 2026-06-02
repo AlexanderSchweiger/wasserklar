@@ -1,6 +1,6 @@
 import re
 
-from flask import render_template, redirect, url_for, flash, request, jsonify
+from flask import render_template, redirect, url_for, flash, request, jsonify, session
 from flask_login import login_required
 from sqlalchemy import case as sa_case, func as sa_func
 from sqlalchemy.exc import IntegrityError
@@ -11,6 +11,8 @@ from app.extensions import db
 from app.models import Customer, Property, PropertyOwnership
 from app.pagination import paginate_query
 from app.utils import bump_customer_counter_to, next_customer_number
+from app.imports import common as import_common
+from app.customers import import_service
 
 
 # Pflichtfelder auf Formular-Ebene. Adressfelder sind seit dem
@@ -598,3 +600,158 @@ def _apply_customer_fields(customer, form, *, is_new: bool) -> str | None:
         # Lieferanten umgestellt wird und die Kundennummer wegfallen soll.
         customer.customer_number = None
     return None
+
+
+# ---------------------------------------------------------------------------
+# CSV / Excel Import — 3-stufiger Wizard
+# ---------------------------------------------------------------------------
+#
+# Schritt 1: /customers/import          (GET = Formular, POST = Datei hochladen)
+# Schritt 2: /customers/import/preview  (GET = Vorschau; POST action=refresh od. confirm)
+# Schritt 3: /customers/import/result   (GET = Ergebnis)
+#
+# Persistenz: DataFrame als Pickle in instance/; Session haelt nur den Pfad
+# und die Config.  Die Vorschau-Zeilen werden pro Request neu aufgebaut.
+
+_CI_FILE_KEY = "customer_import_file"
+_CI_CFG_KEY = "customer_import_cfg"
+_CI_RESULT_KEY = "customer_import_result"
+
+
+def _abort_to_import_upload(reason: str = "Sitzung abgelaufen — bitte erneut hochladen.",
+                            category: str = "warning"):
+    flash(reason, category)
+    path = session.pop(_CI_FILE_KEY, None)
+    if path:
+        import_common.delete_dataframe(path)
+    session.pop(_CI_CFG_KEY, None)
+    return redirect(url_for("customers.import_upload"))
+
+
+@bp.route("/import", methods=["GET", "POST"])
+@login_required
+def import_upload():
+    """Schritt 1: Datei hochladen + Duplikat-Modus wählen."""
+    if request.method == "POST":
+        f = request.files.get("file")
+        if not f or not f.filename:
+            flash("Bitte eine Datei auswählen.", "warning")
+            return redirect(url_for("customers.import_upload"))
+
+        try:
+            df = import_common.read_table(f)
+        except ValueError as exc:
+            flash(str(exc), "danger")
+            return redirect(url_for("customers.import_upload"))
+
+        # Alten Pickle bereinigen
+        old_path = session.pop(_CI_FILE_KEY, None)
+        if old_path:
+            import_common.delete_dataframe(old_path)
+
+        path = import_common.save_dataframe(df, prefix="customer_import_")
+        session[_CI_FILE_KEY] = path
+
+        cfg = import_service.CustomerImportConfig.from_form(request.form)
+        session[_CI_CFG_KEY] = cfg.to_dict()
+
+        return redirect(url_for("customers.import_preview"))
+
+    return render_template("customers/import.html")
+
+
+@bp.route("/import/preview", methods=["GET", "POST"])
+@login_required
+def import_preview():
+    """Schritt 2: Spalten zuordnen, Vorschau prüfen, Import ausführen."""
+    path = session.get(_CI_FILE_KEY)
+    df = import_common.load_dataframe(path) if path else None
+    if df is None:
+        return _abort_to_import_upload()
+
+    columns = list(df.columns)
+
+    if request.method == "POST":
+        # Config immer aus dem Form übernehmen (beide Aktionen: refresh + confirm)
+        cfg = import_service.CustomerImportConfig.from_form(request.form)
+        session[_CI_CFG_KEY] = cfg.to_dict()
+
+        if request.form.get("action") == "confirm":
+            baseline = import_service.build_preview_rows(df, cfg)
+            merged = import_service.apply_edits(request.form, baseline)
+            stats = import_service.commit(merged, cfg)
+
+            # Aufräumen
+            path_to_delete = session.pop(_CI_FILE_KEY, None)
+            if path_to_delete:
+                import_common.delete_dataframe(path_to_delete)
+            session.pop(_CI_CFG_KEY, None)
+            session[_CI_RESULT_KEY] = stats.to_dict()
+
+            total = stats.created + stats.updated
+            category = "success" if total > 0 and not stats.errors else "warning"
+            flash(
+                f"Import abgeschlossen: {stats.created} angelegt, "
+                f"{stats.updated} aktualisiert, {stats.skipped} übersprungen.",
+                category,
+            )
+            return redirect(url_for("customers.import_result"))
+
+        # action=refresh: Vorschau neu rendern (durch Fall-Through zu GET-Pfad)
+    else:
+        cfg = import_service.CustomerImportConfig.from_dict(session.get(_CI_CFG_KEY))
+        # Auto-suggest leere Felder beim ersten Aufruf
+        suggested = import_service.suggest_config(columns)
+        if not cfg.col_customer_number:
+            cfg.col_customer_number = suggested.col_customer_number
+        if not cfg.col_externe_kennung:
+            cfg.col_externe_kennung = suggested.col_externe_kennung
+        if not cfg.col_name:
+            cfg.col_name = suggested.col_name
+        if not cfg.col_name_last:
+            cfg.col_name_last = suggested.col_name_last
+        if not cfg.col_name_first:
+            cfg.col_name_first = suggested.col_name_first
+        if not cfg.col_strasse:
+            cfg.col_strasse = suggested.col_strasse
+        if not cfg.col_hausnummer:
+            cfg.col_hausnummer = suggested.col_hausnummer
+        if not cfg.col_plz:
+            cfg.col_plz = suggested.col_plz
+        if not cfg.col_ort:
+            cfg.col_ort = suggested.col_ort
+        if not cfg.col_land:
+            cfg.col_land = suggested.col_land
+        if not cfg.col_email:
+            cfg.col_email = suggested.col_email
+        if not cfg.col_phone:
+            cfg.col_phone = suggested.col_phone
+        if not cfg.col_notes:
+            cfg.col_notes = suggested.col_notes
+
+    rows = import_service.build_preview_rows(df, cfg)
+
+    counts = {
+        "count_new": sum(1 for r in rows if r.status == import_common.ROW_NEW),
+        "count_update": sum(1 for r in rows if r.status == import_common.ROW_UPDATE),
+        "count_exists": sum(1 for r in rows if r.status == import_common.ROW_EXISTS),
+        "count_error": sum(1 for r in rows if r.status == import_common.ROW_ERROR),
+    }
+
+    return render_template(
+        "customers/import_preview.html",
+        cfg=cfg,
+        columns=columns,
+        rows=rows,
+        counts=counts,
+    )
+
+
+@bp.route("/import/result")
+@login_required
+def import_result():
+    """Schritt 3: Ergebnis anzeigen."""
+    stats = session.pop(_CI_RESULT_KEY, None)
+    if stats is None:
+        return redirect(url_for("customers.index"))
+    return render_template("customers/import_result.html", stats=stats)

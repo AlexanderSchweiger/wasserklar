@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Zähler importieren{% endblock %}
+{% block page_title %}<i class="fas fa-file-import me-2"></i> Zähler importieren{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="col-lg-8">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Schritt 1: Datei wählen</h3>
+      </div>
+      <form method="post" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="card-body">
+
+          <div class="alert alert-info">
+            <h4 class="alert-title"><i class="fas fa-info-circle me-1"></i> Erwartetes Format</h4>
+            <ul class="mb-2">
+              <li><strong>CSV:</strong> beliebiges Trennzeichen (Komma, Semikolon, Tab), Zeichensatz UTF-8</li>
+              <li><strong>Excel:</strong> <code>.xlsx</code> oder <code>.xls</code></li>
+              <li>Im nächsten Schritt können Sie die Spalten zuordnen und Zeilen einzeln bearbeiten.</li>
+            </ul>
+            <strong>Beispiel CSV:</strong>
+            <pre class="mb-0" style="font-size:.8rem;background:#f8f9fa;color:#1a1a1a;padding:.5rem;border-radius:4px">Zählernummer;Objekt-Nr.;Standort;Eichjahr
+Z-001;OBJ-001;Keller;2020
+Z-002;OBJ-002;Erdgeschoss;2021</pre>
+            <small class="text-muted">
+              Die Spalte <em>Zählernummer</em> und <em>Objekt-Nr.</em> sind Pflichtfelder.
+              Das Objekt muss bereits in der Datenbank vorhanden sein — nicht gefundene Objekte ergeben eine Fehlerzeile.
+              Eichjahr, Einbaudatum, Anfangsstand und Typ sind optional.
+              Beim Typ <em>sub</em> wird der Zähler als Subzähler klassifiziert, sonst als Hauptzähler.
+            </small>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">Bei bestehendem Zähler (gleiche Zählernummer)</label>
+            <div>
+              <div class="form-check">
+                <input class="form-check-input" type="radio" name="duplicate_mode" id="dup_skip"
+                       value="skip" checked>
+                <label class="form-check-label" for="dup_skip">
+                  Überspringen <small class="text-muted">(Standard — bestehende Daten bleiben unverändert)</small>
+                </label>
+              </div>
+              <div class="form-check">
+                <input class="form-check-input" type="radio" name="duplicate_mode" id="dup_update"
+                       value="update">
+                <label class="form-check-label" for="dup_update">
+                  Aktualisieren <small class="text-muted">(alle gemappten Felder werden überschrieben)</small>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">Datei auswählen <span class="text-danger">*</span></label>
+            <input type="file" name="file" class="form-control"
+                   accept=".csv,.xlsx,.xls" required>
+          </div>
+
+        </div>
+        <div class="card-footer">
+          <button type="submit" class="btn btn-primary">
+            <i class="fas fa-arrow-right me-1"></i> Weiter zur Vorschau
+          </button>
+          <a href="{{ url_for('meters.index') }}" class="btn btn-secondary ms-2">
+            Abbrechen
+          </a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -13,6 +13,8 @@ from sqlalchemy import case as sa_case
 from app.meters import bp
 from app.meters import import_service
 from app.meters import swap_import_service
+from app.meters import meter_import_service
+from app.imports import common as import_common
 from app.meters.services import save_reading, recompute_meter_chain
 from app.extensions import db
 from app.models import (
@@ -1500,3 +1502,150 @@ def meter_delete(meter_id):
     db.session.commit()
     flash(f"Zähler '{number}' wurde gelöscht.", "success")
     return redirect(url_for("meters.index"))
+
+
+# ---------------------------------------------------------------------------
+# Zähler-Stammdaten-Import — 3-stufiger Wizard (KOLLISIONSFREI)
+#
+# Pfade:   /meters/master-import         → meter_master_import_upload
+#          /meters/master-import/preview → meter_master_import_preview
+#          /meters/master-import/result  → meter_master_import_result
+#
+# Session-Keys: meter_master_import_file / _cfg / _result
+# (NICHT meter_import_* — das gehört dem Ablesungs-Import!)
+# ---------------------------------------------------------------------------
+
+_MMI_FILE_KEY = "meter_master_import_file"
+_MMI_CFG_KEY = "meter_master_import_cfg"
+_MMI_RESULT_KEY = "meter_master_import_result"
+
+
+def _abort_to_mmi_upload(reason: str = "Sitzung abgelaufen — bitte erneut hochladen.",
+                          category: str = "warning"):
+    flash(reason, category)
+    path = session.pop(_MMI_FILE_KEY, None)
+    if path:
+        import_common.delete_dataframe(path)
+    session.pop(_MMI_CFG_KEY, None)
+    return redirect(url_for("meters.meter_master_import_upload"))
+
+
+@bp.route("/master-import", methods=["GET", "POST"])
+@login_required
+def meter_master_import_upload():
+    """Schritt 1: Datei hochladen + Duplikat-Modus wählen."""
+    if request.method == "POST":
+        f = request.files.get("file")
+        if not f or not f.filename:
+            flash("Bitte eine Datei auswählen.", "warning")
+            return redirect(url_for("meters.meter_master_import_upload"))
+
+        try:
+            df = import_common.read_table(f)
+        except ValueError as exc:
+            flash(str(exc), "danger")
+            return redirect(url_for("meters.meter_master_import_upload"))
+
+        # Alten Pickle bereinigen
+        old_path = session.pop(_MMI_FILE_KEY, None)
+        if old_path:
+            import_common.delete_dataframe(old_path)
+
+        path = import_common.save_dataframe(df, prefix="meter_master_import_")
+        session[_MMI_FILE_KEY] = path
+
+        cfg = meter_import_service.MeterImportConfig.from_form(request.form)
+        session[_MMI_CFG_KEY] = cfg.to_dict()
+
+        return redirect(url_for("meters.meter_master_import_preview"))
+
+    return render_template("meters/meter_master_import.html")
+
+
+@bp.route("/master-import/preview", methods=["GET", "POST"])
+@login_required
+def meter_master_import_preview():
+    """Schritt 2: Spalten zuordnen, Vorschau prüfen, Import ausführen."""
+    path = session.get(_MMI_FILE_KEY)
+    df = import_common.load_dataframe(path) if path else None
+    if df is None:
+        return _abort_to_mmi_upload()
+
+    columns = list(df.columns)
+
+    if request.method == "POST":
+        # Config immer aus dem Form übernehmen (beide Aktionen: refresh + confirm)
+        cfg = meter_import_service.MeterImportConfig.from_form(request.form)
+        session[_MMI_CFG_KEY] = cfg.to_dict()
+
+        if request.form.get("action") == "confirm":
+            baseline = meter_import_service.build_preview_rows(df, cfg)
+            merged = meter_import_service.apply_edits(request.form, baseline)
+            stats = meter_import_service.commit(merged, cfg)
+
+            # Aufräumen
+            path_to_delete = session.pop(_MMI_FILE_KEY, None)
+            if path_to_delete:
+                import_common.delete_dataframe(path_to_delete)
+            session.pop(_MMI_CFG_KEY, None)
+            session[_MMI_RESULT_KEY] = stats.to_dict()
+
+            total = stats.created + stats.updated
+            category = "success" if total > 0 and not stats.errors else "warning"
+            flash(
+                f"Import abgeschlossen: {stats.created} angelegt, "
+                f"{stats.updated} aktualisiert, {stats.skipped} übersprungen.",
+                category,
+            )
+            return redirect(url_for("meters.meter_master_import_result"))
+
+        # action=refresh: Vorschau neu rendern (durch Fall-Through zu GET-Pfad)
+    else:
+        cfg = meter_import_service.MeterImportConfig.from_dict(
+            session.get(_MMI_CFG_KEY)
+        )
+        # Auto-suggest leere Felder beim ersten Aufruf
+        suggested = meter_import_service.suggest_config(columns)
+        if not cfg.col_meter_number:
+            cfg.col_meter_number = suggested.col_meter_number
+        if not cfg.col_object_number:
+            cfg.col_object_number = suggested.col_object_number
+        if not cfg.col_location:
+            cfg.col_location = suggested.col_location
+        if not cfg.col_eichjahr:
+            cfg.col_eichjahr = suggested.col_eichjahr
+        if not cfg.col_installed_from:
+            cfg.col_installed_from = suggested.col_installed_from
+        if not cfg.col_initial_value:
+            cfg.col_initial_value = suggested.col_initial_value
+        if not cfg.col_meter_type:
+            cfg.col_meter_type = suggested.col_meter_type
+        if not cfg.col_notes:
+            cfg.col_notes = suggested.col_notes
+
+    rows = meter_import_service.build_preview_rows(df, cfg)
+
+    counts = {
+        "count_new": sum(1 for r in rows if r.status == import_common.ROW_NEW),
+        "count_update": sum(1 for r in rows if r.status == import_common.ROW_UPDATE),
+        "count_exists": sum(1 for r in rows if r.status == import_common.ROW_EXISTS),
+        "count_error": sum(1 for r in rows if r.status == import_common.ROW_ERROR),
+    }
+
+    return render_template(
+        "meters/meter_master_import_preview.html",
+        cfg=cfg,
+        columns=columns,
+        rows=rows,
+        counts=counts,
+    )
+
+
+@bp.route("/master-import/result")
+@login_required
+def meter_master_import_result():
+    """Schritt 3: Ergebnis anzeigen."""
+    stats = session.pop(_MMI_RESULT_KEY, None)
+    if stats is None:
+        return redirect(url_for("meters.index"))
+    return render_template("meters/meter_master_import_result.html", stats=stats)

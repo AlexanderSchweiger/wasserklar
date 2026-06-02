@@ -12,6 +12,7 @@ from flask_login import login_required
 
 from app.import_csv import bp
 from app.extensions import db
+from app.imports.relations import OwnerConflictTracker, MeterObjectTracker
 from app.models import (
     Customer, Property, PropertyOwnership, WaterMeter, MeterReading,
     BillingPeriod,
@@ -101,7 +102,7 @@ def _get_cell(row_dict: dict, col_name: str) -> str:
 
 def _act(text, kind="info"):
     """Eine Aktion in der Vorschau. ``kind``: 'new' (wird angelegt),
-    'update' (wird aktualisiert) oder 'info' (neutral)."""
+    'update' (wird aktualisiert), 'info' (neutral) oder 'warn' (Warnung)."""
     return {"text": text, "kind": kind}
 
 
@@ -157,6 +158,9 @@ def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str,
         "errors": [],
         "plan": [],
     }
+
+    owner_tracker = OwnerConflictTracker()
+    meter_tracker = MeterObjectTracker()
 
     col_cnum = col_map.get("customer_number", "")
     col_name = col_map.get("customer_name", "")
@@ -352,6 +356,18 @@ def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str,
                 property_id=prop.id, customer_id=customer.id, valid_to=None
             ).first()
             if existing_ownership is None:
+                existing_owner_keys = [
+                    o.customer_id for o in
+                    PropertyOwnership.query.filter_by(
+                        property_id=prop.id, valid_to=None
+                    ).all()
+                ]
+                warn = owner_tracker.check_and_register(
+                    prop.id, customer.id, existing_owner_keys
+                )
+                if warn:
+                    results["warnings"].append(f"Zeile {idx}: {warn}")
+                    actions.append(_act(warn, "warn"))
                 db.session.add(PropertyOwnership(
                     property_id=prop.id,
                     customer_id=customer.id,
@@ -387,11 +403,24 @@ def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str,
                 existing_meter = WaterMeter.query.filter_by(meter_number=raw_meter).first()
                 if existing_meter:
                     meter = existing_meter
+                    existing_object_key = existing_meter.property_id
+                    warn = meter_tracker.check_and_register(
+                        raw_meter, prop.id, existing_object_key
+                    )
+                    if warn:
+                        results["warnings"].append(f"Zeile {idx}: {warn}")
+                        actions.append(_act(warn, "warn"))
                     results["meters_reused"] += 1
                     actions.append(_act(
                         f"Zähler »{raw_meter}« – bereits vorhanden, "
                         f"wird wiederverwendet"))
                 else:
+                    warn = meter_tracker.check_and_register(
+                        raw_meter, prop.id, None
+                    )
+                    if warn:
+                        results["warnings"].append(f"Zeile {idx}: {warn}")
+                        actions.append(_act(warn, "warn"))
                     meter = WaterMeter(
                         property_id=prop.id,
                         meter_number=raw_meter,

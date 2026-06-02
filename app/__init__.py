@@ -99,6 +99,16 @@ def create_app(config_name=None):
 
     app.jinja_env.filters["de_number"] = de_number
 
+    # Jinja-Globals fuer per-entity import preview macros (ROW_* status vocabulary).
+    # The meter-reading import_preview.html passes its own status_badge/status_row_class
+    # as render-kwargs and shadows these globals locally — no regression there.
+    from app.imports.common import (
+        status_badge as _status_badge,
+        status_row_class as _status_row_class,
+    )
+    app.jinja_env.globals["status_badge"] = _status_badge
+    app.jinja_env.globals["status_row_class"] = _status_row_class
+
     # Jinja-Global fuer Pagination: erzeugt URLs mit ueberlagerten Query-Args
     # (siehe app/pagination.py + templates/_pagination.html).
     from app.pagination import page_url as _page_url

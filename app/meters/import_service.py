@@ -9,16 +9,17 @@ Konventionen:
 - ``Decimal`` als Geld-/Mengen-Typ konsistent mit Models.
 - DataFrame-Index ``i`` ist die Identitaet einer Zeile durch den ganzen
   Wizard hindurch (Pickle survived den Roundtrip ohne Re-Index).
+
+Die allgemeinen Daten-/IO-Helfer und Parse-Utilities liegen jetzt in
+``app.imports.common`` und werden hier re-exportiert, damit bestehende
+Aufrufer (routes.py, Tests) unveraendert weiterfunktionieren.
 """
 from __future__ import annotations
 
-import os
-import pickle
 import re
-import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Any
 
 from flask import current_app
@@ -30,21 +31,59 @@ from app.models import (
 )
 from app.meters.services import previous_reading, recompute_meter_chain
 
+# ---------------------------------------------------------------------------
+# Re-exports from app.imports.common
+# (routes.py and tests reference these as import_service.<name>)
+# ---------------------------------------------------------------------------
+from app.imports.common import (  # noqa: F401 — re-exported on purpose
+    NUMBER_FORMATS,
+    DATE_FORMATS,
+    DUPLICATE_MODES,
+    _RE_PURE_INT,
+    _RE_NUM_AT_DE_END,
+    _RE_NUM_US_END,
+    _RE_NUM_HAS_DOT_3,
+    _RE_DATE_ISO,
+    _RE_DATE_DEUS,
+    _RE_TRAILING_TIME,
+    _series_strings,
+    detect_number_format,
+    detect_date_format,
+    _cell,
+    parse_number,
+    parse_date,
+    format_value_de,
+    load_dataframe,
+    delete_dataframe,
+    parse_row_edits as _parse_row_edits,
+)
+import app.imports.common as _common
+
 
 # ---------------------------------------------------------------------------
-# Konstanten
+# Konstanten (meter-specific)
 # ---------------------------------------------------------------------------
 
 MAPPING_MODES = ("meter_number", "customer_number", "customer_name")
-NUMBER_FORMATS = ("auto", "at_de", "us", "plain")
-DATE_FORMATS = ("auto", "iso", "de", "us", "excel_ts")
-DUPLICATE_MODES = ("update", "skip")
 
 STATUS_OK = "ok"
 STATUS_OK_PREFERRED_MAIN = "ok_preferred_main"
 STATUS_AMBIGUOUS = "ambiguous"
 STATUS_NOT_FOUND = "not_found"
 STATUS_PARSE_ERROR = "parse_error"
+
+
+# ---------------------------------------------------------------------------
+# save_dataframe — thin wrapper that forces the meter_import_ prefix
+# ---------------------------------------------------------------------------
+
+def save_dataframe(df) -> str:
+    """Pickle the DataFrame with the ``meter_import_`` prefix.
+
+    Thin wrapper around ``app.imports.common.save_dataframe`` to keep the
+    prefix stable for existing session keys and clean-up logic.
+    """
+    return _common.save_dataframe(df, prefix="meter_import_")
 
 
 # ---------------------------------------------------------------------------
@@ -145,6 +184,7 @@ class ResolvedRow:
 
 @dataclass
 class ImportStats:
+    """Meter-reading-specific import stats (different from app.imports.common.ImportStats)."""
     created: int = 0
     updated: int = 0
     skipped: int = 0
@@ -164,283 +204,6 @@ class ImportStats:
 
 
 # ---------------------------------------------------------------------------
-# Pickle-Persistenz fuer das hochgeladene DataFrame
-# ---------------------------------------------------------------------------
-
-def _instance_dir() -> str:
-    return current_app.instance_path
-
-
-def save_dataframe(df: pd.DataFrame) -> str:
-    """Schreibt das DataFrame als Pickle ins instance/-Verzeichnis und gibt
-    den absoluten Pfad zurueck. Der Caller speichert den Pfad in der
-    Session.
-    """
-    os.makedirs(_instance_dir(), exist_ok=True)
-    fname = f"meter_import_{uuid.uuid4().hex}.pkl"
-    path = os.path.join(_instance_dir(), fname)
-    df.to_pickle(path)
-    return path
-
-
-def load_dataframe(path: str) -> pd.DataFrame | None:
-    import pandas as pd
-    if not path or not os.path.exists(path):
-        return None
-    try:
-        return pd.read_pickle(path)
-    except Exception:
-        return None
-
-
-def delete_dataframe(path: str) -> None:
-    try:
-        if path and os.path.exists(path):
-            os.remove(path)
-    except OSError:
-        pass
-
-
-# ---------------------------------------------------------------------------
-# Format-Detection (pro Spalte)
-# ---------------------------------------------------------------------------
-
-_RE_PURE_INT = re.compile(r"^-?\d+$")
-_RE_NUM_AT_DE_END = re.compile(r",\d{1,3}$")
-_RE_NUM_US_END = re.compile(r"\.\d{1,3}$")
-_RE_NUM_HAS_DOT_3 = re.compile(r"\.\d{3}$")
-_RE_DATE_ISO = re.compile(r"^\d{4}-\d{1,2}-\d{1,2}(?:[ T]\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?)?$")
-_RE_DATE_DEUS = re.compile(r"^(\d{1,2})[./](\d{1,2})[./](\d{2,4})(?:[ T]\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?)?$")
-_RE_TRAILING_TIME = re.compile(r"[ T]\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?$")
-
-
-def _series_strings(series: pd.Series, limit: int | None = None) -> list[str]:
-    import pandas as pd
-    out: list[str] = []
-    for v in series:
-        if v is None:
-            continue
-        if isinstance(v, float) and pd.isna(v):
-            continue
-        s = str(v).strip()
-        if not s or s.lower() in ("nan", "none", "nat"):
-            continue
-        out.append(s)
-        if limit is not None and len(out) >= limit:
-            break
-    return out
-
-
-def detect_number_format(series: pd.Series) -> str:
-    """Liefert 'at_de' | 'us' | 'plain' | 'unknown'.
-
-    Heuristik pro Spalte (mehrheits-basiert): wenn alle Werte bloss Ziffern
-    sind, ist 'plain' der sichere Default. Bei Mix aus ',' und '.' wird die
-    Position des letzten Trennzeichens entscheidend (rechts steht das
-    Dezimaltrennzeichen).
-    """
-    samples = _series_strings(series)
-    if not samples:
-        return "unknown"
-    if all(_RE_PURE_INT.match(s) for s in samples):
-        return "plain"
-    has_comma = sum(1 for s in samples if "," in s)
-    has_dot = sum(1 for s in samples if "." in s)
-    if has_comma and has_dot:
-        at_de_votes = sum(1 for s in samples if _RE_NUM_AT_DE_END.search(s))
-        us_votes = sum(1 for s in samples if _RE_NUM_US_END.search(s))
-        if at_de_votes >= us_votes:
-            return "at_de"
-        return "us"
-    if has_comma:
-        return "at_de"
-    if has_dot:
-        # Punkt nur: Tausenderpunkt (3 Stellen rechts) vs. Dezimalpunkt
-        if any(_RE_NUM_HAS_DOT_3.search(s) for s in samples):
-            return "at_de"
-        return "plain"
-    return "unknown"
-
-
-def detect_date_format(series: pd.Series) -> str:
-    """Liefert 'excel_ts' | 'iso' | 'de' | 'us' | 'unknown'.
-
-    'excel_ts' = pandas hat die Spalte als Timestamp eingelesen
-    (passiert bei nativen Excel-Datumszellen, auch mit dtype=str).
-    """
-    import pandas as pd
-    # 1. Echte Timestamp-Objekte?
-    for v in series:
-        if isinstance(v, pd.Timestamp):
-            return "excel_ts"
-        if isinstance(v, (date, datetime)):
-            return "excel_ts"
-
-    samples = _series_strings(series, limit=10)
-    if not samples:
-        return "unknown"
-    if all(_RE_DATE_ISO.match(s) for s in samples):
-        return "iso"
-
-    de_votes = us_votes = 0
-    matched = 0
-    for s in samples:
-        m = _RE_DATE_DEUS.match(s)
-        if not m:
-            continue
-        matched += 1
-        a, b, _ = int(m.group(1)), int(m.group(2)), m.group(3)
-        if a > 12 and b <= 12:
-            de_votes += 1
-        elif b > 12 and a <= 12:
-            us_votes += 1
-    if matched and matched == len(samples):
-        if us_votes > de_votes:
-            return "us"
-        # bei Tie oder de-Mehrheit lokal AT-Default
-        return "de"
-    return "unknown"
-
-
-# ---------------------------------------------------------------------------
-# Per-Zellen-Parser
-# ---------------------------------------------------------------------------
-
-def _cell(row: dict, col: str) -> str:
-    import pandas as pd
-    if not col:
-        return ""
-    v = row.get(col, "")
-    if v is None:
-        return ""
-    if isinstance(v, float) and pd.isna(v):
-        return ""
-    s = str(v).strip()
-    if s.lower() in ("nan", "none", "nat"):
-        return ""
-    return s
-
-
-def parse_number(raw: str, fmt: str) -> Decimal | None:
-    """Parst eine einzelne Zahl gemaess vorgegebenem Format.
-
-    'auto' versucht alle Formate in dieser Reihenfolge: at_de, us, plain.
-    Gibt None zurueck wenn kein Parsing klappt -- der Caller markiert die
-    Zeile dann als parse_error.
-    """
-    if not raw:
-        return None
-    s = raw.strip().replace(" ", "")
-    if not s or s.lower() in ("nan", "none"):
-        return None
-
-    if fmt == "plain":
-        try:
-            return Decimal(s.replace(",", "."))
-        except InvalidOperation:
-            return None
-
-    if fmt == "at_de":
-        # Punkt = Tausender, Komma = Dezimal
-        cleaned = s.replace(".", "").replace(",", ".") if ("," in s) else s.replace(".", "")
-        try:
-            return Decimal(cleaned)
-        except InvalidOperation:
-            return None
-
-    if fmt == "us":
-        cleaned = s.replace(",", "")
-        try:
-            return Decimal(cleaned)
-        except InvalidOperation:
-            return None
-
-    # auto / unknown: probiere durch
-    for try_fmt in ("at_de", "us", "plain"):
-        v = parse_number(s, try_fmt)
-        if v is not None:
-            return v
-    return None
-
-
-def parse_date(raw: Any, fmt: str) -> date | None:
-    """Parst ein einzelnes Datum gemaess vorgegebenem Format.
-
-    Akzeptiert auch direkt pd.Timestamp / date / datetime fuer
-    'excel_ts'-Spalten -- in dem Fall ignorieren wir 'fmt' und konvertieren
-    direkt.
-    """
-    import pandas as pd
-    if raw is None:
-        return None
-    if isinstance(raw, pd.Timestamp):
-        return raw.to_pydatetime().date()
-    if isinstance(raw, datetime):
-        return raw.date()
-    if isinstance(raw, date):
-        return raw
-    if isinstance(raw, float) and pd.isna(raw):
-        return None
-    s = str(raw).strip()
-    if not s or s.lower() in ("nan", "none", "nat"):
-        return None
-
-    # Excel-Datumszellen kommen bei pd.read_excel(dtype=str) als
-    # 'YYYY-MM-DD HH:MM:SS' an -- der Zeitanteil ist fuer eine Ablesung
-    # irrelevant und wuerde alle strptime-Varianten brechen. Einmal
-    # abschneiden, danach normal weiter parsen.
-    s = _RE_TRAILING_TIME.sub("", s).strip()
-
-    if fmt == "iso":
-        try:
-            return datetime.strptime(s, "%Y-%m-%d").date()
-        except ValueError:
-            return None
-    if fmt == "de":
-        for f in ("%d.%m.%Y", "%d.%m.%y", "%d/%m/%Y", "%d/%m/%y",
-                  "%d-%m-%Y", "%d-%m-%y"):
-            try:
-                return datetime.strptime(s, f).date()
-            except ValueError:
-                continue
-        return None
-    if fmt == "us":
-        for f in ("%m/%d/%Y", "%m/%d/%y", "%m.%d.%Y", "%m-%d-%Y"):
-            try:
-                return datetime.strptime(s, f).date()
-            except ValueError:
-                continue
-        return None
-    if fmt == "excel_ts":
-        # Sollte oben schon behandelt sein, aber als Fallback:
-        try:
-            return pd.to_datetime(s, dayfirst=True, errors="coerce").date()
-        except (ValueError, AttributeError):
-            return None
-
-    # auto / unknown: probiere ISO, DE, US, dann pandas mit dayfirst=True
-    for try_fmt in ("iso", "de", "us"):
-        d = parse_date(s, try_fmt)
-        if d is not None:
-            return d
-    # Excel-Serial-Datum (Zelle als Zahl statt Datum formatiert).
-    if re.fullmatch(r"\d{4,6}(\.0+)?", s):
-        try:
-            serial = int(float(s))
-            if 20000 <= serial <= 80000:  # ~1954 bis ~2089
-                return (datetime(1899, 12, 30) + timedelta(days=serial)).date()
-        except (ValueError, OverflowError):
-            pass
-    try:
-        ts = pd.to_datetime(s, dayfirst=True, errors="coerce")
-        if pd.isna(ts):
-            return None
-        return ts.date()
-    except (ValueError, AttributeError):
-        return None
-
-
-# ---------------------------------------------------------------------------
 # Mapping / Resolver
 # ---------------------------------------------------------------------------
 
@@ -456,8 +219,6 @@ def _customer_meters(customer_id: int) -> list[WaterMeter]:
             WaterMeter.active.is_(True),
         )
         .order_by(WaterMeter.meter_type.desc(), WaterMeter.meter_number.asc())
-        # 'main' kommt vor 'sub' im desc-Sort (m > s lexikographisch falsch -- ok,
-        # wir sortieren explizit unten in _classify, das hier ist nur Default-Order)
         .all()
     )
 
@@ -534,10 +295,6 @@ def resolve_meter(lookup_value: str, mode: str) -> ResolveResult:
 # Vorjahresstand + Verbrauchs-Berechnung (inkl. Zaehlerwechsel im Jahr)
 # ---------------------------------------------------------------------------
 
-# Toleranz fuer den Vergleich "berechneter vs. importierter Verbrauch".
-# Excel-Eingaben mit gerundeten Vorjahres-Werten weichen oft um <1 m^3 ab,
-# sind aber materiell identisch -- erst groessere Diskrepanzen sind eine
-# echte Warnung wert.
 CONSUMPTION_TOLERANCE = Decimal("0.5")
 
 
@@ -545,25 +302,10 @@ def compute_prior_and_consumption(
     meter: WaterMeter, reading_date: date | None, value: Decimal | None,
     *, billing_period: BillingPeriod | None = None,
 ) -> tuple[Decimal | None, str, Decimal | None, str]:
-    """Liefert (prior_value, prior_label, consumption, replacement_info).
-
-    prior_value = Wert der vorigen Ablesung des Meters (chronologisch nach
-    ``reading_date``), sonst ``initial_value``. consumption = value - prior.
-
-    Bei einem Zaehlerwechsel innerhalb der Importperiode wird die Kette ueber
-    den Vorgaengerzaehler aufgeloest (gleiche Logik wie auf der
-    Zaehlerablesungen-Seite, vgl. ``meters.routes._build_replacement_map``):
-    prior_value = Vorperioden-Ablesung des Altzaehlers, consumption =
-    (Abschluss-Ablesung Alt - prior) + (value - initial_value Neu).
-
-    Reine Vorschau-Berechnung — der tatsaechlich gespeicherte Verbrauch wird
-    beim Commit ueber ``recompute_meter_chain`` gesetzt.
-    """
+    """Liefert (prior_value, prior_label, consumption, replacement_info)."""
     if value is None or reading_date is None:
         return (None, "—", None, "")
 
-    # Zaehlerwechsel-Pfad: Wenn der Zaehler in der Importperiode neu eingebaut
-    # wurde und ein passender Altzaehler existiert, ueber dessen Kette laufen.
     if (
         billing_period is not None
         and meter.installed_from is not None
@@ -601,13 +343,7 @@ def _compute_swap_chain(
     new_meter: WaterMeter, new_value: Decimal,
     old_meter: WaterMeter, period: BillingPeriod,
 ) -> tuple[Decimal | None, str, Decimal | None, str]:
-    """Swap-aware Vorjahresstand + Verbrauch.
-
-    prior_value = Vorperioden-Ablesung des Altzaehlers (Fallback:
-    ``initial_value`` des Altzaehlers). consumption = (Altz.-Schluss -
-    prior_value) + (new_value - new_meter.initial_value); fehlt eine
-    Komponente, ist consumption None.
-    """
+    """Swap-aware Vorjahresstand + Verbrauch."""
     old_closing = MeterReading.query.filter_by(
         meter_id=old_meter.id, billing_period_id=period.id,
     ).first()
@@ -670,8 +406,7 @@ def _compute_swap_chain(
 
 def _check_mismatch(computed: Decimal | None, imported: Decimal | None) -> bool:
     """True wenn beide Werte vorliegen und sich um mehr als CONSUMPTION_TOLERANCE
-    unterscheiden. Ohne import-Wert oder ohne berechneten Wert keine Warnung.
-    """
+    unterscheiden."""
     if computed is None or imported is None:
         return False
     return abs(computed - imported) > CONSUMPTION_TOLERANCE
@@ -681,12 +416,8 @@ def _check_mismatch(computed: Decimal | None, imported: Decimal | None) -> bool:
 # Build resolved rows
 # ---------------------------------------------------------------------------
 
-def detect_formats_for_config(df: pd.DataFrame, cfg: MappingConfig) -> tuple[str, str]:
-    """Liefert das tatsaechlich zu verwendende Zahlen-/Datumsformat.
-
-    Wenn der User 'auto' gewaehlt hat, wird die Spalten-Heuristik angewendet.
-    Sonst wird das vom User explizit gewaehlte Format zurueckgegeben.
-    """
+def detect_formats_for_config(df, cfg: MappingConfig) -> tuple[str, str]:
+    """Liefert das tatsaechlich zu verwendende Zahlen-/Datumsformat."""
     vf = cfg.value_format
     df_ = cfg.date_format
     if vf == "auto" and cfg.col_value and cfg.col_value in df.columns:
@@ -696,7 +427,7 @@ def detect_formats_for_config(df: pd.DataFrame, cfg: MappingConfig) -> tuple[str
     return vf or "auto", df_ or "auto"
 
 
-def build_resolved_rows(df: pd.DataFrame, cfg: MappingConfig) -> list[ResolvedRow]:
+def build_resolved_rows(df, cfg: MappingConfig) -> list[ResolvedRow]:
     if df is None or df.empty or not cfg.col_lookup or not cfg.col_value:
         return []
 
@@ -721,8 +452,6 @@ def build_resolved_rows(df: pd.DataFrame, cfg: MappingConfig) -> list[ResolvedRo
         if value_raw and value is None:
             parse_errors.append(f"Wert '{value_raw}' nicht parsbar")
 
-        # Importierter Verbrauch: gleiches Format wie Wert, da er typischerweise
-        # in derselben Spalten-Gruppe steht (DE/AT-Komma).
         imported_cons = parse_number(consumption_raw, value_fmt) if consumption_raw else None
 
         rdate = parse_date(date_raw, date_fmt) if date_raw is not None else None
@@ -731,25 +460,19 @@ def build_resolved_rows(df: pd.DataFrame, cfg: MappingConfig) -> list[ResolvedRo
             if d_str:
                 parse_errors.append(f"Datum '{d_str}' nicht parsbar")
 
-        # Fallback: ohne Ablesedatum das Periodenende verwenden.
         if rdate is None:
             rdate = fallback_date
 
-        # Mapping-Resolve
         resolve = resolve_meter(lookup, cfg.mode)
         candidate_ids = [m.id for m in resolve.candidates]
         chosen_id = resolve.chosen.id if resolve.chosen else None
 
-        # Status: parse_errors uebersteuern Mapping-Status (Wert/Datum kaputt
-        # ist wichtiger zu signalisieren als Mapping-OK).
         status = resolve.status
         message = resolve.message
         if value is None:
             status = STATUS_PARSE_ERROR
             message = "; ".join(parse_errors) or "Wert fehlt"
 
-        # Vorablesung + Verbrauch berechnen (nur wenn wir einen Meter UND
-        # einen Wert UND ein Datum haben).
         prior_value: Decimal | None = None
         prior_label = "—"
         computed_cons: Decimal | None = None
@@ -794,19 +517,12 @@ _RE_FORM_KEY = re.compile(r"^rows\[(\d+)\]\[(\w+)\]$")
 def parse_form_edits(form, baseline_rows: list[ResolvedRow]) -> list[ResolvedRow]:
     """Mergt die User-Edits aus dem Confirm-Form auf die baseline-Liste.
 
-    baseline_rows kommt aus build_resolved_rows() und ist bereits resolved
-    (Mapping + Auto-Parse). Fuer jede Zeile wird die User-Eingabe (Wert,
-    Datum, Jahr, Ziel-Meter, Skip) re-validiert und ueberschreibt die
-    Vorbelegung.
+    Uses ``app.imports.common.parse_row_edits`` for the generic key parsing,
+    then applies meter-specific re-validation (value/date/meter_id + status
+    updates) on top.
     """
-    edits: dict[int, dict[str, str]] = {}
-    for key in form.keys():
-        m = _RE_FORM_KEY.match(key)
-        if not m:
-            continue
-        ridx = int(m.group(1))
-        field_name = m.group(2)
-        edits.setdefault(ridx, {})[field_name] = form.get(key, "")
+    # Generic key parsing via common helper
+    edits = _parse_row_edits(form)
 
     # Skip-Checkboxen: HTML schickt unchecked checkboxes nicht mit, also
     # explizit auf False initialisieren.
@@ -826,12 +542,10 @@ def parse_form_edits(form, baseline_rows: list[ResolvedRow]) -> list[ResolvedRow
         if "value" in e:
             new_raw = (e.get("value") or "").strip()
             if new_raw:
-                # User-Edits sind frei eingegeben -- 'auto' ist tolerant.
                 v = parse_number(new_raw, "auto")
                 if v is not None:
                     r.value = v
                     if r.status == STATUS_PARSE_ERROR:
-                        # Wenn der User den Wert repariert hat, Status neu setzen.
                         r.status = STATUS_OK if r.chosen_meter_id else STATUS_NOT_FOUND
                 else:
                     r.value = None
@@ -858,7 +572,6 @@ def parse_form_edits(form, baseline_rows: list[ResolvedRow]) -> list[ResolvedRow
                 r.chosen_meter_id = int(mid_raw) if mid_raw else None
             except ValueError:
                 r.chosen_meter_id = None
-            # Wenn User explizit einen Meter waehlt, "ambiguous" -> "ok"
             if r.chosen_meter_id and r.status in (STATUS_AMBIGUOUS, STATUS_OK_PREFERRED_MAIN):
                 r.status = STATUS_OK
 
@@ -872,14 +585,7 @@ def parse_form_edits(form, baseline_rows: list[ResolvedRow]) -> list[ResolvedRow
 def commit_import(rows: list[ResolvedRow], user_id: int,
                   billing_period: BillingPeriod,
                   duplicate_mode: str) -> ImportStats:
-    """Persistiert die resolved + edited Zeilen in die gewaehlte
-    Abrechnungsperiode.
-
-    Pro Zeile ein Savepoint -- ein Fehler einer Zeile rollt nur diese eine
-    zurueck. Nach dem Lauf wird die Verbrauchskette jedes betroffenen
-    Zaehlers neu berechnet (``recompute_meter_chain``), dann ein einziger
-    commit auf den outer-trans.
-    """
+    """Persistiert die resolved + edited Zeilen in die gewaehlte Abrechnungsperiode."""
     stats = ImportStats()
     affected_meters: dict[int, WaterMeter] = {}
     for row in rows:
@@ -930,7 +636,6 @@ def commit_import(rows: list[ResolvedRow], user_id: int,
             sp.rollback()
             stats.errors.append(f"Zeile {row.idx + 2}: {e}")
 
-    # Verbrauch (consumption) der betroffenen Zaehler einheitlich neu rechnen.
     db.session.flush()
     for meter in affected_meters.values():
         recompute_meter_chain(meter)
@@ -940,10 +645,11 @@ def commit_import(rows: list[ResolvedRow], user_id: int,
 
 
 # ---------------------------------------------------------------------------
-# Helpers fuer Templates
+# Helpers fuer Templates (meter-resolution status — different from common ROW_*)
 # ---------------------------------------------------------------------------
 
 def status_row_class(status: str) -> str:
+    """Maps meter-resolution STATUS_* to a Bootstrap/Tabler table-row CSS class."""
     if status == STATUS_OK:
         return "table-success"
     if status == STATUS_OK_PREFERRED_MAIN:
@@ -956,7 +662,7 @@ def status_row_class(status: str) -> str:
 
 
 def status_badge(status: str) -> tuple[str, str]:
-    """Liefert (Label, CSS-Klasse) fuer den Status-Badge."""
+    """Liefert (Label, CSS-Klasse) fuer den Status-Badge (meter-resolution)."""
     if status == STATUS_OK:
         return ("OK", "bg-success text-white")
     if status == STATUS_OK_PREFERRED_MAIN:
@@ -970,20 +676,12 @@ def status_badge(status: str) -> tuple[str, str]:
     return (status, "bg-secondary text-white")
 
 
-def format_value_de(v: Decimal | None) -> str:
-    """Format Decimal im DE-Stil (Komma als Dezimal) fuer das Vorschau-Input."""
-    if v is None:
-        return ""
-    s = format(v.normalize(), "f") if isinstance(v, Decimal) else str(v)
-    # Decimal "100" -> "100", "100.5" -> "100.5"; jetzt . -> ,
-    return s.replace(".", ",")
-
+# ---------------------------------------------------------------------------
+# Helpers fuer Routes
+# ---------------------------------------------------------------------------
 
 def all_active_meters() -> list[WaterMeter]:
-    """Fuer den Fall, dass eine Zeile als 'not_found' steht und der User
-    manuell einen Meter waehlen koennen soll. Liefert alle aktiven Meter
-    sortiert nach meter_number.
-    """
+    """Alle aktiven Meter sortiert nach meter_number (fuer not_found-Dropdowns)."""
     return (
         WaterMeter.query
         .filter(WaterMeter.active.is_(True))
@@ -993,11 +691,7 @@ def all_active_meters() -> list[WaterMeter]:
 
 
 def owner_name_for(meter: WaterMeter) -> str:
-    """Aktueller Besitzer-Name eines Meters (oder leerer String).
-
-    Properties koennen mehrere parallele aktive Eigentuemer haben (Ehepaare,
-    Erbengemeinschaften) -- in dem Fall mit ', ' gejoint zurueck.
-    """
+    """Aktueller Besitzer-Name eines Meters (oder leerer String)."""
     names = (
         db.session.query(Customer.name)
         .join(PropertyOwnership, PropertyOwnership.customer_id == Customer.id)

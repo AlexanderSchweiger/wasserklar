@@ -1,0 +1,312 @@
+{% extends "base.html" %}
+{% block title %}Kundenauswertung{% endblock %}
+{% block page_title %}<i class="fas fa-users me-2"></i> Kundenauswertung{% endblock %}
+{% block content %}
+
+<style>
+/* Scrollbehälter: beide Scrollbalken immer sichtbar, feste Höhe */
+.kunden-tbl-wrap {
+  overflow: scroll;
+  max-height: calc(100vh - 265px);
+}
+/* Erste Header-Zeile (Blockköpfe) – klebt oben */
+.kunden-tbl-wrap thead tr:first-child th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+}
+/* Zweite Header-Zeile (Spaltenköpfe) – klebt direkt unter der ersten */
+.kunden-tbl-wrap thead tr:nth-child(2) th {
+  position: sticky;
+  top: 32px;   /* == height der ersten Zeile */
+  z-index: 3;
+  background: #f8f9fa;  /* solide Farbe, damit Zeilen dahinter nicht durchscheinen */
+}
+</style>
+
+{% macro sort_url(s) %}{{ url_for('accounting.kundenauswertung',
+    sort=s, modus=modus,
+    q_name=q_name, q_kunden_nr=q_kunden_nr, q_zaehler=q_zaehler,
+    q_objekt_adresse=q_objekt_adresse, q_rechnungsadresse=q_rechnungsadresse) }}{% endmacro %}
+
+{% macro export_url(fmt) %}{{ url_for('accounting.kundenauswertung_export',
+    format=fmt, sort=sort, modus=modus,
+    q_name=q_name, q_kunden_nr=q_kunden_nr, q_zaehler=q_zaehler,
+    q_objekt_adresse=q_objekt_adresse, q_rechnungsadresse=q_rechnungsadresse) }}{% endmacro %}
+
+<!-- Filter-Leiste -->
+<div class="card mb-3">
+  <div class="card-body py-2">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-auto">
+        <label class="form-label fw-bold mb-1">Name</label>
+        <input type="text" name="q_name" value="{{ q_name }}"
+          class="form-control form-control-sm" style="width:160px" placeholder="Kundenname">
+      </div>
+      <div class="col-auto">
+        <label class="form-label fw-bold mb-1">Kd.-Nr.</label>
+        <input type="text" name="q_kunden_nr" value="{{ q_kunden_nr }}"
+          class="form-control form-control-sm" style="width:80px" placeholder="Nr.">
+      </div>
+      <div class="col-auto">
+        <label class="form-label fw-bold mb-1">Rechnungsadresse</label>
+        <input type="text" name="q_rechnungsadresse" value="{{ q_rechnungsadresse }}"
+          class="form-control form-control-sm" style="width:160px" placeholder="Str., PLZ, Ort …">
+      </div>
+      <div class="col-auto">
+        <label class="form-label fw-bold mb-1">Obj.-Adresse</label>
+        <input type="text" name="q_objekt_adresse" value="{{ q_objekt_adresse }}"
+          class="form-control form-control-sm" style="width:160px" placeholder="Str., PLZ, Ort …">
+      </div>
+      <div class="col-auto">
+        <label class="form-label fw-bold mb-1">Zähler-Nr.</label>
+        <input type="text" name="q_zaehler" value="{{ q_zaehler }}"
+          class="form-control form-control-sm" style="width:120px" placeholder="Zähler-Nr.">
+      </div>
+      <div class="col-auto">
+        <label class="form-label fw-bold mb-1">Anzeigen</label>
+        <select name="modus" class="form-select form-select-sm" style="width:230px">
+          <option value="alle"            {% if modus == 'alle' %}selected{% endif %}>Alle Kunden</option>
+          <option value="mit_objekt"      {% if modus == 'mit_objekt' %}selected{% endif %}>Kunden mit Objekt</option>
+          <option value="aktiver_zaehler" {% if modus == 'aktiver_zaehler' %}selected{% endif %}>Kunden mit aktivem Wasserzähler</option>
+        </select>
+      </div>
+      <div class="col-auto d-flex gap-2">
+        <button type="submit" class="btn btn-sm btn-primary">
+          <i class="fas fa-search me-1"></i> Anzeigen
+        </button>
+        <a href="{{ url_for('accounting.kundenauswertung') }}" class="btn btn-sm btn-outline-secondary">
+          <i class="fas fa-times me-1"></i> Zurücksetzen
+        </a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Ergebnis-Kopf + Tabelle -->
+<div class="card">
+  <div class="card-header d-flex align-items-center justify-content-between">
+    <div class="fw-semibold">
+      {{ total_kunden }} Kund{{ 'e' if total_kunden == 1 else 'en' }} gefunden
+    </div>
+    <div class="d-flex gap-2">
+      <a href="{{ export_url('csv') }}" class="btn btn-sm btn-outline-secondary">
+        <i class="fas fa-file-csv me-1"></i> CSV
+      </a>
+      <a href="{{ export_url('xlsx') }}" class="btn btn-sm btn-success">
+        <i class="fas fa-file-excel me-1"></i> Excel
+      </a>
+    </div>
+  </div>
+
+  <div class="card-body p-0">
+    <div class="kunden-tbl-wrap">
+      {#
+        Spalten: Kunde (9) + Objekt (5) + Zähler (7) + Zählerstand (3) = 24
+        Rowspan:
+          - Kunde-Zellen: überspannen alle Zeilen des Kunden
+          - Objekt-Zellen: überspannen alle Meter-Zeilen des Objekts
+          - Zähler/Zählerstand: eine Zeile pro Zähler
+      #}
+      <table class="table table-sm table-bordered table-hover align-middle mb-0"
+             style="font-size: 0.8rem; min-width: 1500px">
+        <thead>
+          <tr style="height:32px">
+            <th colspan="9"  class="text-center text-white" style="background:#1F497D">Kunde</th>
+            <th colspan="5"  class="text-center text-white" style="background:#2F6E3B">Objekt</th>
+            <th colspan="7"  class="text-center text-white" style="background:#7B3F00">Zähler</th>
+            <th colspan="3"  class="text-center text-white" style="background:#4A4A4A">Letzter Zählerstand</th>
+          </tr>
+          <tr class="table-light">
+            {# Kunde #}
+            <th class="text-nowrap">
+              <a href="{{ sort_url('kundennummer') }}" class="text-decoration-none text-dark">
+                Kd.-Nr.{% if sort == 'kundennummer' %}&nbsp;<i class="fas fa-sort-up fa-xs"></i>{% endif %}
+              </a>
+            </th>
+            <th class="text-nowrap">Ext. Kennung</th>
+            <th class="text-nowrap">
+              <a href="{{ sort_url('name') }}" class="text-decoration-none text-dark">
+                Name{% if sort == 'name' %}&nbsp;<i class="fas fa-sort-up fa-xs"></i>{% endif %}
+              </a>
+            </th>
+            <th class="text-nowrap">Straße + Nr.</th>
+            <th class="text-nowrap">PLZ / Ort</th>
+            <th class="text-nowrap">E-Mail</th>
+            <th class="text-nowrap">Telefon</th>
+            <th class="text-nowrap">Mitglied seit</th>
+            <th class="text-nowrap">Rechn. p. E-Mail</th>
+            {# Objekt #}
+            <th class="text-nowrap">Obj.-Nr.</th>
+            <th class="text-nowrap">Typ</th>
+            <th class="text-nowrap">
+              <a href="{{ sort_url('objektstrasse') }}" class="text-decoration-none text-dark">
+                Straße + Nr.{% if sort == 'objektstrasse' %}&nbsp;<i class="fas fa-sort-up fa-xs"></i>{% endif %}
+              </a>
+            </th>
+            <th class="text-nowrap">PLZ / Ort</th>
+            <th class="text-nowrap">Eigentümer seit</th>
+            {# Zähler #}
+            <th class="text-nowrap">Zähler-Nr.</th>
+            <th class="text-nowrap">Typ</th>
+            <th class="text-nowrap">Standort</th>
+            <th class="text-nowrap">Einbaudatum</th>
+            <th class="text-nowrap">Ausbaudatum</th>
+            <th class="text-nowrap">Eichjahr</th>
+            <th class="text-nowrap">Anfangswert m³</th>
+            {# Zählerstand #}
+            <th class="text-nowrap">Datum</th>
+            <th class="text-nowrap">Stand m³</th>
+            <th class="text-nowrap">Verbrauch m³</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in flat_rows %}
+          <tr>
+
+            {# ===== KUNDE (rowspan über alle Zeilen des Kunden) ===== #}
+            {% if row.kunde is not none %}
+            <td rowspan="{{ row.kunde_rowspan }}" class="align-top fw-semibold text-nowrap"
+                style="border-right: 2px solid #1F497D">
+              {% if row.kunde.customer_number %}
+                <a href="{{ url_for('customers.detail', customer_id=row.kunde.id) }}"
+                   class="text-decoration-none">{{ row.kunde.customer_number }}</a>
+              {% else %}—{% endif %}
+            </td>
+            <td rowspan="{{ row.kunde_rowspan }}" class="align-top"
+                style="border-right: 2px solid #1F497D">
+              {{ row.kunde.externe_kennung or '' }}
+            </td>
+            <td rowspan="{{ row.kunde_rowspan }}" class="align-top"
+                style="border-right: 2px solid #1F497D">
+              <a href="{{ url_for('customers.detail', customer_id=row.kunde.id) }}"
+                 class="text-decoration-none fw-semibold">{{ row.kunde.name }}</a>
+            </td>
+            <td rowspan="{{ row.kunde_rowspan }}" class="align-top text-nowrap"
+                style="border-right: 2px solid #1F497D">
+              {{ [row.kunde.strasse, row.kunde.hausnummer] | select | join(' ') }}
+            </td>
+            <td rowspan="{{ row.kunde_rowspan }}" class="align-top text-nowrap"
+                style="border-right: 2px solid #1F497D">
+              {{ [row.kunde.plz, row.kunde.ort] | select | join(' ') }}
+            </td>
+            <td rowspan="{{ row.kunde_rowspan }}" class="align-top"
+                style="border-right: 2px solid #1F497D">
+              {% if row.kunde.email %}
+                <a href="mailto:{{ row.kunde.email }}" class="text-decoration-none">{{ row.kunde.email }}</a>
+              {% endif %}
+            </td>
+            <td rowspan="{{ row.kunde_rowspan }}" class="align-top text-nowrap"
+                style="border-right: 2px solid #1F497D">
+              {{ row.kunde.phone or '' }}
+            </td>
+            <td rowspan="{{ row.kunde_rowspan }}" class="align-top text-nowrap"
+                style="border-right: 2px solid #1F497D">
+              {{ row.kunde.member_since.strftime('%d.%m.%Y') if row.kunde.member_since else '' }}
+            </td>
+            <td rowspan="{{ row.kunde_rowspan }}" class="align-top text-center"
+                style="border-right: 3px solid #1F497D">
+              {% if row.kunde.rechnung_per_email and row.kunde.email %}
+                <span class="badge bg-success text-white">Ja</span>
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+            {% endif %}
+            {# Wenn row.kunde is None: alle 9 Zellen durch rowspan belegt — nichts rendern #}
+
+            {# ===== OBJEKT (rowspan über alle Meter-Zeilen des Objekts) ===== #}
+            {% if row.prop_rowspan > 0 %}
+              {% if row.prop %}
+              <td rowspan="{{ row.prop_rowspan }}" class="align-top text-nowrap"
+                  style="border-right: 2px solid #2F6E3B">
+                <a href="{{ url_for('properties.detail', property_id=row.prop.id) }}"
+                   class="text-decoration-none">{{ row.prop.object_number or '—' }}</a>
+              </td>
+              <td rowspan="{{ row.prop_rowspan }}" class="align-top text-nowrap"
+                  style="border-right: 2px solid #2F6E3B">
+                {{ row.prop.object_type }}
+              </td>
+              <td rowspan="{{ row.prop_rowspan }}" class="align-top text-nowrap"
+                  style="border-right: 2px solid #2F6E3B">
+                {{ [row.prop.strasse, row.prop.hausnummer] | select | join(' ') }}
+              </td>
+              <td rowspan="{{ row.prop_rowspan }}" class="align-top text-nowrap"
+                  style="border-right: 2px solid #2F6E3B">
+                {{ [row.prop.plz, row.prop.ort] | select | join(' ') }}
+              </td>
+              <td rowspan="{{ row.prop_rowspan }}" class="align-top text-nowrap"
+                  style="border-right: 3px solid #2F6E3B">
+                {{ row.ownership.valid_from.strftime('%d.%m.%Y') if row.ownership and row.ownership.valid_from else '' }}
+              </td>
+              {% else %}
+              {# Kunde ohne Objekt — Platzhalter über alle 5 Objekt-Spalten #}
+              <td colspan="5" class="align-middle text-center text-muted fst-italic"
+                  style="border-right: 3px solid #2F6E3B">kein Objekt</td>
+              {% endif %}
+            {% endif %}
+            {# Wenn prop_rowspan == 0: alle 5 Objekt-Zellen durch rowspan belegt — nichts rendern #}
+
+            {# ===== ZÄHLER + ZÄHLERSTAND ===== #}
+            {% if row.meter %}
+            <td class="text-nowrap">
+              <a href="{{ url_for('meters.meter_edit', meter_id=row.meter.id) }}"
+                 class="text-decoration-none">{{ row.meter.meter_number }}</a>
+            </td>
+            <td class="text-nowrap">
+              <span class="badge {{ row.meter.type_badge_class() }}">{{ row.meter.type_label() }}</span>
+            </td>
+            <td>{{ row.meter.location or '' }}</td>
+            <td class="text-nowrap">
+              {{ row.meter.installed_from.strftime('%d.%m.%Y') if row.meter.installed_from else '' }}
+            </td>
+            <td class="text-nowrap">
+              {{ row.meter.installed_to.strftime('%d.%m.%Y') if row.meter.installed_to else '' }}
+            </td>
+            <td class="text-nowrap">{{ row.meter.eichjahr or '' }}</td>
+            <td class="text-end text-nowrap"
+                style="border-right: 3px solid #7B3F00">
+              {% if row.meter.initial_value is not none %}
+                {{ row.meter.initial_value | de_number(decimals=3) }}
+              {% endif %}
+            </td>
+            {# Zählerstand #}
+            {% if row.reading %}
+            <td class="text-nowrap">{{ row.reading.reading_date.strftime('%d.%m.%Y') }}</td>
+            <td class="text-end text-nowrap">{{ row.reading.value | de_number(decimals=3) }}</td>
+            <td class="text-end text-nowrap">
+              {% if row.reading.consumption is not none %}
+                {{ row.reading.consumption | de_number(decimals=3) }}
+              {% else %}—{% endif %}
+            </td>
+            {% else %}
+            <td colspan="3" class="text-center text-muted fst-italic">kein Zählerstand</td>
+            {% endif %}
+
+            {% else %}
+            {# Kein Zähler: 7 Zähler- + 3 Zählerstand-Zellen als Platzhalter #}
+            <td colspan="7" class="text-center text-muted fst-italic"
+                style="border-right: 3px solid #7B3F00">
+              {% if row.prop %}kein aktiver Zähler{% endif %}
+            </td>
+            <td colspan="3"></td>
+            {% endif %}
+
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="24" class="text-center text-muted py-3">
+              <i class="fas fa-search me-1"></i> Keine Kunden gefunden.
+              {% if q_name or q_kunden_nr or q_zaehler or q_objekt_adresse or q_rechnungsadresse or modus != 'alle' %}
+                <a href="{{ url_for('accounting.kundenauswertung') }}">Filter zurücksetzen</a>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
