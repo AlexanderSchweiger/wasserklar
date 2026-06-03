@@ -1,4 +1,17 @@
 {% from "_pagination.html" import render_pagination %}
+{% macro sort_header(key, label, extra_class='') %}
+  {% set active = sort == key %}
+  {% set new_dir = 'desc' if (active and dir == 'asc') else 'asc' %}
+  <a href="{{ url_for('invoices.index', status=status_filter or none, period_id=period_filter or none, date_from=date_from or none, date_to=date_to or none, q=q or none, project_id=project_id_filter or none, mail_filter=mail_filter or none, sort=key, dir=new_dir) }}"
+     class="text-reset text-decoration-none d-inline-flex align-items-center gap-1 {{ extra_class }}">
+    {{ label }}
+    {% if active %}
+      <i class="fas fa-sort-{{ 'down' if dir == 'desc' else 'up' }}"></i>
+    {% else %}
+      <i class="fas fa-sort text-muted"></i>
+    {% endif %}
+  </a>
+{% endmacro %}
 <div class="card-body p-0">
 <table class="table table-hover table-striped mb-0">
   <thead>
@@ -6,15 +19,15 @@
       <th style="width:36px">
         <input type="checkbox" id="select-all" title="Alle auswählen">
       </th>
-      <th>Rechnungsnr.</th>
-      <th>Kunde</th>
-      <th>Objekt</th>
+      <th>{{ sort_header('nr', 'Rechnungsnr.') }}</th>
+      <th>{{ sort_header('kunde', 'Kunde') }}</th>
+      <th>{{ sort_header('objekt', 'Objekt') }}</th>
       <th>Periode</th>
-      <th>Datum</th>
-      <th>Fällig</th>
+      <th>{{ sort_header('datum', 'Datum') }}</th>
+      <th>{{ sort_header('faellig', 'Fällig') }}</th>
       <th class="text-end">Verbrauch</th>
-      <th class="text-end">Betrag</th>
-      <th>Status</th>
+      <th class="text-end">{{ sort_header('betrag', 'Betrag', 'justify-content-end') }}</th>
+      <th>{{ sort_header('status', 'Status') }}</th>
       <th class="text-center">Mahnstufe</th>
       <th></th>
     </tr>

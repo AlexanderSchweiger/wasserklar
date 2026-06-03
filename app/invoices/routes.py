@@ -178,6 +178,10 @@ def _render_email_body(invoice):
     return render_template("invoices/email_body.txt", invoice=invoice)
 
 
+_SORT_KEYS = {"nr", "kunde", "objekt", "datum", "faellig", "betrag", "status"}
+_DEFAULT_SORT = "nr"
+
+
 @bp.route("/")
 @login_required
 def index():
@@ -188,12 +192,17 @@ def index():
     q = request.args.get("q", "").strip()
     project_id_filter = request.args.get("project_id", "", type=str)
     mail_filter = request.args.get("mail_filter", "")
+    sort = request.args.get("sort", _DEFAULT_SORT)
+    if sort not in _SORT_KEYS:
+        sort = _DEFAULT_SORT
+    sort_dir = request.args.get("dir", "asc")
+    if sort_dir not in ("asc", "desc"):
+        sort_dir = "asc"
 
     query = (
         Invoice.query
         .join(Customer, Invoice.customer_id == Customer.id)
         .outerjoin(Property, Invoice.property_id == Property.id)
-        .order_by(Invoice.date.desc())
     )
     if status_filter:
         query = query.filter(Invoice.status == status_filter)
@@ -224,34 +233,63 @@ def index():
     elif mail_filter == "post":
         query = query.filter(Customer.rechnung_per_email != True)
 
+    query = _apply_invoice_sort(query, sort, sort_dir)
     pagination = paginate_query(query, page_key="invoices")
     invoices = pagination.items
     projects_for_filter = Project.query.order_by(Project.name).all()
     accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
     doc_format = AppSetting.get("invoice.document_format", "pdf")
+    sort_ctx = dict(
+        sort=sort, dir=sort_dir,
+        status_filter=status_filter, period_filter=period_filter,
+        date_from=date_from, date_to=date_to,
+        q=q, project_id_filter=project_id_filter, mail_filter=mail_filter,
+    )
     if request.headers.get("HX-Request"):
         return render_template(
             "invoices/_table.html",
             invoices=invoices, doc_format=doc_format, pagination=pagination,
+            **sort_ctx,
         )
     return render_template(
         "invoices/index.html",
         invoices=invoices,
         statuses=Invoice.ALL_STATUSES,
-        status_filter=status_filter,
-        period_filter=period_filter,
         periods=BillingPeriod.query.order_by(
             BillingPeriod.start_date.desc(), BillingPeriod.id.desc()
         ).all(),
-        date_from=date_from,
-        date_to=date_to,
         projects_for_filter=projects_for_filter,
-        project_id_filter=project_id_filter,
-        mail_filter=mail_filter,
         doc_format=doc_format,
         accounts=accounts,
         pagination=pagination,
+        **sort_ctx,
     )
+
+
+def _apply_invoice_sort(query, sort: str, direction: str):
+    desc = direction == "desc"
+
+    def order(col):
+        return (col.desc(),) if desc else (col.asc(),)
+
+    if sort == "kunde":
+        return query.order_by(*order(Customer.name), Invoice.invoice_number.asc())
+    if sort == "objekt":
+        from sqlalchemy import case as sa_case
+        null_last = sa_case((Property.object_number.is_(None), 1), else_=0).asc()
+        return query.order_by(null_last, *order(Property.object_number))
+    if sort == "datum":
+        return query.order_by(*order(Invoice.date), Invoice.invoice_number.asc())
+    if sort == "faellig":
+        from sqlalchemy import case as sa_case
+        null_last = sa_case((Invoice.due_date.is_(None), 1), else_=0).asc()
+        return query.order_by(null_last, *order(Invoice.due_date))
+    if sort == "betrag":
+        return query.order_by(*order(Invoice.total_amount))
+    if sort == "status":
+        return query.order_by(*order(Invoice.status), Invoice.invoice_number.asc())
+    # Default: sort == "nr"
+    return query.order_by(*order(Invoice.invoice_number))
 
 
 _HAUSNUMMER_RE = re.compile(r"(\d+)")
