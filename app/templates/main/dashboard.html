@@ -211,6 +211,57 @@
 
 </div>
 
+{# ── Fällige Prüfungen / Wartungen (Technik) ────────────────────────────── #}
+{% if technik_inspections_due %}
+<div class="row row-cards mb-3">
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title"><i class="fas fa-tools me-1"></i> Fällige Prüfungen &amp; Wartungen</h3>
+        <div class="card-options">
+          <a href="{{ url_for('technik.index') }}" class="btn btn-sm btn-outline-secondary" hx-boost="false">Zum Leitungsplan</a>
+        </div>
+      </div>
+      <div class="card-body p-0">
+        <div style="max-height: 320px; overflow-y: auto;">
+          <table class="table table-hover table-vcenter mb-0">
+            <thead>
+              <tr><th>Anlage</th><th>Letzte Prüfung</th><th>Fällig</th><th></th></tr>
+            </thead>
+            <tbody>
+              {% for row in technik_inspections_due %}
+              {% set f = row.feature %}
+              <tr>
+                <td>
+                  <a href="{{ url_for('technik.index') }}?feature={{ f.id }}"
+                     class="text-reset text-decoration-none" hx-boost="false">
+                    {{ f.label() }}
+                  </a>
+                  <div class="text-muted small">{{ row.type_label }}</div>
+                </td>
+                <td>
+                  {{ row.log.date.strftime('%d.%m.%Y') }}
+                  <div class="text-muted small">{{ row.kind_label }}</div>
+                </td>
+                <td>{{ row.due.strftime('%d.%m.%Y') }}</td>
+                <td>
+                  {% if row.overdue_days > 0 %}
+                    <span class="badge bg-danger text-white">überfällig ({{ row.overdue_days }} T)</span>
+                  {% else %}
+                    <span class="badge bg-warning text-dark">heute fällig</span>
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 {# ── Einnahmen / Ausgaben ───────────────────────────────────────────────── #}
 <div class="row row-cards mb-3">
   <div class="col-md-6">

@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block title %}Pläne{% endblock %}
+{% block page_title %}<i class="fas fa-layer-group me-2"></i> Leitungspläne{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-header d-flex align-items-center flex-wrap" style="gap:.5rem">
+    <h3 class="card-title mb-0"><i class="fas fa-layer-group me-2"></i>Pläne</h3>
+    <div class="ms-auto">
+      <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#planModal"
+              data-mode="create" data-action="{{ url_for('technik.plan_create') }}">
+        <i class="fas fa-plus me-1"></i> Neuer Plan
+      </button>
+    </div>
+  </div>
+
+  {% if plans %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Status</th>
+          <th>Wartung</th>
+          <th class="text-center">Objekte</th>
+          <th>Erstellt</th>
+          <th>Geändert</th>
+          <th class="w-1"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in plans %}
+        <tr>
+          <td>
+            <a href="{{ url_for('technik.index', plan=p.id) }}" class="text-reset fw-bold text-decoration-none">{{ p.name }}</a>
+            {% if p.source_plan %}
+            <div class="small text-secondary"><i class="fas fa-code-branch me-1"></i>Kopie von {{ p.source_plan.name }}</div>
+            {% endif %}
+            {% if p.description %}<div class="small text-secondary">{{ p.description }}</div>{% endif %}
+          </td>
+          <td><span class="badge {{ vocab.plan_status_badge(p.status) }}">{{ vocab.plan_status_label(p.status) }}</span></td>
+          <td>
+            {% if p.maintenance_enabled %}
+            <span class="text-success" title="Wartung/Prüfungen aktiv"><i class="fas fa-wrench me-1"></i>aktiv</span>
+            {% else %}
+            <span class="text-secondary" title="Wartung/Prüfungen deaktiviert"><i class="fas fa-wrench me-1 opacity-50"></i>aus</span>
+            {% endif %}
+          </td>
+          <td class="text-center">{{ p.features|length }}</td>
+          <td class="small text-secondary">
+            {% if p.created_by %}{{ p.created_by.username }}{% endif %}
+            {% if p.created_at %}<div>{{ p.created_at.strftime('%d.%m.%Y %H:%M') }}</div>{% endif %}
+          </td>
+          <td class="small text-secondary">
+            {% if p.updated_by %}{{ p.updated_by.username }}{% endif %}
+            {% if p.updated_at %}<div>{{ p.updated_at.strftime('%d.%m.%Y %H:%M') }}</div>{% endif %}
+          </td>
+          <td class="text-end text-nowrap">
+            <a href="{{ url_for('technik.index', plan=p.id) }}" class="btn btn-sm btn-outline-secondary me-1" title="Auf der Karte öffnen">
+              <i class="fas fa-map-marked-alt"></i>
+            </a>
+            <button type="button" class="btn btn-sm btn-outline-secondary me-1" title="Bearbeiten"
+                    data-bs-toggle="modal" data-bs-target="#planModal" data-mode="edit"
+                    data-action="{{ url_for('technik.plan_update', plan_id=p.id) }}"
+                    data-name="{{ p.name }}" data-status="{{ p.status }}"
+                    data-maintenance="{{ 1 if p.maintenance_enabled else 0 }}"
+                    data-description="{{ p.description or '' }}">
+              <i class="fas fa-edit"></i>
+            </button>
+            <form method="post" action="{{ url_for('technik.plan_copy', plan_id=p.id) }}" class="d-inline" hx-boost="false">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-sm btn-outline-secondary me-1" title="Kopieren (als Entwurf)">
+                <i class="fas fa-copy"></i>
+              </button>
+            </form>
+            {% if p.source_plan %}
+            <form method="post" action="{{ url_for('technik.plan_merge', plan_id=p.id) }}" class="d-inline" hx-boost="false"
+                  onsubmit="return confirm('Alle Änderungen dieser Kopie in den Quellplan übertragen?\n\nNeue Objekte werden hinzugefügt, geänderte aktualisiert und in dieser Kopie gelöschte werden auch im Quellplan entfernt.');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-sm btn-outline-primary me-1" title="Änderungen in Quellplan übertragen">
+                <i class="fas fa-code-merge"></i>
+              </button>
+            </form>
+            {% endif %}
+            <form method="post" action="{{ url_for('technik.plan_delete', plan_id=p.id) }}" class="d-inline" hx-boost="false"
+                  onsubmit="return confirm('Plan mit allen {{ p.features|length }} Objekt(en) wirklich löschen? Das kann nicht rückgängig gemacht werden.');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-sm btn-outline-danger" title="Löschen">
+                <i class="fas fa-trash"></i>
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="card-body text-center text-secondary py-5">
+    <i class="fas fa-layer-group fa-2x mb-2 d-block opacity-50"></i>
+    <p class="mb-3">Noch keine Pläne vorhanden.</p>
+    <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#planModal"
+            data-mode="create" data-action="{{ url_for('technik.plan_create') }}">
+      <i class="fas fa-plus me-1"></i> Ersten Plan anlegen
+    </button>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block modals %}
+{% include "technik/plans/_plan_modal.html" %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var modal = document.getElementById('planModal');
+  if (!modal) return;
+  var form = document.getElementById('planForm');
+  var title = document.getElementById('planModalTitle');
+  var elName = document.getElementById('planName');
+  var elStatus = document.getElementById('planStatus');
+  var elMaint = document.getElementById('planMaintenance');
+  var elDesc = document.getElementById('planDescription');
+
+  modal.addEventListener('show.bs.modal', function (ev) {
+    var btn = ev.relatedTarget;
+    if (!btn) return;
+    form.action = btn.dataset.action || form.action;
+    if (btn.dataset.mode === 'edit') {
+      title.textContent = 'Plan bearbeiten';
+      elName.value = btn.dataset.name || '';
+      elStatus.value = btn.dataset.status || 'entwurf';
+      elMaint.checked = btn.dataset.maintenance === '1';
+      elDesc.value = btn.dataset.description || '';
+    } else {
+      title.textContent = 'Neuer Plan';
+      elName.value = '';
+      elStatus.value = 'entwurf';
+      elMaint.checked = true;
+      elDesc.value = '';
+    }
+    window.setTimeout(function () { elName.focus(); }, 200);
+  });
+})();
+</script>
+{% endblock %}

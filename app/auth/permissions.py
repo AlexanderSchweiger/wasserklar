@@ -15,6 +15,7 @@ PERM_BUCHHALTUNG = "buchhaltung"
 PERM_RECHNUNGEN = "rechnungen_op"
 PERM_MAHNWESEN = "mahnwesen"
 PERM_AUSWERTUNGEN = "auswertungen"
+PERM_TECHNIK = "technik"
 PERM_VERWALTUNG = "verwaltung"
 
 ALL_PERMISSIONS = [
@@ -24,6 +25,7 @@ ALL_PERMISSIONS = [
     (PERM_RECHNUNGEN, "Rechnungen / OP", "Rechnungen, Tarife, Rechnungsläufe, Offene Posten"),
     (PERM_MAHNWESEN, "Mahnwesen", "Mahnungen, Mahnlauf, Mahnvorlagen"),
     (PERM_AUSWERTUNGEN, "Auswertungen", "Jahresbericht, USt-Voranmeldung"),
+    (PERM_TECHNIK, "Technik", "Wasserleitungsplan, Anlagen, Wartung & Prüfung"),
     (PERM_VERWALTUNG, "Verwaltung", "Benutzer, Rollen, Einstellungen, Daten-Export/Import"),
 ]
 

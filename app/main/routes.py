@@ -7,6 +7,8 @@ from app.models import (Invoice, Booking, WaterMeter, MeterReading, Property,
                         BillingPeriod, DunningPolicy, DunningNotice)
 from app.accounting import services as acc_svc
 from app.dunning import services as dunning_svc
+from app.technik import services as technik_svc
+from app.technik import vocab as technik_vocab
 from app.settings_service import meter_replacement_interval
 from datetime import date
 
@@ -118,6 +120,12 @@ def dashboard():
             })
     meters_to_swap.sort(key=lambda r: r["due_year"])
 
+    # Fällige Prüfungen/Wartungen (Technik-Modul) — nur der jüngste Log je Anlage
+    technik_inspections_due = technik_svc.inspections_due(date.today(), limit=8)
+    for row in technik_inspections_due:
+        row["type_label"] = technik_vocab.feature_type_label(row["feature"].feature_type)
+        row["kind_label"] = technik_vocab.maintenance_kind_label(row["log"].kind)
+
     # Saldo laufendes Jahr (Stornopaare werden über den Service ausgeschlossen)
     _, _, year_income, year_expense, year_balance = acc_svc.year_income_expense(current_year)
 
@@ -145,6 +153,7 @@ def dashboard():
         open_item_rows=open_item_rows,
         meters_to_swap=meters_to_swap,
         meter_interval=interval,
+        technik_inspections_due=technik_inspections_due,
         year_income=year_income,
         year_expense=year_expense,
         year_balance=year_balance,

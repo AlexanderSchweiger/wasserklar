@@ -6,7 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Wassergenossenschaft Verwaltung — a Flask web app for Austrian water cooperative management. All UI text, flash messages, and documentation are in **German**.
 
-Stack: Flask 3.1, SQLAlchemy 2.x, Flask-Login, Flask-Mail, Flask-Migrate, WeasyPrint (PDF), pandas (CSV/Excel import), **Tabler 1.0.0 (Bootstrap 5)**, TomSelect 2.3.1, HTMX 2.0.4. DB ist dialekt-portabel (SQLite / MySQL-MariaDB / Postgres) — siehe "Datenbank" unten.
+Stack: Flask 3.1, SQLAlchemy 2.x, Flask-Login, Flask-Mail, Flask-Migrate (Alembic), WeasyPrint + pypdf (PDF), pandas/openpyxl (CSV/Excel-Import), mt-940 + lxml (Bankauszug-Import CAMT/MT940), pyshp + pyproj (Shapefile-/WLK-Import im Technik-Modul), python-docx (Brief-/Export), **Tabler 1.0.0 (Bootstrap 5)**, TomSelect 2.3.1, HTMX 2.0.4, Leaflet (Technik-Karte). DB ist dialekt-portabel (SQLite / MySQL-MariaDB / Postgres) — siehe "Datenbank" unten.
+
+Die App ist deutlich ueber die reine Verwaltung hinausgewachsen: granulares **Rollen-/Rechte-System** (8 Bereiche, nicht mehr nur admin/user), **Abrechnungsperioden** (`BillingPeriod`) statt Kalenderjahr-Verdrahtung, historisierte **Rechnungslaeufe** (`BillingRun`), **Mahnwesen** (`dunning`), **Bankauszug-Import** mit Zuordnungsvorschlaegen, **In-App-Benachrichtigungen**, **E-Mail-Event-Tracking** (Postmark) und ein **Technik-Modul** (Wasserleitungsplan auf Leaflet-Karte). Details in den jeweiligen Abschnitten unten.
 
 ## Common Commands
 
@@ -16,14 +18,26 @@ python -m venv .venv
 .venv/Scripts/pip install -r requirements-dev.txt
 cp .env.example .env
 
-# Initialize database (creates tables + seeds 4 default tax rates)
+# Initialize database (Alembic-Upgrade + Seeds: 4 Steuersaetze, Default-
+# Mahnstufen, Default-Rollen (Admin + abgeleitete), eine aktive Abrechnungsperiode)
 flask --app run init-db
 
-# Create admin user (interactive prompts)
+# Create admin user (interactive prompts) — legt einen User mit der Admin-Rolle an
 flask --app run create-admin
 
 # Migrate existing database after model changes (production updates)
 flask --app run upgrade-db
+
+# Mail-Verschluesselungs-Key rotieren / DB-SMTP-Passwoerter zuruecksetzen
+flask --app run rotate-mail-key        # re-encrypt mit neuem WASSERKLAR_MAIL_KEY (MultiFernet)
+flask --app run reset-mail-passwords   # gespeicherte SMTP-Passwoerter leeren (Recovery)
+
+# Datenexport/-import (Voll-Backup eines Mandanten als ZIP, siehe data_transfer)
+flask --app run export-data --out backup.zip
+flask --app run import-data --in backup.zip --mode merge
+
+# Offene Vortages-Buchungen auf "Verbucht" setzen (Scheduler-Catch-up, taeglich 00:05)
+flask --app run mark-posted
 
 # Run dev server — Port 5002 (FLASK_RUN_PORT in .env), Docker belegt 5000
 python run.py   # → http://127.0.0.1:5002
@@ -93,32 +107,49 @@ Der alte `_SCHEMA_UPGRADE_COLUMNS`-Mechanismus in [cli.py](cli.py) ist deprecate
 
 **Extensions** (`app/extensions.py`): `db`, `login_manager`, `mail`, `migrate`, `csrf` — instantiated once, initialized in factory.
 
-### Blueprints (10 modules)
+### Blueprints (15 modules)
 
-| Blueprint | Prefix | Purpose |
-|-----------|--------|---------|
-| `auth` | `/auth` | Login/logout, user CRUD (admin only) |
-| `customers` | `/customers` | Customer CRUD, soft-delete (active flag) |
-| `meters` | `/meters` | Meter CRUD, yearly readings, CSV/Excel import with column mapping |
-| `invoices` | `/invoices` | Invoice generation/edit/PDF/email, tariff CRUD under `/invoices/tariffs` |
-| `accounting` | `/accounting` | Accounts, bookings, open items, fiscal years, annual report, CSV export |
-| `properties` | `/properties` | Property (Objekt/Liegenschaft) CRUD, ownership history |
-| `projects` | `/projects` | Project tracking with associated bookings and open items |
-| `import_csv` | `/import-csv` | Bulk CSV/Excel import wizard for customers, properties, meters, readings |
-| `settings` | `/settings` | WG contact info and mail config (DB key-value store via `AppSetting`) |
-| `main` | `/` | Dashboard (open invoices, missing readings, income/expense summary) |
+| Blueprint | Prefix | Permission | Purpose |
+|-----------|--------|------------|---------|
+| `auth` | `/auth` | (login) | Login/logout, User-/Rollen-CRUD (siehe Rechte-System) |
+| `customers` | `/customers` | `stammdaten` | Customer CRUD, soft-delete (active flag), Kundenauswertung |
+| `properties` | `/properties` | `stammdaten` | Property (Objekt/Liegenschaft) CRUD, ownership history |
+| `periods` | `/perioden` | `stammdaten` | **Abrechnungsperioden** (`BillingPeriod`) — eine ist immer aktiv |
+| `meters` | `/meters` | `zaehler` | Zähler-CRUD, Ablesungen, **Zählertausch**, CSV/Excel-Import-Wizard |
+| `invoices` | `/invoices` | `rechnungen_op` | Einzel- + **Massen-Rechnungslauf** (`BillingRun`), Edit/PDF/E-Mail, Tarife unter `/invoices/tariffs` |
+| `dunning` | `/dunning` | `mahnwesen` | **Mahnwesen**: Mahnstufen, Mahnlauf, Mahnungen, Vorlagen |
+| `accounting` | `/accounting` | `buchhaltung` | Konten, Buchungen, Umbuchungen, Bankkonten, Offene Posten, Buchungsjahre, EÜR/Jahresbericht, USt |
+| `projects` | `/projekte` | `buchhaltung` | Projekt-Kostenstellen mit zugeordneten Buchungen + Offenen Posten |
+| `bank_import` | `/bank-import` | `buchhaltung` | **Bankauszug-Import** (CAMT/MT940) mit Zuordnungsvorschlaegen |
+| `technik` | `/technik` | `technik` | **Wasserleitungsplan** (Leaflet-Karte), Anlagen, Wartung/Prüfung, WLK-Shapefile-Import |
+| `import_csv` | `/import` | `stammdaten` | Stammdaten-Import-Wizard (Kunden/Objekte/Zähler) |
+| `data_transfer` | `/data-transfer` | `verwaltung` | Voll-Export/-Import eines Mandanten (ZIP), registry-getrieben |
+| `settings` | `/einstellungen` | `verwaltung` | WG-Kontakt + Mail-Config (DB-KV-Store via `AppSetting`) |
+| `main` | `/` | (login) | Dashboard (offene Rechnungen, fehlende Ablesungen, Einnahmen/Ausgaben) |
 
-Each blueprint: `app/<name>/__init__.py` (registers blueprint) + `app/<name>/routes.py` (all routes).
+Each blueprint: `app/<name>/__init__.py` (registers blueprint) + `app/<name>/routes.py` (all routes). Blueprints, deren komplette Routen-Menge unter genau einem Recht steht, registrieren `bp.before_request(require_blueprint_permission(PERM_X))` (siehe `app/technik/__init__.py`); feiner granulierte Routen nutzen den `@permission_required(PERM_X)`-Decorator pro Route.
 
 ### Data Model (`app/models.py`)
 
-- **User** — auth with role ("admin"/"user"), active flag
-- **Customer** → has many **PropertyOwnership**; `base_fee_override` / `additional_fee_override` take priority over tariff
+Das Modell ist deutlich gewachsen (~40 Tabellen). Die Kerngruppen:
+
+**Auth & Rechte:**
+- **Role** + **RolePermission** — Rollen mit zugeordneten Rechten. Die Rolle `Admin` hat **implizit alle Rechte** (auch spaeter neu hinzukommende). Rechte sind feste Code-Konstanten in [app/auth/permissions.py](app/auth/permissions.py), keine eigene Tabelle. Siehe "Rechte-System" unten.
+- **User** — `role_id` → **Role** (ersetzt das alte `role`-String-Feld), `active`-Flag; `User.has_permission(key)` ist der zentrale Check.
+- **UserPreference** — per-User-Einstellungen (z.B. Default-Konto, Tabellen-Spalten).
+
+**Stammdaten:**
+- **Customer** → has many **PropertyOwnership**; `base_fee_override` / `additional_fee_override` take priority over tariff; `wants_email` gatet jeglichen Kunden-Mailversand (siehe SaaS `invoice_optin`)
 - **Property** (Objekt/Liegenschaft) → has many **WaterMeter** and **PropertyOwnership**; also has fee overrides; `object_type` ist `NOT NULL` (Werte `'Haus'` / `'Garten'` / `'Sonstiges'`)
 - **PropertyOwnership** — time-bounded Customer↔Property link (`valid_from` / `valid_to`); `valid_to=None` = currently active. **Mehrere parallele aktive Ownerships pro Property sind erlaubt** (Ehepaare, Erbengemeinschaften) — Code, der "den" aktuellen Eigentuemer abfragt, muss `.all()` oder `.first()` nehmen, nicht `.scalar()` (sonst `MultipleResultsFound`)
 - **WaterMeter** → has many **MeterReading** (unique per meter+year); tracks `installed_from/to`, `initial_value`, `eichjahr`. **`meter_type`** (`'main'` / `'sub'`, default `'main'`, NOT NULL) klassifiziert Hauptz. vs. Subz.; **`parent_meter_id`** (FK self-ref, ondelete SET NULL) verlinkt Subz. auf Hauptz. (max. 1 Ebene, parent muss `meter_type='main'` sein — Validation in der Route, kein DB-Constraint, weil dialekt-portabel). Self-Reference und Nicht-Hauptz.-Parent werden in `meter_new`/`meter_edit` serverseitig gekappt + Flash-Warnung
+- **CustomerCounter** — per-year sequence counter for Kundennummern (analog `InvoiceCounter`).
+
+**Abrechnung (Perioden statt Kalenderjahr):**
+- **BillingPeriod** — **zentraler Gruppierungsschluessel** fuer Ablesungen, Zählertausche und Rechnungslaeufe; ersetzt die fruehere Kalenderjahr-Verdrahtung. `start_date`/`end_date` (z.B. Juni–Juni), `name` (z.B. "2025/26"). **Genau eine ist immer aktiv** — applikationsseitig erzwungen (`activate()` setzt alle anderen inaktiv; `BillingPeriod.current()`), kein portabler Partial-Index ueber alle drei Dialekte.
 - **WaterTariff** — base_fee + additional_fee + price_per_m3, valid for year range; fee overrides on Customer/Property take priority
-- **Invoice** → linked to Customer + optional Property; has many **InvoiceItem**; statuses: Entwurf → Versendet → Bezahlt → Storniert / Guthaben; invoice_number format `YYYY-NNNNN` (via `InvoiceCounter`)
+- **BillingRun** — **historisierter Massen-Rechnungslauf**: bei jeder Massenabrechnung gespeichert, haelt einen **Snapshot des verwendeten Tarifs** (Kopie aller `tariff_*`-Felder), zaehlt `invoices_created`/`invoices_skipped`, kennt eine `sort_order` fuer die PDF-Reihenfolge. `Invoice.billing_run` verlinkt zurueck.
+- **Invoice** (erbt `EmailTrackableMixin`) → linked to Customer + optional Property + optional **BillingRun**; has many **InvoiceItem**; statuses: Entwurf → Versendet → Bezahlt → Storniert / Guthaben; invoice_number format `YYYY-NNNNN` (via `InvoiceCounter`). E-Mail-Versand-Status wird ueber **EmailEvent** getrackt (siehe E-Mail-Tracking).
 - **InvoiceCounter** — per-year sequence counter for invoice numbers; auto-seeded from existing invoices if missing
 - **Account** (Einnahme/Ausgabe-Konto) → has many **Booking**; optional 3-char `code`
 - **RealAccount** — real bank account (IBAN, opening balance, Font Awesome `icon`); `is_default` marks the pre-selected account
@@ -128,21 +159,56 @@ Each blueprint: `app/<name>/__init__.py` (registers blueprint) + `app/<name>/rou
 - **OpenItem** — manually tracked receivable/payable; statuses: Offen → Teilbezahlt → Bezahlt / Gutschrift; settled via Bookings
 - **Project** — named cost/revenue center with optional 3-char `code` and `color`; bookings and open items can be assigned
 - **TaxRate** — available tax rates (0 %, 10 %, 13 %, 20 % seeded by `init-db`); used on Booking and InvoiceItem
-- **FiscalYear** — year with start/end dates; closing locks bookings (Offen → Verbucht) and snapshots RealAccount balances
-- **AppSetting** — generic key-value store (`AppSetting.get(key)` / `AppSetting.set(key, value)`); keys `wg.*` for cooperative contact info, `mail.*` for SMTP config
+- **BookingGroup** — fasst zusammengehoerige Buchungen (z.B. aus einem Vorgang) zu einer Gruppe zusammen.
+- **FiscalYear** — year with start/end dates; `is_vat_liable` markiert USt-pflichtige Jahre (steuert USt-Voranmeldung + den `has_vat_fiscal_year`-Context-Flag); closing locks bookings (Offen → Verbucht) and snapshots RealAccount balances.
+- **FiscalYearReopenLog** — Audit-Log fuer das Wieder-Oeffnen eines abgeschlossenen Buchungsjahres.
+- **AppSetting** — generic key-value store (`AppSetting.get(key)` / `AppSetting.set(key, value)`); keys `wg.*` for cooperative contact info, `mail.*` for SMTP config.
+
+**Mahnwesen (`dunning`):**
+- **DunningPolicy** → has many **DunningStage** — Mahn-Regelwerk (Default via `init-db` geseedet): pro Stufe Frist in Tagen, Gebuehr, Vorlagentext.
+- **DunningNotice** — einzelne Mahnung zu einer Rechnung; Status Aktiv → Zurückgesetzt / Storniert. Achtung Alembic-FK-Reihenfolge: `dunning_notices` referenziert `users` — siehe Initial-Migrations-Stolperer im Deploy-SETUP.
+
+**Bankauszug-Import (`bank_import`):**
+- **BankStatement** → has many **BankStatementLine** — importierter Kontoauszug (CAMT.053 / MT940, via `mt-940` + `lxml`). Zeilen werden gegen offene Rechnungen/Posten gematcht und als Buchung uebernommen.
+
+**In-App-Benachrichtigungen:**
+- **AdminNotification** + **AdminNotificationRead** — plattform-/system-seitige Hinweise im Glocken-Badge; `*Read` haelt den Gelesen-Status pro User. (Im SaaS gespeist vom Platform-Notification-Stream.)
+
+**E-Mail-Tracking (`app/email_tracking.py`):**
+- **EmailEvent** — Delivery-/Bounce-/Open-Events zu versendeten Mails. `EmailTrackableMixin` (von `Invoice` geerbt) verknuepft ein Modell mit seinen Events; im SaaS schreibt der Postmark-Webhook ueber die Platform diese Events ins Tenant-Schema.
+- **InvoiceEmailOptInCode** + **CustomerEmailConsentLog** — Double-Opt-In fuer "Rechnung per E-Mail": Code-basierte Zustimmung + Consent-Audit-Log (DSGVO). Auto-Anlage des Codes passiert im SaaS (`invoice_optin`).
+
+**Technik-Modul (`technik`, OSS v1.12.0):** Wasserleitungsplan als GeoJSON-Annotationen auf einer Leaflet-Karte (basemap.at), bewusst **kein PostGIS** (dialekt-portabel, Geometrie als Text).
+- **NetworkFeature** — Punkt (Hydrant, Schieber, Quelle, Behaelter, Verteiler, Pumpe, Hausanschluss, Probenahmestelle) oder Linie (Versorgungs-/Haupt-/Ring-/Hausanschlussleitung); `geometry` haelt das GeoJSON-Geometry-Objekt als Text.
+- **MaintenanceLog** — Wartungs-/Pruef-Eintraege zu einem Feature (WLK-Import schreibt hier rein).
+- **FeaturePhoto** — Foto-Anhang zu einem Feature; Ablage als Geschwister von `PDF_DIR` (nicht in der DB). Shapefile-/WLK-Import in `app/technik/wlk_import.py` (`pyshp` + `pyproj`, GK→WGS84).
 
 Setting invoice status to "Bezahlt" auto-creates a Booking in the first active income account.
+
+### Rechte-System (Rollen & Permissions)
+
+[app/auth/permissions.py](app/auth/permissions.py) definiert **8 Bereichs-Rechte** als Code-Konstanten (keine DB-Tabelle): `stammdaten`, `zaehler`, `buchhaltung`, `rechnungen_op`, `mahnwesen`, `auswertungen`, `technik`, `verwaltung`. Jeder Hauptmenuepunkt entspricht genau einem Recht.
+
+- Rechte werden Rollen ueber `role_permissions` zugeordnet; `init-db` seedet eine **Admin-Rolle** (alle Rechte) plus abgeleitete Rollen.
+- Die Rolle **`Admin`** hat **implizit jedes Recht** — auch spaeter neu hinzukommende (Check in `User.has_permission`).
+- Durchsetzung: `@permission_required(PERM_X)` pro Route, oder `bp.before_request(require_blueprint_permission(PERM_X))` fuer ein ganzes Blueprint. Beide flashen + redirecten zum Dashboard statt 403 (konsistenter UX-Pfad). `ALL_PERMISSIONS` ist als Jinja-Global fuer das Rollen-Formular verfuegbar.
+- **Migration von altem Code:** Routen, die frueher `current_user.role == "admin"` geprueft haben, muessen auf `has_permission(...)` umgestellt werden. Neue gated Routen IMMER mit Recht versehen, sonst sind sie fuer alle eingeloggten User offen.
 
 ### Settings & WG Context
 
 `app/settings_service.py` provides DB-overrides-env for cooperative identity and mail config:
 - `wg_settings()` is injected into **every template** as `{{ wg.name }}`, `{{ wg.iban }}`, `{{ wg.email }}`, etc.
 - `apply_mail_settings()` runs at app start and after settings changes to update Flask-Mail state
-- Mail password is encrypted at rest (Fernet/AES, key derived from `SECRET_KEY`)
+- Mail-Passwort wird at rest mit **`WASSERKLAR_MAIL_KEY`** verschluesselt — bewusst **separat vom `SECRET_KEY`** (ein geleaktes Session-Secret soll nicht das SMTP-Passwort entschluesseln). Comma-separated Keys ⇒ Rotation via `MultiFernet` (erster Key = primary); `flask --app run rotate-mail-key` re-encryptet. Ohne den Key loggt die App beim Start eine Warnung und `send_mail()` wirft erst beim tatsaechlichen Versand (ist Absicht — Erststart ohne Mail-Konfig soll laufen).
+- **`MAIL_PLATFORM_RELAY`** (default aus): wenn aktiv, laeuft der Versand ueber den `app.config`-SMTP statt ueber per-Tenant-`mail.*`-Overrides. OSS-Standalone: aus; SaaS schaltet das per `mail_overrides` kontextabhaengig (own_smtp / shared_relay / custom_postmark).
 
 ### HTMX Pattern
 
 Many routes check `request.headers.get("HX-Request")` and return partial HTML fragments (`_table.html`, `_row.html`, `_status_badge.html`) instead of full pages. This enables dynamic search/filter without full reloads.
+
+`base.html` setzt `<body hx-boost="true">` — jede Navigation laeuft als HTMX-Request. Damit geboostete **Voll**-Navigationen nicht faelschlich als Fragment-Request behandelt werden (Sidebar wuerde verschwinden), entfernt ein `before_request`-Hook in [app/__init__.py](app/__init__.py) (`_strip_hx_request_on_boost`) den `HX-Request`-Header, wenn `HX-Boosted` gesetzt ist — die Route sieht dann einen normalen GET und rendert das volle Template.
+
+**Seiten-spezifische JS-Libs (Leaflet im Technik-Modul, TomSelect):** hx-boost tauscht nur `<body>` aus und fuehrt `<head>`-`<script>`-Tags nicht erneut aus. Seiten, die eine eigene Lib im `head_extra`-Block laden, muessen `hx-boost="false"` auf dem Link/Container setzen (harter Reload), sonst fehlt die Lib nach dem Boost. Inline-Init-Skripte zusaetzlich gegen fehlendes `window.<lib>` absichern.
 
 ### Forms
 
@@ -178,7 +244,7 @@ DATABASE_URL=mysql+pymysql://user:pass@host:3307/dbname?charset=utf8mb4
 DATABASE_URL=postgresql://user:pass@host:5432/dbname
 ```
 
-Lokal laeuft typischerweise **MariaDB** (Netzwerk-Host) — entsprechend muss neuer Query-/Migrations-Code auf allen drei Dialekten kompilieren.
+Lokales Dev (und das Docker-Standalone-Deployment) laeuft inzwischen typischerweise gegen den **Docker-Postgres-Container** (`docker compose up -d postgres`, `DATABASE_URL=postgresql://…@localhost:5432/…` in der `.env`, siehe [README.md](README.md)). **MariaDB/MySQL und SQLite bleiben unterstuetzte Ziele** — entsprechend muss neuer Query-/Migrations-Code weiterhin auf allen drei Dialekten kompilieren (die Portabilitaets-Stolperer unten sind real).
 
 **Portabilitaets-Stolperer**, die in der Vergangenheit zugeschlagen haben:
 

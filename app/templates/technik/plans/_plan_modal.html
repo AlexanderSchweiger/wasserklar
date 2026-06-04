@@ -1,0 +1,47 @@
+{# Gemeinsames Modal fuer „Neuer Plan" und „Plan bearbeiten" — das ausloesende
+   Button setzt action + Werte per data-* (siehe plans/index.html scripts). #}
+<div class="modal fade" id="planModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg" role="document">
+    <div class="modal-content">
+      <form method="post" id="planForm" hx-boost="false" action="{{ url_for('technik.plan_create') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-header">
+          <h5 class="modal-title" id="planModalTitle">Neuer Plan</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label required">Name</label>
+            <input type="text" name="name" id="planName" class="form-control" required maxlength="200"
+                   placeholder="z. B. Hauptplan, Ausbau Oberdorf 2026">
+          </div>
+          <div class="row">
+            <div class="col-md-6 mb-3">
+              <label class="form-label">Status</label>
+              <select name="status" id="planStatus" class="form-select">
+                {% for key, s in vocab.PLAN_STATUSES.items() %}
+                <option value="{{ key }}">{{ s.label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-6 mb-3">
+              <label class="form-label">Wartung / Prüfungen</label>
+              <label class="form-check form-switch mt-1">
+                <input type="checkbox" class="form-check-input" name="maintenance_enabled" id="planMaintenance" value="1" checked>
+                <span class="form-check-label">Wartungs-/Prüfprotokolle für diesen Plan aktiv</span>
+              </label>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Beschreibung <span class="text-secondary">(optional)</span></label>
+            <textarea name="description" id="planDescription" class="form-control" rows="2"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">Abbrechen</button>
+          <button type="submit" class="btn btn-primary"><i class="fas fa-save me-1"></i>Speichern</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>

@@ -14,6 +14,7 @@ from app.models import (
     BookingGroup, Booking, Transfer, RealAccountYearBalance,
     DunningPolicy, DunningStage, DunningNotice,
     AppSetting, InvoiceCounter, CustomerCounter,
+    NetworkPlan, NetworkFeature, MaintenanceLog,
 )
 
 # Spalten die auf users.id verweisen — werden beim Import auf NULL gesetzt,
@@ -29,6 +30,9 @@ NULL_ON_IMPORT_COLS = {
     OpenItem: ["created_by_id"],
     FiscalYear: ["closed_by_id"],
     DunningNotice: ["reset_by_id", "created_by_id"],
+    NetworkPlan: ["created_by_id", "updated_by_id"],
+    NetworkFeature: ["created_by_id"],
+    MaintenanceLog: ["created_by_id"],
 }
 
 
@@ -39,6 +43,7 @@ CATEGORIES = {
         TaxRate, FiscalYear, Account, RealAccount, Project,
         Customer, Property, PropertyOwnership, WaterMeter,
         BillingPeriod, MeterReadingAccessCode, WaterTariff,
+        NetworkPlan, NetworkFeature, MaintenanceLog,
     ],
     "buchungen": [
         MeterReading, BillingRun, Invoice, InvoiceItem, OpenItem,
@@ -69,6 +74,7 @@ INSERT_ORDER = [
     BookingGroup, Booking, Transfer, RealAccountYearBalance,
     DunningPolicy, DunningStage, DunningNotice,
     AppSetting, InvoiceCounter, CustomerCounter,
+    NetworkPlan, NetworkFeature, MaintenanceLog,
 ]
 
 
@@ -119,6 +125,9 @@ NATURAL_KEYS = {
     AppSetting: ("key",),
     InvoiceCounter: ("year",),
     CustomerCounter: ("id",),           # Singleton id=1
+    NetworkPlan: None,                  # immer Insert (Voll-Replace ersetzt den Seed-Hauptplan)
+    NetworkFeature: None,               # kein natuerlicher Schluessel — immer Insert
+    MaintenanceLog: None,
 }
 
 
@@ -147,6 +156,11 @@ FOREIGN_KEYS = {
     DunningStage: {"policy_id": DunningPolicy},
     DunningNotice: {"invoice_id": Invoice, "stage_id": DunningStage,
                     "fee_invoice_item_id": InvoiceItem},
+    NetworkPlan: {"source_plan_id": NetworkPlan},  # Self-FK, zweiter Pass
+    NetworkFeature: {"plan_id": NetworkPlan, "property_id": Property,
+                     "meter_id": WaterMeter,
+                     "source_feature_id": NetworkFeature},  # source_feature_id: Self-FK, zweiter Pass
+    MaintenanceLog: {"feature_id": NetworkFeature},
 }
 
 
@@ -156,6 +170,8 @@ FOREIGN_KEYS = {
 DEFERRED_FK_UPDATES = {
     Booking: ["storno_of_id"],
     InvoiceItem: ["dunning_notice_id"],
+    NetworkPlan: ["source_plan_id"],         # Self-FK
+    NetworkFeature: ["source_feature_id"],   # Self-FK
 }
 
 
@@ -166,6 +182,7 @@ EXCLUDED_TABLES = {
     "user_preferences",
     "alembic_version",
     "fiscal_year_reopen_logs",  # Audit-Log mit User-FK; ohne User-Export sinnlos
+    "feature_photos",           # Fotos liegen als Dateien im instance-Volume, nicht im JSON-Export
 }
 
 

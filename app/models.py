@@ -1,4 +1,5 @@
 from datetime import datetime, date
+import sqlalchemy as sa
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_login import UserMixin
 from app.extensions import db, login_manager
@@ -1499,3 +1500,231 @@ class BankStatementLine(db.Model):
 
     def __repr__(self):
         return f"<BankStatementLine {self.id} {self.booking_date} {self.amount}>"
+
+
+# ---------------------------------------------------------------------------
+# Technik / Wasserleitungsplan (Kartierung)
+# ---------------------------------------------------------------------------
+
+class NetworkPlan(db.Model):
+    """Benannter Leitungsplan — Container fuer ``NetworkFeature``-Annotationen.
+
+    Erlaubt mehrere parallele Plaene (z.B. operativer Hauptplan + Planungs-
+    Sandkasten). Eine Kopie merkt sich ihren Ursprung in ``source_plan_id``,
+    sodass ``technik.plan_merge`` die in der Kopie vorgenommenen Aenderungen
+    (Geometrie/Sachdaten, inkl. Loeschungen) in den Quellplan zurueckspiegeln
+    kann — man plant also in der Kopie, ohne den Hauptplan zu editieren.
+
+    ``maintenance_enabled`` schaltet die Wartungs-/Pruef-Funktion je Plan; nur
+    Plaene mit ``status='aktiv'`` UND ``maintenance_enabled`` treiben die
+    Dashboard-Erinnerung „Faellige Pruefungen" (siehe ``services.inspections_due``).
+    """
+    __tablename__ = "network_plans"
+
+    STATUS_DRAFT = "entwurf"
+    STATUS_ACTIVE = "aktiv"
+    STATUS_ARCHIVED = "archiviert"
+    STATUSES = (STATUS_DRAFT, STATUS_ACTIVE, STATUS_ARCHIVED)
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(200), nullable=False)
+    status = db.Column(
+        db.String(20), nullable=False,
+        default=STATUS_DRAFT, server_default=db.text("'entwurf'"),
+    )
+    maintenance_enabled = db.Column(
+        db.Boolean, nullable=False, default=True, server_default=sa.true(),
+    )
+    description = db.Column(db.Text, nullable=True)
+
+    # Herkunft einer Kopie (fuer „Aenderungen in den Quellplan uebertragen").
+    source_plan_id = db.Column(
+        db.Integer, db.ForeignKey("network_plans.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_by_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+    updated_by_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+
+    features = db.relationship(
+        "NetworkFeature", backref="plan", lazy="selectin",
+        cascade="all, delete-orphan",
+        foreign_keys="NetworkFeature.plan_id",
+    )
+    source_plan = db.relationship("NetworkPlan", remote_side=[id])
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+    updated_by = db.relationship("User", foreign_keys=[updated_by_id])
+
+    def feature_count(self):
+        return len(self.features)
+
+    def __repr__(self):
+        return f"<NetworkPlan #{self.id} {self.name!r} {self.status}>"
+
+
+class NetworkFeature(db.Model):
+    """Annotation im Wasserleitungsplan — Punkt (Hydrant, Schieber, Quelle,
+    Behaelter, Verteiler, Pumpe, Hausanschluss, Probenahmestelle) oder Linie
+    (Versorgungs-/Haupt-/Ring-/Hausanschlussleitung).
+
+    Geometrie wird als GeoJSON-Geometry-Objekt in ``geometry`` (Text) gehalten —
+    dialekt-portabel (SQLite/MariaDB/Postgres), bewusst kein PostGIS. Punkte
+    werden zusaetzlich nach ``lat``/``lng`` denormalisiert (schnelles
+    Marker-Rendering ohne JSON-Parse), Linien bekommen ``length_m`` (Haversine,
+    beim Speichern berechnet) als Basis fuer die Netzstatistik.
+    """
+    __tablename__ = "network_features"
+
+    GEOMETRY_POINT = "point"
+    GEOMETRY_LINE = "line"
+
+    ACCURACY_ESTIMATED = "geschaetzt"
+    ACCURACY_GOOD = "gut"
+    ACCURACY_EXACT = "exakt"
+
+    id = db.Column(db.Integer, primary_key=True)
+    plan_id = db.Column(
+        db.Integer, db.ForeignKey("network_plans.id"),
+        nullable=False, index=True,
+    )
+    geometry_kind = db.Column(db.String(10), nullable=False)   # 'point' | 'line'
+    feature_type = db.Column(db.String(40), nullable=False)    # hydrant, schieber, versorgungsleitung, ...
+    name = db.Column(db.String(200), nullable=True)
+
+    geometry = db.Column(db.Text, nullable=False)              # GeoJSON-Geometry (Point/LineString)
+    lat = db.Column(db.Float, nullable=True)                   # nur Punkte
+    lng = db.Column(db.Float, nullable=True)                   # nur Punkte
+    length_m = db.Column(db.Float, nullable=True)              # nur Linien (Haversine)
+
+    accuracy = db.Column(
+        db.String(20), nullable=False,
+        default=ACCURACY_ESTIMATED, server_default=db.text("'geschaetzt'"),
+    )
+    material = db.Column(db.String(60), nullable=True)
+    dimension_dn = db.Column(db.Integer, nullable=True)
+    year_built = db.Column(db.Integer, nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+
+    # Verknuepfung mit bestehenden Stammdaten (Hausanschluss -> Objekt/Zaehler).
+    property_id = db.Column(
+        db.Integer, db.ForeignKey("properties.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )
+    meter_id = db.Column(
+        db.Integer, db.ForeignKey("water_meters.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )
+
+    # Abstammung fuer den Plan-Merge: zeigt auf das Quell-Feature im Quellplan,
+    # aus dem dieses Feature beim Kopieren entstand. ``None`` = in dieser Kopie
+    # neu gezeichnet (wird beim Merge im Quellplan neu angelegt + zurueckverlinkt).
+    source_feature_id = db.Column(
+        db.Integer, db.ForeignKey("network_features.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_by_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+
+    linked_property = db.relationship("Property", foreign_keys=[property_id])
+    linked_meter = db.relationship("WaterMeter", foreign_keys=[meter_id])
+
+    photos = db.relationship(
+        "FeaturePhoto", backref="feature", lazy="selectin",
+        cascade="all, delete-orphan",
+        order_by="FeaturePhoto.uploaded_at.asc()",
+    )
+    maintenance_logs = db.relationship(
+        "MaintenanceLog", backref="feature", lazy="selectin",
+        cascade="all, delete-orphan",
+        order_by="MaintenanceLog.date.desc()",
+    )
+
+    def is_line(self):
+        return self.geometry_kind == self.GEOMETRY_LINE
+
+    def is_point(self):
+        return self.geometry_kind == self.GEOMETRY_POINT
+
+    def label(self):
+        return self.name or f"{self.feature_type} #{self.id}"
+
+    def __repr__(self):
+        return f"<NetworkFeature {self.geometry_kind}:{self.feature_type} #{self.id}>"
+
+
+class MaintenanceLog(db.Model):
+    """Wartungs-/Pruefprotokoll-Eintrag zu einer NetworkFeature
+    (Hydrantenspuelung, Schieber-Funktionspruefung, Inspektion ...).
+
+    ``next_due`` treibt die Dashboard-Erinnerung „Faellige Pruefungen": der
+    jeweils juengste Log je Feature mit ``next_due <= heute`` gilt als faellig.
+    """
+    __tablename__ = "maintenance_logs"
+
+    KIND_FLUSH = "spuelung"
+    KIND_FUNCTION_TEST = "funktionspruefung"
+    KIND_MAINTENANCE = "wartung"
+    KIND_INSPECTION = "inspektion"
+    KIND_OTHER = "sonstiges"
+
+    RESULT_OK = "ok"
+    RESULT_DEFECT = "mangel"
+
+    id = db.Column(db.Integer, primary_key=True)
+    feature_id = db.Column(
+        db.Integer, db.ForeignKey("network_features.id"),
+        nullable=False, index=True,
+    )
+    date = db.Column(db.Date, nullable=False)
+    kind = db.Column(
+        db.String(30), nullable=False,
+        default=KIND_INSPECTION, server_default=db.text("'inspektion'"),
+    )
+    result = db.Column(db.String(20), nullable=True)           # ok | mangel
+    next_due = db.Column(db.Date, nullable=True)
+    interval_months = db.Column(db.Integer, nullable=True)
+    performed_by = db.Column(db.String(120), nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_by_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+
+    def __repr__(self):
+        return f"<MaintenanceLog feature={self.feature_id} {self.date} {self.kind}>"
+
+
+class FeaturePhoto(db.Model):
+    """Foto-Dokumentation zu einer NetworkFeature. Die Datei liegt im
+    tenant-spezifischen Upload-Ordner (siehe ``technik.services.technik_upload_dir``);
+    die DB haelt nur Metadaten — analog dazu, dass Rechnungs-PDFs ausserhalb der
+    DB im instance-Volume liegen.
+    """
+    __tablename__ = "feature_photos"
+
+    id = db.Column(db.Integer, primary_key=True)
+    feature_id = db.Column(
+        db.Integer, db.ForeignKey("network_features.id"),
+        nullable=False, index=True,
+    )
+    filename = db.Column(db.String(255), nullable=False)        # gespeicherter Dateiname (UUID)
+    original_name = db.Column(db.String(255), nullable=True)
+    content_type = db.Column(db.String(80), nullable=True)
+    caption = db.Column(db.String(255), nullable=True)
+    uploaded_at = db.Column(db.DateTime, default=datetime.utcnow)
+    uploaded_by_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+
+    def __repr__(self):
+        return f"<FeaturePhoto feature={self.feature_id} {self.filename}>"

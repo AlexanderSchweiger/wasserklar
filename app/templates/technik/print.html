@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Wasserleitungsplan – Druck{% endblock %}
+
+{% block head_extra %}
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    @media print {
+      .page-header, .footer, aside.navbar, header.navbar { display: none !important; }
+      .page-wrapper { margin: 0 !important; }
+      #technik-print-map { height: 13cm !important; }
+      a[href]::after { content: "" !important; }
+    }
+    .technik-legend-swatch { display:inline-block; width:1.1rem; height:1.1rem; border-radius:3px; vertical-align:middle; margin-right:.4rem; }
+    .technik-legend-line { display:inline-block; width:1.6rem; height:0; border-top:3px solid; vertical-align:middle; margin-right:.4rem; }
+  </style>
+{% endblock %}
+
+{% block content %}
+<div class="d-print-none mb-3 btn-list">
+  <button type="button" onclick="window.print()" class="btn btn-primary"><i class="fas fa-print me-1"></i>Drucken</button>
+  <a href="{{ url_for('technik.index') }}" class="btn" hx-boost="false"><i class="fas fa-arrow-left me-1"></i>Zurück zum Plan</a>
+</div>
+
+<div class="d-flex align-items-baseline mb-2">
+  <h2 class="me-auto mb-0">{{ wg.name }} — Wasserleitungsplan{% if plan %}: {{ plan.name }}{% endif %}</h2>
+  <span class="text-secondary small">Stand: {{ today_iso }}</span>
+</div>
+
+<div id="technik-print-map" class="mb-3 border rounded" style="height: 60vh; min-height: 420px;"></div>
+
+<div class="row mb-3">
+  <div class="col-md-6">
+    <h4>Legende — Anlagen</h4>
+    <div class="row">
+      {% for key, t in vocab.POINT_TYPES.items() %}
+      <div class="col-6"><span class="technik-legend-swatch" style="background: {{ t.color }}"></span>{{ t.label }}</div>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="col-md-6">
+    <h4>Legende — Leitungen</h4>
+    {% for key, t in vocab.LINE_TYPES.items() %}
+    <div><span class="technik-legend-line" style="border-color: {{ t.color }}"></span>{{ t.label }}</div>
+    {% endfor %}
+  </div>
+</div>
+
+<h4>Objektliste ({{ features | length }})</h4>
+<table class="table table-sm table-bordered">
+  <thead>
+    <tr>
+      <th>Typ</th><th>Bezeichnung</th><th>Genauigkeit</th><th>Material</th>
+      <th>DN</th><th>Baujahr</th><th>Länge (m)</th><th>Notiz</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for f in features %}
+    <tr>
+      <td>{{ vocab.feature_type_label(f.feature_type) }}</td>
+      <td>{{ f.name or '' }}</td>
+      <td>{{ vocab.accuracy_label(f.accuracy) }}</td>
+      <td>{{ f.material or '' }}</td>
+      <td>{{ f.dimension_dn if f.dimension_dn is not none else '' }}</td>
+      <td>{{ f.year_built if f.year_built is not none else '' }}</td>
+      <td>{{ f.length_m | de_number(1) if f.length_m is not none else '' }}</td>
+      <td>{{ f.notes or '' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  window.TECHNIK = {{ cfg|tojson }};
+</script>
+<script src="{{ url_for('static', filename='js/technik-map.js') }}"></script>
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    if (window.TECHNIK_MAP) window.TECHNIK_MAP.renderStatic('technik-print-map');
+  });
+</script>
+{% endblock %}

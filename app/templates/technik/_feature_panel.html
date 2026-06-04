@@ -1,0 +1,235 @@
+{# Feature-Detail-Panel — HTMX-Fragment, Ziel #technik-panel.
+   Wird von technik.feature_panel (GET) und nach jeder Panel-Aktion (POST)
+   gerendert. Erwartet: f, vocab, properties, meters, today_iso. #}
+{% include "_flash_inline.html" %}
+{% set types = vocab.LINE_TYPES if f.is_line() else vocab.POINT_TYPES %}
+{% set _icon = vocab.POINT_TYPES[f.feature_type].icon if f.feature_type in vocab.POINT_TYPES else 'fa-route' %}
+<div class="technik-detail p-3" data-feature-id="{{ f.id }}">
+  <div class="d-flex align-items-center mb-3">
+    <h3 class="card-title mb-0 me-auto text-truncate">
+      <i class="fas {{ _icon }} me-1" style="color: {{ vocab.feature_type_color(f.feature_type) }}"></i>
+      {{ f.label() }}
+    </h3>
+    <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" id="technik-panel-close" title="Schließen">
+      <i class="fas fa-times"></i>
+    </button>
+  </div>
+
+  {# --- Sachattribute --- #}
+  <form hx-post="{{ url_for('technik.feature_update', feature_id=f.id) }}"
+        hx-target="#technik-panel" hx-swap="innerHTML">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="mb-2">
+      <label class="form-label">Typ</label>
+      <select name="feature_type" class="form-select">
+        {% for key, t in types.items() %}
+        <option value="{{ key }}" {{ 'selected' if f.feature_type == key }}>{{ t.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="mb-2">
+      <label class="form-label">Bezeichnung</label>
+      <input type="text" name="name" class="form-control" value="{{ f.name or '' }}" placeholder="z. B. Hydrant Dorfplatz">
+    </div>
+    <div class="row g-2">
+      <div class="col-6 mb-2">
+        <label class="form-label">Lagegenauigkeit</label>
+        <select name="accuracy" class="form-select">
+          {% for key, a in vocab.ACCURACIES.items() %}
+          <option value="{{ key }}" {{ 'selected' if f.accuracy == key }}>{{ a.label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-6 mb-2">
+        <label class="form-label">Material</label>
+        <select name="material" class="form-select tom-select" autocomplete="off">
+          <option value="">—</option>
+          {% for m in vocab.MATERIALS %}
+          <option value="{{ m }}" {{ 'selected' if f.material == m }}>{{ m }}</option>
+          {% endfor %}
+          {% if f.material and f.material not in vocab.MATERIALS %}
+          <option value="{{ f.material }}" selected>{{ f.material }}</option>
+          {% endif %}
+        </select>
+      </div>
+    </div>
+    <div class="row g-2">
+      <div class="col-6 mb-2">
+        <label class="form-label">Dimension (DN)</label>
+        <input type="number" name="dimension_dn" class="form-control" min="0" step="1"
+          value="{{ f.dimension_dn if f.dimension_dn is not none else '' }}" placeholder="z. B. 100">
+      </div>
+      <div class="col-6 mb-2">
+        <label class="form-label">Baujahr</label>
+        <input type="number" name="year_built" class="form-control" min="1850" max="2100"
+          value="{{ f.year_built if f.year_built is not none else '' }}">
+      </div>
+    </div>
+    <div class="mb-2">
+      <label class="form-label">Notizen</label>
+      <textarea name="notes" class="form-control" rows="2">{{ f.notes or '' }}</textarea>
+    </div>
+
+    <div class="mb-2">
+      <label class="form-label">Objekt (Liegenschaft)</label>
+      <select name="property_id" class="form-select tom-select" autocomplete="off">
+        <option value="">— keines —</option>
+        {% for p in properties %}
+        <option value="{{ p.id }}" {{ 'selected' if f.property_id == p.id }}>{{ p.label() }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Wasserzähler</label>
+      <select name="meter_id" class="form-select tom-select" autocomplete="off">
+        <option value="">— keiner —</option>
+        {% for m in meters %}
+        <option value="{{ m.id }}" {{ 'selected' if f.meter_id == m.id }}>
+          {{ m.meter_number }}{% if m.property %} — {{ m.property.label() }}{% endif %}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="d-flex mb-3">
+      <button type="submit" class="btn btn-primary btn-sm"><i class="fas fa-save me-1"></i>Speichern</button>
+      <button type="button" class="btn btn-outline-danger btn-sm ms-auto"
+        hx-post="{{ url_for('technik.feature_delete', feature_id=f.id) }}"
+        hx-target="#technik-panel" hx-swap="innerHTML"
+        hx-confirm="Dieses Objekt wirklich löschen? Fotos und Wartungseinträge werden mitgelöscht.">
+        <i class="fas fa-trash me-1"></i>Löschen
+      </button>
+    </div>
+  </form>
+
+  {# --- Geo-Info --- #}
+  <div class="datagrid mb-3">
+    {% if f.is_line() and f.length_m is not none %}
+    <div class="datagrid-item">
+      <div class="datagrid-title">Länge</div>
+      <div class="datagrid-content">{{ f.length_m | de_number(1) }} m</div>
+    </div>
+    {% endif %}
+    {% if f.is_point() and f.lat is not none %}
+    <div class="datagrid-item">
+      <div class="datagrid-title">Koordinaten</div>
+      <div class="datagrid-content small">{{ f.lat | round(6) }}, {{ f.lng | round(6) }}</div>
+    </div>
+    {% endif %}
+  </div>
+
+  {# --- Fotos --- #}
+  <div class="mb-3">
+    <div class="d-flex align-items-center mb-2">
+      <strong class="me-auto"><i class="fas fa-camera me-1 text-secondary"></i>Fotos</strong>
+      <span class="badge bg-secondary-lt">{{ f.photos | length }}</span>
+    </div>
+    {% if f.photos %}
+    <div class="row g-2 mb-2">
+      {% for photo in f.photos %}
+      <div class="col-4">
+        <div class="technik-photo">
+          <a href="{{ url_for('technik.photo_serve', photo_id=photo.id) }}" target="_blank"
+             rel="noopener" hx-boost="false">
+            <img src="{{ url_for('technik.photo_serve', photo_id=photo.id) }}"
+                 alt="{{ photo.caption or photo.original_name or 'Foto' }}" class="rounded" loading="lazy">
+          </a>
+          <button type="button" class="btn btn-icon btn-sm technik-photo-del"
+            hx-post="{{ url_for('technik.photo_delete', photo_id=photo.id) }}"
+            hx-target="#technik-panel" hx-swap="innerHTML"
+            hx-confirm="Foto löschen?" title="Foto löschen">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+    <form hx-post="{{ url_for('technik.photo_upload', feature_id=f.id) }}"
+          hx-target="#technik-panel" hx-swap="innerHTML" hx-encoding="multipart/form-data">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="input-group input-group-sm">
+        <input type="file" name="photo" class="form-control" accept="image/*" required>
+        <button type="submit" class="btn" title="Foto hochladen"><i class="fas fa-upload"></i></button>
+      </div>
+    </form>
+  </div>
+
+  {# --- Wartung / Pruefung (nur wenn am Plan aktiviert) --- #}
+  {% if f.plan.maintenance_enabled %}
+  <div>
+    <div class="d-flex align-items-center mb-2">
+      <strong class="me-auto"><i class="fas fa-tools me-1 text-secondary"></i>Wartung &amp; Prüfung</strong>
+      <span class="badge bg-secondary-lt">{{ f.maintenance_logs | length }}</span>
+    </div>
+    {% if f.maintenance_logs %}
+    <div class="list-group list-group-flush mb-2">
+      {% for log in f.maintenance_logs %}
+      <div class="list-group-item px-0 py-2">
+        <div class="d-flex align-items-center">
+          <span class="me-2">{{ log.date.strftime('%d.%m.%Y') }}</span>
+          <span class="badge bg-blue-lt me-1">{{ vocab.maintenance_kind_label(log.kind) }}</span>
+          {% if log.result and log.result in vocab.MAINTENANCE_RESULTS %}
+          <span class="badge {{ vocab.MAINTENANCE_RESULTS[log.result].badge }}">{{ vocab.MAINTENANCE_RESULTS[log.result].label }}</span>
+          {% endif %}
+          <button type="button" class="btn btn-icon btn-sm btn-ghost-secondary ms-auto"
+            hx-post="{{ url_for('technik.maintenance_delete', log_id=log.id) }}"
+            hx-target="#technik-panel" hx-swap="innerHTML"
+            hx-confirm="Eintrag löschen?" title="Löschen"><i class="fas fa-times"></i></button>
+        </div>
+        {% if log.next_due %}<div class="small text-secondary">Nächste Prüfung: {{ log.next_due.strftime('%d.%m.%Y') }}</div>{% endif %}
+        {% if log.performed_by %}<div class="small text-secondary">Durch: {{ log.performed_by }}</div>{% endif %}
+        {% if log.notes %}<div class="small">{{ log.notes }}</div>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <form hx-post="{{ url_for('technik.maintenance_add', feature_id=f.id) }}"
+          hx-target="#technik-panel" hx-swap="innerHTML" class="border-top pt-2">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="row g-2">
+        <div class="col-6 mb-2">
+          <label class="form-label">Datum</label>
+          <input type="date" name="date" class="form-control" value="{{ today_iso }}">
+        </div>
+        <div class="col-6 mb-2">
+          <label class="form-label">Art</label>
+          <select name="kind" class="form-select">
+            {% for key, label in vocab.MAINTENANCE_KINDS.items() %}
+            <option value="{{ key }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-6 mb-2">
+          <label class="form-label">Ergebnis</label>
+          <select name="result" class="form-select">
+            <option value="">—</option>
+            {% for key, r in vocab.MAINTENANCE_RESULTS.items() %}
+            <option value="{{ key }}">{{ r.label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-6 mb-2">
+          <label class="form-label">Intervall (Monate)</label>
+          <input type="number" name="interval_months" class="form-control" min="1" max="600" placeholder="z. B. 12">
+        </div>
+      </div>
+      <div class="mb-2">
+        <label class="form-label">Durchgeführt von</label>
+        <input type="text" name="performed_by" class="form-control" placeholder="Name">
+      </div>
+      <div class="mb-2">
+        <label class="form-label">Notiz</label>
+        <input type="text" name="notes" class="form-control">
+      </div>
+      <button type="submit" class="btn btn-sm btn-outline-primary"><i class="fas fa-plus me-1"></i>Eintrag hinzufügen</button>
+      <div class="form-hint mt-1">„Intervall" setzt automatisch die nächste Prüfung, wenn kein Datum angegeben ist.</div>
+    </form>
+  </div>
+  {% else %}
+  <div class="text-secondary small border-top pt-2">
+    <i class="fas fa-tools me-1"></i>Wartung/Prüfung ist für diesen Plan deaktiviert.
+  </div>
+  {% endif %}
+</div>

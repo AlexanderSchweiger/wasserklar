@@ -65,6 +65,9 @@ def create_app(config_name=None):
     from app.bank_import import bp as bank_import_bp
     app.register_blueprint(bank_import_bp)
 
+    from app.technik import bp as technik_bp
+    app.register_blueprint(technik_bp)
+
     # hx-boost-Navigationen (base.html: <body hx-boost="true">) senden
     # sowohl "HX-Request: true" als auch "HX-Boosted: true". Unsere Routen
     # verwenden "HX-Request" als Signal fuer Partial-Fragment-Antworten
