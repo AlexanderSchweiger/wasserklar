@@ -1,5 +1,5 @@
 {% if meetings %}
-<div class="table-responsive">
+<div class="table-responsive table-scroll">
   <table class="table table-vcenter card-table table-hover">
     <thead>
       <tr>
@@ -8,7 +8,7 @@
         <th>Uhrzeit</th>
         <th>Ort</th>
         <th>Status</th>
-        <th class="w-1"></th>
+        <th class="w-1 col-actions"></th>
       </tr>
     </thead>
     <tbody>
@@ -26,7 +26,7 @@
         </td>
         <td>{{ m.location or '—' }}</td>
         <td><span class="badge {{ sf_meeting_status_badge[m.status] }}">{{ sf_meeting_status_labels[m.status] }}</span></td>
-        <td class="text-end">
+        <td class="text-end col-actions">
           <div class="btn-list flex-nowrap justify-content-end">
             <a href="{{ url_for('schriftfuehrung.meeting_detail', meeting_id=m.id) }}" class="btn btn-sm btn-outline-secondary">Öffnen</a>
             <form method="post" action="{{ url_for('schriftfuehrung.meeting_copy', meeting_id=m.id) }}" class="d-inline">

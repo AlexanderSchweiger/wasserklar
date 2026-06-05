@@ -254,6 +254,104 @@ tr.overdue { background-color: #fff3cd !important; }
   min-height: 0;
 }
 
+/* ============================================================
+   Daten-Grid: Listenseite fuellt den Viewport, nur die Tabelle
+   scrollt intern — Spaltenheader bleiben sichtbar (sticky thead),
+   Pagination bleibt unten gepinnt. Opt-in pro Seite via
+   {% block page_wrapper_class %}is-fill{% endblock %}.
+
+   Technik wie bei den Modalen oben: durchgehende Flex-Spalte mit
+   min-height:0, sodass der Scroll-Container die Resthoehe bekommt —
+   ohne Magic-Number-max-height. Reine vh-Einheiten, daher keine
+   globale html/body-Aenderung noetig (Nicht-Listen-Seiten bleiben
+   unberuehrt). Kurze Tabellen bleiben kompakt (nur die Tabellen-Card
+   darf schrumpfen), lange fuellen den Viewport und scrollen intern.
+   ============================================================ */
+.page-wrapper.is-fill { height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+.page-wrapper.is-fill > .page-body { flex: 1 1 auto; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.page-wrapper.is-fill > .page-body > .container-fluid { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+
+/* Geschwister der Tabellen-Card (Alerts, Filter-Card) schrumpfen nicht;
+   nur die Tabellen-Card absorbiert die Resthoehe und scrollt intern. */
+.page-wrapper.is-fill .page-body > .container-fluid > * { flex-shrink: 0; }
+.page-wrapper.is-fill .page-body > .container-fluid > .table-card { flex-shrink: 1; min-height: 0; margin-bottom: 0; }
+
+/* Flex-Kette durch die Card. .table-fill ist die fuellende Spalte (oft der
+   HTMX-Ziel-Wrapper) und darf verschachtelt sein (z.B. ein <form> um eine
+   Bulk-Leiste + Tabelle). Innerhalb einer .table-fill ist alles per Default
+   fix; nur .table-scroll und eine verschachtelte .table-fill fuellen weiter. */
+.page-wrapper.is-fill .table-card { display: flex; flex-direction: column; }
+.page-wrapper.is-fill .table-card > * { flex: 0 0 auto; }
+.page-wrapper.is-fill .table-fill { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.page-wrapper.is-fill .table-fill > * { flex: 0 0 auto; }
+.page-wrapper.is-fill .table-card > .table-fill,
+.page-wrapper.is-fill .table-fill > .table-fill,
+.page-wrapper.is-fill .table-fill > .table-scroll { flex: 1 1 auto; min-height: 0; }
+.page-wrapper.is-fill .table-scroll { overflow: auto; }
+
+/* Sticky Spaltenheader im Scroll-Container: solider Hintergrund, damit Zeilen
+   nicht durchscheinen; box-shadow statt border, weil ein Border am
+   sticky-Element beim Scrollen verschwindet. */
+.page-wrapper.is-fill .table-scroll > .table > thead > tr > th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--tblr-bg-surface, #fff);
+  box-shadow: inset 0 -1px 0 var(--tblr-border-color, #dee2e6);
+}
+
+/* Actions-Spalte beim horizontalen Scrollen rechts fixieren. Opt-in via
+   .col-actions an Header- UND Body-Zelle (nicht :last-child, sonst wuerden
+   colspan-Leerzeilen / aufgeklappte Detail-Zeilen faelschlich gepinnt).
+   Deckender Hintergrund gegen Durchscheinen; linke Schattenlinie als Trenner.
+   Bewusst kein Zebra/Hover auf der fixierten Spalte (einheitlicher Look). */
+.page-wrapper.is-fill .table-scroll > .table > tbody > tr > td.col-actions {
+  position: sticky;
+  right: 0;
+  z-index: 1;
+  background: var(--tblr-bg-surface, #fff);
+  box-shadow: inset 1px 0 0 var(--tblr-border-color, #dee2e6);
+}
+.page-wrapper.is-fill .table-scroll > .table > thead > tr > th.col-actions {
+  right: 0;
+  z-index: 3;  /* Ecke oben-rechts: ueber sticky-Header (2) UND sticky-Spalte (1) */
+  box-shadow: inset 1px 0 0 var(--tblr-border-color, #dee2e6),
+              inset 0 -1px 0 var(--tblr-border-color, #dee2e6);
+}
+
+/* Actions-Spalte schrumpft auf Button-Breite (+ Zell-Padding) und waechst NICHT
+   mit, wenn horizontal Platz frei ist: width:1% ist der klassische
+   "shrink-to-fit"-Hint in width:100%-Tabellen (auto-layout vergibt Restbreite an
+   die anderen Spalten, nicht an diese), nowrap haelt die Buttons in einer Zeile. */
+.page-wrapper.is-fill .table-scroll > .table > thead > tr > th.col-actions,
+.page-wrapper.is-fill .table-scroll > .table > tbody > tr > td.col-actions {
+  width: 1%;
+  white-space: nowrap;
+}
+
+/* Druck + schmale Viewports: zurueck auf normalen Seitenfluss. */
+@media print {
+  .page-wrapper.is-fill,
+  .page-wrapper.is-fill > .page-body,
+  .page-wrapper.is-fill .page-body > .container-fluid,
+  .page-wrapper.is-fill .table-card,
+  .page-wrapper.is-fill .table-fill,
+  .page-wrapper.is-fill .table-scroll { height: auto; min-height: 0; overflow: visible; flex: none; }
+  .page-wrapper.is-fill .table-scroll > .table > thead > tr > th { position: static; }
+}
+@media (max-width: 768px) {
+  .page-wrapper.is-fill { height: auto; overflow: visible; }
+  .page-wrapper.is-fill > .page-body { overflow: visible; }
+  .page-wrapper.is-fill .table-scroll { overflow-x: auto; }
+}
+
+/* Sidebar: nie einen sichtbaren Scrollbalken zeigen. Tabler setzt
+   overflow-y:scroll HART auf .navbar-vertical (Leiste immer da, auch ohne
+   Overflow). Inhalt bleibt bei Bedarf scrollbar (Wheel/Touch) — nur die Leiste
+   wird ausgeblendet; das Versions-Label bleibt unten (navbar-nav flex-grow). */
+.navbar-vertical { scrollbar-width: none; }            /* Firefox */
+.navbar-vertical::-webkit-scrollbar { display: none; } /* Chrome/Edge/Safari */
+
 /* Seiten-Transitions
    Greifen in zwei Faellen:
    - Cross-Document-Navigation via @view-transition (voller Reload, z.B. Login-Redirect).

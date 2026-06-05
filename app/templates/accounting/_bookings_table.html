@@ -12,7 +12,7 @@
     {% endif %}
   </div>
 </div>
-<div class="card-body p-0">
+<div class="card-body p-0 table-scroll">
 <table class="table table-hover mb-0">
   <thead>
     <tr>
@@ -25,7 +25,7 @@
       <th class="text-center px-1" style="width:1%">%</th>
       <th class="text-end" style="width:1%; white-space:nowrap">Steuer</th>
       <th class="text-end" style="white-space:nowrap">Betrag</th>
-      <th style="width:1%"></th>
+      <th class="col-actions" style="width:1%"></th>
     </tr>
   </thead>
   <tbody>
@@ -99,7 +99,7 @@
       <td class="text-end fw-bold text-nowrap {{ 'text-success' if total_gross >= 0 else 'text-danger' }}">
         {{ total_gross|de_number }}&nbsp;€
       </td>
-      <td class="text-end" style="white-space:nowrap">
+      <td class="text-end col-actions" style="white-space:nowrap">
         {% set fy_locked = effective_children and (effective_children|first).id in locked_booking_ids %}
         {% if fy_locked %}
           <span class="text-muted" title="Buchungsjahr abgeschlossen"><i class="fas fa-lock"></i></span>
@@ -200,7 +200,7 @@
       <td class="text-end text-nowrap small {{ 'text-success' if b.amount > 0 else 'text-danger' }}">
         {{ b.amount|de_number }}&nbsp;€
       </td>
-      <td></td>
+      <td class="col-actions"></td>
     </tr>
     {% endif %}
     {% endfor %}
@@ -238,7 +238,7 @@
       <td class="text-end fw-bold text-nowrap {{ 'text-success' if t_amount > 0 else 'text-danger' }}">
         {{ t_amount|de_number }}&nbsp;€
       </td>
-      <td class="text-end" style="white-space:nowrap">
+      <td class="text-end col-actions" style="white-space:nowrap">
         <a href="{{ url_for('accounting.transfers') }}"
            class="btn btn-sm btn-outline-secondary" title="Umbuchungen">
           <i class="fas fa-exchange-alt"></i>
@@ -352,7 +352,7 @@
       <td class="text-end fw-bold text-nowrap {{ 'text-success' if b.amount > 0 else 'text-danger' }}">
         {{ b.amount|de_number }}&nbsp;€
       </td>
-      <td class="text-end" style="white-space:nowrap">
+      <td class="text-end col-actions" style="white-space:nowrap">
         {% set fy_locked = b.id in locked_booking_ids %}
         {% if fy_locked %}
         <span class="text-muted" title="Buchungsjahr abgeschlossen"><i class="fas fa-lock"></i></span>

@@ -14,7 +14,7 @@
     {% endif %}
   </a>
 {% endmacro %}
-<div class="table-responsive">
+<div class="table-responsive table-scroll">
 <table class="table table-vcenter table-hover card-table mb-0">
   <thead>
     <tr>
@@ -29,7 +29,7 @@
       <th>{{ sort_header('wartung', 'Wartung') }}</th>
       <th>Weitere Daten</th>
       <th>Notiz</th>
-      <th></th>
+      <th class="col-actions"></th>
     </tr>
   </thead>
   <tbody>
@@ -91,7 +91,7 @@
         {% if not f.pressure_rating and not f.manufacturer and f.installation_depth_m is none and f.ground_level_m is none %}<span class="text-secondary">—</span>{% endif %}
       </td>
       <td class="text-secondary small">{{ f.notes | truncate(60) if f.notes else '—' }}</td>
-      <td class="text-end text-nowrap">
+      <td class="text-end text-nowrap col-actions">
         <a href="{{ url_for('network.index', plan=f.plan_id, feature=f.id) }}"
            class="btn btn-sm btn-outline-secondary me-1" hx-boost="false"
            title="Im Plan anzeigen (zentriert)">

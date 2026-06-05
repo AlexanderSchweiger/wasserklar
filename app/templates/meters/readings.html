@@ -1,9 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Zählerablesungen{% endblock %}
 {% block page_title %}<i class="fas fa-tachometer-alt me-2"></i> Zählerablesungen{% endblock %}
+{% block page_wrapper_class %}is-fill{% endblock %}
 {% block content %}
 <input type="hidden" name="mode" id="mode-input" value="{{ mode }}">
-<div class="card">
+<div class="card table-card">
   <div class="card-header">
     <div class="filter-bar">
       <div class="mb-3">
@@ -75,7 +76,7 @@
       </a>
     </div>
   </div>
-  <div id="meters-table">
+  <div id="meters-table" class="table-fill">
     {% if not period %}
       <div class="card-body text-center text-muted py-4">
         Keine Abrechnungsperiode vorhanden —

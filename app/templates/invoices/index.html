@@ -1,8 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Rechnungen{% endblock %}
 {% block page_title %}<i class="fas fa-file-invoice-dollar me-2"></i> Rechnungen{% endblock %}
+{% block page_wrapper_class %}is-fill{% endblock %}
 {% block content %}
-<div class="card">
+<div class="card table-card">
   <div class="card-header">
     <div class="filter-bar">
       <div class="mb-3">
@@ -119,7 +120,7 @@
   </div>
 
   <!-- Sammelaktion-Leiste -->
-  <form method="post" action="{{ url_for('invoices.bulk_action') }}" id="bulk-form">
+  <form method="post" action="{{ url_for('invoices.bulk_action') }}" id="bulk-form" class="table-fill">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div id="bulk-toolbar" class="px-3 py-2 border-bottom bg-light d-none"
          style="display:flex; align-items:center; gap:12px; flex-wrap:wrap">
@@ -154,7 +155,7 @@
       </div>
     </div>
 
-    <div id="invoices-table">
+    <div id="invoices-table" class="table-fill">
       {% include "invoices/_table.html" %}
     </div>
   </form>

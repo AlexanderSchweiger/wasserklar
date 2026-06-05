@@ -1,8 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Projekte{% endblock %}
 {% block page_title %}<i class="fas fa-project-diagram me-2"></i> Projekte{% endblock %}
+{% block page_wrapper_class %}is-fill{% endblock %}
 {% block content %}
-<div class="card">
+<div class="card table-card">
   <div class="card-header">
     <div class="card-options d-flex align-items-center">
       <form method="get" class="me-3">
@@ -19,7 +20,8 @@
       </a>
     </div>
   </div>
-  <div class="card-body p-0">
+  <div class="table-fill">
+  <div class="card-body p-0 table-scroll">
     <table class="table table-hover table-striped mb-0">
       <thead>
         <tr>
@@ -28,7 +30,7 @@
           <th>Name</th>
           <th>Beschreibung</th>
           <th>Status</th>
-          <th></th>
+          <th class="col-actions"></th>
         </tr>
       </thead>
       <tbody>
@@ -60,7 +62,7 @@
             <span class="badge bg-success text-white">Aktiv</span>
             {% endif %}
           </td>
-          <td class="text-end" style="white-space:nowrap">
+          <td class="text-end col-actions" style="white-space:nowrap">
             <a href="{{ url_for('projects.detail', project_id=p.id) }}"
                class="btn btn-sm btn-outline-info"
                title="Ansicht">
@@ -91,6 +93,7 @@
         {% endfor %}
       </tbody>
     </table>
+  </div>
   </div>
 </div>
 {% endblock %}

@@ -1,8 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Kontakte{% endblock %}
 {% block page_title %}<i class="fas fa-users me-2"></i> Kontakte{% endblock %}
+{% block page_wrapper_class %}is-fill{% endblock %}
 {% block content %}
-<div class="card">
+<div class="card table-card">
   <div class="card-header d-flex align-items-center flex-wrap" style="gap:.5rem">
     <ul class="nav nav-pills" role="tablist">
       <li class="nav-item">
@@ -98,7 +99,7 @@
       </div>
     </div>
   </div>
-  <div id="customer-table">
+  <div id="customer-table" class="table-fill">
     {% include "customers/_table.html" %}
   </div>
 </div>

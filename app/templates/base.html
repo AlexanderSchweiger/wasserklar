@@ -537,13 +537,18 @@
             {% endif %}
             {% block saas_sidebar_extra %}{% endblock %}
           </ul>
+          <div class="mt-auto px-3 pt-2 pb-1 text-center" style="font-size:.65rem;line-height:1.25">
+            {% block footer_app_label %}
+            <span class="text-secondary">wasserklar v{{ oss_version }}</span>
+            {% endblock %}
+          </div>
         </div>
       </div>
     </aside>
     {% endif %}
 
     <!-- ===== Page Wrapper ===== -->
-    <div class="page-wrapper">
+    <div class="page-wrapper {% block page_wrapper_class %}{% endblock %}">
       {% if current_user.is_authenticated %}
       <!-- Top Navbar -->
       <header class="navbar navbar-expand-md d-none d-lg-flex d-print-none">
@@ -609,25 +614,6 @@
           {% endfor %} {% endwith %} {% block content %}{% endblock %}
         </div>
       </div>
-
-      {% if current_user.is_authenticated %}
-      <!-- Footer -->
-      <footer class="footer footer-transparent d-print-none">
-        <div class="container-fluid">
-          <div class="row text-center align-items-center flex-row-reverse">
-            <div class="col-lg-auto ms-lg-auto">
-              {% block footer_app_label %}
-              <small class="text-secondary">Wassergenossenschaft Verwaltung v{{ oss_version }}</small>
-              {% endblock %}
-            </div>
-            <div class="col-12 col-lg-auto mt-3 mt-lg-0">
-              <strong>{{ wg.name }}</strong>
-            </div>
-            {% block saas_footer_extra %}{% endblock %}
-          </div>
-        </div>
-      </footer>
-      {% endif %}
     </div>
     <!-- /page-wrapper -->
   </div>

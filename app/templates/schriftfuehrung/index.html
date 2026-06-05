@@ -3,8 +3,9 @@
 {% set list_url = url_for('schriftfuehrung.assemblies') if meeting_type == 'assembly' else url_for('schriftfuehrung.board_meetings') %}
 {% block title %}{{ sf_meeting_type_labels_plural[meeting_type] }}{% endblock %}
 {% block page_title %}<i class="fas fa-feather-alt me-2"></i> {{ sf_meeting_type_labels_plural[meeting_type] }}{% endblock %}
+{% block page_wrapper_class %}is-fill{% endblock %}
 {% block content %}
-<div class="card">
+<div class="card table-card">
   <div class="card-header d-flex align-items-center flex-wrap" style="gap:.5rem">
     <div class="input-group input-group-sm" style="width:260px">
       <input type="search" name="q" value="{{ q }}" class="form-control" placeholder="Sitzung suchen…"
@@ -35,7 +36,7 @@
       </button>
     </div>
   </div>
-  <div id="sf-meeting-table">
+  <div id="sf-meeting-table" class="table-fill">
     {% include "schriftfuehrung/_table.html" %}
   </div>
 </div>
@@ -52,7 +53,7 @@
           <h5 class="modal-title"><i class="fas fa-plus me-2"></i>Neue {{ sf_meeting_type_labels[meeting_type] }}</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
         </div>
-        <div class="modal-body">{{ meeting_form_fields() }}</div>
+        <div class="modal-body">{{ meeting_form_fields(meeting_type=meeting_type) }}</div>
         <div class="modal-footer">
           <button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">Abbrechen</button>
           <button type="submit" class="btn btn-primary"><i class="fas fa-save me-1"></i> Anlegen</button>

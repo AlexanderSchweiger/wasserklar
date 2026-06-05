@@ -2,6 +2,7 @@
 {% from "_pagination.html" import render_pagination %}
 {% block title %}Offene Posten{% endblock %}
 {% block page_title %}<i class="fas fa-exclamation-circle me-2"></i> Offene Posten{% endblock %}
+{% block page_wrapper_class %}is-fill{% endblock %}
 {% block content %}
 
 {# ------------------------------------------------------------------ #}
@@ -68,7 +69,7 @@
 {# ------------------------------------------------------------------ #}
 {# Offene-Posten-Tabelle                                              #}
 {# ------------------------------------------------------------------ #}
-<div class="card">
+<div class="card table-card">
   <div class="card-header">
     <h3 class="card-title"><i class="fas fa-exclamation-circle me-1"></i> Offene Posten</h3>
     <div class="card-options d-flex align-items-center gap-2">
@@ -97,7 +98,8 @@
       </a>
     </div>
   </div>
-  <div class="card-body p-0">
+  <div class="table-fill">
+  <div class="card-body p-0 table-scroll">
     <table class="table table-hover mb-0">
       <thead>
         <tr>
@@ -109,7 +111,7 @@
           <th>Status</th>
           <th class="text-end">Gesamt</th>
           <th class="text-end">Offen</th>
-          <th></th>
+          <th class="col-actions"></th>
         </tr>
       </thead>
       <tbody>
@@ -178,7 +180,7 @@
           </td>
 
           {# Aktionen #}
-          <td class="text-end" style="white-space:nowrap">
+          <td class="text-end col-actions" style="white-space:nowrap">
             {% if not is_closed %}
             <form method="post" action="{{ url_for('accounting.open_item_pay', item_id=item.id) }}"
                   class="d-inline-flex align-items-center gap-1">
@@ -228,6 +230,7 @@
     </table>
   </div>
   {{ render_pagination(pagination) }}
+  </div>
 </div>
 
 {% endblock %}

@@ -1,9 +1,10 @@
 ﻿{% extends "base.html" %}
 {% block title %}Elementliste{% endblock %}
 {% block page_title %}<i class="fas fa-list me-2"></i> Elementliste{% endblock %}
+{% block page_wrapper_class %}is-fill{% endblock %}
 
 {% block content %}
-<div class="card">
+<div class="card table-card">
   <div class="card-header">
     <div class="d-flex align-items-center flex-wrap" style="gap:.5rem">
       <select class="form-select form-select-sm w-auto" name="plan" aria-label="Plan filtern"
@@ -60,7 +61,7 @@
     </div>
   </div>
   {% else %}
-  <div id="elemente-table">
+  <div id="elemente-table" class="table-fill">
     {% include "network/_elemente_table.html" %}
   </div>
   {% endif %}

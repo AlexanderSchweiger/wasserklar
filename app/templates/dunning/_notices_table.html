@@ -12,7 +12,7 @@
             <th class="text-end">Gebühr</th>
             <th class="text-center">Status</th>
             <th class="text-center">Versand</th>
-            <th class="text-end">Aktionen</th>
+            <th class="col-actions"></th>
         </tr>
     </thead>
     <tbody>
@@ -78,7 +78,7 @@
                     <span class="text-muted">–</span>
                 {% endif %}
             </td>
-            <td class="text-end" style="white-space:nowrap">
+            <td class="text-end col-actions" style="white-space:nowrap">
                 <a href="{{ url_for('dunning.notice_detail', notice_id=n.id) }}"
                    class="btn btn-sm btn-outline-info">
                     <i class="fas fa-eye"></i>

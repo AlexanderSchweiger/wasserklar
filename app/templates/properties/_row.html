@@ -33,7 +33,7 @@
   <td class="text-end">{% if _shares > 0 %}<strong>{{ _shares }}</strong>{% else %}<span class="text-muted">0</span>{% endif %}</td>
   <td class="text-end">{% if _wgp and _wgp.area_m2 is not none %}{{ _wgp.area_m2 }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
   {% endif %}
-  <td class="text-end">
+  <td class="text-end col-actions">
     <a href="{{ url_for('properties.detail', property_id=prop.id) }}"
        class="btn btn-sm btn-outline-primary" title="Liegenschaftsdetails">
       <i class="fas fa-home"></i>

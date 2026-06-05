@@ -2,8 +2,9 @@
 {% from "_pagination.html" import render_pagination %}
 {% block title %}Abrechnungsperioden{% endblock %}
 {% block page_title %}<i class="fas fa-calendar-week me-2"></i> Abrechnungsperioden{% endblock %}
+{% block page_wrapper_class %}is-fill{% endblock %}
 {% block content %}
-<div class="card">
+<div class="card table-card">
   <div class="card-header">
     <h3 class="card-title">Abrechnungsperioden</h3>
     <div class="card-options">
@@ -13,14 +14,15 @@
       </button>
     </div>
   </div>
-  <div class="card-body p-0">
+  <div class="table-fill">
+  <div class="card-body p-0 table-scroll">
     <table class="table table-hover table-striped mb-0">
       <thead>
         <tr>
           <th>Name</th>
           <th>Zeitraum</th>
           <th>Status</th>
-          <th></th>
+          <th class="col-actions"></th>
         </tr>
       </thead>
       <tbody>
@@ -38,7 +40,7 @@
             <span class="badge bg-secondary-lt">inaktiv</span>
             {% endif %}
           </td>
-          <td class="text-end">
+          <td class="text-end col-actions">
             <div class="d-flex justify-content-end gap-1">
               {% if not period.active %}
               <form method="post" action="{{ url_for('periods.activate', period_id=period.id) }}">
@@ -76,6 +78,7 @@
     </table>
   </div>
   {{ render_pagination(pagination) }}
+  </div>
 </div>
 {% endblock %}
 

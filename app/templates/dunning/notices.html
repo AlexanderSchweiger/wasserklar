@@ -1,19 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Mahnungen{% endblock %}
+{% block page_title %}<i class="fas fa-gavel me-2"></i> Mahnungen{% endblock %}
+{% block page_wrapper_class %}is-fill{% endblock %}
 
 {% block content %}
-<div class="container-xl">
-    <div class="page-header d-print-none mb-3">
-        <div class="row align-items-center">
-            <div class="col-auto">
-                <h2 class="page-title">Mahnungen</h2>
-            </div>
-        </div>
-    </div>
-
-    <form method="post" id="notices-form">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <div class="card">
+<div class="card table-card">
         <div class="card-header">
             <h3 class="card-title">{{ notices | length }} Mahnung(en)</h3>
             <div class="card-options d-flex align-items-center gap-2">
@@ -51,12 +42,13 @@
                 </button>
             </div>
         </div>
-        <div class="card-body p-0" id="notices-table">
+        <form method="post" id="notices-form" class="table-fill">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="card-body p-0 table-scroll" id="notices-table">
             {% include "dunning/_notices_table.html" %}
         </div>
+        </form>
     </div>
-    </form>
-</div>
 {% endblock %}
 
 {% block modals %}

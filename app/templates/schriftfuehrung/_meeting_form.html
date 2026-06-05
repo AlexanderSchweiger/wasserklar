@@ -1,6 +1,31 @@
 {# Gemeinsamer Formular-Body für Neu + Bearbeiten einer Sitzung (Modal-Body). #}
 {% from "schriftfuehrung/_richtext.html" import rt %}
-{% macro meeting_form_fields(meeting=None) %}
+{#
+  Vorausgefüllte Standardtexte für Neuanlage je nach Sitzungstyp.
+  meeting_type wird nur ausgewertet wenn meeting=None (Neuanlage).
+#}
+{% set _defaults_board = {
+  'intro': '<p>Der Obmann eröffnet die Vorstandssitzung und begrüßt die Anwesenden. Er stellt die ordnungsgemäße Einladung sowie die Beschlussfähigkeit des Vorstands fest.</p>',
+  'closing': '<p>Da keine weiteren Punkte vorliegen, schließt der Obmann die Vorstandssitzung und dankt den Anwesenden für ihre Teilnahme.</p>'
+} %}
+{% set _defaults_assembly = {
+  'intro': '<p>Der Obmann eröffnet die ordentliche Hauptversammlung und begrüßt die erschienenen Mitglieder. Er stellt fest, dass die Einladung fristgerecht ergangen ist und die Versammlung beschlussfähig ist.</p>',
+  'closing': '<p>Da keine weiteren Wortmeldungen vorliegen, schließt der Obmann die Hauptversammlung und dankt den Mitgliedern für ihre Teilnahme.</p>'
+} %}
+{% macro meeting_form_fields(meeting=None, meeting_type=None) %}
+{%- if meeting %}
+  {%- set _intro  = meeting.intro_text %}
+  {%- set _closing = meeting.closing_text %}
+{%- elif meeting_type == 'board' %}
+  {%- set _intro  = _defaults_board.intro %}
+  {%- set _closing = _defaults_board.closing %}
+{%- elif meeting_type == 'assembly' %}
+  {%- set _intro  = _defaults_assembly.intro %}
+  {%- set _closing = _defaults_assembly.closing %}
+{%- else %}
+  {%- set _intro  = '' %}
+  {%- set _closing = '' %}
+{%- endif %}
 <div class="row g-2">
   <div class="col-12">
     <label class="form-label required">Titel</label>
@@ -31,11 +56,11 @@
   </div>
   <div class="col-12">
     <label class="form-label">Einleitender Text</label>
-    {{ rt('intro_text', meeting.intro_text if meeting else '') }}
+    {{ rt('intro_text', _intro) }}
   </div>
   <div class="col-12">
     <label class="form-label">Abschlusstext</label>
-    {{ rt('closing_text', meeting.closing_text if meeting else '') }}
+    {{ rt('closing_text', _closing) }}
   </div>
 </div>
 {% endmacro %}

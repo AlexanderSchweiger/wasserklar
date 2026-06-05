@@ -1,5 +1,5 @@
 {% from "_pagination.html" import render_pagination %}
-<form method="post" action="{{ url_for('meters.bulk_read') }}">
+<form method="post" action="{{ url_for('meters.bulk_read') }}" class="table-fill">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <input type="hidden" name="billing_period_id" value="{{ period.id if period else '' }}">
   <div class="px-3 py-2 border-bottom d-flex align-items-center gap-2 flex-wrap">
@@ -11,6 +11,7 @@
       style="width:auto" value="{{ today.isoformat() if today else '' }}">
     <small class="text-muted ms-2">Nur befüllte Felder werden gespeichert.</small>
   </div>
+  <div class="table-scroll">
   <table class="table table-hover table-striped mb-0">
     <thead>
       <tr>
@@ -75,6 +76,7 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
 </form>
 {{ render_pagination(pagination) }}
 <script>

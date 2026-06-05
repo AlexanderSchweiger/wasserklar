@@ -1,5 +1,5 @@
 {% from "_pagination.html" import render_pagination %}
-<div class="card-body p-0">
+<div class="card-body p-0 table-scroll">
 <table class="table table-hover table-striped mb-0">
   <thead>
     <tr>
@@ -12,7 +12,7 @@
       <th class="text-end">Stand {{ period.name if period else '' }}</th>
       <th class="text-end">Verbrauch (m³)</th>
       <th>Datum</th>
-      <th></th>
+      <th class="col-actions"></th>
     </tr>
   </thead>
   <tbody>

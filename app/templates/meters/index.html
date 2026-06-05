@@ -1,8 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Zähler-Verwaltung{% endblock %}
 {% block page_title %}<i class="fas fa-tachometer-alt me-2"></i> Zähler{% endblock %}
+{% block page_wrapper_class %}is-fill{% endblock %}
 {% block content %}
-<div class="card">
+<div class="card table-card">
   <div class="card-header">
     <div class="filter-bar">
       <div class="input-group input-group-sm" style="width:280px">
@@ -48,7 +49,7 @@
       </a>
     </div>
   </div>
-  <div id="meters-table">
+  <div id="meters-table" class="table-fill">
     {% include "meters/_manage_table.html" %}
   </div>
 </div>

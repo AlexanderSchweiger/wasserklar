@@ -12,7 +12,7 @@
     {% endif %}
   </a>
 {% endmacro %}
-<div class="card-body p-0">
+<div class="card-body p-0 table-scroll">
 <table class="table table-hover table-striped mb-0">
   <thead>
     <tr>
@@ -29,7 +29,7 @@
       <th class="text-end">{{ sort_header('betrag', 'Betrag', 'justify-content-end') }}</th>
       <th>{{ sort_header('status', 'Status') }}</th>
       <th class="text-center">Mahnstufe</th>
-      <th></th>
+      <th class="col-actions"></th>
     </tr>
   </thead>
   <tbody>
@@ -107,7 +107,7 @@
           <span class="text-muted">–</span>
         {% endif %}
       </td>
-      <td class="text-end text-nowrap">
+      <td class="text-end text-nowrap col-actions">
         {% if doc_format in ('pdf', 'both') %}
         <a href="{{ url_for('invoices.pdf', invoice_id=inv.id) }}?fmt=pdf"
            class="btn btn-sm btn-outline-danger" target="_blank" title="PDF">

@@ -58,7 +58,7 @@
   </td>
   <td>{{ c.email or '—' }}</td>
   <td>{{ c.phone or '—' }}</td>
-  <td class="text-end text-nowrap">
+  <td class="text-end text-nowrap col-actions">
     <button type="button"
        data-url="{{ url_for('customers.edit', customer_id=c.id) }}"
        onclick="openCustomerEditModal(this)"

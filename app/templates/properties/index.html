@@ -1,8 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Liegenschaften{% endblock %}
 {% block page_title %}<i class="fas fa-home me-2"></i> Liegenschaften{% endblock %}
+{% block page_wrapper_class %}is-fill{% endblock %}
 {% block content %}
-<div class="card">
+<div class="card table-card">
   <div class="card-header">
     <div class="input-group input-group-sm" style="width:280px">
       <input type="search" name="q" value="{{ q }}" class="form-control"
@@ -47,7 +48,7 @@
       </div>
     </div>
   </div>
-  <div id="property-table">
+  <div id="property-table" class="table-fill">
     {% include "properties/_table.html" %}
   </div>
 </div>

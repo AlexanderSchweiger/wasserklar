@@ -1,9 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Buchungen {{ year }}{% endblock %}
 {% block page_title %}<i class="fas fa-book me-2"></i> Buchungen {% endblock %}
+{% block page_wrapper_class %}is-fill{% endblock %}
 {% block content %}
 
-<div class="card">
+<div class="card table-card">
   <div class="card-header">
     {% set filter_include = "[name='year'],[name='month'],[name='quarter'],[name='real_account_id'],[name='kind'],[name='tax'],[name='account_id'],[name='project_id']" %}
     {% set months = [(1,'Jänner'),(2,'Februar'),(3,'März'),(4,'April'),(5,'Mai'),(6,'Juni'),(7,'Juli'),(8,'August'),(9,'September'),(10,'Oktober'),(11,'November'),(12,'Dezember')] %}
@@ -166,7 +167,7 @@
       </div>
     </div>
   </div>
-  <div id="bookings-table">
+  <div id="bookings-table" class="table-fill">
     {% include "accounting/_bookings_table.html" %}
   </div>
 </div>

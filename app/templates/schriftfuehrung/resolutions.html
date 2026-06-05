@@ -1,8 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Beschlüsse{% endblock %}
 {% block page_title %}<i class="fas fa-balance-scale me-2"></i> Beschluss-Register{% endblock %}
+{% block page_wrapper_class %}is-fill{% endblock %}
 {% block content %}
-<div class="card">
+<div class="card table-card">
   <div class="card-header d-flex align-items-center flex-wrap" style="gap:.5rem">
     <div class="input-group input-group-sm" style="width:260px">
       <input type="search" name="q" value="{{ q }}" class="form-control" placeholder="Beschluss / Notiz suchen…"
@@ -31,7 +32,7 @@
     </select>
     {% endif %}
   </div>
-  <div id="sf-res-table">
+  <div id="sf-res-table" class="table-fill">
     {% include "schriftfuehrung/_resolutions_table.html" %}
   </div>
 </div>
