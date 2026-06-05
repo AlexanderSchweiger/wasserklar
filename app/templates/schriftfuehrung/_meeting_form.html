@@ -1,0 +1,41 @@
+{# Gemeinsamer Formular-Body für Neu + Bearbeiten einer Sitzung (Modal-Body). #}
+{% from "schriftfuehrung/_richtext.html" import rt %}
+{% macro meeting_form_fields(meeting=None) %}
+<div class="row g-2">
+  <div class="col-12">
+    <label class="form-label required">Titel</label>
+    <input type="text" name="title" class="form-control" required maxlength="200"
+           placeholder="z. B. Ordentliche Vorstandssitzung"
+           value="{{ meeting.title if meeting else '' }}">
+  </div>
+  <div class="col-md-4">
+    <label class="form-label">Datum</label>
+    <input type="date" name="meeting_date" class="form-control"
+           value="{{ meeting.meeting_date.isoformat() if meeting and meeting.meeting_date else '' }}">
+  </div>
+  <div class="col-md-4">
+    <label class="form-label">Beginn</label>
+    <input type="time" name="start_time" class="form-control"
+           value="{{ meeting.start_time.strftime('%H:%M') if meeting and meeting.start_time else '' }}">
+  </div>
+  <div class="col-md-4">
+    <label class="form-label">Ende</label>
+    <input type="time" name="end_time" class="form-control"
+           value="{{ meeting.end_time.strftime('%H:%M') if meeting and meeting.end_time else '' }}">
+  </div>
+  <div class="col-12">
+    <label class="form-label">Ort</label>
+    <input type="text" name="location" class="form-control" maxlength="200"
+           placeholder="z. B. Gemeindesaal Musterdorf"
+           value="{{ meeting.location if meeting and meeting.location else '' }}">
+  </div>
+  <div class="col-12">
+    <label class="form-label">Einleitender Text</label>
+    {{ rt('intro_text', meeting.intro_text if meeting else '') }}
+  </div>
+  <div class="col-12">
+    <label class="form-label">Abschlusstext</label>
+    {{ rt('closing_text', meeting.closing_text if meeting else '') }}
+  </div>
+</div>
+{% endmacro %}

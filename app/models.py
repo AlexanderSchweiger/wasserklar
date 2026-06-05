@@ -1476,8 +1476,10 @@ class DunningStage(db.Model):
     fee_max = db.Column(db.Numeric(10, 2), nullable=True)     # Maximum bei %-Berechnung
     new_due_days = db.Column(db.Integer, default=14)           # Nachfrist in Tagen
     print_title = db.Column(db.String(200), nullable=True)     # Titel auf Mahn-PDF
-    email_subject = db.Column(db.String(200), nullable=True)
-    email_body = db.Column(db.Text, nullable=True)
+    email_subject = db.Column(db.String(200), nullable=True)   # Betreff der Mahn-Mail
+    email_body = db.Column(db.Text, nullable=True)             # Mailtext (Platzhalter erlaubt)
+    letter_intro = db.Column(db.Text, nullable=True)           # Einleitung im Mahnbrief (PDF/DOCX)
+    letter_closing = db.Column(db.Text, nullable=True)         # Schlusstext im Mahnbrief (PDF/DOCX)
     color = db.Column(db.String(20), nullable=True)            # Badge-Farbe
     icon = db.Column(db.String(50), nullable=True)             # Font Awesome Icon
     active = db.Column(db.Boolean, default=True, nullable=False)
@@ -1490,9 +1492,11 @@ class DunningStage(db.Model):
         return f"<DunningStage L{self.level} {self.name}>"
 
 
-class DunningNotice(db.Model):
+class DunningNotice(EmailTrackableMixin, db.Model):
     """Einzelne Mahnung zu einer Rechnung."""
     __tablename__ = "dunning_notices"
+
+    EMAIL_SUBJECT_TYPE = "dunning"
 
     STATUS_AKTIV = "Aktiv"
     STATUS_ZURUECKGESETZT = "Zurückgesetzt"
@@ -1536,6 +1540,12 @@ class DunningNotice(db.Model):
 
     def __repr__(self):
         return f"<DunningNotice invoice={self.invoice_id} L{self.level_snapshot}>"
+
+
+# DunningNotice nachtraeglich registrieren: EMAIL_SUBJECT_MODELS ist oben (vor
+# dieser Klasse) definiert, damit Invoice/AccessCode dort stehen. Mahnungen
+# tracken E-Mails ueber denselben polymorphen Webhook-Pfad (subject_type='dunning').
+EMAIL_SUBJECT_MODELS[DunningNotice.EMAIL_SUBJECT_TYPE] = DunningNotice
 
 
 # ---------------------------------------------------------------------------
@@ -1867,3 +1877,357 @@ class FeaturePhoto(db.Model):
 
     def __repr__(self):
         return f"<FeaturePhoto feature={self.feature_id} {self.filename}>"
+
+
+# ---------------------------------------------------------------------------
+# Schriftführung (Mandant-Typ Wassergenossenschaft — Sitzungen, Einladungen,
+# Protokolle, Beschlüsse, Schriftverkehr)
+# ---------------------------------------------------------------------------
+
+class Meeting(db.Model):
+    """Vorstandssitzung (board) oder Hauptversammlung (assembly).
+
+    Beide Sitzungsarten teilen sich diese Tabelle; ``meeting_type`` ist der
+    Diskriminator (Unterschied nur in der Empfänger-Vorauswahl beim Versand).
+    Lebenszyklus: ``planning`` → ``invited`` (mind. einmal versendet) → ``held``.
+    """
+    __tablename__ = "meetings"
+
+    TYPE_BOARD = "board"          # Vorstandssitzung
+    TYPE_ASSEMBLY = "assembly"    # Hauptversammlung
+    TYPES = (TYPE_BOARD, TYPE_ASSEMBLY)
+
+    STATUS_PLANNING = "planning"  # Planung
+    STATUS_INVITED = "invited"    # Eingeladen
+    STATUS_HELD = "held"          # Abgehalten
+    STATUSES = (STATUS_PLANNING, STATUS_INVITED, STATUS_HELD)
+
+    id = db.Column(db.Integer, primary_key=True)
+    meeting_type = db.Column(db.String(20), nullable=False, index=True)
+    title = db.Column(db.String(200), nullable=False)
+    meeting_date = db.Column(db.Date, nullable=True)
+    start_time = db.Column(db.Time, nullable=True)
+    end_time = db.Column(db.Time, nullable=True)
+    location = db.Column(db.String(200), nullable=True)
+    intro_text = db.Column(db.Text, nullable=True)     # sanitisiertes Rich-Text-HTML
+    closing_text = db.Column(db.Text, nullable=True)   # sanitisiertes Rich-Text-HTML
+    status = db.Column(db.String(20), nullable=False, default=STATUS_PLANNING,
+                       server_default=db.text("'planning'"))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"),
+                              nullable=True)
+
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+    agenda_items = db.relationship(
+        "MeetingAgendaItem", backref="meeting", lazy="select",
+        cascade="all, delete-orphan", order_by="MeetingAgendaItem.position",
+    )
+    invitations = db.relationship(
+        "MeetingInvitation", backref="meeting", lazy="select",
+        cascade="all, delete-orphan",
+    )
+    delivery_logs = db.relationship(
+        "MeetingDeliveryLog", backref="meeting", lazy="select",
+        cascade="all, delete-orphan", order_by="MeetingDeliveryLog.occurred_at.desc()",
+    )
+    attendances = db.relationship(
+        "MeetingAttendance", backref="meeting", lazy="select",
+        cascade="all, delete-orphan",
+    )
+    resolutions = db.relationship(
+        "MeetingResolution", backref="meeting", lazy="select",
+        cascade="all, delete-orphan", order_by="MeetingResolution.id",
+    )
+    protocol = db.relationship(
+        "MeetingProtocol", backref="meeting", uselist=False,
+        cascade="all, delete-orphan",
+    )
+
+    @property
+    def is_assembly(self):
+        return self.meeting_type == self.TYPE_ASSEMBLY
+
+    @property
+    def can_delete(self):
+        """Vor dem ersten Versand löschbar; danach bleibt sie erhalten (History)."""
+        return self.status == self.STATUS_PLANNING
+
+    def __repr__(self):
+        return f"<Meeting #{self.id} {self.meeting_type} {self.title!r}>"
+
+
+class MeetingAgendaItem(db.Model):
+    """Tagesordnungspunkt (TOP) einer Sitzung."""
+    __tablename__ = "meeting_agenda_items"
+
+    id = db.Column(db.Integer, primary_key=True)
+    meeting_id = db.Column(db.Integer, db.ForeignKey("meetings.id", ondelete="CASCADE"),
+                           nullable=False, index=True)
+    position = db.Column(db.Integer, nullable=False, default=0)
+    title = db.Column(db.String(300), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    # TOP, über den abgestimmt wird → belegt das Protokoll mit einem Beschluss vor.
+    requires_vote = db.Column(db.Boolean, nullable=False, default=False,
+                              server_default=sa.false())
+
+    def __repr__(self):
+        return f"<MeetingAgendaItem #{self.id} m={self.meeting_id} pos={self.position}>"
+
+
+class MeetingInvitation(EmailTrackableMixin, db.Model):
+    """Einladung je Empfänger zu einer Sitzung.
+
+    Erbt die E-Mail-Tracking-Felder (Versand-/Zustellstatus, Postmark-Webhook) —
+    analog zur Rechnung. ``delivery_method`` haelt fest, wie dieser Empfänger
+    informiert werden soll; E-Mail nur, wenn ``Customer.wants_email``.
+    """
+    __tablename__ = "meeting_invitations"
+
+    EMAIL_SUBJECT_TYPE = "meeting_invitation"
+
+    METHOD_EMAIL = "email"
+    METHOD_POST = "post"
+    METHOD_NONE = "none"
+
+    id = db.Column(db.Integer, primary_key=True)
+    meeting_id = db.Column(db.Integer, db.ForeignKey("meetings.id", ondelete="CASCADE"),
+                           nullable=False, index=True)
+    customer_id = db.Column(db.Integer, db.ForeignKey("customers.id", ondelete="CASCADE"),
+                            nullable=False, index=True)
+    delivery_method = db.Column(db.String(10), nullable=True)   # email | post | none
+    post_sent_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    # E-Mail-Tracking-Spalten kommen aus EmailTrackableMixin.
+
+    customer = db.relationship("Customer", foreign_keys=[customer_id])
+    # Polymorphe E-Mail-Events (kein FK → viewonly), analog Invoice.email_events.
+    email_events = db.relationship(
+        "EmailEvent",
+        primaryjoin=(
+            "and_(foreign(EmailEvent.subject_id) == MeetingInvitation.id, "
+            "EmailEvent.subject_type == 'meeting_invitation')"
+        ),
+        order_by="(EmailEvent.occurred_at.desc(), EmailEvent.id.desc())",
+        viewonly=True,
+        lazy="select",
+    )
+
+    __table_args__ = (
+        db.UniqueConstraint("meeting_id", "customer_id", name="uq_meeting_invitation"),
+    )
+
+    def __repr__(self):
+        return f"<MeetingInvitation m={self.meeting_id} c={self.customer_id}>"
+
+
+class MeetingDeliveryLog(db.Model):
+    """History, wer wie und wann zu einer Sitzung informiert wurde (inkl.
+    erneuter Versände + Post). Ergänzt das Mail-Status-Tracking von
+    ``MeetingInvitation`` um die Aktionen des Schriftführers und um Post."""
+    __tablename__ = "meeting_delivery_logs"
+
+    METHOD_EMAIL = "email"
+    METHOD_POST = "post"
+
+    ACTION_SENT = "sent"
+    ACTION_RESENT = "resent"
+    ACTION_PRINTED = "printed"
+
+    id = db.Column(db.Integer, primary_key=True)
+    meeting_id = db.Column(db.Integer, db.ForeignKey("meetings.id", ondelete="CASCADE"),
+                           nullable=False, index=True)
+    customer_id = db.Column(db.Integer, db.ForeignKey("customers.id", ondelete="SET NULL"),
+                            nullable=True)
+    recipient_name = db.Column(db.String(200), nullable=True)    # Snapshot
+    recipient_email = db.Column(db.String(255), nullable=True)   # Snapshot
+    method = db.Column(db.String(10), nullable=False)            # email | post
+    action = db.Column(db.String(20), nullable=False)            # sent | resent | printed
+    occurred_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"),
+                        nullable=True)
+    note = db.Column(db.String(255), nullable=True)
+
+    user = db.relationship("User", foreign_keys=[user_id])
+
+    def __repr__(self):
+        return f"<MeetingDeliveryLog m={self.meeting_id} {self.method}/{self.action}>"
+
+
+class MeetingAttendance(db.Model):
+    """Anwesenheit je Person am Sitzungstag (für Teilnehmerliste + Quorum)."""
+    __tablename__ = "meeting_attendances"
+
+    STATUS_PRESENT = "present"     # anwesend
+    STATUS_EXCUSED = "excused"     # entschuldigt
+    STATUS_ABSENT = "absent"       # abwesend
+    STATUSES = (STATUS_PRESENT, STATUS_EXCUSED, STATUS_ABSENT)
+
+    id = db.Column(db.Integer, primary_key=True)
+    meeting_id = db.Column(db.Integer, db.ForeignKey("meetings.id", ondelete="CASCADE"),
+                           nullable=False, index=True)
+    customer_id = db.Column(db.Integer, db.ForeignKey("customers.id", ondelete="CASCADE"),
+                            nullable=False, index=True)
+    status = db.Column(db.String(20), nullable=False, default=STATUS_PRESENT,
+                       server_default=db.text("'present'"))
+    is_member = db.Column(db.Boolean, nullable=False, default=False, server_default=sa.false())
+    # Stimmgewicht/Anteile (für anteilsgewichtetes Quorum; Default 1 = Kopfzählung).
+    weight = db.Column(db.Integer, nullable=False, default=1, server_default=db.text("1"))
+    note = db.Column(db.String(255), nullable=True)
+
+    customer = db.relationship("Customer", foreign_keys=[customer_id])
+
+    __table_args__ = (
+        db.UniqueConstraint("meeting_id", "customer_id", name="uq_meeting_attendance"),
+    )
+
+    def __repr__(self):
+        return f"<MeetingAttendance m={self.meeting_id} c={self.customer_id} {self.status}>"
+
+
+class MeetingResolution(db.Model):
+    """Beschluss/Abstimmung — eigenständig gespeichert und durchsuchbar
+    (Beschluss-Register). Verknüpft mit der Sitzung (Vorstand oder HV; die Art
+    ergibt sich aus ``meeting.meeting_type``) und optional dem Agendapunkt.
+    Auch abgelehnte Beschlüsse bleiben mit eigenem Status gelistet."""
+    __tablename__ = "meeting_resolutions"
+
+    STATUS_ACCEPTED = "accepted"    # angenommen
+    STATUS_REJECTED = "rejected"    # abgelehnt
+    STATUS_POSTPONED = "postponed"  # vertagt
+    STATUSES = (STATUS_ACCEPTED, STATUS_REJECTED, STATUS_POSTPONED)
+
+    id = db.Column(db.Integer, primary_key=True)
+    meeting_id = db.Column(db.Integer, db.ForeignKey("meetings.id", ondelete="CASCADE"),
+                           nullable=False, index=True)
+    agenda_item_id = db.Column(
+        db.Integer, db.ForeignKey("meeting_agenda_items.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    title = db.Column(db.String(300), nullable=False)        # Name (Vorschlag aus TOP)
+    status = db.Column(db.String(20), nullable=False, default=STATUS_ACCEPTED,
+                       server_default=db.text("'accepted'"))
+    votes_for = db.Column(db.Integer, nullable=False, default=0, server_default=db.text("0"))
+    votes_against = db.Column(db.Integer, nullable=False, default=0, server_default=db.text("0"))
+    votes_abstain = db.Column(db.Integer, nullable=False, default=0, server_default=db.text("0"))
+    notes = db.Column(db.Text, nullable=True)
+    decided_on = db.Column(db.Date, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"),
+                              nullable=True)
+
+    agenda_item = db.relationship("MeetingAgendaItem", foreign_keys=[agenda_item_id])
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+
+    @property
+    def is_unanimous(self):
+        """Einstimmig angenommen: Ja-Stimmen vorhanden, keine Gegenstimmen/Enthaltungen."""
+        return (self.status == self.STATUS_ACCEPTED
+                and (self.votes_against or 0) == 0
+                and (self.votes_abstain or 0) == 0
+                and (self.votes_for or 0) > 0)
+
+    def __repr__(self):
+        return f"<MeetingResolution #{self.id} m={self.meeting_id} {self.status}>"
+
+
+class MeetingProtocol(db.Model):
+    """Protokoll zu einer Sitzung (1:1). Entweder als Rich-Text erfasst oder als
+    Datei hochgeladen. ``draft`` ist editierbar, ``final`` gesperrt; ein Upload
+    ist sofort ``final``. Die abgelegte Datei liegt im Schriftverkehr-Ordner."""
+    __tablename__ = "meeting_protocols"
+
+    SOURCE_RICHTEXT = "richtext"
+    SOURCE_UPLOAD = "upload"
+
+    STATUS_DRAFT = "draft"      # Entwurf
+    STATUS_FINAL = "final"      # Abgeschlossen
+    STATUSES = (STATUS_DRAFT, STATUS_FINAL)
+
+    ATTENDANCE_LIST = "list"          # detaillierte Personenliste (Default)
+    ATTENDANCE_FREETEXT = "freetext"  # Freitext statt Liste ("X Personen anwesend")
+    ATTENDANCE_MODES = (ATTENDANCE_LIST, ATTENDANCE_FREETEXT)
+
+    id = db.Column(db.Integer, primary_key=True)
+    meeting_id = db.Column(db.Integer, db.ForeignKey("meetings.id", ondelete="CASCADE"),
+                           nullable=False, unique=True, index=True)
+    source_type = db.Column(db.String(10), nullable=False, default=SOURCE_RICHTEXT,
+                            server_default=db.text("'richtext'"))
+    content_html = db.Column(db.Text, nullable=True)        # narrativer Teil (sanitisiert)
+    status = db.Column(db.String(20), nullable=False, default=STATUS_DRAFT,
+                       server_default=db.text("'draft'"))
+
+    # Quorum-Snapshot (Beschlussfähigkeit zum Zeitpunkt des Protokolls).
+    quorum_present = db.Column(db.Integer, nullable=True)
+    quorum_total = db.Column(db.Integer, nullable=True)
+    is_quorate = db.Column(db.Boolean, nullable=True)
+
+    # Anwesenheits-Erfassung: detaillierte Personenliste ('list') oder Freitext
+    # ('freetext' — die Personenliste entfällt, z.B. "37 Personen anwesend").
+    attendance_mode = db.Column(db.String(10), nullable=False, default=ATTENDANCE_LIST,
+                                server_default=db.text("'list'"))
+    attendance_freetext = db.Column(db.Text, nullable=True)
+    # Manuell erfasste Kopfzahl Anwesender — genutzt im Freitext-Modus und wenn
+    # die Versammlung nach erfolgloser Wartefrist erneut eröffnet wurde.
+    present_headcount = db.Column(db.Integer, nullable=True)
+    # Hauptversammlung: war zunächst nicht beschlussfähig und wurde nach einer
+    # Wartefrist erneut eröffnet → mit den Anwesenden beschlussfähig.
+    reconvened = db.Column(db.Boolean, nullable=False, default=False, server_default=sa.false())
+    reconvene_wait_minutes = db.Column(db.Integer, nullable=True)
+
+    # Datei: generiertes PDF aus Rich-Text ODER hochgeladenes Dokument.
+    file_path = db.Column(db.String(500), nullable=True)
+    original_filename = db.Column(db.String(255), nullable=True)
+    mime_type = db.Column(db.String(120), nullable=True)
+    file_size = db.Column(db.Integer, nullable=True)
+
+    finalized_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"),
+                              nullable=True)
+
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+
+    @property
+    def is_locked(self):
+        return self.status == self.STATUS_FINAL
+
+    @property
+    def is_freetext_attendance(self):
+        return self.attendance_mode == self.ATTENDANCE_FREETEXT
+
+    def __repr__(self):
+        return f"<MeetingProtocol m={self.meeting_id} {self.status}>"
+
+
+class SchriftverkehrDocument(db.Model):
+    """Eigenständiges Schriftverkehr-Dokument (eingehende/ausgehende
+    Korrespondenz) im Archiv. Die Datei liegt im Schriftverkehr-Ordner
+    (Jahr-Unterordner); die DB hält nur Metadaten."""
+    __tablename__ = "schriftverkehr_documents"
+
+    TYPE_INCOMING = "incoming"   # eingehend
+    TYPE_OUTGOING = "outgoing"   # ausgehend
+    TYPE_OTHER = "other"         # sonstiges
+    TYPES = (TYPE_INCOMING, TYPE_OUTGOING, TYPE_OTHER)
+
+    id = db.Column(db.Integer, primary_key=True)
+    year = db.Column(db.Integer, nullable=False, index=True)
+    title = db.Column(db.String(300), nullable=False)
+    doc_type = db.Column(db.String(20), nullable=False, default=TYPE_OUTGOING,
+                         server_default=db.text("'outgoing'"))
+    document_date = db.Column(db.Date, nullable=True)
+    file_path = db.Column(db.String(500), nullable=False)
+    original_filename = db.Column(db.String(255), nullable=True)
+    mime_type = db.Column(db.String(120), nullable=True)
+    file_size = db.Column(db.Integer, nullable=True)
+    note = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"),
+                              nullable=True)
+
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+
+    def __repr__(self):
+        return f"<SchriftverkehrDocument #{self.id} {self.year} {self.title!r}>"

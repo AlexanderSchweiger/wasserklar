@@ -124,7 +124,9 @@ class TestUploadStep:
         body = r.get_data(as_text=True)
         assert "Schritt 1" in body
         assert "Zählernummer" in body
-        assert "Objekt-Nr." in body
+        # Property column label switches on is_wg: WG/cooperative mode (the
+        # default) renders "Lieg.-Nr.", utility mode "Objekt-Nr.".
+        assert "Lieg.-Nr." in body or "Objekt-Nr." in body
 
     def test_post_without_file_redirects(self, client, admin):
         _login(client)

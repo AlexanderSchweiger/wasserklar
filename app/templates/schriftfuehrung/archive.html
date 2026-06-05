@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}Schriftverkehr{% endblock %}
+{% block page_title %}<i class="fas fa-folder-open me-2"></i> Schriftverkehr{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="card-header d-flex align-items-center flex-wrap" style="gap:.5rem">
+    <form method="get" class="d-flex align-items-center" style="gap:.5rem" id="archiveFilter">
+      {% if years %}
+      <select name="year" class="form-select form-select-sm" style="width:130px" onchange="document.getElementById('archiveFilter').submit()">
+        <option value="">Alle Jahre</option>
+        {% for y in years %}<option value="{{ y }}" {% if year_filter == y|string %}selected{% endif %}>{{ y }}</option>{% endfor %}
+      </select>
+      {% endif %}
+      <select name="type" class="form-select form-select-sm" style="width:170px" onchange="document.getElementById('archiveFilter').submit()">
+        <option value="">Alle Dokumente</option>
+        <option value="protocol" {% if type_filter == 'protocol' %}selected{% endif %}>Nur Protokolle</option>
+        {% for k, l in sf_doc_type_labels.items() %}<option value="{{ k }}" {% if k == type_filter %}selected{% endif %}>{{ l }}</option>{% endfor %}
+      </select>
+    </form>
+    <div class="ms-auto">
+      <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#docUploadModal">
+        <i class="fas fa-upload me-1"></i> Dokument hochladen
+      </button>
+    </div>
+  </div>
+
+  {% if protocols %}
+  <div class="card-body pb-0"><h4 class="text-secondary"><i class="fas fa-file-signature me-1"></i> Protokolle</h4></div>
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table">
+      <thead><tr><th>Sitzung</th><th>Datum</th><th>Abgeschlossen</th><th class="w-1"></th></tr></thead>
+      <tbody>
+        {% for p in protocols %}
+        <tr>
+          <td><a href="{{ url_for('schriftfuehrung.protocol', meeting_id=p.meeting_id) }}" class="fw-bold text-reset">
+            {{ sf_meeting_type_labels[p.meeting.meeting_type] }}: {{ p.meeting.title }}</a></td>
+          <td>{{ p.meeting.meeting_date.strftime('%d.%m.%Y') if p.meeting.meeting_date else '—' }}</td>
+          <td>{{ p.finalized_at.strftime('%d.%m.%Y') if p.finalized_at else '—' }}</td>
+          <td class="text-end">
+            <a href="{{ url_for('schriftfuehrung.protocol_download', meeting_id=p.meeting_id) }}" class="btn btn-sm btn-outline-secondary" target="_blank">
+              <i class="fas fa-download me-1"></i> Download
+            </a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <div class="card-body pb-0"><h4 class="text-secondary"><i class="fas fa-envelope-open-text me-1"></i> Korrespondenz</h4></div>
+  {% if docs %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table">
+      <thead><tr><th>Titel</th><th>Art</th><th>Datum</th><th class="w-1"></th></tr></thead>
+      <tbody>
+        {% for d in docs %}
+        <tr>
+          <td>
+            <div class="fw-bold">{{ d.title }}</div>
+            {% if d.note %}<div class="small text-secondary">{{ d.note|truncate(90) }}</div>{% endif %}
+          </td>
+          <td><span class="badge bg-secondary-lt">{{ sf_doc_type_labels.get(d.doc_type, d.doc_type) }}</span></td>
+          <td>{{ d.document_date.strftime('%d.%m.%Y') if d.document_date else '—' }}</td>
+          <td class="text-end">
+            <a href="{{ url_for('schriftfuehrung.archive_download', doc_id=d.id) }}" class="btn btn-sm btn-outline-secondary">
+              <i class="fas fa-download me-1"></i> Download
+            </a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="card-body"><p class="text-secondary mb-0">Keine Korrespondenz abgelegt.</p></div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block modals %}
+<div class="modal fade" id="docUploadModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <form method="post" hx-boost="false" enctype="multipart/form-data"
+            action="{{ url_for('schriftfuehrung.archive_upload') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="fas fa-upload me-2"></i>Dokument hochladen</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-2">
+            <label class="form-label">Titel</label>
+            <input type="text" name="title" class="form-control" placeholder="z. B. Bescheid Behörde XY">
+          </div>
+          <div class="row g-2">
+            <div class="col-md-6">
+              <label class="form-label">Art</label>
+              <select name="doc_type" class="form-select">
+                {% for k, l in sf_doc_type_labels.items() %}<option value="{{ k }}">{{ l }}</option>{% endfor %}
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Datum</label>
+              <input type="date" name="document_date" class="form-control">
+            </div>
+          </div>
+          <div class="mb-2 mt-2">
+            <label class="form-label">Notiz</label>
+            <textarea name="note" class="form-control" rows="2"></textarea>
+          </div>
+          <div class="mb-2">
+            <label class="form-label">Datei</label>
+            <input type="file" name="document" class="form-control" required
+                   accept=".pdf,.doc,.docx,.xls,.xlsx,.odt,.ods,.md,.txt">
+            <div class="form-text">{{ sf_upload_hint }}</div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">Abbrechen</button>
+          <button type="submit" class="btn btn-primary"><i class="fas fa-upload me-1"></i> Hochladen</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

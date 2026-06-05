@@ -94,5 +94,19 @@
 {% endblock %}
 
 {% block scripts %}
+<script>
+// Nach dem Modal-Speichern nur die betroffene Zeile neu laden und an Ort und
+// Stelle tauschen — statt window.location.reload(), das Filter, Suche und
+// Pagination verlieren wuerde. Nur auf der Liste definiert; auf der
+// Detailseite bleibt der Default-Reload aus _property_modal_scripts.html.
+window.onPropertyEdited = function (e) {
+  var id = e.detail && e.detail.property_id;
+  var rowEl = id ? document.getElementById('property-row-' + id) : null;
+  if (!rowEl || !window.htmx) { window.location.reload(); return; }
+  htmx.ajax('GET', '/properties/' + id + '/row', {
+    target: '#property-row-' + id, swap: 'outerHTML',
+  });
+};
+</script>
 {% include "properties/_property_modal_scripts.html" %}
 {% endblock %}

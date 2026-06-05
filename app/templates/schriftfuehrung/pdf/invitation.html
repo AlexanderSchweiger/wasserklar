@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<style>
+  @page {
+    size: A4;
+    margin: 18mm 18mm 20mm;
+    @bottom-center {
+      content: "Seite " counter(page) " / " counter(pages);
+      font-family: {{ design.font_family | default("Arial, sans-serif") }};
+      font-size: 8pt; color: {{ design.muted_color | default("#888") }};
+    }
+  }
+  body {
+    font-family: {{ design.font_family | default("Arial, sans-serif") }};
+    font-size: 11pt; color: {{ design.text_color | default("#2d3748") }};
+    line-height: 1.45;
+  }
+  .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+  .head .logo img { max-height: 60px; max-width: 220px; }
+  .contact { font-size: 9pt; color: {{ design.muted_color | default("#666") }}; text-align: right; }
+  .rule { height: 3px; background: {{ design.accent_color | default("#2f6a93") }}; margin: 10mm 0 8mm; }
+  .sender { font-size: 8pt; color: {{ design.muted_color | default("#888") }}; margin-bottom: 2mm; }
+  .recipient { margin-bottom: 10mm; }
+  h1 { font-size: 16pt; color: {{ design.heading_color | default("#102a44") }}; margin: 0 0 2mm; }
+  .meta { color: {{ design.muted_color | default("#555") }}; margin-bottom: 6mm; }
+  .meta strong { color: {{ design.text_color | default("#2d3748") }}; }
+  .section-title { font-size: 12pt; color: {{ design.heading_color | default("#102a44") }};
+                   border-bottom: 1px solid {{ design.border_color | default("#e2e8f0") }};
+                   padding-bottom: 2mm; margin: 6mm 0 3mm; }
+  ol.agenda { margin: 0; padding-left: 6mm; }
+  ol.agenda li { margin-bottom: 2.5mm; }
+  ol.agenda .desc { font-size: 9.5pt; color: {{ design.muted_color | default("#666") }}; }
+  .text-block { margin: 4mm 0; }
+  .signature { margin-top: 18mm; font-size: 10pt; color: {{ design.muted_color | default("#555") }}; }
+</style>
+</head>
+<body>
+  <div class="head">
+    <div class="logo">{% if wg.logo %}<img src="{{ wg.logo }}" alt="">{% else %}<strong>{{ wg.name }}</strong>{% endif %}</div>
+    <div class="contact" style="font-size: {{ contact_info_font_size or 9 }}pt">{{ contact_info | safe }}</div>
+  </div>
+  <div class="rule"></div>
+
+  <div class="recipient">
+    {% if sender_address %}<div class="sender">{{ sender_address }}</div>{% endif %}
+    {{ customer.name }}<br>
+    {% if customer.address_display() %}{{ customer.address_display() }}{% endif %}
+  </div>
+
+  <h1>Einladung zur {{ sf_meeting_type_labels[meeting.meeting_type] }}</h1>
+  <div class="meta">
+    {% if meeting.meeting_date %}<strong>Termin:</strong> {{ meeting.meeting_date.strftime('%d.%m.%Y') }}{% if meeting.start_time %}, {{ meeting.start_time.strftime('%H:%M') }}{% if meeting.end_time %}–{{ meeting.end_time.strftime('%H:%M') }}{% endif %} Uhr{% endif %}<br>{% endif %}
+    {% if meeting.location %}<strong>Ort:</strong> {{ meeting.location }}{% endif %}
+  </div>
+
+  {% if meeting.intro_text %}<div class="text-block">{{ meeting.intro_text | safe }}</div>{% endif %}
+
+  <div class="section-title">Tagesordnung</div>
+  {% if agenda_items %}
+  <ol class="agenda">
+    {% for item in agenda_items %}
+    <li>{{ item.title }}{% if item.description %}<div class="desc">{{ item.description }}</div>{% endif %}</li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  <p class="meta">Die Tagesordnung wird gesondert bekannt gegeben.</p>
+  {% endif %}
+
+  {% if meeting.closing_text %}<div class="text-block">{{ meeting.closing_text | safe }}</div>{% endif %}
+
+  <div class="signature">
+    {{ wg.name }}<br><br>
+    _______________________________<br>
+    Der Obmann / Die Obfrau
+  </div>
+</body>
+</html>

@@ -1,0 +1,51 @@
+{% if meetings %}
+<div class="table-responsive">
+  <table class="table table-vcenter card-table table-hover">
+    <thead>
+      <tr>
+        <th>Titel</th>
+        <th>Datum</th>
+        <th>Uhrzeit</th>
+        <th>Ort</th>
+        <th>Status</th>
+        <th class="w-1"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for m in meetings %}
+      <tr>
+        <td>
+          <a href="{{ url_for('schriftfuehrung.meeting_detail', meeting_id=m.id) }}" class="fw-bold text-reset">{{ m.title }}</a>
+          {% if m.agenda_items %}
+          <div class="small text-secondary">{{ m.agenda_items|length }} Tagesordnungspunkt(e)</div>
+          {% endif %}
+        </td>
+        <td>{{ m.meeting_date.strftime('%d.%m.%Y') if m.meeting_date else '—' }}</td>
+        <td>
+          {% if m.start_time %}{{ m.start_time.strftime('%H:%M') }}{% if m.end_time %}–{{ m.end_time.strftime('%H:%M') }}{% endif %} Uhr{% else %}—{% endif %}
+        </td>
+        <td>{{ m.location or '—' }}</td>
+        <td><span class="badge {{ sf_meeting_status_badge[m.status] }}">{{ sf_meeting_status_labels[m.status] }}</span></td>
+        <td class="text-end">
+          <div class="btn-list flex-nowrap justify-content-end">
+            <a href="{{ url_for('schriftfuehrung.meeting_detail', meeting_id=m.id) }}" class="btn btn-sm btn-outline-secondary">Öffnen</a>
+            <form method="post" action="{{ url_for('schriftfuehrung.meeting_copy', meeting_id=m.id) }}" class="d-inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button class="btn btn-sm btn-outline-secondary" title="Inkl. Tagesordnung kopieren"><i class="fas fa-copy"></i></button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="card-body">
+  <div class="empty">
+    <div class="empty-icon"><i class="fas fa-feather-alt fa-2x text-secondary"></i></div>
+    <p class="empty-title">Keine {{ sf_meeting_type_labels_plural[meeting_type] }}</p>
+    <p class="empty-subtitle text-secondary">Lege oben rechts die erste {{ sf_meeting_type_labels[meeting_type] }} an.</p>
+  </div>
+</div>
+{% endif %}

@@ -62,6 +62,7 @@
                                 <th>Drucktitel</th>
                                 <th style="width:90px">Farbe</th>
                                 <th style="width:120px">Icon</th>
+                                <th style="width:50px" class="text-center">Texte</th>
                                 <th style="width:50px"></th>
                             </tr>
                         </thead>
@@ -93,10 +94,20 @@
                                     <td>{{ color_select('stage_color', s.color) }}</td>
                                     <td><input type="text" name="stage_icon" class="form-control form-control-sm"
                                                value="{{ s.icon or '' }}" placeholder="fa-…"></td>
+                                    <td class="text-center">
+                                        <button type="button" class="btn btn-sm btn-outline-secondary btn-toggle-texts" title="Texte bearbeiten">
+                                            <i class="fas fa-align-left"></i>
+                                        </button>
+                                    </td>
                                     <td>
                                         <button type="button" class="btn btn-sm btn-outline-danger btn-remove-stage" title="Stufe entfernen">
                                             <i class="fas fa-times"></i>
                                         </button>
+                                    </td>
+                                </tr>
+                                <tr class="stage-detail-row d-none">
+                                    <td colspan="13">
+                                        {% include "dunning/_stage_texts.html" with context %}
                                     </td>
                                 </tr>
                                 {% endfor %}
@@ -124,9 +135,29 @@
 
 {% block scripts %}
 <script>
+{% raw %}
 (function() {
     const tbody = document.getElementById('stages-body');
     const hint  = document.getElementById('no-stages-hint');
+
+    const TEXT_HINT = 'Platzhalter: <code>{{kunde}}</code> <code>{{rechnungsnummer}}</code> '
+        + '<code>{{rechnungsdatum}}</code> <code>{{faelligkeit}}</code> <code>{{nachfrist}}</code> '
+        + '<code>{{betrag}}</code> <code>{{mahntitel}}</code> &mdash; leere Felder verwenden den Standardtext.';
+
+    function detailHtml() {
+        return '<td colspan="13">'
+            + '<div class="row g-2">'
+            + '  <div class="col-md-6"><label class="form-label small mb-1">E-Mail-Betreff</label>'
+            + '    <input type="text" name="stage_email_subject" class="form-control form-control-sm" placeholder="leer = Standardtext"></div>'
+            + '  <div class="col-md-6"><label class="form-label small mb-1">E-Mail-Text</label>'
+            + '    <textarea name="stage_email_body" class="form-control form-control-sm" rows="4" placeholder="leer = Standardtext"></textarea></div>'
+            + '  <div class="col-md-6"><label class="form-label small mb-1">Mahnbrief: Einleitung</label>'
+            + '    <textarea name="stage_letter_intro" class="form-control form-control-sm" rows="3" placeholder="leer = Standardtext"></textarea></div>'
+            + '  <div class="col-md-6"><label class="form-label small mb-1">Mahnbrief: Schlusstext</label>'
+            + '    <textarea name="stage_letter_closing" class="form-control form-control-sm" rows="3" placeholder="leer = Standardtext"></textarea></div>'
+            + '  <div class="col-12"><div class="form-hint small mb-0">' + TEXT_HINT + '</div></div>'
+            + '</div></td>';
+    }
 
     function nextLevel() {
         const rows = tbody.querySelectorAll('.stage-row');
@@ -167,12 +198,23 @@
                 </select>
             </td>
             <td><input type="text" name="stage_icon" class="form-control form-control-sm" value="" placeholder="fa-…"></td>
+            <td class="text-center">
+                <button type="button" class="btn btn-sm btn-outline-secondary btn-toggle-texts" title="Texte bearbeiten">
+                    <i class="fas fa-align-left"></i>
+                </button>
+            </td>
             <td>
                 <button type="button" class="btn btn-sm btn-outline-danger btn-remove-stage" title="Stufe entfernen">
                     <i class="fas fa-times"></i>
                 </button>
             </td>`;
         tbody.appendChild(tr);
+
+        const detail = document.createElement('tr');
+        detail.className = 'stage-detail-row d-none';
+        detail.innerHTML = detailHtml();
+        tbody.appendChild(detail);
+
         initColorSelects(tr);
         updateHint();
         tr.querySelector('[name="stage_name"]').focus();
@@ -183,14 +225,27 @@
     });
 
     tbody.addEventListener('click', function(e) {
-        const btn = e.target.closest('.btn-remove-stage');
-        if (btn) {
-            btn.closest('tr').remove();
+        const rm = e.target.closest('.btn-remove-stage');
+        if (rm) {
+            const row = rm.closest('tr');
+            const next = row.nextElementSibling;
+            if (next && next.classList.contains('stage-detail-row')) next.remove();
+            row.remove();
             updateHint();
+            return;
+        }
+        const tg = e.target.closest('.btn-toggle-texts');
+        if (tg) {
+            const row = tg.closest('tr');
+            const next = row.nextElementSibling;
+            if (next && next.classList.contains('stage-detail-row')) {
+                next.classList.toggle('d-none');
+            }
         }
     });
 
     updateHint();
 })();
+{% endraw %}
 </script>
 {% endblock %}

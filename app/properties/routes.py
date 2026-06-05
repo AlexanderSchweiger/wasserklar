@@ -289,6 +289,26 @@ def edit(property_id):
     return render_template("properties/form.html", property=prop)
 
 
+@bp.route("/<int:property_id>/row")
+@login_required
+def row(property_id):
+    """Liefert genau eine Liegenschafts-Tabellenzeile als HTML-Fragment.
+
+    Wird nach dem Modal-Speichern (HX-Trigger ``propertyEdited``) auf der
+    Liegenschaftsliste per HTMX nachgeladen und an Ort und Stelle in die
+    Tabelle getauscht, statt die ganze Seite neu zu laden — so bleiben Filter,
+    Suche und Pagination erhalten. Auf der Detailseite gibt es keine solche
+    Zeile; dort greift weiterhin der Default-Reload (siehe
+    ``_property_modal_scripts.html``).
+    """
+    prop = db.get_or_404(Property, property_id)
+    profile = PropertyWgProfile.query.filter_by(property_id=property_id).first()
+    wg_property_map = {property_id: profile} if profile else {}
+    return render_template(
+        "properties/_row.html", prop=prop, wg_property_map=wg_property_map,
+    )
+
+
 @bp.route("/<int:property_id>/deactivate", methods=["POST"])
 @login_required
 def deactivate(property_id):

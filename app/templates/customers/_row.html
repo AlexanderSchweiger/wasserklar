@@ -1,0 +1,80 @@
+{# Eine Kontakt-Tabellenzeile. Genutzt vom Tabellen-Loop (customers/_table.html)
+   UND einzeln vom customers.row-Endpoint fuer den In-Place-Swap nach dem
+   Modal-Speichern — so bleibt beim Bearbeiten der Rest der Seite (Filter,
+   Suche, Pagination) unberuehrt statt eines Full-Reloads.
+
+   Erwartet: c (Customer), property_map, wg_profile_map, wg_functions_map sowie
+   optional die Listen-Filter (type_filter/q/sort/dir/country_filter/
+   status_filter/func_filter) fuer das ``next`` des Loeschen-Formulars. #}
+{% set prop = property_map.get(c.id) if property_map is defined else none %}
+{# Warn-Markierung nur fuer Kunden ohne Objekt — fuer Lieferanten irrelevant. #}
+<tr id="customer-row-{{ c.id }}"{% if c.is_customer and not prop %} class="table-warning"{% endif %}>
+  <td class="text-muted">{{ c.customer_number or '—' }}</td>
+  <td>
+    <a href="{{ url_for('customers.detail', customer_id=c.id) }}">
+      <strong>{{ c.name }}</strong>
+    </a>
+  </td>
+  <td>
+    {% if c.is_customer %}
+    <span class="badge bg-primary text-white"><i class="fas fa-user me-1"></i>{{ 'Mitglied' if is_wg else 'Kunde' }}</span>
+    {% endif %}
+    {% if c.is_supplier %}
+    <span class="badge bg-info text-white"><i class="fas fa-truck me-1"></i>Lieferant</span>
+    {% endif %}
+  </td>
+  {% if is_wg %}
+  {% set _prof = wg_profile_map.get(c.id) if wg_profile_map is defined else none %}
+  {% set _status = _prof.status if _prof else 'member' %}
+  <td>
+    {% if c.is_customer %}
+    <span class="badge {{ wg_status_badge.get(_status, 'bg-secondary-lt') }}">{{ wg_status_labels.get(_status, _status) }}</span>
+    {% else %}<span class="text-muted">—</span>{% endif %}
+  </td>
+  <td>
+    {% set _funcs = wg_function_keys_ordered(wg_functions_map.get(c.id, [])) if wg_functions_map is defined else [] %}
+    {% if _funcs %}
+      {{ wg_function_label(_funcs[0]) }}{% if _funcs|length > 1 %} <span class="badge bg-secondary-lt">+{{ _funcs|length - 1 }}</span>{% endif %}
+    {% else %}<span class="text-muted">—</span>{% endif %}
+  </td>
+  <td class="text-nowrap small">
+    {% set _until = _prof.member_until if _prof else none %}
+    {% if c.member_since or _until %}
+      {% if c.member_since %}{{ c.member_since.strftime('%d.%m.%Y') }}{% else %}—{% endif %}{% if _until %} <span class="text-muted">– {{ _until.strftime('%d.%m.%Y') }}</span>{% endif %}
+    {% else %}<span class="text-muted">—</span>{% endif %}
+  </td>
+  {% endif %}
+  <td>{{ c.address_display() or '—' }}</td>
+  <td>
+    {% if c.is_customer %}
+      {% if prop %}
+        {{ prop.object_number or prop.address_display() or '—' }}
+      {% else %}
+        <span class="text-muted"><em>keine Liegenschaft</em></span>
+      {% endif %}
+    {% else %}
+      <span class="text-muted">—</span>
+    {% endif %}
+  </td>
+  <td>{{ c.email or '—' }}</td>
+  <td>{{ c.phone or '—' }}</td>
+  <td class="text-end text-nowrap">
+    <button type="button"
+       data-url="{{ url_for('customers.edit', customer_id=c.id) }}"
+       onclick="openCustomerEditModal(this)"
+       class="btn btn-sm btn-outline-secondary me-1" title="Bearbeiten">
+      <i class="fas fa-edit"></i>
+    </button>
+    <form method="post"
+          action="{{ url_for('customers.delete', customer_id=c.id) }}"
+          class="d-inline"
+          hx-boost="false"
+          onsubmit="return confirm('Kontakt {{ c.name|e }} wirklich löschen? Nur möglich, wenn keine Rechnungen, Buchungen oder Eigentümerverhältnisse verknüpft sind.');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="next" value="{{ url_for('customers.index', type=type_filter or none, q=q or none, sort=sort, dir=dir, country=country_filter or none, status=status_filter or none, func=func_filter or none) }}">
+      <button type="submit" class="btn btn-sm btn-outline-danger" title="Löschen">
+        <i class="fas fa-trash"></i>
+      </button>
+    </form>
+  </td>
+</tr>

@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Versand-Historie{% endblock %}
+{% block page_title %}
+<a href="{{ url_for('schriftfuehrung.meeting_detail', meeting_id=meeting.id) }}" class="text-secondary me-2"><i class="fas fa-arrow-left"></i></a>
+Versand-Historie
+{% endblock %}
+{% block content %}
+{% set mail_badge = {'sent':'bg-azure-lt','delivered':'bg-success-lt','bounced_hard':'bg-danger-lt','bounced_soft':'bg-yellow-lt','spam_complaint':'bg-danger-lt','failed':'bg-danger-lt'} %}
+<div class="row g-3">
+  <div class="col-lg-7">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Empfänger ({{ meeting.invitations|length }})</h3>
+        <div class="card-actions btn-list">
+          <a href="{{ url_for('schriftfuehrung.send', meeting_id=meeting.id) }}" class="btn btn-sm btn-primary">
+            <i class="fas fa-paper-plane me-1"></i> Erneut versenden / bearbeiten
+          </a>
+        </div>
+      </div>
+      {% if meeting.invitations %}
+      <div class="table-responsive">
+        <table class="table table-vcenter card-table">
+          <thead><tr><th>Empfänger</th><th>Versandart</th><th>E-Mail-Status</th><th>Post</th></tr></thead>
+          <tbody>
+            {% for inv in meeting.invitations %}
+            <tr>
+              <td>{{ inv.customer.name if inv.customer else '—' }}</td>
+              <td>{{ sf_delivery_method_labels.get(inv.delivery_method, '—') }}</td>
+              <td>
+                {% if inv.last_email_status %}
+                <span class="badge {{ mail_badge.get(inv.last_email_status, 'bg-secondary-lt') }}">{{ inv.last_email_status_de }}</span>
+                {% if inv.email_sent_at %}<div class="small text-secondary">{{ inv.email_sent_at.strftime('%d.%m.%Y %H:%M') }}</div>{% endif %}
+                {% else %}<span class="text-secondary">—</span>{% endif %}
+              </td>
+              <td>{% if inv.post_sent_at %}{{ inv.post_sent_at.strftime('%d.%m.%Y') }}{% else %}<span class="text-secondary">—</span>{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="card-footer btn-list">
+        <a href="{{ url_for('schriftfuehrung.invitations_download', meeting_id=meeting.id, fmt='pdf') }}" class="btn btn-sm btn-outline-secondary">
+          <i class="fas fa-file-pdf me-1"></i> Alle Einladungen (PDF)
+        </a>
+        <a href="{{ url_for('schriftfuehrung.invitations_download', meeting_id=meeting.id, fmt='docx') }}" class="btn btn-sm btn-outline-secondary">
+          <i class="fas fa-file-word me-1"></i> Alle Einladungen (Word)
+        </a>
+      </div>
+      {% else %}
+      <div class="card-body"><p class="text-secondary mb-0">Es wurden noch keine Empfänger ausgewählt.</p></div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="col-lg-5">
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">Verlauf</h3></div>
+      <div class="card-body">
+        {% if logs %}
+        <ul class="list-unstyled mb-0">
+          {% for log in logs %}
+          <li class="mb-3 d-flex">
+            <span class="me-2">
+              {% if log.method == 'email' %}<i class="fas fa-envelope text-azure"></i>{% else %}<i class="fas fa-print text-secondary"></i>{% endif %}
+            </span>
+            <div>
+              <div>
+                <strong>{{ log.recipient_name or '—' }}</strong>
+                — {{ sf_delivery_method_labels.get(log.method, log.method) }},
+                {{ sf_delivery_action_labels.get(log.action, log.action) }}
+              </div>
+              <div class="small text-secondary">
+                {{ log.occurred_at.strftime('%d.%m.%Y %H:%M') }}
+                {% if log.user %} · {{ log.user.username }}{% endif %}
+              </div>
+            </div>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="text-secondary mb-0">Noch kein Versand erfolgt.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

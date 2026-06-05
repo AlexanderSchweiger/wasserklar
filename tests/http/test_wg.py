@@ -141,6 +141,26 @@ class TestCustomerEditModal:
         assert saved.wg_status == "member"
         assert saved.function_keys() == {"treasurer", "secretary"}
 
+    def test_row_returns_single_row_fragment(self, client, admin):
+        _login(client)
+        c = _member("Row Me", "member")
+        r = client.get(f"/customers/{c.id}/row")
+        assert r.status_code == 200
+        body = r.get_data(as_text=True)
+        assert "<html" not in body.lower()           # nur Fragment
+        assert f'id="customer-row-{c.id}"' in body    # stabile Swap-Ziel-ID
+        assert "Row Me" in body
+
+    def test_row_preserves_filters_in_delete_next(self, client, admin):
+        # Listen-Filter werden als Query-Args durchgereicht, damit das ``next``
+        # des Loeschen-Formulars in der getauschten Zeile gefiltert bleibt.
+        _login(client)
+        c = _member("Filter Me", "member")
+        r = client.get(f"/customers/{c.id}/row?status=member&q=Filter")
+        body = r.get_data(as_text=True)
+        assert "status=member" in body
+        assert "q=Filter" in body
+
 
 class TestPropertyList:
     def test_shares_filter_with(self, client, admin):
@@ -186,6 +206,16 @@ class TestPropertyEditModal:
         saved = db.session.get(Property, p.id)
         assert saved.wg_shares == 4
         assert saved.wg_area_m2 == 950
+
+    def test_row_returns_single_row_fragment(self, client, admin):
+        _login(client)
+        p = _prop("ROW-OBJ", 3)
+        r = client.get(f"/properties/{p.id}/row")
+        assert r.status_code == 200
+        body = r.get_data(as_text=True)
+        assert "<html" not in body.lower()            # nur Fragment
+        assert f'id="property-row-{p.id}"' in body     # stabile Swap-Ziel-ID
+        assert "ROW-OBJ" in body
 
 
 class TestFiscalYearModal:

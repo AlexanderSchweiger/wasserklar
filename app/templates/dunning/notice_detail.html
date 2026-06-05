@@ -94,31 +94,47 @@
                 <div class="card-header">
                     <h3 class="card-title">Dokument</h3>
                 </div>
-                <div class="card-body d-flex gap-2 flex-wrap">
-                    <a href="{{ url_for('dunning.notice_pdf', notice_id=notice.id, fmt='docx') }}"
-                       class="btn btn-outline-primary">
-                        <i class="fas fa-file-word me-1"></i> DOCX
-                    </a>
-                    <a href="{{ url_for('dunning.notice_pdf', notice_id=notice.id, fmt='pdf') }}"
-                       class="btn btn-outline-primary">
-                        <i class="fas fa-file-pdf me-1"></i> PDF
-                    </a>
-                    {% if notice.status == 'Aktiv' and notice.invoice.customer.wants_email %}
-                    <form method="post" action="{{ url_for('dunning.notice_send_email', notice_id=notice.id) }}"
-                          class="d-inline"
-                          hx-boost="false"
-                          onsubmit="return confirm('Mahnung per E-Mail an {{ notice.invoice.customer.email }} senden?')">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="btn btn-outline-success">
-                            <i class="fas fa-envelope me-1"></i> Per E-Mail senden
-                        </button>
-                    </form>
-                    {% elif notice.status == 'Aktiv' %}
-                    <button type="button" class="btn btn-outline-success" disabled
-                            title="{{ 'Kunde hat keine E-Mail-Adresse hinterlegt' if not notice.invoice.customer.email else 'Kunde hat den Schriftverkehr per E-Mail nicht aktiviert' }}">
-                        <i class="fas fa-envelope me-1"></i> Per E-Mail senden
-                    </button>
-                    {% endif %}
+                <div class="card-body">
+                    <div class="d-flex gap-2 flex-wrap">
+                        <a href="{{ url_for('dunning.notice_pdf', notice_id=notice.id, fmt='docx') }}"
+                           class="btn btn-outline-primary" hx-boost="false">
+                            <i class="fas fa-file-word me-1"></i> DOCX
+                        </a>
+                        <a href="{{ url_for('dunning.notice_pdf', notice_id=notice.id, fmt='pdf') }}"
+                           class="btn btn-outline-primary" hx-boost="false">
+                            <i class="fas fa-file-pdf me-1"></i> PDF
+                        </a>
+                        {% if notice.status == 'Aktiv' %}
+                            {% set has_email = notice.invoice.customer.email %}
+                            {% if has_email and notice.invoice.customer.wants_email %}
+                            <button type="button" class="btn btn-outline-success" id="dn-send-btn"
+                                    onclick="dunSendEmail(false)">
+                                <i class="fas fa-envelope me-1"></i> Per E-Mail senden
+                            </button>
+                            {% else %}
+                            <button type="button" class="btn btn-outline-success" disabled
+                                    title="{{ 'Kunde hat keine E-Mail-Adresse hinterlegt' if not has_email else 'Kunde hat den Schriftverkehr per E-Mail nicht aktiviert' }}">
+                                <i class="fas fa-envelope me-1"></i> Per E-Mail senden
+                            </button>
+                            {% endif %}
+                            {% if has_email %}
+                            <button type="button" class="btn btn-outline-warning"
+                                    onclick="dunSendEmail(true)"
+                                    title="Testmail an die eigene Adresse ({{ current_user.email or 'keine hinterlegt' }})">
+                                <i class="fas fa-flask me-1"></i> Testmail
+                            </button>
+                            {% endif %}
+                            <form method="post" action="{{ url_for('dunning.notice_mark_sent', notice_id=notice.id) }}"
+                                  class="d-inline" hx-boost="false"
+                                  onsubmit="return confirm('Mahnung als per Post versendet markieren und archivieren?')">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-outline-secondary">
+                                    <i class="fas fa-print me-1"></i> Als versendet (Post) markieren
+                                </button>
+                            </form>
+                        {% endif %}
+                    </div>
+                    <div id="dn-send-result" class="mt-2"></div>
                 </div>
             </div>
 
@@ -141,6 +157,29 @@
                         <div class="col-sm-4 text-muted">Versendet an</div>
                         <div class="col-sm-8">{{ notice.sent_to or '–' }}</div>
                     </div>
+                    {% if notice.last_email_status %}
+                    <div class="row mb-2">
+                        <div class="col-sm-4 text-muted">E-Mail-Status</div>
+                        <div class="col-sm-8">
+                            {% set _ms = notice.last_email_status %}
+                            {% set _mc = 'success' if _ms == 'delivered' else 'danger' if ('bounced' in _ms or _ms == 'spam_complaint' or _ms == 'failed') else 'info' %}
+                            <span class="badge bg-{{ _mc }}-lt">{{ notice.last_email_status_de }}</span>
+                            {% if notice.last_email_bounce_detail %}
+                            <div class="small text-muted mt-1">{{ notice.last_email_bounce_detail }}</div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endif %}
+                    {% if notice.sent_via == 'email' or notice.last_email_status %}
+                    <div class="row">
+                        <div class="col-sm-4 text-muted">Verlauf</div>
+                        <div class="col-sm-8">
+                            <a href="{{ url_for('dunning.notice_email_events', notice_id=notice.id) }}">
+                                <i class="fas fa-envelope-open-text me-1"></i> E-Mail-Verlauf anzeigen
+                            </a>
+                        </div>
+                    </div>
+                    {% endif %}
                     {% else %}
                     <p class="text-muted mb-0">Noch nicht versendet.</p>
                     {% endif %}
@@ -255,4 +294,45 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function dunSendEmail(testMode) {
+  const result = document.getElementById('dn-send-result');
+  const btn = document.getElementById('dn-send-btn');
+  if (!testMode && !confirm('Mahnung per E-Mail an {{ notice.invoice.customer.email }} senden?')) return;
+  if (result) result.innerHTML = '<span class="text-muted"><i class="fas fa-spinner fa-spin me-1"></i> Wird gesendet…</span>';
+  if (btn) btn.disabled = true;
+  try {
+    let body = 'csrf_token=' + encodeURIComponent('{{ csrf_token() }}');
+    if (testMode) body += '&test_mode=1';
+    const resp = await fetch('{{ url_for("dunning.notice_send_email", notice_id=notice.id) }}', {
+      method: 'POST',
+      headers: {
+        'X-CSRFToken': '{{ csrf_token() }}',
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body,
+    });
+    const json = await resp.json();
+    if (json.ok && json.test_mode) {
+      result.innerHTML = '<span class="text-warning"><i class="fas fa-check-circle me-1"></i> Testmail an '
+        + json.email + ' gesendet (eigentlicher Empfänger: {{ notice.invoice.customer.email }}).</span>';
+      if (btn) btn.disabled = false;
+    } else if (json.ok) {
+      result.innerHTML = '<span class="text-success"><i class="fas fa-check-circle me-1"></i> Versendet an '
+        + json.email + '. Seite wird neu geladen…</span>';
+      setTimeout(function () { window.location.reload(); }, 1200);
+    } else {
+      result.innerHTML = '<span class="text-danger"><i class="fas fa-times-circle me-1"></i> '
+        + (json.error || 'Versand fehlgeschlagen') + '</span>';
+      if (btn) btn.disabled = false;
+    }
+  } catch (e) {
+    if (result) result.innerHTML = '<span class="text-danger">Netzwerkfehler beim Versand.</span>';
+    if (btn) btn.disabled = false;
+  }
+}
+</script>
 {% endblock %}

@@ -1,0 +1,374 @@
+{% extends "base.html" %}
+{% from "schriftfuehrung/_richtext.html" import rt %}
+{% from "schriftfuehrung/_res_row.html" import res_row with context %}
+{% block title %}Protokoll{% endblock %}
+{% block page_title %}
+<a href="{{ url_for('schriftfuehrung.meeting_detail', meeting_id=meeting.id) }}" class="text-secondary me-2"><i class="fas fa-arrow-left"></i></a>
+Protokoll — {{ meeting.title }}
+<span class="badge {{ sf_protocol_status_badge[protocol.status] }} ms-2">{{ sf_protocol_status_labels[protocol.status] }}</span>
+{% endblock %}
+{% block content %}
+
+{# ── Beschlussfähigkeit ── #}
+<div class="alert {{ 'alert-success' if quorum.is_quorate else 'alert-warning' }}">
+  <i class="fas fa-balance-scale me-1"></i>
+  Anwesend: <strong>{{ quorum.present }}</strong> von {{ quorum.total }} eingeladenen Stimmberechtigten —
+  {% if quorum.is_quorate %}<strong>beschlussfähig</strong>{% else %}<strong>nicht beschlussfähig</strong>{% endif %}.
+  {% if protocol.reconvened %}
+    <br><i class="fas fa-clock me-1"></i> Nach einer Wartefrist{% if protocol.reconvene_wait_minutes %} von {{ protocol.reconvene_wait_minutes }} Minuten{% endif %} erneut eröffnet und mit den Anwesenden beschlussfähig.
+  {% elif protocol.status != 'final' %}<span class="text-secondary small">(wird beim Speichern aktualisiert)</span>{% endif %}
+</div>
+
+{% if protocol.is_locked %}
+  {# ───────── Abgeschlossen (schreibgeschützt) ───────── #}
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">Abgeschlossenes Protokoll</h3>
+      <div class="card-actions">
+        <a href="{{ url_for('schriftfuehrung.protocol_download', meeting_id=meeting.id) }}" class="btn btn-sm btn-primary" target="_blank">
+          <i class="fas fa-download me-1"></i> Herunterladen
+        </a>
+      </div>
+    </div>
+    <div class="card-body">
+      <p class="text-secondary">
+        Abgeschlossen am {{ protocol.finalized_at.strftime('%d.%m.%Y %H:%M') if protocol.finalized_at else '—' }}.
+        {% if protocol.source_type == 'upload' %}Hochgeladenes Dokument: <strong>{{ protocol.original_filename }}</strong>.{% endif %}
+      </p>
+      {% if protocol.is_freetext_attendance %}
+      <h4>Anwesenheit</h4>
+      <p class="mb-0" style="white-space:pre-line">{{ protocol.attendance_freetext or '—' }}</p>
+      {% elif meeting.attendances %}
+      <h4>Anwesenheit</h4>
+      <ul class="columns-2">
+        {% for a in attendances %}
+        <li>{{ a.customer.name if a.customer else '—' }} — <span class="badge {{ sf_attendance_status_badge[a.status] }}">{{ sf_attendance_status_labels[a.status] }}</span></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      {% if resolutions %}
+      <h4 class="mt-3">Beschlüsse</h4>
+      <table class="table table-sm">
+        <thead><tr><th>Beschluss</th><th>Ergebnis</th><th>Ja/Nein/Enth.</th></tr></thead>
+        <tbody>
+          {% for r in resolutions %}
+          <tr>
+            <td>{{ r.title }}{% if r.notes %}<div class="small text-secondary">{{ r.notes }}</div>{% endif %}</td>
+            <td><span class="badge {{ sf_resolution_status_badge[r.status] }}">{{ sf_resolution_status_labels[r.status] }}</span></td>
+            <td>{{ r.votes_for }} / {{ r.votes_against }} / {{ r.votes_abstain }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+      {% if protocol.content_html %}
+      <h4 class="mt-3">Protokolltext</h4>
+      <div class="border rounded p-3">{{ protocol.content_html | safe }}</div>
+      {% endif %}
+    </div>
+  </div>
+
+{% else %}
+  {# ───────── Entwurf (bearbeitbar) ───────── #}
+  <form method="post" id="protocolForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    {# Anwesenheit #}
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title"><i class="fas fa-user-check me-1"></i> Anwesenheit</h3>
+        <div class="card-actions">
+          <label class="form-check form-switch form-check-inline m-0">
+            <input class="form-check-input" type="checkbox" id="attFreetextToggle"
+                   name="attendance_freetext_mode" value="1"
+                   {% if protocol.is_freetext_attendance %}checked{% endif %}>
+            <span class="form-check-label">Als Freitext erfassen</span>
+          </label>
+        </div>
+      </div>
+
+      {# Detaillierte Personenliste (eingeladene Stimmberechtigte) #}
+      <div id="attListSection" class="{% if protocol.is_freetext_attendance %}d-none{% endif %}">
+        {% if attendances %}
+        <div class="card-body border-bottom py-2">
+          <input type="search" id="attSearch" class="form-control form-control-sm"
+                 placeholder="Person suchen…" autocomplete="off">
+        </div>
+        {% endif %}
+        <div class="table-responsive">
+          <table class="table table-vcenter card-table">
+            <thead><tr><th>Person</th><th class="w-1">Mitglied</th><th class="w-2">Status</th></tr></thead>
+            <tbody id="attBody">
+              {% for a in attendances %}
+              <tr data-att-row data-name="{{ (a.customer.name if a.customer else '') | lower }}">
+                <td>{{ a.customer.name if a.customer else '—' }}</td>
+                <td><input type="checkbox" class="form-check-input" name="attendance_{{ a.customer_id }}_member" value="1" {% if a.is_member %}checked{% endif %}></td>
+                <td>
+                  <select name="attendance_{{ a.customer_id }}_status" class="form-select form-select-sm">
+                    {% for k, l in sf_attendance_status_labels.items() %}
+                    <option value="{{ k }}" {% if a.status == k %}selected{% endif %}>{{ l }}</option>
+                    {% endfor %}
+                  </select>
+                </td>
+              </tr>
+              {% else %}
+              <tr><td colspan="3" class="text-secondary">Keine Teilnehmer vorbelegt — es wurden noch keine Einladungen erfasst.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% if attendances %}
+        <div class="card-footer d-flex align-items-center justify-content-between" id="attPager" hidden>
+          <p class="m-0 text-secondary small" id="attRange"></p>
+          <ul class="pagination m-0">
+            <li class="page-item" id="attPrev"><a class="page-link" href="#" tabindex="-1">‹ Zurück</a></li>
+            <li class="page-item disabled"><span class="page-link" id="attPageInfo"></span></li>
+            <li class="page-item" id="attNext"><a class="page-link" href="#">Weiter ›</a></li>
+          </ul>
+        </div>
+        {% endif %}
+      </div>
+
+      {# Freitext-Alternative — die Personenliste entfällt #}
+      <div id="attFreetextSection" class="card-body {% if not protocol.is_freetext_attendance %}d-none{% endif %}">
+        <label class="form-label">Anwesenheit (Freitext)</label>
+        <textarea name="attendance_freetext" id="attFreetext" class="form-control" rows="2"
+                  data-default="{{ default_freetext }}"
+                  placeholder="{{ default_freetext }}">{{ protocol.attendance_freetext or '' }}</textarea>
+        <div class="row g-2 mt-2">
+          <div class="col-sm-4">
+            <label class="form-label small text-secondary mb-1">Anzahl anwesender Personen</label>
+            <input type="number" min="0" name="present_headcount" id="attHeadcount"
+                   class="form-control form-control-sm"
+                   value="{{ protocol.present_headcount if protocol.present_headcount is not none else default_present }}">
+          </div>
+        </div>
+        <p class="text-secondary small mt-2 mb-0">
+          Statt jede Person einzeln zu erfassen, wird im Protokoll nur dieser Text gezeigt.
+        </p>
+      </div>
+    </div>
+
+    {% if meeting.is_assembly %}
+    {# Beschlussfähigkeit nach Wartefrist (nur Hauptversammlung) #}
+    <div class="card mt-3">
+      <div class="card-header"><h3 class="card-title"><i class="fas fa-clock me-1"></i> Beschlussfähigkeit nach Wartefrist</h3></div>
+      <div class="card-body">
+        <label class="form-check">
+          <input class="form-check-input" type="checkbox" id="reconvenedToggle" name="reconvened" value="1"
+                 {% if protocol.reconvened %}checked{% endif %}>
+          <span class="form-check-label">
+            Versammlung war zunächst nicht beschlussfähig und wurde nach einer Wartefrist erneut eröffnet
+            — damit ist sie mit den anwesenden Personen beschlussfähig.
+          </span>
+        </label>
+        <div id="reconveneDetails" class="row g-2 mt-2 ms-4 {% if not protocol.reconvened %}d-none{% endif %}">
+          <div class="col-sm-4">
+            <label class="form-label small text-secondary mb-1">Wartefrist (Minuten)</label>
+            <input type="number" min="0" name="reconvene_wait_minutes" class="form-control form-control-sm"
+                   value="{{ protocol.reconvene_wait_minutes if protocol.reconvene_wait_minutes is not none else 30 }}">
+          </div>
+          <div class="col-sm-4">
+            <label class="form-label small text-secondary mb-1">Anzahl tatsächlich anwesender Personen</label>
+            <input type="number" min="0" name="reconvene_headcount" class="form-control form-control-sm"
+                   value="{{ protocol.present_headcount if protocol.present_headcount is not none else default_present }}">
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {# Beschlüsse #}
+    <div class="card mt-3">
+      <div class="card-header">
+        <h3 class="card-title"><i class="fas fa-balance-scale me-1"></i> Beschlüsse &amp; Abstimmungen</h3>
+        <div class="card-actions">
+          <button type="button" class="btn btn-sm btn-outline-primary" id="resAddBtn"><i class="fas fa-plus me-1"></i> Beschluss hinzufügen</button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div id="resRows">
+          {% for r in resolutions %}{{ res_row(r) }}{% endfor %}
+        </div>
+        <div id="resEmpty" class="text-secondary small {% if resolutions %}d-none{% endif %}">
+          Keine Beschlüsse. Markiere Tagesordnungspunkte als „Abstimmung", dann werden sie hier vorbelegt — oder füge manuell einen hinzu.
+        </div>
+      </div>
+    </div>
+
+    {# Protokolltext #}
+    <div class="card mt-3">
+      <div class="card-header">
+        <h3 class="card-title"><i class="fas fa-file-alt me-1"></i> Protokolltext</h3>
+        <div class="card-actions">
+          <button type="button" class="btn btn-sm btn-outline-secondary" id="insertAgendaBtn"><i class="fas fa-list-ol me-1"></i> Tagesordnung einfügen</button>
+        </div>
+      </div>
+      <div class="card-body">
+        {{ rt('content_html', protocol.content_html or '', '14rem') }}
+      </div>
+      <div class="card-footer d-flex flex-wrap" style="gap:.5rem">
+        <button type="submit" formaction="{{ url_for('schriftfuehrung.protocol_save', meeting_id=meeting.id) }}" class="btn btn-outline-primary">
+          <i class="fas fa-save me-1"></i> Entwurf speichern
+        </button>
+        <button type="submit" formaction="{{ url_for('schriftfuehrung.protocol_finalize', meeting_id=meeting.id) }}" class="btn btn-success"
+                onclick="return confirm('Protokoll abschließen? Danach ist keine Bearbeitung mehr möglich.');">
+          <i class="fas fa-lock me-1"></i> Abschließen
+        </button>
+      </div>
+    </div>
+  </form>
+
+  {# Datei-Upload-Alternative #}
+  <div class="card mt-3">
+    <div class="card-header"><h3 class="card-title"><i class="fas fa-upload me-1"></i> Oder: fertiges Dokument hochladen</h3></div>
+    <div class="card-body">
+      <p class="text-secondary">Lädst du ein fertiges Protokoll hoch, gilt es sofort als <strong>abgeschlossen</strong>. Erlaubt: {{ sf_upload_hint }}.</p>
+      <form method="post" hx-boost="false" enctype="multipart/form-data"
+            action="{{ url_for('schriftfuehrung.protocol_upload', meeting_id=meeting.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="d-flex" style="gap:.5rem">
+          <input type="file" name="document" class="form-control"
+                 accept=".pdf,.doc,.docx,.xls,.xlsx,.odt,.ods,.md,.txt" required>
+          <button type="submit" class="btn btn-outline-secondary"
+                  onclick="return confirm('Dokument hochladen und Protokoll abschließen?');">
+            <i class="fas fa-upload me-1"></i> Hochladen
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <template id="resRowTemplate">{{ res_row(None) }}</template>
+  <script type="application/json" id="agendaData">{{ meeting.agenda_items | map(attribute='title') | list | tojson }}</script>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% include "schriftfuehrung/_richtext_scripts.html" %}
+<script>
+(function () {
+  var rows = document.getElementById('resRows');
+  var tpl = document.getElementById('resRowTemplate');
+  var addBtn = document.getElementById('resAddBtn');
+  var empty = document.getElementById('resEmpty');
+  var counter = 0;
+
+  function applyNames(row) {
+    var key = row.dataset.key;
+    if (key === '__NEW__') { key = 'new' + (++counter); row.dataset.key = key; }
+    ['title', 'status', 'votes_for', 'votes_against', 'votes_abstain', 'notes'].forEach(function (f) {
+      var el = row.querySelector('[data-f="' + f + '"]');
+      if (el) el.name = 'resolution[' + key + '][' + f + ']';
+    });
+  }
+
+  if (rows) {
+    rows.querySelectorAll('[data-res-row]').forEach(applyNames);
+    rows.addEventListener('click', function (e) {
+      if (e.target.closest('.res-remove')) {
+        var row = e.target.closest('[data-res-row]');
+        if (row) row.remove();
+        if (empty) empty.classList.toggle('d-none', rows.querySelectorAll('[data-res-row]').length > 0);
+      }
+    });
+  }
+  if (addBtn && tpl && rows) {
+    addBtn.addEventListener('click', function () {
+      rows.appendChild(tpl.content.cloneNode(true));
+      var added = rows.lastElementChild;
+      applyNames(added);
+      if (empty) empty.classList.add('d-none');
+      var t = added.querySelector('[data-f="title"]'); if (t) t.focus();
+    });
+  }
+
+  // „Tagesordnung einfügen" — Agenda als nummerierte Liste in den Editor.
+  var insertBtn = document.getElementById('insertAgendaBtn');
+  var dataEl = document.getElementById('agendaData');
+  if (insertBtn && dataEl) {
+    insertBtn.addEventListener('click', function () {
+      var titles = [];
+      try { titles = JSON.parse(dataEl.textContent || '[]'); } catch (e) { titles = []; }
+      var editorWrap = document.querySelector('[data-rt-wrap]');
+      if (!editorWrap || !titles.length) return;
+      var editor = editorWrap.querySelector('.sf-rt-editor');
+      var input = editorWrap.querySelector('.sf-rt-input');
+      var html = '<b>Tagesordnung</b><br>';
+      titles.forEach(function (t, i) {
+        var d = document.createElement('div'); d.textContent = (i + 1) + '. ' + t;
+        html += d.innerHTML + '<br>';
+      });
+      editor.innerHTML = editor.innerHTML + html;
+      if (input) input.value = editor.innerHTML;
+    });
+  }
+})();
+
+// Anwesenheit: Freitext-Umschaltung, Wartefrist, Pagination + Suche.
+(function () {
+  // ── Freitext vs. Liste ──
+  var ftToggle = document.getElementById('attFreetextToggle');
+  var listSec = document.getElementById('attListSection');
+  var ftSec = document.getElementById('attFreetextSection');
+  var ftArea = document.getElementById('attFreetext');
+  function syncFreetext() {
+    if (!ftToggle) return;
+    var on = ftToggle.checked;
+    if (listSec) listSec.classList.toggle('d-none', on);
+    if (ftSec) ftSec.classList.toggle('d-none', !on);
+    if (on && ftArea && !ftArea.value.trim()) ftArea.value = ftArea.dataset.default || '';
+  }
+  if (ftToggle) ftToggle.addEventListener('change', syncFreetext);
+
+  // ── Wartefrist/Wiedereröffnung (Hauptversammlung) ──
+  var rcToggle = document.getElementById('reconvenedToggle');
+  var rcDetails = document.getElementById('reconveneDetails');
+  if (rcToggle) rcToggle.addEventListener('change', function () {
+    if (rcDetails) rcDetails.classList.toggle('d-none', !rcToggle.checked);
+  });
+
+  // ── Pagination + Suche der Personenliste ──
+  var body = document.getElementById('attBody');
+  var pager = document.getElementById('attPager');
+  if (body && pager) {
+    var PAGE = 15, page = 1;
+    var search = document.getElementById('attSearch');
+    var prev = document.getElementById('attPrev');
+    var next = document.getElementById('attNext');
+    var info = document.getElementById('attPageInfo');
+    var range = document.getElementById('attRange');
+    var allRows = Array.prototype.slice.call(body.querySelectorAll('[data-att-row]'));
+
+    function filtered() {
+      var q = (search && search.value || '').trim().toLowerCase();
+      if (!q) return allRows;
+      return allRows.filter(function (r) { return (r.dataset.name || '').indexOf(q) !== -1; });
+    }
+    function render() {
+      var rows = filtered();
+      var pages = Math.max(1, Math.ceil(rows.length / PAGE));
+      if (page > pages) page = pages;
+      if (page < 1) page = 1;
+      allRows.forEach(function (r) { r.style.display = 'none'; });
+      var start = (page - 1) * PAGE;
+      var slice = rows.slice(start, start + PAGE);
+      slice.forEach(function (r) { r.style.display = ''; });
+      if (info) info.textContent = 'Seite ' + page + ' / ' + pages;
+      if (range) range.textContent = rows.length
+        ? ('Zeige ' + (start + 1) + '–' + (start + slice.length) + ' von ' + rows.length)
+        : 'Keine Treffer';
+      if (prev) prev.classList.toggle('disabled', page <= 1);
+      if (next) next.classList.toggle('disabled', page >= pages);
+      pager.hidden = allRows.length <= PAGE;
+    }
+    if (prev) prev.addEventListener('click', function (e) { e.preventDefault(); if (page > 1) { page--; render(); } });
+    if (next) next.addEventListener('click', function (e) { e.preventDefault(); page++; render(); });
+    if (search) search.addEventListener('input', function () { page = 1; render(); });
+    render();
+  }
+
+  syncFreetext();
+})();
+</script>
+{% endblock %}

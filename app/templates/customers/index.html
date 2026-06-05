@@ -146,6 +146,26 @@
 {% block scripts %}
 {% include "_modal_edit_helpers.html" %}
 <script>
+// Nach dem Modal-Speichern nur die betroffene Zeile neu laden und an Ort und
+// Stelle tauschen — statt window.location.reload(), das Filter, Suche und
+// Pagination verlieren wuerde. Faellt defensiv auf Reload zurueck, wenn die
+// Zeile (noch) nicht im DOM ist oder HTMX fehlt.
+window.onCustomerEdited = function (e) {
+  var id = e.detail && e.detail.customer_id;
+  var rowEl = id ? document.getElementById('customer-row-' + id) : null;
+  if (!rowEl || !window.htmx) { window.location.reload(); return; }
+  // Aktuelle Listen-Filter mitsenden, damit das Loeschen-„next" der frisch
+  // getauschten Zeile weiter auf die gefilterte Liste zeigt.
+  var values = {};
+  ['q', 'type', 'sort', 'dir', 'country', 'status', 'func'].forEach(function (n) {
+    var el = document.querySelector('[name="' + n + '"]');
+    if (el && el.value) { values[n] = el.value; }
+  });
+  htmx.ajax('GET', '/customers/' + id + '/row', {
+    target: '#customer-row-' + id, swap: 'outerHTML', values: values,
+  });
+};
+
 setupEditModal({
   formId: 'customerEditForm',
   bodyId: 'customerEditModalBody',
@@ -153,6 +173,7 @@ setupEditModal({
   openFn: 'openCustomerEditModal',
   closeEvent: 'closeCustomerEditModal',
   savedEvent: 'customerEdited',
+  savedHandler: 'onCustomerEdited',
 });
 </script>
 {% endblock %}

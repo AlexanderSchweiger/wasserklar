@@ -1,0 +1,294 @@
+{% extends "base.html" %}
+{% block title %}Einladungen versenden{% endblock %}
+{% block page_title %}
+<a href="{{ url_for('schriftfuehrung.meeting_detail', meeting_id=meeting.id) }}" class="text-secondary me-2"><i class="fas fa-arrow-left"></i></a>
+Einladungen versenden
+{% endblock %}
+{% block content %}
+<form method="post" hx-boost="false" id="sendForm">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+  {# ── Übersicht oben: bleibt sichtbar, Tabelle scrollt separat ── #}
+  <div class="card mb-3">
+    <div class="card-body">
+      <div class="d-flex flex-wrap align-items-center" style="gap:.75rem">
+        <div>
+          <h3 class="card-title mb-0">{{ meeting.title }}</h3>
+          <div class="text-secondary small">
+            {% if meeting.meeting_date %}{{ meeting.meeting_date.strftime('%d.%m.%Y') }}{% endif %}
+            {% if meeting.start_time %}, {{ meeting.start_time.strftime('%H:%M') }}{% if meeting.end_time %}–{{ meeting.end_time.strftime('%H:%M') }}{% endif %} Uhr{% endif %}
+            {% if meeting.location %} · {{ meeting.location }}{% endif %}
+          </div>
+        </div>
+        <div class="ms-auto btn-list">
+          <button type="button" class="btn btn-primary" id="openEmailModalBtn">
+            <i class="fas fa-paper-plane me-1"></i> Ausgewählte per E-Mail senden
+            <span class="badge bg-white text-primary ms-1" id="emailCountBadge">0</span>
+          </button>
+          <button type="submit" name="post_only" value="1"
+                  formaction="{{ url_for('schriftfuehrung.invitations_print', meeting_id=meeting.id) }}"
+                  class="btn btn-primary">
+            <i class="fas fa-print me-1"></i> Ausgewählte per Post senden
+            <span class="badge bg-white text-primary ms-1" id="postCountBadge">0</span>
+          </button>
+          <button type="submit" formaction="{{ url_for('schriftfuehrung.invitations_print', meeting_id=meeting.id) }}"
+                  class="btn btn-outline-secondary">
+            <i class="fas fa-print me-1"></i> Alle Einladungen drucken (PDF)
+          </button>
+        </div>
+      </div>
+      <hr class="my-2">
+      <div class="text-secondary small mb-1">
+        Ausgewählte Empfänger (<span id="selCount">0</span>) —
+        E-Mail steht nur Kontakten mit aktiviertem „Schriftverkehr per E-Mail" zur Verfügung,
+        alle anderen erhalten die Einladung per Post (Druck).
+      </div>
+      <div id="selectedChips" class="d-flex flex-wrap" style="gap:.35rem">
+        <span class="text-secondary small" id="selEmpty">Niemand ausgewählt.</span>
+      </div>
+    </div>
+  </div>
+
+  {# ── Kontaktliste (eigener Scrollbalken) ── #}
+  <div class="card">
+    <div class="card-header d-flex align-items-center flex-wrap" style="gap:.5rem">
+      <span class="card-title mb-0">Kontakte</span>
+      <div class="input-group input-group-sm ms-auto" style="width:240px">
+        <input type="search" id="contactFilter" class="form-control" placeholder="Kontakt filtern…">
+        <span class="input-group-text"><i class="fas fa-search"></i></span>
+      </div>
+    </div>
+    <div style="max-height:55vh; overflow-y:auto">
+      <table class="table table-vcenter card-table">
+        <thead style="position:sticky; top:0; z-index:1; background:var(--tblr-bg-surface, #fff)">
+          <tr>
+            <th class="w-1"><input type="checkbox" class="form-check-input" id="selectAll"></th>
+            <th>Name</th>
+            <th>Funktion</th>
+            <th>E-Mail</th>
+            <th class="w-1">Versandart</th>
+            <th class="w-1">Drucken</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          {% set c = row.customer %}
+          <tr class="contact-row" data-name="{{ c.name|lower }}" data-cid="{{ c.id }}"
+              data-cname="{{ c.name }}" data-email="{{ c.email or '' }}"
+              data-wants="{{ 'true' if row.wants_email else 'false' }}">
+            <td>
+              <input type="checkbox" class="form-check-input row-check" name="recipient_ids" value="{{ c.id }}"
+                     {% if row.selected %}checked{% endif %}>
+            </td>
+            <td>
+              <div class="fw-bold">{{ c.name }}</div>
+              <div class="small text-secondary">{{ c.address_display() or '' }}</div>
+            </td>
+            <td>{% for f in row.functions %}<span class="badge bg-blue-lt me-1">{{ f }}</span>{% endfor %}</td>
+            <td>
+              {% if c.email %}{{ c.email }}
+                {% if row.wants_email %}<span class="badge bg-success-lt ms-1">E-Mail aktiv</span>
+                {% else %}<span class="badge bg-secondary-lt ms-1">keine Freigabe</span>{% endif %}
+              {% else %}<span class="text-secondary">—</span>{% endif %}
+            </td>
+            <td>
+              <select name="method_{{ c.id }}" class="form-select form-select-sm row-method">
+                <option value="email" {% if not row.wants_email %}disabled{% endif %} {% if row.method == 'email' %}selected{% endif %}>E-Mail</option>
+                <option value="post" {% if row.method == 'post' %}selected{% endif %}>Post</option>
+              </select>
+            </td>
+            <td>
+              <div class="btn-list flex-nowrap">
+                {% if sf_doc_format in ('pdf', 'both') %}
+                <a href="{{ url_for('schriftfuehrung.invitation_preview', meeting_id=meeting.id, customer_id=c.id, fmt='pdf') }}"
+                   target="_blank" class="btn btn-sm btn-outline-secondary" title="Einladung als PDF"><i class="fas fa-file-pdf"></i></a>
+                {% endif %}
+                {% if sf_doc_format in ('docx', 'both') %}
+                <a href="{{ url_for('schriftfuehrung.invitation_preview', meeting_id=meeting.id, customer_id=c.id, fmt='docx') }}"
+                   class="btn btn-sm btn-outline-secondary" title="Einladung als Word"><i class="fas fa-file-word"></i></a>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</form>
+{% endblock %}
+
+{% block modals %}
+<div class="modal fade" id="emailModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="fas fa-paper-plane me-2"></i>Einladungen per E-Mail senden</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-secondary" id="emailModalIntro"></p>
+        <div class="table-responsive" style="max-height:50vh; overflow-y:auto">
+          <table class="table table-sm table-vcenter">
+            <thead><tr><th>Name</th><th>E-Mail</th><th class="w-1">Status</th></tr></thead>
+            <tbody id="email-rows"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer justify-content-between">
+        <div class="form-check">
+          <input type="checkbox" class="form-check-input" id="email-testmode">
+          <label class="form-check-label text-warning" for="email-testmode">
+            <i class="fas fa-flask me-1"></i> Testmodus (an die eigene Adresse)
+          </label>
+        </div>
+        <div>
+          <a href="{{ url_for('schriftfuehrung.history', meeting_id=meeting.id) }}"
+             class="btn btn-link d-none" id="email-done-btn">Zur Versand-Historie</a>
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+          <button type="button" class="btn btn-primary ms-2" id="email-start-btn">
+            <i class="fas fa-paper-plane me-1"></i> Senden starten
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const form = document.getElementById('sendForm');
+  if (!form) return;
+  const ajaxUrl = "{{ url_for('schriftfuehrung.invitations_email_ajax', meeting_id=meeting.id) }}";
+
+  function rowMethod(tr) {
+    const sel = tr.querySelector('.row-method');
+    return sel ? sel.value : 'post';
+  }
+  function selectedRows() {
+    return Array.from(document.querySelectorAll('.contact-row'))
+      .filter(tr => tr.querySelector('.row-check').checked);
+  }
+  function emailEligibleRows() {
+    return selectedRows().filter(tr => tr.dataset.wants === 'true' && rowMethod(tr) === 'email');
+  }
+  function postRows() {
+    return selectedRows().filter(tr => rowMethod(tr) === 'post');
+  }
+
+  function refreshSelection() {
+    const rows = selectedRows();
+    const chips = document.getElementById('selectedChips');
+    const empty = document.getElementById('selEmpty');
+    document.getElementById('selCount').textContent = rows.length;
+    chips.querySelectorAll('.sel-chip').forEach(e => e.remove());
+    if (empty) empty.style.display = rows.length ? 'none' : '';
+    rows.forEach(tr => {
+      const isMail = tr.dataset.wants === 'true' && rowMethod(tr) === 'email';
+      const span = document.createElement('span');
+      span.className = 'sel-chip badge ' + (isMail ? 'bg-success-lt' : 'bg-secondary-lt');
+      span.innerHTML = '<i class="fas fa-' + (isMail ? 'envelope' : 'print') + ' me-1"></i>' + tr.dataset.cname;
+      chips.appendChild(span);
+    });
+    document.getElementById('emailCountBadge').textContent = emailEligibleRows().length;
+    document.getElementById('postCountBadge').textContent = postRows().length;
+  }
+
+  form.addEventListener('change', function (e) {
+    if (e.target.classList.contains('row-check') || e.target.classList.contains('row-method')) {
+      refreshSelection();
+    }
+  });
+
+  const selectAll = document.getElementById('selectAll');
+  if (selectAll) {
+    selectAll.addEventListener('change', function () {
+      document.querySelectorAll('.contact-row').forEach(tr => {
+        if (tr.style.display === 'none') return;
+        tr.querySelector('.row-check').checked = selectAll.checked;
+      });
+      refreshSelection();
+    });
+  }
+
+  const filter = document.getElementById('contactFilter');
+  if (filter) {
+    filter.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') e.preventDefault();  // Enter im Filter darf nichts versenden/drucken
+    });
+    filter.addEventListener('input', function () {
+      const q = this.value.trim().toLowerCase();
+      document.querySelectorAll('.contact-row').forEach(tr => {
+        tr.style.display = (!q || tr.dataset.name.indexOf(q) !== -1) ? '' : 'none';
+      });
+    });
+  }
+
+  // ── E-Mail-Modal ──
+  function openEmailModal() {
+    const eligible = emailEligibleRows();
+    const tbody = document.getElementById('email-rows');
+    tbody.innerHTML = '';
+    eligible.forEach(tr => {
+      const cid = tr.dataset.cid;
+      const trEl = document.createElement('tr');
+      trEl.id = 'em-row-' + cid;
+      trEl.innerHTML = '<td>' + tr.dataset.cname + '</td>'
+        + '<td>' + (tr.dataset.email || '') + '</td>'
+        + '<td><i class="fas fa-clock text-muted" id="em-icon-' + cid + '"></i></td>';
+      tbody.appendChild(trEl);
+    });
+    const postCount = selectedRows().length - eligible.length;
+    document.getElementById('emailModalIntro').textContent =
+      eligible.length + ' Empfänger erhalten die Einladung per E-Mail.'
+      + (postCount > 0 ? ' ' + postCount + ' weitere ohne E-Mail-Freigabe — bitte über „Alle Einladungen drucken" per Post.' : '');
+    document.getElementById('email-start-btn').disabled = eligible.length === 0;
+    document.getElementById('email-done-btn').classList.add('d-none');
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('emailModal')).show();
+  }
+  document.getElementById('openEmailModalBtn').addEventListener('click', openEmailModal);
+
+  async function startEmailSend() {
+    const startBtn = document.getElementById('email-start-btn');
+    startBtn.disabled = true;
+    const csrf = form.querySelector('input[name="csrf_token"]').value;
+    const testMode = document.getElementById('email-testmode').checked;
+    const rows = Array.from(document.querySelectorAll('#email-rows tr[id^="em-row-"]'))
+      .map(tr => tr.id.replace('em-row-', ''));
+    for (let i = 0; i < rows.length; i++) {
+      const cid = rows[i];
+      const icon = document.getElementById('em-icon-' + cid);
+      if (icon) icon.className = 'fas fa-spinner fa-spin text-primary';
+      try {
+        let body = 'csrf_token=' + encodeURIComponent(csrf) + '&customer_id=' + encodeURIComponent(cid);
+        if (testMode) body += '&test_mode=1';
+        const resp = await fetch(ajaxUrl, {
+          method: 'POST',
+          headers: { 'X-CSRFToken': csrf, 'Content-Type': 'application/x-www-form-urlencoded' },
+          body,
+        });
+        const json = await resp.json();
+        if (json.ok) {
+          icon.className = json.test_mode ? 'fas fa-check-circle text-warning' : 'fas fa-check-circle text-success';
+          icon.title = json.test_mode ? ('Testmail an ' + json.email) : ('Gesendet an ' + json.email);
+        } else {
+          const td = icon.closest('td');
+          if (td) td.innerHTML = '<i class="fas fa-times-circle text-danger me-1"></i><small class="text-danger">' + (json.error || 'Fehler') + '</small>';
+        }
+      } catch (err) {
+        if (icon) { icon.className = 'fas fa-times-circle text-danger'; icon.title = 'Netzwerkfehler'; }
+      }
+      if (i < rows.length - 1) {
+        await new Promise(r => setTimeout(r, 600));  // seriell mit Pause
+      }
+    }
+    document.getElementById('email-done-btn').classList.remove('d-none');
+  }
+  document.getElementById('email-start-btn').addEventListener('click', startEmailSend);
+
+  refreshSelection();
+})();
+</script>
+{% endblock %}

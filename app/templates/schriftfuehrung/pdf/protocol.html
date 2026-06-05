@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<style>
+  @page {
+    size: A4;
+    margin: 18mm 18mm 20mm;
+    @bottom-center {
+      content: "Seite " counter(page) " / " counter(pages);
+      font-family: {{ design.font_family | default("Arial, sans-serif") }};
+      font-size: 8pt; color: {{ design.muted_color | default("#888") }};
+    }
+  }
+  body {
+    font-family: {{ design.font_family | default("Arial, sans-serif") }};
+    font-size: 11pt; color: {{ design.text_color | default("#2d3748") }}; line-height: 1.45;
+  }
+  .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+  .head .logo img { max-height: 56px; max-width: 200px; }
+  .contact { font-size: 9pt; color: {{ design.muted_color | default("#666") }}; text-align: right; }
+  .rule { height: 3px; background: {{ design.accent_color | default("#2f6a93") }}; margin: 8mm 0 6mm; }
+  h1 { font-size: 16pt; color: {{ design.heading_color | default("#102a44") }}; margin: 0 0 1mm; }
+  .meta { color: {{ design.muted_color | default("#555") }}; margin-bottom: 4mm; }
+  .quorum { padding: 3mm 4mm; border: 1px solid {{ design.border_color | default("#e2e8f0") }};
+            border-radius: 4px; margin-bottom: 5mm; }
+  .section-title { font-size: 12pt; color: {{ design.heading_color | default("#102a44") }};
+                   border-bottom: 1px solid {{ design.border_color | default("#e2e8f0") }};
+                   padding-bottom: 2mm; margin: 6mm 0 3mm; }
+  table { width: 100%; border-collapse: collapse; font-size: 10pt; }
+  th { text-align: left; background: {{ design.header_bg | default("#102a44") }};
+       color: {{ design.header_text | default("#fff") }}; padding: 4px 6px; }
+  td { padding: 4px 6px; border-bottom: 1px solid {{ design.border_color | default("#e2e8f0") }}; }
+  .cols { column-count: 2; }
+  .text-block { margin: 3mm 0; }
+  .sig { margin-top: 16mm; display: flex; justify-content: space-between; font-size: 10pt;
+         color: {{ design.muted_color | default("#555") }}; }
+  .sig div { width: 45%; }
+</style>
+</head>
+<body>
+  <div class="head">
+    <div class="logo">{% if wg.logo %}<img src="{{ wg.logo }}" alt="">{% else %}<strong>{{ wg.name }}</strong>{% endif %}</div>
+    <div class="contact" style="font-size: {{ contact_info_font_size or 9 }}pt">{{ contact_info | safe }}</div>
+  </div>
+  <div class="rule"></div>
+
+  <h1>Protokoll — {{ sf_meeting_type_labels[meeting.meeting_type] }}</h1>
+  <div class="meta">
+    <strong>{{ meeting.title }}</strong><br>
+    {% if meeting.meeting_date %}{{ meeting.meeting_date.strftime('%d.%m.%Y') }}{% if meeting.start_time %}, {{ meeting.start_time.strftime('%H:%M') }}{% if meeting.end_time %}–{{ meeting.end_time.strftime('%H:%M') }}{% endif %} Uhr{% endif %}{% endif %}
+    {% if meeting.location %} · {{ meeting.location }}{% endif %}
+  </div>
+
+  <div class="quorum">
+    <strong>Beschlussfähigkeit:</strong>
+    {{ quorum.present }} von {{ quorum.total }} eingeladenen Stimmberechtigten anwesend —
+    {% if quorum.is_quorate %}beschlussfähig{% else %}nicht beschlussfähig{% endif %}.
+    {% if protocol.reconvened %}
+    <br>Die Versammlung war zunächst nicht beschlussfähig und wurde nach einer Wartefrist{% if protocol.reconvene_wait_minutes %} von {{ protocol.reconvene_wait_minutes }} Minuten{% endif %} erneut eröffnet; sie ist damit mit den anwesenden Personen beschlussfähig.
+    {% endif %}
+  </div>
+
+  {% if protocol.is_freetext_attendance %}
+  <div class="section-title">Anwesenheit</div>
+  <div class="text-block" style="white-space:pre-line">{{ protocol.attendance_freetext or '—' }}</div>
+  {% elif attendances %}
+  <div class="section-title">Anwesenheit</div>
+  <div class="cols">
+    {% for a in attendances %}
+    <div>{{ a.customer.name if a.customer else '—' }} — {{ sf_attendance_status_labels[a.status] }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if resolutions %}
+  <div class="section-title">Beschlüsse</div>
+  <table>
+    <thead><tr><th>Beschluss</th><th>Ergebnis</th><th>Ja / Nein / Enth.</th></tr></thead>
+    <tbody>
+      {% for r in resolutions %}
+      <tr>
+        <td>{{ r.title }}{% if r.notes %}<br><span style="color:{{ design.muted_color | default('#666') }};font-size:9pt">{{ r.notes }}</span>{% endif %}</td>
+        <td>{{ sf_resolution_status_labels[r.status] }}</td>
+        <td>{{ r.votes_for }} / {{ r.votes_against }} / {{ r.votes_abstain }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if protocol.content_html %}
+  <div class="section-title">Protokoll</div>
+  <div class="text-block">{{ protocol.content_html | safe }}</div>
+  {% endif %}
+
+  <div class="sig">
+    <div>_______________________________<br>Schriftführer/in</div>
+    <div>_______________________________<br>Obmann / Obfrau</div>
+  </div>
+</body>
+</html>

@@ -45,6 +45,10 @@
                         <i class="fas fa-file-pdf me-1"></i> PDF
                     </button>
                 </div>
+                <button type="button" class="btn btn-success btn-sm ms-2" title="Auswahl per E-Mail versenden"
+                        onclick="openDunningMassmail()">
+                    <i class="fas fa-envelope me-1"></i> Per E-Mail senden
+                </button>
             </div>
         </div>
         <div class="card-body p-0" id="notices-table">
@@ -79,6 +83,50 @@
       </div>
       <div class="modal-footer justify-content-center">
         <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Schließen</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Massenmail Modal -->
+<div class="modal fade" id="dnMassmailModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="fas fa-envelope me-2"></i> Mahnungen per E-Mail senden</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted mb-2">
+          Nur aktive Mahnungen an Kunden mit E-Mail-Adresse und aktiviertem
+          Schriftverkehr per E-Mail werden versendet — die übrigen werden übersprungen.
+        </p>
+        <table class="table table-sm mb-0">
+          <thead>
+            <tr>
+              <th>Rechnungsnr.</th>
+              <th>Kunde</th>
+              <th>E-Mail</th>
+              <th style="width:80px">Status</th>
+            </tr>
+          </thead>
+          <tbody id="dn-massmail-rows"></tbody>
+        </table>
+      </div>
+      <div class="modal-footer justify-content-between">
+        <div class="form-check">
+          <input type="checkbox" class="form-check-input" id="dn-massmail-testmode">
+          <label class="form-check-label text-warning" for="dn-massmail-testmode">
+            <i class="fas fa-flask me-1"></i> Testmodus (Mails an die eigene Adresse)
+          </label>
+        </div>
+        <div>
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+          <button type="button" class="btn btn-primary ms-2" id="dn-massmail-start-btn"
+                  onclick="startDunningMassmail()">
+            <i class="fas fa-paper-plane me-1"></i> Senden starten
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -146,5 +194,91 @@ async function dunningBulkDownload(url, title) {
         }
     });
 })();
+
+// Massenmail: Vorschau der ausgewählten Mahnungen, dann serieller Versand mit
+// Status-Icon pro Zeile — analog zum Rechnungsversand.
+const DN_SEND_URL = '{{ url_for("dunning.notice_send_email", notice_id=0) }}';
+
+function openDunningMassmail() {
+  const checked = document.querySelectorAll('.dn-cb:checked');
+  if (!checked.length) { alert('Keine Mahnungen ausgewählt.'); return; }
+  const tbody = document.getElementById('dn-massmail-rows');
+  tbody.innerHTML = '';
+  let hasEligible = false;
+  checked.forEach(cb => {
+    const row = cb.closest('tr');
+    const data = {
+      id: cb.value,
+      number: row.dataset.invoiceNumber,
+      name: row.dataset.customerName,
+      email: row.dataset.customerEmail,
+      enabled: row.dataset.emailEnabled === 'true',
+    };
+    const eligible = data.enabled && data.email;
+    if (eligible) hasEligible = true;
+    const emailCell = eligible
+      ? data.email
+      : '<span class="text-muted">' + (data.email ? 'E-Mail-Versand inaktiv' : 'Keine E-Mail') + '</span>';
+    const statusCell = eligible
+      ? '<i class="fas fa-clock text-muted" id="dn-mm-icon-' + data.id + '"></i>'
+      : '<i class="fas fa-minus text-muted"></i>';
+    const tr = document.createElement('tr');
+    tr.id = 'dn-mm-row-' + data.id;
+    tr.innerHTML = '<td><code>' + data.number + '</code></td>'
+      + '<td>' + data.name + '</td>'
+      + '<td>' + emailCell + '</td>'
+      + '<td>' + statusCell + '</td>';
+    tbody.appendChild(tr);
+  });
+  document.getElementById('dn-massmail-start-btn').disabled = !hasEligible;
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('dnMassmailModal')).show();
+}
+
+async function startDunningMassmail() {
+  document.getElementById('dn-massmail-start-btn').disabled = true;
+  const csrfToken = document.querySelector('#notices-form input[name="csrf_token"]').value;
+  const testMode = document.getElementById('dn-massmail-testmode').checked;
+  const eligible = [];
+  document.querySelectorAll('#dn-massmail-rows tr[id^="dn-mm-row-"]').forEach(tr => {
+    const id = tr.id.replace('dn-mm-row-', '');
+    const icon = document.getElementById('dn-mm-icon-' + id);
+    if (icon) eligible.push({ id, icon });
+  });
+  for (let i = 0; i < eligible.length; i++) {
+    const { id, icon } = eligible[i];
+    icon.className = 'fas fa-spinner fa-spin text-primary';
+    try {
+      let body = 'csrf_token=' + encodeURIComponent(csrfToken);
+      if (testMode) body += '&test_mode=1';
+      const resp = await fetch(DN_SEND_URL.replace('/0/', '/' + id + '/'), {
+        method: 'POST',
+        headers: {
+          'X-CSRFToken': csrfToken,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body,
+      });
+      const json = await resp.json();
+      if (json.ok) {
+        icon.className = json.test_mode
+          ? 'fas fa-check-circle text-warning'
+          : 'fas fa-check-circle text-success';
+        icon.title = json.test_mode ? 'Testmail gesendet an ' + json.email : 'Gesendet an ' + json.email;
+      } else {
+        const td = icon.closest('td');
+        if (td) {
+          td.innerHTML = '<i class="fas fa-times-circle text-danger me-1"></i>'
+            + '<small class="text-danger">' + (json.error || 'Fehler') + '</small>';
+        }
+      }
+    } catch (err) {
+      icon.className = 'fas fa-times-circle text-danger';
+      icon.title = 'Netzwerkfehler';
+    }
+    if (i < eligible.length - 1) {
+      await new Promise(r => setTimeout(r, 500));
+    }
+  }
+}
 </script>
 {% endblock %}

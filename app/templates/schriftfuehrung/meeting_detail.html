@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% from "schriftfuehrung/_meeting_form.html" import meeting_form_fields %}
+{% from "schriftfuehrung/_agenda_row.html" import agenda_row %}
+{% set list_url = url_for('schriftfuehrung.assemblies') if meeting.is_assembly else url_for('schriftfuehrung.board_meetings') %}
+{% block title %}{{ meeting.title }}{% endblock %}
+{% block page_title %}
+<a href="{{ list_url }}" class="text-secondary me-2"><i class="fas fa-arrow-left"></i></a>
+{{ sf_meeting_type_labels[meeting.meeting_type] }}
+<span class="badge {{ sf_meeting_status_badge[meeting.status] }} ms-2">{{ sf_meeting_status_labels[meeting.status] }}</span>
+{% endblock %}
+{% block content %}
+<div class="row g-3">
+  <div class="col-lg-8">
+    {# ── Eckdaten ── #}
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">{{ meeting.title }}</h3>
+        <div class="card-actions">
+          <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#meetingEditModal">
+            <i class="fas fa-edit me-1"></i> Bearbeiten
+          </button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="row">
+          <div class="col-md-4"><div class="text-secondary small">Datum</div>
+            <div>{{ meeting.meeting_date.strftime('%d.%m.%Y') if meeting.meeting_date else '—' }}</div></div>
+          <div class="col-md-4"><div class="text-secondary small">Uhrzeit</div>
+            <div>{% if meeting.start_time %}{{ meeting.start_time.strftime('%H:%M') }}{% if meeting.end_time %}–{{ meeting.end_time.strftime('%H:%M') }}{% endif %} Uhr{% else %}—{% endif %}</div></div>
+          <div class="col-md-4"><div class="text-secondary small">Ort</div>
+            <div>{{ meeting.location or '—' }}</div></div>
+        </div>
+        {% if meeting.intro_text %}
+        <hr><div class="text-secondary small mb-1">Einleitung</div><div>{{ meeting.intro_text | safe }}</div>
+        {% endif %}
+        {% if meeting.closing_text %}
+        <hr><div class="text-secondary small mb-1">Abschluss</div><div>{{ meeting.closing_text | safe }}</div>
+        {% endif %}
+      </div>
+    </div>
+
+    {# ── Tagesordnung ── #}
+    <form method="post" action="{{ url_for('schriftfuehrung.agenda_save', meeting_id=meeting.id) }}" class="card mt-3" id="agendaForm">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="card-header">
+        <h3 class="card-title"><i class="fas fa-list-ol me-1"></i> Tagesordnung</h3>
+        <div class="card-actions">
+          <button type="button" class="btn btn-sm btn-outline-primary" id="agendaAddBtn">
+            <i class="fas fa-plus me-1"></i> Punkt hinzufügen
+          </button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div id="agendaRows">
+          {% for item in meeting.agenda_items %}
+          {{ agenda_row(item) }}
+          {% endfor %}
+        </div>
+        <div id="agendaEmpty" class="text-secondary small {% if meeting.agenda_items %}d-none{% endif %}">
+          Noch keine Tagesordnungspunkte. Füge oben den ersten Punkt hinzu.
+        </div>
+      </div>
+      <div class="card-footer text-end">
+        <button type="submit" class="btn btn-primary"><i class="fas fa-save me-1"></i> Tagesordnung speichern</button>
+      </div>
+    </form>
+  </div>
+
+  {# ── Aktionen ── #}
+  <div class="col-lg-4">
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">Aktionen</h3></div>
+      <div class="list-group list-group-flush">
+        <a href="{{ url_for('schriftfuehrung.send', meeting_id=meeting.id) }}" class="list-group-item list-group-item-action">
+          <i class="fas fa-paper-plane me-2 text-primary"></i> Einladungen versenden
+        </a>
+        <a href="{{ url_for('schriftfuehrung.history', meeting_id=meeting.id) }}" class="list-group-item list-group-item-action">
+          <i class="fas fa-history me-2 text-secondary"></i> Versand-Historie
+          {% if meeting.invitations %}<span class="badge bg-secondary-lt ms-1">{{ meeting.invitations|length }}</span>{% endif %}
+        </a>
+        <a href="{{ url_for('schriftfuehrung.protocol', meeting_id=meeting.id) }}" class="list-group-item list-group-item-action">
+          <i class="fas fa-file-signature me-2 text-success"></i> Protokoll
+          {% if meeting.protocol %}<span class="badge {{ sf_protocol_status_badge[meeting.protocol.status] }} ms-1">{{ sf_protocol_status_labels[meeting.protocol.status] }}</span>{% endif %}
+        </a>
+        {% if sf_doc_format in ('pdf', 'both') %}
+        <a href="{{ url_for('schriftfuehrung.invitation_preview', meeting_id=meeting.id, fmt='pdf') }}" target="_blank" class="list-group-item list-group-item-action">
+          <i class="fas fa-file-pdf me-2 text-danger"></i> Einladung als PDF ansehen
+        </a>
+        {% endif %}
+        {% if sf_doc_format in ('docx', 'both') %}
+        <a href="{{ url_for('schriftfuehrung.invitation_preview', meeting_id=meeting.id, fmt='docx') }}" class="list-group-item list-group-item-action">
+          <i class="fas fa-file-word me-2 text-primary"></i> Einladung als Word herunterladen
+        </a>
+        {% endif %}
+      </div>
+      <div class="card-footer">
+        <div class="btn-list">
+          {% if meeting.status != 'held' %}
+          <form method="post" action="{{ url_for('schriftfuehrung.meeting_set_held', meeting_id=meeting.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-sm btn-outline-success w-100"><i class="fas fa-check me-1"></i> Als abgehalten markieren</button>
+          </form>
+          {% endif %}
+          <form method="post" action="{{ url_for('schriftfuehrung.meeting_copy', meeting_id=meeting.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-sm btn-outline-secondary w-100"><i class="fas fa-copy me-1"></i> Sitzung kopieren</button>
+          </form>
+          {% if meeting.can_delete %}
+          <form method="post" action="{{ url_for('schriftfuehrung.meeting_delete', meeting_id=meeting.id) }}"
+                onsubmit="return confirm('Diese Sitzung wirklich löschen?');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-sm btn-outline-danger w-100"><i class="fas fa-trash me-1"></i> Löschen</button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Vorlage für eine Agenda-Zeile (von JS geklont) ── #}
+<template id="agendaRowTemplate">{{ agenda_row(None) }}</template>
+{% endblock %}
+
+{% block modals %}
+<div class="modal fade" id="meetingEditModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <form method="post" action="{{ url_for('schriftfuehrung.meeting_edit', meeting_id=meeting.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="fas fa-edit me-2"></i>Sitzung bearbeiten</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+        </div>
+        <div class="modal-body">{{ meeting_form_fields(meeting) }}</div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">Abbrechen</button>
+          <button type="submit" class="btn btn-primary"><i class="fas fa-save me-1"></i> Speichern</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{% include "schriftfuehrung/_richtext_scripts.html" %}
+<script>
+(function () {
+  var rows = document.getElementById('agendaRows');
+  var tpl = document.getElementById('agendaRowTemplate');
+  var addBtn = document.getElementById('agendaAddBtn');
+  var empty = document.getElementById('agendaEmpty');
+  if (!rows || !tpl || !addBtn) return;
+
+  function reindex() {
+    var list = rows.querySelectorAll('[data-agenda-row]');
+    list.forEach(function (row, i) {
+      row.querySelector('[data-f="title"]').name = 'agenda[' + i + '][title]';
+      row.querySelector('[data-f="description"]').name = 'agenda[' + i + '][description]';
+      row.querySelector('[data-f="requires_vote"]').name = 'agenda[' + i + '][requires_vote]';
+    });
+    if (empty) empty.classList.toggle('d-none', list.length > 0);
+  }
+
+  rows.addEventListener('click', function (e) {
+    var row = e.target.closest('[data-agenda-row]');
+    if (!row) return;
+    if (e.target.closest('.agenda-remove')) { row.remove(); reindex(); }
+    else if (e.target.closest('.agenda-up') && row.previousElementSibling) {
+      row.parentNode.insertBefore(row, row.previousElementSibling); reindex();
+    } else if (e.target.closest('.agenda-down') && row.nextElementSibling) {
+      row.parentNode.insertBefore(row.nextElementSibling, row); reindex();
+    }
+  });
+
+  addBtn.addEventListener('click', function () {
+    var frag = tpl.content.cloneNode(true);
+    rows.appendChild(frag);
+    reindex();
+    var added = rows.lastElementChild;
+    var input = added && added.querySelector('[data-f="title"]');
+    if (input) input.focus();
+  });
+
+  reindex();
+})();
+</script>
+{% endblock %}

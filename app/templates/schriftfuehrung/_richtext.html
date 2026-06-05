@@ -1,0 +1,21 @@
+{# Wiederverwendbarer Rich-Text-Editor (fett/kursiv/unterstrichen/Schriftgröße) —
+   gleiche Formatierung wie der Rechnungs-Briefkopf. Speichert als reduziertes
+   HTML (b/i/u/br/span font-size), das der Server via sanitize_rich_text
+   normalisiert. Das zugehörige JS (_richtext_scripts.html) spiegelt den Inhalt
+   LIVE ins versteckte Feld (input+blur) — wichtig wegen hx-boost. #}
+{% macro rt(name, value='', height='8rem') %}
+<div class="sf-rt" data-rt-wrap>
+  <div class="btn-group btn-group-sm mb-1" role="group">
+    <button type="button" class="btn btn-outline-secondary" data-rt-cmd="bold" title="Fett"><i class="fas fa-bold"></i></button>
+    <button type="button" class="btn btn-outline-secondary" data-rt-cmd="italic" title="Kursiv"><i class="fas fa-italic"></i></button>
+    <button type="button" class="btn btn-outline-secondary" data-rt-cmd="underline" title="Unterstrichen"><i class="fas fa-underline"></i></button>
+    <select class="form-select form-select-sm sf-rt-size" style="width:auto" title="Schriftgröße">
+      <option value="">Größe</option>
+      {% for pt in [8, 9, 10, 11, 12, 14, 16, 18, 20] %}<option value="{{ pt }}">{{ pt }} pt</option>{% endfor %}
+    </select>
+  </div>
+  <div class="form-control sf-rt-editor" contenteditable="true"
+       style="min-height:{{ height }};line-height:1.3">{{ value | safe }}</div>
+  <input type="hidden" name="{{ name }}" class="sf-rt-input">
+</div>
+{% endmacro %}

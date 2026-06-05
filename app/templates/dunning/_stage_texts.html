@@ -1,0 +1,31 @@
+{# Pro-Stufe-Textfelder (E-Mail + Brief). Erwartet `s` (Stage) + `placeholders`.
+   Index-parallel zu den Stufen-Hauptfeldern — siehe dunning.routes._save_policy. #}
+<div class="row g-2">
+  <div class="col-md-6">
+    <label class="form-label small mb-1">E-Mail-Betreff</label>
+    <input type="text" name="stage_email_subject" class="form-control form-control-sm"
+           value="{{ s.email_subject or '' }}" placeholder="Standard: {{ '{{' }}mahntitel{{ '}}' }} – {{ '{{' }}rechnungsnummer{{ '}}' }}">
+  </div>
+  <div class="col-md-6">
+    <label class="form-label small mb-1">E-Mail-Text</label>
+    <textarea name="stage_email_body" class="form-control form-control-sm" rows="4"
+              placeholder="leer = Standardtext">{{ s.email_body or '' }}</textarea>
+  </div>
+  <div class="col-md-6">
+    <label class="form-label small mb-1">Mahnbrief: Einleitung</label>
+    <textarea name="stage_letter_intro" class="form-control form-control-sm" rows="3"
+              placeholder="leer = Standardtext">{{ s.letter_intro or '' }}</textarea>
+  </div>
+  <div class="col-md-6">
+    <label class="form-label small mb-1">Mahnbrief: Schlusstext</label>
+    <textarea name="stage_letter_closing" class="form-control form-control-sm" rows="3"
+              placeholder="leer = Standardtext">{{ s.letter_closing or '' }}</textarea>
+  </div>
+  <div class="col-12">
+    <div class="form-hint small mb-0">
+      Platzhalter:
+      {% for key, desc in placeholders %}<code>{{ '{{' }}{{ key }}{{ '}}' }}</code>{% if not loop.last %} {% endif %}{% endfor %}
+      &mdash; leere Felder verwenden den Standardtext.
+    </div>
+  </div>
+</div>

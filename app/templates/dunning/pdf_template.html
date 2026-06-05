@@ -94,11 +94,7 @@
 <h1>{{ notice.print_title_snapshot or notice.name_snapshot }}</h1>
 
 <p class="intro">Sehr geehrte Damen und Herren,</p>
-<p class="intro">
-  zu unserer Rechnung {{ invoice.invoice_number }} vom {{ invoice.date.strftime('%d.%m.%Y') }}
-  mit Fälligkeit am {{ invoice.due_date.strftime('%d.%m.%Y') if invoice.due_date else '—' }}
-  konnten wir bisher leider keinen Zahlungseingang feststellen.
-</p>
+<p class="intro">{{ letter_intro }}</p>
 
 <table>
   <thead>
@@ -110,8 +106,14 @@
   <tbody>
     <tr>
       <td>Rechnungsbetrag ({{ invoice.invoice_number }})</td>
-      <td class="text-right">{{ summary.principal|de_number(2) }} &euro;</td>
+      <td class="text-right">{{ summary.original_total|de_number(2) }} &euro;</td>
     </tr>
+    {% if summary.paid and summary.paid > 0 %}
+    <tr>
+      <td>abzüglich Zahlungseingang</td>
+      <td class="text-right">&minus;&nbsp;{{ summary.paid|de_number(2) }} &euro;</td>
+    </tr>
+    {% endif %}
     {% for n in summary.notices %}
     {% if n.fee_amount and n.fee_amount > 0 %}
     <tr>
@@ -134,19 +136,12 @@
   Bitte überweisen Sie den Betrag von <strong>{{ summary.gross_total|de_number(2) }} &euro;</strong>
   bis zum {{ notice.new_due_date.strftime('%d.%m.%Y') if notice.new_due_date else '—' }}<br>
   {% if wg.iban %}IBAN: <strong>{{ wg.iban }}</strong><br>{% endif %}
+  {% if wg.bic %}BIC: {{ wg.bic }}<br>{% endif %}
   Empfänger: {{ wg.account_holder or wg.name }}<br>
   Verwendungszweck: <strong>{{ invoice.invoice_number }} / Mahnung</strong>
 </div>
 
-<p style="margin-top:1cm">
-  {% if notice.level_snapshot <= 2 %}
-  Sollte sich Ihre Zahlung mit diesem Schreiben gekreuzt haben,
-  betrachten Sie dieses bitte als gegenstandslos.
-  {% else %}
-  Wir bitten Sie dringend, den ausstehenden Betrag innerhalb der
-  genannten Frist zu begleichen, um weitere Maßnahmen zu vermeiden.
-  {% endif %}
-</p>
+<p style="margin-top:1cm">{{ letter_closing }}</p>
 
 <div class="footer">
   {{ wg.name }}

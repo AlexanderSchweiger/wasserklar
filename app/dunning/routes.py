@@ -18,6 +18,7 @@ from app.dunning.services import (
     cancel_dunnings_for_invoice, compute_fee, create_dunning_notice,
     current_dunning_level, defer_dunning_notice, dunning_summary,
     eligible_invoices_for_stage, reset_dunning_notice,
+    rendered_email, rendered_letter_texts, TEXT_PLACEHOLDERS,
 )
 from app.invoices.design import get_design
 
@@ -39,6 +40,75 @@ def _get_dunning_doc_dir(notice):
 def _dunning_filename(notice, ext):
     """Dateiname: <Rechnungsnr>_M<level>.<ext>"""
     return f"{notice.invoice.invoice_number}_M{notice.level_snapshot}.{ext}"
+
+
+# ---------------------------------------------------------------------------
+# Dokument-Erzeugung & -Archivierung (Helfer)
+# ---------------------------------------------------------------------------
+
+def _dunning_pdf_context(notice, wg=None, summary=None):
+    """Vollständiger Template-Kontext für ``dunning/pdf_template.html``.
+
+    Zentralisiert die gerenderten Stufentexte (Einleitung/Schluss) + Design,
+    damit Download, Vorschau, Mail und Bulk denselben Output erzeugen.
+    """
+    from app.settings_service import wg_settings
+    if wg is None:
+        wg = wg_settings()
+    if summary is None:
+        summary = dunning_summary(notice.invoice)
+    intro, closing = rendered_letter_texts(notice, summary, wg)
+    return dict(
+        notice=notice, invoice=notice.invoice, summary=summary,
+        wg=wg, design=_current_design(),
+        letter_intro=intro, letter_closing=closing,
+    )
+
+
+def _dunning_versioned_path(notice, ext):
+    """Eindeutiger Pfad <Rechnungsnr>_M<level>[_Vn].<ext> — friert den
+    Versand-Stand ein, ältere Versionen bleiben erhalten (analog Rechnung)."""
+    doc_dir = _get_dunning_doc_dir(notice)
+    base = os.path.join(doc_dir, _dunning_filename(notice, ext))
+    if not os.path.exists(base):
+        return base
+    inv_no = notice.invoice.invoice_number
+    v = 2
+    while True:
+        cand = os.path.join(doc_dir, f"{inv_no}_M{notice.level_snapshot}_V{v}.{ext}")
+        if not os.path.exists(cand):
+            return cand
+        v += 1
+
+
+def _render_dunning_pdf_bytes(notice):
+    """PDF-Bytes (WeasyPrint). Wirft ImportError/OSError ohne WeasyPrint."""
+    import weasyprint
+    html_str = render_template("dunning/pdf_template.html", **_dunning_pdf_context(notice))
+    return weasyprint.HTML(string=html_str).write_pdf()
+
+
+def _render_dunning_docx_bytes(notice):
+    """DOCX-Bytes der Mahnung mit aktuellem Design + gerenderten Texten."""
+    from app.dunning.document_service import generate_dunning_docx
+    from app.settings_service import wg_settings
+    return generate_dunning_docx(notice, wg_settings(), design=_current_design())
+
+
+def _freeze_dunning_document(notice, ext, data):
+    """Schreibt das exakt versendete Dokument persistent und merkt sich den Pfad.
+
+    Ab dann liefert der Download diese eingefrorene Datei aus (Audit-/Beleg-
+    Spur), statt live neu zu rendern.
+    """
+    path = _dunning_versioned_path(notice, ext)
+    with open(path, "wb") as fh:
+        fh.write(data)
+    if ext == "pdf":
+        notice.pdf_path = path
+    else:
+        notice.doc_path = path
+    return path
 
 
 # ---------------------------------------------------------------------------
@@ -231,34 +301,27 @@ def notice_defer(notice_id):
 @bp.route("/notices/<int:notice_id>/pdf")
 @login_required
 def notice_pdf(notice_id):
-    """Mahn-Dokument als PDF oder DOCX herunterladen."""
+    """Mahn-Dokument als PDF oder DOCX herunterladen.
+
+    Bereits versendete (eingefrorene) Mahnungen liefern die archivierte Datei
+    aus; noch nicht versendete werden live gerendert (kein Cache beim Download —
+    eingefroren wird erst beim Versand).
+    """
     notice = db.session.get(DunningNotice, notice_id)
     if not notice:
         flash("Mahnung nicht gefunden.", "danger")
         return redirect(url_for("dunning.notices"))
 
-    from app.settings_service import wg_settings
-    wg = wg_settings()
-    summary = dunning_summary(notice.invoice)
     fmt = request.args.get("fmt", AppSetting.get("invoice.document_format", "pdf"))
-
-    filename_base = _dunning_filename(notice, "")
+    if fmt == "both":
+        fmt = "pdf"  # Download liefert genau ein Dokument
 
     if fmt == "docx":
-        # Cached?
         if notice.doc_path and os.path.exists(notice.doc_path):
             return send_file(notice.doc_path, as_attachment=True,
                              download_name=_dunning_filename(notice, "docx"),
                              mimetype=_DOCX_MIME)
-        from app.dunning.document_service import generate_dunning_docx
-        doc_data = generate_dunning_docx(notice, wg, design=_current_design())
-        # Cache
-        doc_dir = _get_dunning_doc_dir(notice)
-        doc_path = os.path.join(doc_dir, _dunning_filename(notice, "docx"))
-        with open(doc_path, "wb") as f:
-            f.write(doc_data)
-        notice.doc_path = doc_path
-        db.session.commit()
+        doc_data = _render_dunning_docx_bytes(notice)
         return send_file(io.BytesIO(doc_data), as_attachment=True,
                          download_name=_dunning_filename(notice, "docx"),
                          mimetype=_DOCX_MIME)
@@ -267,9 +330,8 @@ def notice_pdf(notice_id):
     if notice.pdf_path and os.path.exists(notice.pdf_path):
         return send_file(notice.pdf_path, as_attachment=True,
                          download_name=_dunning_filename(notice, "pdf"))
-
     try:
-        import weasyprint
+        pdf_data = _render_dunning_pdf_bytes(notice)
     except (ImportError, OSError):
         if current_app.debug:
             flash("WeasyPrint nicht verfügbar – HTML-Vorschau geöffnet (Strg+P → Als PDF speichern).", "info")
@@ -277,18 +339,7 @@ def notice_pdf(notice_id):
         flash("PDF-Erzeugung erfordert WeasyPrint (nur im Docker-Container verfügbar). "
               "Verwenden Sie ?fmt=docx für Word-Download.", "warning")
         return redirect(url_for("dunning.notice_detail", notice_id=notice_id))
-
-    html_str = render_template(
-        "dunning/pdf_template.html",
-        notice=notice, invoice=notice.invoice,
-        summary=summary, wg=wg, design=_current_design(),
-    )
-    doc_dir = _get_dunning_doc_dir(notice)
-    pdf_path = os.path.join(doc_dir, _dunning_filename(notice, "pdf"))
-    weasyprint.HTML(string=html_str).write_pdf(pdf_path)
-    notice.pdf_path = pdf_path
-    db.session.commit()
-    return send_file(pdf_path, as_attachment=True,
+    return send_file(io.BytesIO(pdf_data), as_attachment=True,
                      download_name=_dunning_filename(notice, "pdf"))
 
 
@@ -303,14 +354,7 @@ def notice_pdf_preview(notice_id):
     notice = db.session.get(DunningNotice, notice_id)
     if not notice:
         abort(404)
-    from app.settings_service import wg_settings
-    wg = wg_settings()
-    summary = dunning_summary(notice.invoice)
-    return render_template(
-        "dunning/pdf_template.html",
-        notice=notice, invoice=notice.invoice,
-        summary=summary, wg=wg, design=_current_design(),
-    )
+    return render_template("dunning/pdf_template.html", **_dunning_pdf_context(notice))
 
 
 # ---------------------------------------------------------------------------
@@ -320,84 +364,141 @@ def notice_pdf_preview(notice_id):
 @bp.route("/notices/<int:notice_id>/send-email", methods=["POST"])
 @login_required
 def notice_send_email(notice_id):
-    """Mahnung per E-Mail versenden (JSON-Antwort für AJAX)."""
+    """Mahnung per E-Mail versenden (JSON-Antwort; Einzel- und Massenversand).
+
+    Verhält sich wie der Rechnungsversand: Testmodus (Mail an die eigene
+    Admin-Adresse), konfigurierbare Stufentexte, Postmark-Tracking via
+    ``EmailEvent`` und Einfrieren des versendeten Dokuments.
+    """
+    from flask_mail import Message
+    from app.settings_service import wg_settings, send_mail
+    from app.dunning.send_email_hooks import run_before_send, read_message_id
+    from app.email_tracking import record_email_sent
+
     notice = db.session.get(DunningNotice, notice_id)
     if not notice:
         return jsonify(ok=False, error="Mahnung nicht gefunden."), 404
 
+    test_mode = request.form.get("test_mode") == "1"
     customer = notice.invoice.customer
     if not customer.email:
         return jsonify(ok=False, error="Kunde hat keine E-Mail-Adresse."), 400
-    if not customer.rechnung_per_email:
+    # Einwilligung: ohne aktivierten Schriftverkehr-per-E-Mail darf nur der
+    # Test an die eigene Admin-Adresse gehen.
+    if not test_mode and not customer.wants_email:
         return jsonify(
             ok=False,
             error="Der Kunde hat den Schriftverkehr per E-Mail nicht aktiviert.",
         ), 400
-
-    from app.settings_service import wg_settings, send_mail
-    from flask_mail import Message
+    if test_mode:
+        recipient = current_user.email
+        if not recipient:
+            return jsonify(ok=False, error="Kein eigener E-Mail-Account für Testmodus hinterlegt."), 400
+    else:
+        recipient = customer.email
 
     wg = wg_settings()
     summary = dunning_summary(notice.invoice)
     fmt = AppSetting.get("invoice.document_format", "pdf")
-    title = notice.print_title_snapshot or notice.name_snapshot
+    subject, body = rendered_email(notice, summary, wg)
+    if test_mode:
+        subject = f"[TEST – an: {customer.email}] {subject}"
+        body = f"[TESTMODUS – eigentlicher Empfänger: {customer.email}]\n\n{body}"
 
-    subject = f"{title} – {notice.invoice.invoice_number}"
-    body = (
-        f"Sehr geehrte Damen und Herren,\n\n"
-        f"anbei erhalten Sie eine {title} zu unserer Rechnung "
-        f"{notice.invoice.invoice_number}.\n\n"
-        f"Bitte überweisen Sie den ausstehenden Betrag bis zum "
-        f"{notice.new_due_date.strftime('%d.%m.%Y') if notice.new_due_date else '—'}.\n\n"
-        f"Mit freundlichen Grüßen\n{wg.get('name', '')}"
-    )
+    msg = Message(subject=subject, recipients=[recipient], body=body)
 
-    msg = Message(subject=subject, recipients=[customer.email], body=body)
-
-    # Dokument anhängen
+    pdf_data = None
+    docx_data = None
     if fmt in ("docx", "both"):
-        from app.dunning.document_service import generate_dunning_docx
-        doc_data = generate_dunning_docx(notice, wg, design=_current_design())
-        msg.attach(_dunning_filename(notice, "docx"), _DOCX_MIME, doc_data)
-        # Cache
-        doc_dir = _get_dunning_doc_dir(notice)
-        doc_path = os.path.join(doc_dir, _dunning_filename(notice, "docx"))
-        with open(doc_path, "wb") as f:
-            f.write(doc_data)
-        notice.doc_path = doc_path
-
+        docx_data = _render_dunning_docx_bytes(notice)
+        msg.attach(_dunning_filename(notice, "docx"), _DOCX_MIME, docx_data)
     if fmt in ("pdf", "both"):
         try:
-            import weasyprint
-            html_str = render_template(
-                "dunning/pdf_template.html",
-                notice=notice, invoice=notice.invoice,
-                summary=summary, wg=wg, design=_current_design(),
-            )
-            pdf_data = weasyprint.HTML(string=html_str).write_pdf()
+            pdf_data = _render_dunning_pdf_bytes(notice)
             msg.attach(_dunning_filename(notice, "pdf"), "application/pdf", pdf_data)
-            doc_dir = _get_dunning_doc_dir(notice)
-            pdf_path = os.path.join(doc_dir, _dunning_filename(notice, "pdf"))
-            with open(pdf_path, "wb") as f:
-                f.write(pdf_data)
-            notice.pdf_path = pdf_path
         except (ImportError, OSError):
             if fmt == "pdf":
                 preview_url = url_for("dunning.notice_pdf_preview", notice_id=notice_id)
                 return jsonify(ok=False, error="PDF-Erzeugung erfordert WeasyPrint.",
-                               preview_url=preview_url if current_app.debug else None), 500
+                               preview_url=preview_url if current_app.debug else None), 503
+            # bei 'both' reicht das DOCX als Anhang
 
+    if not msg.attachments:
+        return jsonify(ok=False, error="Kein Dokument konnte erzeugt werden."), 500
+
+    run_before_send(notice, msg)
     try:
         send_mail(msg)
     except Exception as e:
         return jsonify(ok=False, error=f"E-Mail-Versand fehlgeschlagen: {e}"), 500
 
+    if test_mode:
+        return jsonify(ok=True, notice_id=notice.id, email=recipient, test_mode=True)
+
+    # Versand protokollieren (EmailEvent + Tracking-Felder) und Dokument einfrieren.
+    record_email_sent(notice, recipient, read_message_id(msg))
     notice.sent_via = "email"
     notice.sent_at = datetime.utcnow()
-    notice.sent_to = customer.email
+    notice.sent_to = recipient
+    if docx_data is not None:
+        _freeze_dunning_document(notice, "docx", docx_data)
+    if pdf_data is not None:
+        _freeze_dunning_document(notice, "pdf", pdf_data)
     db.session.commit()
 
-    return jsonify(ok=True, notice_id=notice.id, email=customer.email)
+    return jsonify(ok=True, notice_id=notice.id, email=recipient, test_mode=False)
+
+
+@bp.route("/notices/<int:notice_id>/mark-sent", methods=["POST"])
+@login_required
+def notice_mark_sent(notice_id):
+    """Mahnung als per Post versendet markieren und das Dokument archivieren."""
+    notice = db.session.get(DunningNotice, notice_id)
+    if not notice:
+        flash("Mahnung nicht gefunden.", "danger")
+        return redirect(url_for("dunning.notices"))
+
+    fmt = AppSetting.get("invoice.document_format", "pdf")
+    frozen = False
+    if fmt in ("docx", "both"):
+        try:
+            _freeze_dunning_document(notice, "docx", _render_dunning_docx_bytes(notice))
+            frozen = True
+        except Exception:  # noqa: BLE001
+            current_app.logger.exception("DOCX-Archivierung fehlgeschlagen")
+    if fmt in ("pdf", "both"):
+        try:
+            _freeze_dunning_document(notice, "pdf", _render_dunning_pdf_bytes(notice))
+            frozen = True
+        except (ImportError, OSError):
+            pass
+
+    notice.sent_via = "post"
+    notice.sent_at = datetime.utcnow()
+    notice.sent_to = "Post"
+    db.session.commit()
+    if frozen:
+        flash("Mahnung als versendet (Post) markiert und archiviert.", "success")
+    else:
+        flash("Mahnung als versendet (Post) markiert. Dokument konnte nicht "
+              "archiviert werden (WeasyPrint nur im Docker-Container).", "warning")
+    return redirect(url_for("dunning.notice_detail", notice_id=notice_id))
+
+
+@bp.route("/notices/<int:notice_id>/email-events")
+@login_required
+def notice_email_events(notice_id):
+    """Read-only Audit-Trail aller E-Mail-Versand-/Webhook-Events zur Mahnung."""
+    from app.models import EmailEvent
+    notice = db.session.get(DunningNotice, notice_id)
+    if not notice:
+        flash("Mahnung nicht gefunden.", "danger")
+        return redirect(url_for("dunning.notices"))
+    events = (EmailEvent.query
+              .filter_by(subject_type="dunning", subject_id=notice.id)
+              .order_by(EmailEvent.occurred_at.desc(), EmailEvent.id.desc())
+              .all())
+    return render_template("dunning/email_events.html", notice=notice, events=events)
 
 
 # ---------------------------------------------------------------------------
@@ -413,28 +514,17 @@ def bulk_docx_merged():
         flash("Keine Mahnungen ausgewählt.", "warning")
         return redirect(url_for("dunning.notices"))
 
-    from app.dunning.document_service import generate_dunning_docx
     from app.invoices.document_service import merge_docx_files
-    from app.settings_service import wg_settings
 
-    wg = wg_settings()
-    design = _current_design()
     notices = DunningNotice.query.filter(DunningNotice.id.in_(notice_ids)).all()
     sources = []
-
     for notice in notices:
+        # Versendete Mahnungen: archivierte Datei; sonst live rendern.
         if notice.doc_path and os.path.exists(notice.doc_path):
             sources.append(notice.doc_path)
         else:
-            doc_data = generate_dunning_docx(notice, wg, design=design)
-            doc_dir = _get_dunning_doc_dir(notice)
-            doc_path = os.path.join(doc_dir, _dunning_filename(notice, "docx"))
-            with open(doc_path, "wb") as f:
-                f.write(doc_data)
-            notice.doc_path = doc_path
-            sources.append(doc_data)
+            sources.append(_render_dunning_docx_bytes(notice))
 
-    db.session.commit()
     merged = merge_docx_files(sources)
     return send_file(
         io.BytesIO(merged),
@@ -464,8 +554,6 @@ def bulk_pdf_merged():
         return redirect(url_for("dunning.notices"))
 
     from pypdf import PdfWriter
-    from app.settings_service import wg_settings
-    wg = wg_settings()
     notices = DunningNotice.query.filter(DunningNotice.id.in_(notice_ids)).all()
     if not notices:
         flash("Keine Dokumente erzeugt.", "warning")
@@ -475,17 +563,15 @@ def bulk_pdf_merged():
     # Bewusst KEIN WeasyPrint-copy() ueber mehrere Dokumente — kippt auf dem
     # Server mit PIL.UnidentifiedImageError und korrumpiert dabei die Bild-Buffer
     # (Details siehe invoices.bulk_pdf_merged). Einzel-Render + pypdf laeuft stabil.
+    # Versendete Mahnungen liefern ihr archiviertes PDF, sonst Live-Render.
     writer = PdfWriter()
-    design = _current_design()
     for notice in notices:
-        summary = dunning_summary(notice.invoice)
-        html_str = render_template(
-            "dunning/pdf_template.html",
-            notice=notice, invoice=notice.invoice,
-            summary=summary, wg=wg, design=design,
-        )
-        pdf_bytes = weasyprint.HTML(string=html_str).render().write_pdf()
-        writer.append(io.BytesIO(pdf_bytes))
+        if notice.pdf_path and os.path.exists(notice.pdf_path):
+            writer.append(notice.pdf_path)
+        else:
+            html_str = render_template("dunning/pdf_template.html", **_dunning_pdf_context(notice))
+            pdf_bytes = weasyprint.HTML(string=html_str).render().write_pdf()
+            writer.append(io.BytesIO(pdf_bytes))
     writer.compress_identical_objects()
     doc_dir = os.path.join(current_app.config["PDF_DIR"], "_bulk")
     os.makedirs(doc_dir, exist_ok=True)
@@ -517,7 +603,8 @@ def policy_new():
     if request.method == "POST":
         return _save_policy(None)
 
-    return render_template("dunning/policy_form.html", policy=None)
+    return render_template("dunning/policy_form.html", policy=None,
+                           placeholders=TEXT_PLACEHOLDERS)
 
 
 @bp.route("/policies/<int:policy_id>/bearbeiten", methods=["GET", "POST"])
@@ -532,7 +619,8 @@ def policy_edit(policy_id):
     if request.method == "POST":
         return _save_policy(policy)
 
-    return render_template("dunning/policy_form.html", policy=policy)
+    return render_template("dunning/policy_form.html", policy=policy,
+                           placeholders=TEXT_PLACEHOLDERS)
 
 
 @bp.route("/policies/<int:policy_id>/loeschen", methods=["POST"])
@@ -610,7 +698,17 @@ def _save_policy(policy):
     print_titles = request.form.getlist("stage_print_title")
     colors = request.form.getlist("stage_color")
     icons = request.form.getlist("stage_icon")
+    email_subjects = request.form.getlist("stage_email_subject")
+    email_bodies = request.form.getlist("stage_email_body")
+    letter_intros = request.form.getlist("stage_letter_intro")
+    letter_closings = request.form.getlist("stage_letter_closing")
     stage_ids = request.form.getlist("stage_id")
+
+    def _text_at(lst, idx):
+        """Trimmt den Wert an Index ``idx`` oder None (leer = Standardtext)."""
+        if idx < len(lst) and lst[idx].strip():
+            return lst[idx].strip()
+        return None
 
     existing = {s.id: s for s in policy.stages}
     seen_ids = set()
@@ -659,6 +757,10 @@ def _save_policy(policy):
         stage.print_title = pt or s_name
         stage.color = color or None
         stage.icon = icon or None
+        stage.email_subject = _text_at(email_subjects, i)
+        stage.email_body = _text_at(email_bodies, i)
+        stage.letter_intro = _text_at(letter_intros, i)
+        stage.letter_closing = _text_at(letter_closings, i)
 
     for sid, stage in existing.items():
         if sid not in seen_ids:

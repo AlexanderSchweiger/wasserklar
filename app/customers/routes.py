@@ -297,6 +297,47 @@ def edit(customer_id):
     )
 
 
+@bp.route("/<int:customer_id>/row")
+@login_required
+def row(customer_id):
+    """Liefert genau eine Kontakt-Tabellenzeile als HTML-Fragment.
+
+    Wird nach dem Modal-Speichern (HX-Trigger ``customerEdited``) per HTMX
+    nachgeladen und an Ort und Stelle in die Tabelle getauscht, statt die
+    ganze Seite neu zu laden — so bleiben Filter, Suche und Pagination der
+    Liste erhalten. Die aktuellen Listen-Filter kommen als Query-Args mit, damit
+    das ``next`` des Loeschen-Formulars in der frisch gerenderten Zeile weiter
+    auf die gefilterte Liste zeigt.
+    """
+    customer = db.get_or_404(Customer, customer_id)
+
+    ownership = PropertyOwnership.query.filter(
+        PropertyOwnership.valid_to.is_(None),
+        PropertyOwnership.customer_id == customer_id,
+    ).first()
+    property_map = {customer_id: ownership.property} if ownership else {}
+
+    profile = CustomerWgProfile.query.filter_by(customer_id=customer_id).first()
+    wg_profile_map = {customer_id: profile} if profile else {}
+    funcs = WgFunction.query.filter_by(customer_id=customer_id).all()
+    wg_functions_map = {customer_id: [f.function for f in funcs]} if funcs else {}
+
+    return render_template(
+        "customers/_row.html",
+        c=customer,
+        property_map=property_map,
+        wg_profile_map=wg_profile_map,
+        wg_functions_map=wg_functions_map,
+        type_filter=request.args.get("type", ""),
+        q=request.args.get("q", ""),
+        sort=request.args.get("sort", _DEFAULT_SORT),
+        dir=request.args.get("dir", "asc"),
+        country_filter=request.args.get("country", ""),
+        status_filter=request.args.get("status", ""),
+        func_filter=request.args.get("func", ""),
+    )
+
+
 @bp.route("/<int:customer_id>/deactivate", methods=["POST"])
 @login_required
 def deactivate(customer_id):

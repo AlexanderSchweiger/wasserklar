@@ -108,6 +108,13 @@
             {% set _nav_plan_import  = request.endpoint == 'network.import_view' %}
             {% set technik_active    = request.blueprint == 'network' %}
 
+            {# Schriftführung #}
+            {% set _nav_sf_board       = request.endpoint == 'schriftfuehrung.board_meetings' %}
+            {% set _nav_sf_assembly    = request.endpoint == 'schriftfuehrung.assemblies' %}
+            {% set _nav_sf_resolutions = request.endpoint == 'schriftfuehrung.resolutions' %}
+            {% set _nav_sf_archive     = request.endpoint == 'schriftfuehrung.archive' %}
+            {% set schriftfuehrung_active = request.blueprint == 'schriftfuehrung' %}
+
             {# Stammdaten #}
             {% set _nav_kunden         = request.blueprint == 'customers' %}
             {% set _nav_objekte        = request.blueprint == 'properties' %}
@@ -405,6 +412,46 @@
                     <a class="nav-link {% if _nav_plan_import %}active{% endif %}"
                       href="{{ url_for('network.import_view') }}">
                       <i class="fas fa-file-import me-2"></i>Plan importieren
+                    </a>
+                  </li>
+                </ul>
+              </div>
+            </li>
+            {% endif %}
+
+            {% if is_wg and current_user.has_permission('schriftfuehrung') %}
+            <li class="nav-item">
+              <a class="nav-link dropdown-toggle {% if schriftfuehrung_active %}active{% endif %}" href="#navbar-schriftfuehrung"
+                data-bs-toggle="collapse" role="button"
+                aria-expanded="{{ 'true' if schriftfuehrung_active else 'false' }}"
+                aria-controls="navbar-schriftfuehrung">
+                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-feather-alt"></i></span>
+                <span class="nav-link-title">Schriftführung</span>
+              </a>
+              <div class="collapse {% if schriftfuehrung_active %}show{% endif %}" id="navbar-schriftfuehrung">
+                <ul class="nav nav-sm flex-column ps-3">
+                  <li class="nav-item">
+                    <a class="nav-link {% if _nav_sf_board %}active{% endif %}"
+                      href="{{ url_for('schriftfuehrung.board_meetings') }}">
+                      <i class="fas fa-users-cog me-2"></i>Vorstandssitzungen
+                    </a>
+                  </li>
+                  <li class="nav-item">
+                    <a class="nav-link {% if _nav_sf_assembly %}active{% endif %}"
+                      href="{{ url_for('schriftfuehrung.assemblies') }}">
+                      <i class="fas fa-users me-2"></i>Hauptversammlungen
+                    </a>
+                  </li>
+                  <li class="nav-item">
+                    <a class="nav-link {% if _nav_sf_resolutions %}active{% endif %}"
+                      href="{{ url_for('schriftfuehrung.resolutions') }}">
+                      <i class="fas fa-balance-scale me-2"></i>Beschlüsse
+                    </a>
+                  </li>
+                  <li class="nav-item">
+                    <a class="nav-link {% if _nav_sf_archive %}active{% endif %}"
+                      href="{{ url_for('schriftfuehrung.archive') }}">
+                      <i class="fas fa-folder-open me-2"></i>Schriftverkehr
                     </a>
                   </li>
                 </ul>

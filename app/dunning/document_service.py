@@ -113,7 +113,7 @@ def generate_dunning_docx(notice, wg: dict, design: dict | None = None) -> bytes
     bytes
         Rohe .docx-Datei als Bytes.
     """
-    from app.dunning.services import dunning_summary
+    from app.dunning.services import dunning_summary, rendered_letter_texts
 
     if design is None:
         design = get_design("classic")
@@ -131,6 +131,7 @@ def generate_dunning_docx(notice, wg: dict, design: dict | None = None) -> bytes
     invoice = notice.invoice
     customer = invoice.customer
     summary = dunning_summary(invoice)
+    intro_text, closing_text = rendered_letter_texts(notice, summary, wg)
 
     doc = Document()
 
@@ -226,17 +227,13 @@ def generate_dunning_docx(notice, wg: dict, design: dict | None = None) -> bytes
     heading.runs[0].font.color.rgb = heading_rgb
     heading.runs[0].font.name = font_name
 
-    # ── Einleitungstext ──────────────────────────────────────────────────
-    due_str = invoice.due_date.strftime("%d.%m.%Y") if invoice.due_date else "—"
-    intro = (
-        f"zu unserer Rechnung {invoice.invoice_number} vom "
-        f"{invoice.date.strftime('%d.%m.%Y')} mit Fälligkeit am {due_str} "
-        f"konnten wir bisher leider keinen Zahlungseingang feststellen."
-    )
+    # ── Einleitungstext (pro Stufe konfigurierbar, siehe services) ───────
     p_intro = doc.add_paragraph()
     p_intro.add_run("Sehr geehrte Damen und Herren,").bold = False
     doc.add_paragraph()
-    doc.add_paragraph(intro)
+    for para in (intro_text or "").split("\n"):
+        if para.strip():
+            doc.add_paragraph(para.strip())
     doc.add_paragraph()
 
     # ── Forderungsübersicht ──────────────────────────────────────────────
@@ -259,12 +256,20 @@ def generate_dunning_docx(notice, wg: dict, design: dict | None = None) -> bytes
         _set_cell_bg(hdr[i], header_bg_hex)
         _set_cell_border_bottom(hdr[i], 16, rule_hex)
 
-    # Hauptforderung
+    # Hauptforderung (ursprünglicher Rechnungsbetrag)
     row = tbl.add_row().cells
     row[0].text = f"Rechnungsbetrag ({invoice.invoice_number})"
-    _right_align_cell(row[1], f"{_de_fmt(summary['principal'], 2)} €", font_size=Pt(10))
+    _right_align_cell(row[1], f"{_de_fmt(summary['original_total'], 2)} €", font_size=Pt(10))
     for r in row[0].paragraphs[0].runs:
         r.font.size = Pt(10)
+
+    # Bereits geleistete Zahlung (nur bei Teilzahlung)
+    if summary.get("paid") and summary["paid"] > 0:
+        row = tbl.add_row().cells
+        row[0].text = "abzüglich Zahlungseingang"
+        _right_align_cell(row[1], f"− {_de_fmt(summary['paid'], 2)} €", font_size=Pt(10))
+        for r in row[0].paragraphs[0].runs:
+            r.font.size = Pt(10)
 
     # Kumulative Mahngebühren
     for n in summary["notices"]:
@@ -308,25 +313,18 @@ def generate_dunning_docx(notice, wg: dict, design: dict | None = None) -> bytes
         p_iban.add_run(wg["iban"]).bold = True
     if wg.get("bic"):
         payment_cell.add_paragraph(f"BIC: {wg['bic']}")
-    payment_cell.add_paragraph(f"Empfänger: {wg.get('name', '')}")
+    payment_cell.add_paragraph(
+        f"Empfänger: {wg.get('account_holder') or wg.get('name', '')}"
+    )
     p_ref = payment_cell.add_paragraph("Verwendungszweck: ")
     p_ref.add_run(f"{invoice.invoice_number} / Mahnung").bold = True
 
     doc.add_paragraph()
 
-    # ── Schlusstext (stufenspezifisch) ───────────────────────────────────
-    level = notice.level_snapshot
-    if level <= 2:
-        closing = (
-            "Sollte sich Ihre Zahlung mit diesem Schreiben gekreuzt haben, "
-            "betrachten Sie dieses bitte als gegenstandslos."
-        )
-    else:
-        closing = (
-            "Wir bitten Sie dringend, den ausstehenden Betrag innerhalb der "
-            "genannten Frist zu begleichen, um weitere Maßnahmen zu vermeiden."
-        )
-    doc.add_paragraph(closing)
+    # ── Schlusstext (pro Stufe konfigurierbar, siehe services) ───────────
+    for para in (closing_text or "").split("\n"):
+        if para.strip():
+            doc.add_paragraph(para.strip())
 
     doc.add_paragraph()  # Abstand
 

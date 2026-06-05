@@ -1,0 +1,35 @@
+{# Eine Beschluss-Zeile im Protokoll-Editor. ``r`` None = leere Vorlage. #}
+{% macro res_row(r=None) %}
+<div class="card card-sm mb-2 res-row" data-res-row data-key="{{ r.id if r else '__NEW__' }}">
+  <div class="card-body p-2">
+    <div class="row g-2 align-items-end">
+      <div class="col-md-5">
+        <label class="form-label small mb-0">Beschluss</label>
+        <input type="text" data-f="title" class="form-control form-control-sm" placeholder="Name des Beschlusses" value="{{ r.title if r else '' }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small mb-0">Ergebnis</label>
+        <select data-f="status" class="form-select form-select-sm">
+          {% for k, l in sf_resolution_status_labels.items() %}
+          <option value="{{ k }}" {% if r and r.status == k %}selected{% endif %}>{{ l }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small mb-0">Ja / Nein / Enth.</label>
+        <div class="d-flex" style="gap:.25rem">
+          <input type="number" min="0" data-f="votes_for" class="form-control form-control-sm" title="Dafür" value="{{ r.votes_for if r else 0 }}">
+          <input type="number" min="0" data-f="votes_against" class="form-control form-control-sm" title="Dagegen" value="{{ r.votes_against if r else 0 }}">
+          <input type="number" min="0" data-f="votes_abstain" class="form-control form-control-sm" title="Enthaltung" value="{{ r.votes_abstain if r else 0 }}">
+        </div>
+      </div>
+      <div class="col-md-1 text-end">
+        <button type="button" class="btn btn-sm btn-outline-danger res-remove" title="Entfernen"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="col-12">
+        <textarea data-f="notes" class="form-control form-control-sm" rows="1" placeholder="Notiz (optional)">{{ r.notes if r and r.notes else '' }}</textarea>
+      </div>
+    </div>
+  </div>
+</div>
+{% endmacro %}

@@ -15,6 +15,133 @@ from app.models import (
 
 
 # ---------------------------------------------------------------------------
+# Stufentexte (pro Stufe konfigurierbar, mit Default-Fallback)
+# ---------------------------------------------------------------------------
+#
+# Die Defaults reproduzieren das frühere hartcodierte Verhalten 1:1, damit
+# Bestands-Stufen ohne hinterlegten Text unverändert mahnen. In allen Texten
+# sind Jinja-Platzhalter erlaubt — siehe ``dunning_text_context`` für die Liste.
+
+DEFAULT_LETTER_INTRO = (
+    "zu unserer Rechnung {{ rechnungsnummer }} vom {{ rechnungsdatum }} "
+    "mit Fälligkeit am {{ faelligkeit }} konnten wir bisher leider keinen "
+    "Zahlungseingang feststellen."
+)
+DEFAULT_LETTER_CLOSING_SOFT = (
+    "Sollte sich Ihre Zahlung mit diesem Schreiben gekreuzt haben, "
+    "betrachten Sie dieses bitte als gegenstandslos."
+)
+DEFAULT_LETTER_CLOSING_HARD = (
+    "Wir bitten Sie dringend, den ausstehenden Betrag innerhalb der "
+    "genannten Frist zu begleichen, um weitere Maßnahmen zu vermeiden."
+)
+DEFAULT_EMAIL_SUBJECT = "{{ mahntitel }} – {{ rechnungsnummer }}"
+DEFAULT_EMAIL_BODY = (
+    "Sehr geehrte Damen und Herren,\n\n"
+    "anbei erhalten Sie eine {{ mahntitel }} zu unserer Rechnung "
+    "{{ rechnungsnummer }}.\n\n"
+    "Bitte überweisen Sie den offenen Betrag von {{ betrag }} € bis zum "
+    "{{ nachfrist }}.\n\n"
+    "Mit freundlichen Grüßen\n{{ wg_name }}"
+)
+
+# Für die Platzhalter-Hilfe im Policy-Formular (Frontend rendert diese Liste).
+TEXT_PLACEHOLDERS = [
+    ("kunde", "Name des Kunden"),
+    ("rechnungsnummer", "Rechnungsnummer"),
+    ("rechnungsdatum", "Rechnungsdatum (TT.MM.JJJJ)"),
+    ("faelligkeit", "ursprüngliche Fälligkeit der Rechnung"),
+    ("nachfrist", "neue Zahlungsfrist der Mahnung"),
+    ("stufe", "Mahnstufe (Zahl)"),
+    ("mahntitel", "Titel der Mahnung (Drucktitel)"),
+    ("hauptforderung", "offene Hauptforderung"),
+    ("mahngebuehr", "Mahngebühr dieser Stufe"),
+    ("summe_mahngebuehren", "Summe aller Mahngebühren"),
+    ("betrag", "Gesamtbetrag offen (Hauptforderung + Gebühren)"),
+    ("iban", "IBAN der Genossenschaft"),
+    ("wg_name", "Name der Genossenschaft"),
+]
+
+
+def _money(value):
+    """Deutsches Geldformat ohne Währungssymbol, z.B. ``1.234,56``."""
+    try:
+        v = Decimal(str(value or 0))
+    except Exception:
+        return str(value)
+    s = f"{v:,.2f}"
+    return s.replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def dunning_text_context(notice, summary=None, wg=None):
+    """Platzhalter-Werte für die Stufentexte einer Mahnung."""
+    if summary is None:
+        summary = dunning_summary(notice.invoice)
+    if wg is None:
+        from app.settings_service import wg_settings
+        wg = wg_settings()
+    invoice = notice.invoice
+
+    def _d(dt):
+        return dt.strftime("%d.%m.%Y") if dt else "—"
+
+    return {
+        "kunde": invoice.customer.name,
+        "rechnungsnummer": invoice.invoice_number,
+        "rechnungsdatum": _d(invoice.date),
+        "faelligkeit": _d(invoice.due_date),
+        "nachfrist": _d(notice.new_due_date),
+        "stufe": notice.level_snapshot,
+        "mahntitel": notice.print_title_snapshot or notice.name_snapshot,
+        "hauptforderung": _money(summary["principal"]),
+        "mahngebuehr": _money(notice.fee_amount or 0),
+        "summe_mahngebuehren": _money(summary["total_fees"]),
+        "betrag": _money(summary["gross_total"]),
+        "iban": wg.get("iban", ""),
+        "bic": wg.get("bic", ""),
+        "wg_name": wg.get("name", ""),
+    }
+
+
+def _render_text(template_str, context):
+    """Rendert einen Stufentext mit Jinja (Platzhalter), Fehler → Rohtext."""
+    from jinja2 import Environment
+    try:
+        return Environment(autoescape=False).from_string(
+            template_str or ""
+        ).render(**context)
+    except Exception:
+        return template_str or ""
+
+
+def rendered_letter_texts(notice, summary=None, wg=None):
+    """``(intro, closing)`` für den Mahnbrief, mit Platzhaltern gerendert.
+
+    Pro-Stufe-Text wenn hinterlegt, sonst der Default (Schlusstext-Default
+    richtet sich nach der Stufe: ≤2 sanft, sonst dringlich).
+    """
+    ctx = dunning_text_context(notice, summary, wg)
+    stage = notice.stage
+    intro_tpl = (getattr(stage, "letter_intro", None) or "").strip() or DEFAULT_LETTER_INTRO
+    closing_tpl = (getattr(stage, "letter_closing", None) or "").strip()
+    if not closing_tpl:
+        closing_tpl = (
+            DEFAULT_LETTER_CLOSING_SOFT if notice.level_snapshot <= 2
+            else DEFAULT_LETTER_CLOSING_HARD
+        )
+    return _render_text(intro_tpl, ctx), _render_text(closing_tpl, ctx)
+
+
+def rendered_email(notice, summary=None, wg=None):
+    """``(subject, body)`` für die Mahn-Mail, mit Platzhaltern gerendert."""
+    ctx = dunning_text_context(notice, summary, wg)
+    stage = notice.stage
+    subj_tpl = (getattr(stage, "email_subject", None) or "").strip() or DEFAULT_EMAIL_SUBJECT
+    body_tpl = (getattr(stage, "email_body", None) or "").strip() or DEFAULT_EMAIL_BODY
+    return _render_text(subj_tpl, ctx), _render_text(body_tpl, ctx)
+
+
+# ---------------------------------------------------------------------------
 # Gebührenberechnung
 # ---------------------------------------------------------------------------
 
@@ -95,6 +222,12 @@ def eligible_invoices_for_stage(policy, today=None):
 
     results = []
     for inv in overdue_invoices:
+        # Teilzahlungen berücksichtigen: bereits (teil-)beglichene Rechnungen
+        # nicht über den vollen Betrag weitermahnen. Voll bezahlte Rechnungen
+        # haben Status 'Bezahlt' und fielen schon oben raus; das fängt den Fall
+        # ab, dass per Buchung beglichen wurde, ohne den Status zu wechseln.
+        if inv.open_balance <= 0:
+            continue
         days_overdue = (today - inv.due_date).days
         cur_level = current_dunning_level(inv)
 
@@ -119,8 +252,12 @@ def create_dunning_notice(invoice, stage, created_by_id):
 
     Status wird direkt auf 'Aktiv' gesetzt (kein Entwurf-Zwischenstatus).
     ``recalculate_total()`` wird NICHT aufgerufen (Fee-Items sind Phantom).
+
+    Die Gebühr wird auf den **offenen** Betrag berechnet (``open_balance``),
+    nicht auf den ursprünglichen Rechnungsbetrag — Teilzahlungen mindern die
+    prozentuale Mahngebühr.
     """
-    principal = Decimal(str(invoice.total_amount or 0))
+    principal = Decimal(str(invoice.open_balance or 0))
     fee = compute_fee(stage, principal)
     new_due = date.today() + timedelta(days=stage.new_due_days or 14)
 
@@ -243,8 +380,10 @@ def dunning_summary(invoice):
         - level: höchste aktive Stufe (int)
         - notices: Liste der aktiven DunningNotice-Objekte
         - total_fees: Summe aller aktiven Mahngebühren (Decimal)
-        - principal: Hauptforderung (= invoice.total_amount)
-        - gross_total: Hauptforderung + Mahngebühren
+        - principal: **offene** Hauptforderung (= invoice.open_balance)
+        - original_total: ursprünglicher Rechnungsbetrag (invoice.total_amount)
+        - paid: bereits geleistete Zahlung (original_total - principal)
+        - gross_total: offene Hauptforderung + Mahngebühren
     """
     notices = (
         DunningNotice.query
@@ -253,7 +392,9 @@ def dunning_summary(invoice):
         .all()
     )
 
-    principal = Decimal(str(invoice.total_amount or 0))
+    principal = Decimal(str(invoice.open_balance or 0))
+    original_total = Decimal(str(invoice.total_amount or 0))
+    paid = original_total - principal
     total_fees = sum(
         (Decimal(str(n.fee_amount or 0)) for n in notices),
         Decimal("0"),
@@ -264,5 +405,7 @@ def dunning_summary(invoice):
         "notices": notices,
         "total_fees": total_fees,
         "principal": principal,
+        "original_total": original_total,
+        "paid": paid,
         "gross_total": principal + total_fees,
     }

@@ -1,0 +1,47 @@
+<script>
+// Rich-Text-Editoren der Schriftführung initialisieren. Läuft bei jedem
+// hx-boost-Body-Swap erneut; pro Editor einmalig (data-rt-init-Guard).
+(function () {
+  try { document.execCommand('styleWithCSS', false, false); } catch (e) { /* ignore */ }
+  document.querySelectorAll('[data-rt-wrap]').forEach(function (wrap) {
+    if (wrap.dataset.rtInit) return;
+    wrap.dataset.rtInit = '1';
+    var editor = wrap.querySelector('.sf-rt-editor');
+    var input = wrap.querySelector('.sf-rt-input');
+    if (!editor || !input) return;
+
+    // LIVE-Spiegelung ins versteckte Feld — NICHT erst beim Submit (hx-boost
+    // serialisiert vor einem eigenen submit-Listener).
+    function sync() { input.value = editor.innerHTML; }
+    sync();
+    editor.addEventListener('input', sync);
+    editor.addEventListener('blur', sync);
+
+    wrap.querySelectorAll('[data-rt-cmd]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        editor.focus();
+        document.execCommand(btn.getAttribute('data-rt-cmd'), false, null);
+        sync();
+      });
+    });
+
+    var sizeSel = wrap.querySelector('.sf-rt-size');
+    if (sizeSel) {
+      sizeSel.addEventListener('change', function () {
+        var pt = this.value;
+        if (!pt) return;
+        editor.focus();
+        document.execCommand('fontSize', false, '7');
+        editor.querySelectorAll('font[size="7"]').forEach(function (f) {
+          var span = document.createElement('span');
+          span.style.fontSize = pt + 'pt';
+          span.innerHTML = f.innerHTML;
+          f.replaceWith(span);
+        });
+        sync();
+        this.value = '';
+      });
+    }
+  });
+})();
+</script>

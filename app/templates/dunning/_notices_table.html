@@ -11,12 +11,16 @@
             <th class="text-center">Nachfrist</th>
             <th class="text-end">Gebühr</th>
             <th class="text-center">Status</th>
+            <th class="text-center">Versand</th>
             <th class="text-end">Aktionen</th>
         </tr>
     </thead>
     <tbody>
         {% for n in notices %}
-        <tr>
+        <tr data-invoice-number="{{ n.invoice.invoice_number }}"
+            data-customer-name="{{ n.invoice.customer.name }}"
+            data-customer-email="{{ n.invoice.customer.email or '' }}"
+            data-email-enabled="{{ 'true' if (n.status == 'Aktiv' and n.invoice.customer.wants_email) else 'false' }}">
             <td>
                 <input type="checkbox" name="notice_ids" value="{{ n.id }}" class="dn-cb">
             </td>
@@ -58,6 +62,22 @@
                     <span class="badge bg-secondary">{{ n.status }}</span>
                 {% endif %}
             </td>
+            <td class="text-center" id="dn-mailstatus-{{ n.id }}">
+                {% if n.last_email_status %}
+                    {% set _ms = n.last_email_status %}
+                    {% set _mc = 'success' if _ms == 'delivered' else 'danger' if ('bounced' in _ms or _ms == 'spam_complaint' or _ms == 'failed') else 'info' %}
+                    <a href="{{ url_for('dunning.notice_email_events', notice_id=n.id) }}"
+                       class="badge bg-{{ _mc }}-lt text-decoration-none" title="E-Mail-Verlauf anzeigen">
+                        {{ n.last_email_status_de }}
+                    </a>
+                {% elif n.sent_at %}
+                    <span class="badge bg-secondary-lt">
+                        {{ 'Post' if n.sent_via == 'post' else 'E-Mail' if n.sent_via == 'email' else n.sent_via or 'versendet' }}
+                    </span>
+                {% else %}
+                    <span class="text-muted">–</span>
+                {% endif %}
+            </td>
             <td class="text-end" style="white-space:nowrap">
                 <a href="{{ url_for('dunning.notice_detail', notice_id=n.id) }}"
                    class="btn btn-sm btn-outline-info">
@@ -67,7 +87,7 @@
         </tr>
         {% else %}
         <tr>
-            <td colspan="9" class="text-center text-muted py-3">Keine Mahnungen gefunden.</td>
+            <td colspan="10" class="text-center text-muted py-3">Keine Mahnungen gefunden.</td>
         </tr>
         {% endfor %}
     </tbody>

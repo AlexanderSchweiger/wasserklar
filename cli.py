@@ -153,6 +153,19 @@ def seed_default_dunning_policy(db, *, verbose=False):
                      days_after_due=60, fee_fixed=Decimal("10.00"), new_due_days=7,
                      print_title="Letzte Mahnung", color="pink", icon="fa-gavel"),
     ]
+    # Default-Texte je Stufe vorbefüllen (im Policy-Formular editierbar).
+    from app.dunning.services import (
+        DEFAULT_LETTER_INTRO, DEFAULT_LETTER_CLOSING_SOFT,
+        DEFAULT_LETTER_CLOSING_HARD, DEFAULT_EMAIL_SUBJECT, DEFAULT_EMAIL_BODY,
+    )
+    for st in stages:
+        st.letter_intro = DEFAULT_LETTER_INTRO
+        st.letter_closing = (
+            DEFAULT_LETTER_CLOSING_SOFT if st.level <= 2
+            else DEFAULT_LETTER_CLOSING_HARD
+        )
+        st.email_subject = DEFAULT_EMAIL_SUBJECT
+        st.email_body = DEFAULT_EMAIL_BODY
     db.session.add_all(stages)
     db.session.commit()
     if verbose:

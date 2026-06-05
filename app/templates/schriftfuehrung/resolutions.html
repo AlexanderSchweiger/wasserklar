@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Beschlüsse{% endblock %}
+{% block page_title %}<i class="fas fa-balance-scale me-2"></i> Beschluss-Register{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="card-header d-flex align-items-center flex-wrap" style="gap:.5rem">
+    <div class="input-group input-group-sm" style="width:260px">
+      <input type="search" name="q" value="{{ q }}" class="form-control" placeholder="Beschluss / Notiz suchen…"
+        hx-get="{{ url_for('schriftfuehrung.resolutions') }}" hx-trigger="input changed delay:300ms, search"
+        hx-target="#sf-res-table" hx-include="[name='q'],[name='status'],[name='type'],[name='year']">
+      <span class="input-group-text"><i class="fas fa-search"></i></span>
+    </div>
+    <select name="status" class="form-select form-select-sm" style="width:150px"
+      hx-get="{{ url_for('schriftfuehrung.resolutions') }}" hx-trigger="change"
+      hx-target="#sf-res-table" hx-include="[name='q'],[name='status'],[name='type'],[name='year']">
+      <option value="">Alle Ergebnisse</option>
+      {% for k, l in sf_resolution_status_labels.items() %}<option value="{{ k }}" {% if k == status_filter %}selected{% endif %}>{{ l }}</option>{% endfor %}
+    </select>
+    <select name="type" class="form-select form-select-sm" style="width:180px"
+      hx-get="{{ url_for('schriftfuehrung.resolutions') }}" hx-trigger="change"
+      hx-target="#sf-res-table" hx-include="[name='q'],[name='status'],[name='type'],[name='year']">
+      <option value="">Alle Sitzungsarten</option>
+      {% for k, l in sf_meeting_type_labels.items() %}<option value="{{ k }}" {% if k == type_filter %}selected{% endif %}>{{ l }}</option>{% endfor %}
+    </select>
+    {% if years %}
+    <select name="year" class="form-select form-select-sm" style="width:130px"
+      hx-get="{{ url_for('schriftfuehrung.resolutions') }}" hx-trigger="change"
+      hx-target="#sf-res-table" hx-include="[name='q'],[name='status'],[name='type'],[name='year']">
+      <option value="">Alle Jahre</option>
+      {% for y in years %}<option value="{{ y }}" {% if year_filter == y|string %}selected{% endif %}>{{ y }}</option>{% endfor %}
+    </select>
+    {% endif %}
+  </div>
+  <div id="sf-res-table">
+    {% include "schriftfuehrung/_resolutions_table.html" %}
+  </div>
+</div>
+{% endblock %}

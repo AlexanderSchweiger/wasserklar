@@ -30,49 +30,7 @@
   </thead>
   <tbody>
     {% for prop in properties %}
-    {% set owner = prop.current_owner() %}
-    {% set _wgp = wg_property_map.get(prop.id) if wg_property_map is defined else none %}
-    {% set _shares = _wgp.shares if _wgp else 0 %}
-    <tr{% if is_wg and _shares <= 0 %} class="table-warning"{% endif %}>
-      <td>
-        {% if prop.object_number %}
-          <a href="{{ url_for('properties.detail', property_id=prop.id) }}">{{ prop.object_number }}</a>
-        {% else %}—{% endif %}
-      </td>
-      <td>{{ prop.object_type }}</td>
-      <td>
-        {% set street = [prop.strasse, prop.hausnummer] | select | join(' ') %}
-        {% set city = [prop.plz, prop.ort] | select | join(' ') %}
-        {{ street }}{% if street and city %}, {% endif %}{{ city }}
-      </td>
-      <td>
-        {% if owner %}
-          <a href="{{ url_for('customers.detail', customer_id=owner.customer_id) }}">
-            {{ owner.customer.name }}
-          </a>
-          <small class="text-muted">ab {{ owner.valid_from.strftime('%d.%m.%Y') }}</small>
-        {% else %}
-          <span class="text-muted">—</span>
-        {% endif %}
-      </td>
-      {% if is_wg %}
-      <td class="text-end">{% if _shares > 0 %}<strong>{{ _shares }}</strong>{% else %}<span class="text-muted">0</span>{% endif %}</td>
-      <td class="text-end">{% if _wgp and _wgp.area_m2 is not none %}{{ _wgp.area_m2 }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
-      {% endif %}
-      <td class="text-end">
-        <a href="{{ url_for('properties.detail', property_id=prop.id) }}"
-           class="btn btn-sm btn-outline-primary" title="Liegenschaftsdetails">
-          <i class="fas fa-home"></i>
-        </a>
-        <button type="button"
-           data-url="{{ url_for('properties.edit', property_id=prop.id) }}"
-           onclick="openPropertyEditModal(this)"
-           class="btn btn-sm btn-outline-secondary"
-           title="Bearbeiten">
-          <i class="fas fa-edit"></i>
-        </button>
-      </td>
-    </tr>
+    {% include "properties/_row.html" %}
     {% else %}
     <tr><td colspan="{{ 7 if is_wg else 5 }}" class="text-center text-muted py-3">Keine Liegenschaften gefunden.</td></tr>
     {% endfor %}

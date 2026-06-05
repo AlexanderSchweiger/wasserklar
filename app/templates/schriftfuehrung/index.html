@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% from "schriftfuehrung/_meeting_form.html" import meeting_form_fields %}
+{% set list_url = url_for('schriftfuehrung.assemblies') if meeting_type == 'assembly' else url_for('schriftfuehrung.board_meetings') %}
+{% block title %}{{ sf_meeting_type_labels_plural[meeting_type] }}{% endblock %}
+{% block page_title %}<i class="fas fa-feather-alt me-2"></i> {{ sf_meeting_type_labels_plural[meeting_type] }}{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="card-header d-flex align-items-center flex-wrap" style="gap:.5rem">
+    <div class="input-group input-group-sm" style="width:260px">
+      <input type="search" name="q" value="{{ q }}" class="form-control" placeholder="Sitzung suchen…"
+        hx-get="{{ list_url }}" hx-trigger="input changed delay:300ms, search"
+        hx-target="#sf-meeting-table"
+        hx-include="[name='q'],[name='status'],[name='year']">
+      <span class="input-group-text"><i class="fas fa-search"></i></span>
+    </div>
+    <select name="status" class="form-select form-select-sm" style="width:160px"
+      hx-get="{{ list_url }}" hx-trigger="change" hx-target="#sf-meeting-table"
+      hx-include="[name='q'],[name='status'],[name='year']">
+      <option value="">Alle Status</option>
+      {% for k, l in sf_meeting_status_labels.items() %}
+      <option value="{{ k }}" {% if k == status_filter %}selected{% endif %}>{{ l }}</option>
+      {% endfor %}
+    </select>
+    {% if years %}
+    <select name="year" class="form-select form-select-sm" style="width:140px"
+      hx-get="{{ list_url }}" hx-trigger="change" hx-target="#sf-meeting-table"
+      hx-include="[name='q'],[name='status'],[name='year']">
+      <option value="">Alle Jahre</option>
+      {% for y in years %}<option value="{{ y }}" {% if year_filter == y|string %}selected{% endif %}>{{ y }}</option>{% endfor %}
+    </select>
+    {% endif %}
+    <div class="ms-auto">
+      <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#meetingCreateModal">
+        <i class="fas fa-plus me-1"></i> Neue {{ sf_meeting_type_labels[meeting_type] }}
+      </button>
+    </div>
+  </div>
+  <div id="sf-meeting-table">
+    {% include "schriftfuehrung/_table.html" %}
+  </div>
+</div>
+{% endblock %}
+
+{% block modals %}
+<div class="modal fade" id="meetingCreateModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <form method="post" action="{{ url_for('schriftfuehrung.meeting_new') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="meeting_type" value="{{ meeting_type }}">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="fas fa-plus me-2"></i>Neue {{ sf_meeting_type_labels[meeting_type] }}</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+        </div>
+        <div class="modal-body">{{ meeting_form_fields() }}</div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">Abbrechen</button>
+          <button type="submit" class="btn btn-primary"><i class="fas fa-save me-1"></i> Anlegen</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}{% include "schriftfuehrung/_richtext_scripts.html" %}{% endblock %}

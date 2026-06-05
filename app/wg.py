@@ -24,12 +24,14 @@ ORG_TYPE_LABELS = {
 # ---------------------------------------------------------------------------
 STATUS_PROSPECT = "prospect"      # Interessent
 STATUS_MEMBER = "member"          # Mitglied
+STATUS_EXTERNAL = "external"      # Extern (Wasserbezieher ohne Mitgliedschaft)
 STATUS_RESIGNED = "resigned"      # Ausgeschieden (Vererbt/Tod/Verkauf)
 
 # Reihenfolge = Reihenfolge im <select>
 STATUS_LABELS = {
     STATUS_PROSPECT: "Interessent",
     STATUS_MEMBER: "Mitglied",
+    STATUS_EXTERNAL: "Extern",
     STATUS_RESIGNED: "Ausgeschieden",
 }
 
@@ -37,6 +39,7 @@ STATUS_LABELS = {
 STATUS_BADGE = {
     STATUS_PROSPECT: "bg-yellow-lt",
     STATUS_MEMBER: "bg-success-lt",
+    STATUS_EXTERNAL: "bg-azure-lt",
     STATUS_RESIGNED: "bg-secondary-lt",
 }
 
@@ -53,6 +56,10 @@ _STATUS_SYNONYMS = {
     "mitglied": STATUS_MEMBER,
     "aktiv": STATUS_MEMBER,
     "member": STATUS_MEMBER,
+    "extern": STATUS_EXTERNAL,
+    "externer": STATUS_EXTERNAL,
+    "external": STATUS_EXTERNAL,
+    "nichtmitglied": STATUS_EXTERNAL,
     "ausgeschieden": STATUS_RESIGNED,
     "ausgetreten": STATUS_RESIGNED,
     "inaktiv": STATUS_RESIGNED,

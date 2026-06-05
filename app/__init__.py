@@ -7,7 +7,13 @@ def create_app(config_name=None):
     if config_name is None:
         config_name = os.environ.get("FLASK_ENV", "default")
 
-    app = Flask(__name__, instance_relative_config=True)
+    # instance_path defaultet auf <package_root>/instance. Im SaaS-Stack liegt
+    # das OSS-Paket aber unter /app/wasserklar/, waehrend das persistente Volume
+    # bei /app/instance gemountet ist — ohne Override schriebe die App auf das
+    # ephemere Container-FS und verloere alle Tenant-PDFs/Backups beim Redeploy.
+    # WASSERKLAR_INSTANCE_PATH (absolut) biegt instance_path auf das Volume.
+    instance_path = os.environ.get("WASSERKLAR_INSTANCE_PATH") or None
+    app = Flask(__name__, instance_relative_config=True, instance_path=instance_path)
     app.config.from_object(config[config_name])
 
     # Verzeichnisse sicherstellen
@@ -67,6 +73,9 @@ def create_app(config_name=None):
 
     from app.network import bp as network_bp
     app.register_blueprint(network_bp)
+
+    from app.schriftfuehrung import bp as schriftfuehrung_bp
+    app.register_blueprint(schriftfuehrung_bp)
 
     # hx-boost-Navigationen (base.html: <body hx-boost="true">) senden
     # sowohl "HX-Request: true" als auch "HX-Boosted: true". Unsere Routen

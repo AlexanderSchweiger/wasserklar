@@ -1,0 +1,26 @@
+{# Eine Agenda-Zeile (Tagesordnungspunkt). ``item`` None = leere Vorlage. #}
+{% macro agenda_row(item=None) %}
+<div class="card card-sm mb-2 agenda-row" data-agenda-row>
+  <div class="card-body p-2">
+    <div class="d-flex align-items-start" style="gap:.5rem">
+      <span class="text-secondary mt-2" title="Reihenfolge"><i class="fas fa-grip-vertical"></i></span>
+      <div class="flex-fill">
+        <input type="text" data-f="title" class="form-control form-control-sm mb-1"
+               placeholder="Titel des Tagesordnungspunkts" value="{{ item.title if item else '' }}">
+        <textarea data-f="description" class="form-control form-control-sm" rows="1"
+                  placeholder="Beschreibung (optional)">{{ item.description if item and item.description else '' }}</textarea>
+        <label class="form-check mt-1 mb-0">
+          <input type="checkbox" class="form-check-input" data-f="requires_vote" value="1"
+                 {% if item and item.requires_vote %}checked{% endif %}>
+          <span class="form-check-label small">Abstimmung / Beschluss zu diesem Punkt</span>
+        </label>
+      </div>
+      <div class="btn-group-vertical btn-group-sm">
+        <button type="button" class="btn btn-outline-secondary agenda-up" title="Nach oben"><i class="fas fa-chevron-up"></i></button>
+        <button type="button" class="btn btn-outline-secondary agenda-down" title="Nach unten"><i class="fas fa-chevron-down"></i></button>
+        <button type="button" class="btn btn-outline-danger agenda-remove" title="Entfernen"><i class="fas fa-times"></i></button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endmacro %}
