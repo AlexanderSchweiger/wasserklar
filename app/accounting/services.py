@@ -775,6 +775,79 @@ def booking_group_from_invoice_payment(
     return group, children
 
 
+def storno_invoice_bookings(invoice, reason, created_by_id, storno_date=None):
+    """Storniert alle wirksamen Buchungen einer Rechnung (Einzel- und Sammelbuchungen).
+
+    Wird beim Stornieren einer Rechnung aufgerufen, damit eine zuvor automatisch
+    erzeugte Zahlungsbuchung nicht als Phantom-Einnahme in den Auswertungen
+    hängen bleibt. Für jede betroffene Buchung wird ein Storno-Partner angelegt
+    (Betrag negiert, ``storno_of_id`` gesetzt) und das Original auf ``Storniert``
+    gesetzt; Sammelbuchungen werden über :func:`storno_booking_group` gruppen-
+    atomar zurückgesetzt.
+
+    Liegt eine betroffene Buchung in einem abgeschlossenen Buchungsjahr, wird
+    **nichts** storniert und eine deutsche Fehlermeldung zurückgegeben; sonst
+    ``None``. Die Funktion committet nicht — der Aufrufer ist dafür zuständig.
+    """
+    storno_date = storno_date or date.today()
+    bookings = (
+        Booking.query
+        .filter(Booking.invoice_id == invoice.id)
+        .filter(storno_filter())
+        .all()
+    )
+    if not bookings:
+        return None
+
+    # Erst prüfen, ob alle betroffenen Buchungen storniert werden dürfen –
+    # nichts anfassen, solange auch nur eine in einem geschlossenen Jahr liegt.
+    for b in bookings:
+        fy = locked_fiscal_year(b.date)
+        if fy is not None:
+            return (
+                f"Buchung vom {b.date.strftime('%d.%m.%Y')} liegt im abgeschlossenen "
+                f"Buchungsjahr {fy.year} und kann nicht storniert werden – die "
+                f"Rechnung lässt sich daher nicht stornieren."
+            )
+
+    seen_groups = set()
+    for b in bookings:
+        if b.group_id is not None:
+            if b.group_id in seen_groups:
+                continue
+            seen_groups.add(b.group_id)
+            group = db.session.get(BookingGroup, b.group_id)
+            if group is not None:
+                storno_booking_group(group, reason, created_by_id, storno_date)
+            continue
+        # Einzelbuchung: Storno-Partner anlegen, Original markieren.
+        partner = Booking(
+            date=b.date,
+            account_id=b.account_id,
+            amount=-Decimal(str(b.amount)),
+            description=f"Storno: {b.description}",
+            reference=b.reference,
+            invoice_id=b.invoice_id,
+            open_item_id=b.open_item_id,
+            project_id=b.project_id,
+            real_account_id=b.real_account_id,
+            customer_id=b.customer_id,
+            tax_rate=b.tax_rate,
+            status=Booking.STATUS_VERBUCHT,
+            storno_of_id=b.id,
+            storno_reason=reason,
+            storno_date=storno_date,
+            created_by_id=created_by_id,
+        )
+        db.session.add(partner)
+        b.status = Booking.STATUS_STORNIERT
+        b.storno_reason = reason
+        b.storno_date = storno_date
+
+    db.session.flush()
+    return None
+
+
 def storno_booking_group(group, reason, created_by_id, storno_date=None):
     """Storniert eine Sammelbuchung gruppen-atomar (ADR-002).
 

@@ -64,6 +64,11 @@
               {{ col_select("phone", "Telefon") }}
               {{ col_select("email", "E-Mail") }}
               {{ col_select("notes", "Kommentar / Notizen") }}
+              {% if is_wg %}
+              {{ col_select("wg_status", "Mitglieds-Status") }}
+              {{ col_select("member_since", "Mitglied seit") }}
+              {{ col_select("member_until", "Mitglied bis") }}
+              {% endif %}
 
               {# Liegenschaft-Felder #}
               <tr class="table-secondary">
@@ -71,6 +76,10 @@
               </tr>
               {{ col_select("property_name", "Liegenschaft (Bezeichnung / Adresse)", required=True) }}
               {{ col_select("property_type", "Typ (Stall → Sonstiges)") }}
+              {% if is_wg %}
+              {{ col_select("property_shares", "Anteile") }}
+              {{ col_select("property_area", "Fläche (m²)") }}
+              {% endif %}
 
               {# Zähler-Felder #}
               <tr class="table-secondary">

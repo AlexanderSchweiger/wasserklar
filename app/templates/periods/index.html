@@ -7,9 +7,10 @@
   <div class="card-header">
     <h3 class="card-title">Abrechnungsperioden</h3>
     <div class="card-options">
-      <a href="{{ url_for('periods.new') }}" class="btn btn-primary">
+      <button type="button" data-url="{{ url_for('periods.new') }}"
+              onclick="openPeriodModal(this)" class="btn btn-primary">
         <i class="fas fa-plus me-1"></i> Neue Periode
-      </a>
+      </button>
     </div>
   </div>
   <div class="card-body p-0">
@@ -47,10 +48,10 @@
                 </button>
               </form>
               {% endif %}
-              <a href="{{ url_for('periods.edit', period_id=period.id) }}"
-                 class="btn btn-outline-secondary btn-sm" title="Bearbeiten">
+              <button type="button" data-url="{{ url_for('periods.edit', period_id=period.id) }}"
+                 onclick="openPeriodModal(this)" class="btn btn-outline-secondary btn-sm" title="Bearbeiten">
                 <i class="fas fa-edit"></i>
-              </a>
+              </button>
               {% if not period.active %}
               <form method="post" action="{{ url_for('periods.delete', period_id=period.id) }}"
                     hx-boost="false"
@@ -76,4 +77,22 @@
   </div>
   {{ render_pagination(pagination) }}
 </div>
+{% endblock %}
+
+{% block modals %}
+{% include "periods/_period_modal.html" %}
+{% endblock %}
+
+{% block scripts %}
+{% include "_modal_edit_helpers.html" %}
+<script>
+setupEditModal({
+  formId: 'periodForm',
+  bodyId: 'periodModalBody',
+  modalId: 'periodModal',
+  openFn: 'openPeriodModal',
+  closeEvent: 'closePeriodModal',
+  savedEvent: 'periodSaved',
+});
+</script>
 {% endblock %}

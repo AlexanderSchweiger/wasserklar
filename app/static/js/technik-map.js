@@ -196,11 +196,27 @@
 
   // --- Legende -------------------------------------------------------------
 
+  // Legende einklappbar: Zustand in localStorage merken, auf schmalen Screens
+  // (Mobile) per Default zugeklappt, damit die Karte mehr Platz bekommt.
+  var LEGEND_KEY = "technik.legend.collapsed";
+  function legendCollapsedDefault() {
+    try {
+      var stored = window.localStorage.getItem(LEGEND_KEY);
+      if (stored !== null) return stored === "1";
+    } catch (e) { /* localStorage gesperrt -> Fallback unten */ }
+    return window.matchMedia && window.matchMedia("(max-width: 768px)").matches;
+  }
+
   function legendControl(store) {
     var ctrl = L.control({ position: "bottomleft" });
     ctrl.onAdd = function () {
       var div = L.DomUtil.create("div", "technik-legend card");
-      var html = '<div class="technik-legend-head"><strong>Legende</strong></div><div class="technik-legend-body">';
+      var collapsed = legendCollapsedDefault();
+      var html = '<button type="button" class="technik-legend-head" aria-expanded="' +
+        (collapsed ? "false" : "true") + '" title="Legende ein-/ausblenden">' +
+        '<i class="fas fa-layer-group me-1 text-secondary"></i><strong>Legende</strong>' +
+        '<i class="fas fa-chevron-down technik-legend-caret ms-auto"></i></button>' +
+        '<div class="technik-legend-body">';
       function row(type, label, color, isLine) {
         var swatch = isLine
           ? '<span class="technik-legend-line" style="border-color:' + color + '"></span>'
@@ -212,8 +228,15 @@
       Object.keys(V.lineTypes || {}).forEach(function (k) { html += row(k, V.lineTypes[k].label, V.lineTypes[k].color, true); });
       html += "</div>";
       div.innerHTML = html;
+      if (collapsed) div.classList.add("is-collapsed");
       L.DomEvent.disableClickPropagation(div);
       L.DomEvent.disableScrollPropagation(div);
+      var head = div.querySelector(".technik-legend-head");
+      head.addEventListener("click", function () {
+        var nowCollapsed = div.classList.toggle("is-collapsed");
+        head.setAttribute("aria-expanded", nowCollapsed ? "false" : "true");
+        try { window.localStorage.setItem(LEGEND_KEY, nowCollapsed ? "1" : "0"); } catch (e) { /* ignore */ }
+      });
       div.addEventListener("change", function (e) {
         var cb = e.target.closest("input[type=checkbox]");
         if (cb) store.toggleType(cb.getAttribute("data-type"), cb.checked);
@@ -260,6 +283,18 @@
     var store = new FeatureStore(map);
     legendControl(store).addTo(map);
     resetPanel();
+
+    // --- Mobile-Bottom-Sheet ---
+    // Auf Mobile (< lg) liegt die rechte Spalte als Bottom-Sheet ueber der Karte
+    // (CSS). setSheet(true) schiebt es hoch, setSheet(false) wieder runter; auf
+    // Desktop ist die Klasse wirkungslos (Media-Query). So bleibt die Karte mobil
+    // gross, das Detail/die Liste kommt nur bei Bedarf rein.
+    var cardEl = document.getElementById("technik-card");
+    function setSheet(open) {
+      if (cardEl) cardEl.classList.toggle("technik-sheet-open", open);
+    }
+    var sheetHandle = document.querySelector(".technik-sheet-handle");
+    if (sheetHandle) sheetHandle.addEventListener("click", function () { setSheet(false); });
 
     // --- Elementliste + Suche (rechte Spalte) ---
     var listEl = document.getElementById("technik-list");
@@ -340,6 +375,7 @@
       if (listToggleBtn) listToggleBtn.classList.add("active");
       if (listViewEl) listViewEl.style.display = "";
       var p = panelEl(); if (p) p.style.display = "none";
+      setSheet(true);
     }
     function showPanel() {   // nur DOM umschalten; listMode bleibt (Detail liegt ueber der Liste)
       if (listViewEl) listViewEl.style.display = "none";
@@ -352,14 +388,17 @@
       if (listToggleBtn) listToggleBtn.classList.remove("active");
       resetPanel();
       showPanel();
+      setSheet(false);   // Mobile: Sheet runter, Karte wieder voll sichtbar
     }
     function showDetail(id) {     // Panel einblenden + laden, Karte NICHT bewegen (Marker-Klick)
       showPanel();
       openPanel(id);
+      setSheet(true);
     }
     function selectFeature(id) {  // wie showDetail, zusaetzlich auf das Element zentrieren (Liste/Deep-Link)
       showPanel();
       focusFeature(map, store, id);
+      setSheet(true);
     }
 
     if (searchInput) {
@@ -552,13 +591,21 @@
       });
     }
 
-    // --- Bearbeiten-Umschalter (Geometrie verschieben/Stuetzpunkte) ---
+    // --- Bearbeiten-Umschalter (Zeichnen-Leiste + Geometrie verschieben) ---
+    // Blendet die Zeichnen-Palette ein/aus und schaltet den Geoman-Edit-Modus.
     var editBtn = document.getElementById("technik-edit-toggle");
+    var drawBar = document.getElementById("technik-draw-bar");
     if (editBtn && map.pm) {
       editBtn.addEventListener("click", function () {
         editMode = !editMode;
         editBtn.classList.toggle("active", editMode);
-        if (editMode) { map.pm.enableGlobalEditMode(); } else { map.pm.disableGlobalEditMode(); }
+        if (drawBar) drawBar.classList.toggle("is-open", editMode);
+        if (editMode) {
+          map.pm.enableGlobalEditMode();
+        } else {
+          cancelDraw();                 // laufendes Zeichnen abbrechen
+          map.pm.disableGlobalEditMode();
+        }
       });
     }
 
@@ -581,7 +628,7 @@
       panel.addEventListener("click", function (e) {
         if (e.target.closest("#technik-panel-close")) {
           resetPanel();
-          if (listMode) showList(); else showPanel();
+          if (listMode) showList(); else showEmpty();
         }
       });
     }
@@ -598,7 +645,7 @@
       if (e.detail && e.detail.id != null) store.remove(e.detail.id);
       resetPanel();
       renderList();
-      if (listMode) showList(); else showPanel();
+      if (listMode) showList(); else showEmpty();
     });
   }
 

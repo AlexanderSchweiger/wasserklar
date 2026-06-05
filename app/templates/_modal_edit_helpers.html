@@ -1,0 +1,55 @@
+{# Generischer Edit-Modal-Helfer (DRY fuer Kontakt-, Buchungsjahr-,
+   Abrechnungsperioden-Modal). Body wird per HTMX-GET (X-From-Modal) geladen;
+   das Formular submittet nativ via htmx (hx-post wird beim Oeffnen dynamisch
+   gesetzt) — dadurch funktionieren Mehrfach-Checkboxen, und HX-Trigger-
+   Antworten (204) werden von htmx selbst verarbeitet.
+
+   setupEditModal({
+     formId, bodyId, modalId,          // DOM-IDs des Skeletts
+     openFn,                            // Name der globalen Open-Funktion (data-url-Button ruft sie)
+     closeEvent, savedEvent,           // HX-Trigger-Event-Namen vom Server
+     savedHandler                      // optional: Name einer window-Funktion; sonst reload
+   })
+#}
+<script>
+window.setupEditModal = function (opts) {
+  var form = document.getElementById(opts.formId);
+  if (!form) { return; }
+  var bodySel = '#' + opts.bodyId;
+
+  // Open-Funktion bei jedem Setup neu binden — nach hx-boost ist das Formular
+  // ein frisches DOM-Element.
+  window[opts.openFn] = function (btn) {
+    var url = btn.dataset.url;
+    form.setAttribute('hx-post', url);
+    form.setAttribute('hx-target', bodySel);
+    form.setAttribute('hx-swap', 'innerHTML');
+    if (window.htmx) { htmx.process(form); }
+    document.getElementById(opts.bodyId).innerHTML =
+      '<div class="text-center text-muted py-4">' +
+      '<div class="spinner-border spinner-border-sm" role="status"></div></div>';
+    bootstrap.Modal.getOrCreateInstance(document.getElementById(opts.modalId)).show();
+    if (window.htmx) {
+      htmx.ajax('GET', url, {target: bodySel, swap: 'innerHTML', headers: {'X-From-Modal': '1'}});
+    }
+  };
+
+  // Dokument-Listener nur einmal pro Event-Name registrieren — hx-boost ruft
+  // setupEditModal bei jeder Navigation erneut auf (sonst Mehrfach-Reload).
+  window.__wkModalEvents = window.__wkModalEvents || {};
+  if (!window.__wkModalEvents[opts.closeEvent]) {
+    window.__wkModalEvents[opts.closeEvent] = true;
+    document.addEventListener(opts.closeEvent, function () {
+      var el = document.getElementById(opts.modalId);
+      if (!el) { return; }
+      var modal = bootstrap.Modal.getInstance(el);
+      if (modal) { modal.hide(); }
+    });
+    document.addEventListener(opts.savedEvent, function (e) {
+      var fn = opts.savedHandler ? window[opts.savedHandler] : null;
+      if (typeof fn === 'function') { fn(e); }
+      else { window.location.reload(); }
+    });
+  }
+};
+</script>

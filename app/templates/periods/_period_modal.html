@@ -1,0 +1,29 @@
+{# Modal-Skelett fuer Abrechnungsperiode anlegen/bearbeiten. Body wird per
+   HTMX (X-From-Modal-GET) geladen, Submit nativ via htmx → 204 + HX-Trigger
+   (closePeriodModal + periodSaved). #}
+<div class="modal fade" id="periodModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="fas fa-calendar-week me-2"></i> Abrechnungsperiode</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <form id="periodForm" method="post" hx-headers='{"X-From-Modal": "1"}'>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-body" id="periodModalBody">
+          <div class="text-center text-muted py-4">
+            <div class="spinner-border spinner-border-sm" role="status"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+            <i class="fas fa-times me-1"></i> Abbrechen
+          </button>
+          <button type="submit" class="btn btn-primary">
+            <i class="fas fa-save me-1"></i> Speichern
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>

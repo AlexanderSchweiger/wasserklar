@@ -3,7 +3,7 @@
 {% macro sort_header(key, label) %}
   {% set active = sort == key %}
   {% set new_dir = 'desc' if (active and dir == 'asc') else 'asc' %}
-  <a href="{{ url_for('properties.index', q=q or none, sort=key, dir=new_dir) }}"
+  <a href="{{ url_for('properties.index', q=q or none, sort=key, dir=new_dir, shares=shares_filter if shares_filter is defined and shares_filter != 'all' else none) }}"
      class="text-reset text-decoration-none d-inline-flex align-items-center gap-1">
     {{ label }}
     {% if active %}
@@ -21,13 +21,19 @@
       <th>{{ sort_header('type', 'Typ') }}</th>
       <th>{{ sort_header('address', 'Adresse') }}</th>
       <th>{{ sort_header('owner', 'Aktueller Besitzer') }}</th>
+      {% if is_wg %}
+      <th class="text-end">{{ sort_header('shares', 'Anteile') }}</th>
+      <th class="text-end">m²</th>
+      {% endif %}
       <th></th>
     </tr>
   </thead>
   <tbody>
     {% for prop in properties %}
     {% set owner = prop.current_owner() %}
-    <tr>
+    {% set _wgp = wg_property_map.get(prop.id) if wg_property_map is defined else none %}
+    {% set _shares = _wgp.shares if _wgp else 0 %}
+    <tr{% if is_wg and _shares <= 0 %} class="table-warning"{% endif %}>
       <td>
         {% if prop.object_number %}
           <a href="{{ url_for('properties.detail', property_id=prop.id) }}">{{ prop.object_number }}</a>
@@ -49,6 +55,10 @@
           <span class="text-muted">—</span>
         {% endif %}
       </td>
+      {% if is_wg %}
+      <td class="text-end">{% if _shares > 0 %}<strong>{{ _shares }}</strong>{% else %}<span class="text-muted">0</span>{% endif %}</td>
+      <td class="text-end">{% if _wgp and _wgp.area_m2 is not none %}{{ _wgp.area_m2 }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+      {% endif %}
       <td class="text-end">
         <a href="{{ url_for('properties.detail', property_id=prop.id) }}"
            class="btn btn-sm btn-outline-primary" title="Liegenschaftsdetails">
@@ -64,7 +74,7 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="5" class="text-center text-muted py-3">Keine Liegenschaften gefunden.</td></tr>
+    <tr><td colspan="{{ 7 if is_wg else 5 }}" class="text-center text-muted py-3">Keine Liegenschaften gefunden.</td></tr>
     {% endfor %}
   </tbody>
 </table>

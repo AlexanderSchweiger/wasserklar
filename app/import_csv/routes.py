@@ -44,6 +44,12 @@ _COLUMN_HINTS = {
     "phone": ["telefon", "tel"],
     "email": ["e-mail", "email"],
     "notes": ["kommentar", "bemerkung", "notiz", "info"],
+    # WG-spezifisch (nur im Genossenschafts-Modus gemappt/angewendet)
+    "wg_status": ["status", "mitgliedsstatus", "mitglieds-status"],
+    "member_since": ["mitglied seit", "mitglied-seit", "beitritt", "beitrittsdatum", "eintritt"],
+    "member_until": ["mitglied bis", "mitglied-bis", "austritt", "austrittsdatum"],
+    "property_shares": ["anteile", "anteil"],
+    "property_area": ["fläche", "flaeche", "quadratmeter", "m2", "fläche m2", "fläche (m2)"],
 }
 
 
@@ -120,8 +126,63 @@ def _plan_entry(idx, cnum, name, objekt, meter, category, label, actions):
     }
 
 
+def _parse_import_date(raw: str):
+    """Parst ein Import-Datum (de/iso/Excel) zu einem date-Objekt, sonst None."""
+    from app.imports.common import parse_date
+    return parse_date(raw, "de") if raw else None
+
+
+def _parse_import_int(raw: str):
+    """Parst eine (oesterr. formatierte) Zahl zu int, sonst None."""
+    from app.imports.common import parse_number
+    n = parse_number(raw, "at_de") if raw else None
+    return int(n) if n is not None else None
+
+
+def _apply_wg_customer(customer, row, cols, actions):
+    """Setzt im WG-Modus Mitglied-seit (Customer) sowie Status und Mitglied-bis
+    (CustomerWgProfile). Nur gemappte Spalten werden angefasst."""
+    from app.wg import parse_status
+    col_status, col_since, col_until = cols
+    if col_since:
+        d = _parse_import_date(_get_cell(row, col_since))
+        if d is not None:
+            customer.member_since = d
+    if col_status or col_until:
+        profile = customer.ensure_wg_profile()
+        if col_status:
+            st = parse_status(_get_cell(row, col_status))
+            if st:
+                profile.status = st
+                actions.append(_act(f"WG-Status »{st}« gesetzt", "update"))
+        if col_until:
+            raw_until = _get_cell(row, col_until)
+            if raw_until:
+                profile.member_until = _parse_import_date(raw_until)
+
+
+def _apply_wg_property(prop, row, cols, actions):
+    """Setzt im WG-Modus Anteile + Fläche (PropertyWgProfile)."""
+    col_shares, col_area = cols
+    shares = _parse_import_int(_get_cell(row, col_shares)) if col_shares else None
+    area = _parse_import_int(_get_cell(row, col_area)) if col_area else None
+    if shares is None and area is None:
+        return
+    profile = prop.ensure_wg_profile()
+    if shares is not None:
+        profile.shares = shares
+    if area is not None:
+        profile.area_m2 = area
+    bits = []
+    if shares is not None:
+        bits.append(f"{shares} Anteil(e)")
+    if area is not None:
+        bits.append(f"{area} m²")
+    actions.append(_act("WG-Liegenschaft: " + ", ".join(bits), "update"))
+
+
 def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str,
-                dry_run: bool = False) -> dict:
+                dry_run: bool = False, is_wg: bool = False) -> dict:
     """
     Analysiert/importiert die CSV.
 
@@ -177,6 +238,16 @@ def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str,
     col_phone = col_map.get("phone", "")
     col_email = col_map.get("email", "")
     col_notes = col_map.get("notes", "")
+    # WG-spezifisch (nur im Genossenschafts-Modus angewendet)
+    wg_customer_cols = (
+        col_map.get("wg_status", ""),
+        col_map.get("member_since", ""),
+        col_map.get("member_until", ""),
+    )
+    wg_property_cols = (
+        col_map.get("property_shares", ""),
+        col_map.get("property_area", ""),
+    )
 
     # Äußere Transaktionsklammer vor alle DB-Schreibzugriffe ziehen — auch
     # vor die Period-Erstellung, damit dry_run alles sauber zurückrollt.
@@ -310,6 +381,8 @@ def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str,
                         for key, val in cust_fields.items():
                             setattr(customer, key, val)
                         db.session.flush()
+                        if is_wg:
+                            _apply_wg_customer(customer, row, wg_customer_cols, actions)
                         results["customers_updated"] += 1
                         updated = True
                         actions.append(_act(
@@ -324,6 +397,8 @@ def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str,
                     db.session.add(customer)
                     db.session.flush()
                     seen_customers[cnum] = customer
+                    if is_wg:
+                        _apply_wg_customer(customer, row, wg_customer_cols, actions)
                     results["customers_created"] += 1
                     new_count += 1
                     actions.append(_act(
@@ -343,10 +418,15 @@ def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str,
                 )
                 db.session.add(prop)
                 db.session.flush()
+                if is_wg:
+                    _apply_wg_property(prop, row, wg_property_cols, actions)
                 results["properties_created"] += 1
                 new_count += 1
                 actions.append(_act(f"Objekt »{raw_objekt}« – neu angelegt", "new"))
             else:
+                if is_wg and duplicate_mode == "overwrite":
+                    _apply_wg_property(prop, row, wg_property_cols, actions)
+                    db.session.flush()
                 results["properties_reused"] += 1
                 actions.append(_act(
                     f"Objekt »{raw_objekt}« – bereits vorhanden, wird verwendet"))
@@ -652,10 +732,13 @@ def preview():
 
     stand_columns = _detect_stand_columns(df.columns.tolist())
     duplicate_mode = session.get("import_duplicate_mode", "skip")
+    from app.settings_service import is_wassergenossenschaft
+    is_wg = is_wassergenossenschaft()
 
     if request.method == "GET":
         # Probelauf: zeigt exakt, was der echte Import tun würde, ohne zu schreiben.
-        plan = _run_import(df, col_map, stand_columns, duplicate_mode, dry_run=True)
+        plan = _run_import(df, col_map, stand_columns, duplicate_mode,
+                           dry_run=True, is_wg=is_wg)
         return render_template(
             "import_csv/preview.html",
             results=plan,
@@ -663,7 +746,8 @@ def preview():
         )
 
     # POST: "Jetzt importieren" – echter Import
-    results = _run_import(df, col_map, stand_columns, duplicate_mode, dry_run=False)
+    results = _run_import(df, col_map, stand_columns, duplicate_mode,
+                          dry_run=False, is_wg=is_wg)
 
     # Aufräumen
     try:

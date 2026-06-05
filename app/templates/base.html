@@ -145,7 +145,7 @@
                 aria-expanded="{{ 'true' if stammdaten_active else 'false' }}"
                 aria-controls="navbar-stammdaten">
                 <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-database"></i></span>
-                <span class="nav-link-title">Stammdaten</span>
+                <span class="nav-link-title">{{ 'Genossenschaft' if is_wg else 'Stammdaten' }}</span>
               </a>
               <div class="collapse {% if stammdaten_active %}show{% endif %}" id="navbar-stammdaten">
                 <ul class="nav nav-sm flex-column ps-3">

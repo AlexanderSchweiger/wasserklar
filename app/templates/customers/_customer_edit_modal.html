@@ -1,0 +1,32 @@
+{# Modal-Skelett fuer den Kontakt-Edit. Body wird per HTMX vom
+   `customers.edit`-Endpoint (X-From-Modal-GET) geladen; Submit laeuft nativ
+   ueber htmx (hx-post dynamisch) → 204 + HX-Trigger (closeCustomerEditModal
+   + customerEdited) bzw. Body-Fragment mit Inline-Alert bei Validierungsfehler. #}
+<div class="modal fade" id="customerEditModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">
+          <i class="fas fa-user-edit me-2"></i> Kontakt bearbeiten
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <form id="customerEditForm" method="post" hx-headers='{"X-From-Modal": "1"}'>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-body" id="customerEditModalBody">
+          <div class="text-center text-muted py-4">
+            <div class="spinner-border spinner-border-sm" role="status"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+            <i class="fas fa-times me-1"></i> Abbrechen
+          </button>
+          <button type="submit" class="btn btn-primary">
+            <i class="fas fa-save me-1"></i> Speichern
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>

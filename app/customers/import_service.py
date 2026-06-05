@@ -49,6 +49,16 @@ HINTS: dict[str, list[str]] = {
     "email": ["e-mail", "email"],
     "phone": ["telefon", "tel", "handy", "mobil"],
     "notes": ["kommentar", "bemerkung", "notiz", "info", "anmerkung"],
+    # WG-spezifisch (nur im Genossenschafts-Modus gemappt/angewendet)
+    "wg_status": ["status", "mitgliedsstatus", "mitglieds-status"],
+    "member_since": [
+        "mitglied seit", "mitglied-seit", "beitritt", "beitrittsdatum",
+        "eintritt", "eintrittsdatum",
+    ],
+    "member_until": [
+        "mitglied bis", "mitglied-bis", "austritt", "austrittsdatum",
+        "ausgeschieden am",
+    ],
 }
 
 
@@ -73,6 +83,10 @@ class CustomerImportConfig:
     col_email: str = ""
     col_phone: str = ""
     col_notes: str = ""
+    # WG-spezifisch (nur im Genossenschafts-Modus relevant)
+    col_wg_status: str = ""
+    col_member_since: str = ""
+    col_member_until: str = ""
     duplicate_mode: str = "skip"  # Default: Überspringen
 
     # --- serialisation helpers -----------------------------------------------
@@ -92,6 +106,9 @@ class CustomerImportConfig:
             "col_email": self.col_email,
             "col_phone": self.col_phone,
             "col_notes": self.col_notes,
+            "col_wg_status": self.col_wg_status,
+            "col_member_since": self.col_member_since,
+            "col_member_until": self.col_member_until,
             "duplicate_mode": self.duplicate_mode,
         }
 
@@ -117,6 +134,9 @@ class CustomerImportConfig:
             col_email=d.get("col_email", ""),
             col_phone=d.get("col_phone", ""),
             col_notes=d.get("col_notes", ""),
+            col_wg_status=d.get("col_wg_status", ""),
+            col_member_since=d.get("col_member_since", ""),
+            col_member_until=d.get("col_member_until", ""),
             duplicate_mode=dup,
         )
 
@@ -140,6 +160,9 @@ class CustomerImportConfig:
             col_email=form.get("col_email", ""),
             col_phone=form.get("col_phone", ""),
             col_notes=form.get("col_notes", ""),
+            col_wg_status=form.get("col_wg_status", ""),
+            col_member_since=form.get("col_member_since", ""),
+            col_member_until=form.get("col_member_until", ""),
             duplicate_mode=dup,
         )
 
@@ -164,6 +187,9 @@ def suggest_config(columns: list[str]) -> CustomerImportConfig:
         col_email=suggest_column(columns, HINTS["email"]),
         col_phone=suggest_column(columns, HINTS["phone"]),
         col_notes=suggest_column(columns, HINTS["notes"]),
+        col_wg_status=suggest_column(columns, HINTS["wg_status"]),
+        col_member_since=suggest_column(columns, HINTS["member_since"]),
+        col_member_until=suggest_column(columns, HINTS["member_until"]),
     )
 
 
@@ -193,8 +219,23 @@ def _resolve_customer(cnum: int | None, ext_key: str) -> "Customer | None":
     return None
 
 
-def build_preview_rows(df, cfg: CustomerImportConfig) -> list[PreviewRow]:
-    """Build a list of PreviewRow from the DataFrame and config."""
+def _parse_import_date(raw: str):
+    """Parst ein Import-Datum (de/iso/Excel) zu einem ISO-String 'YYYY-MM-DD'
+    fuer das <input type="date"> in der Vorschau. Leerer/ungueltiger Wert → ''."""
+    from app.imports.common import parse_date
+    d = parse_date(raw, "auto") if raw else None
+    return d.isoformat() if d else ""
+
+
+def build_preview_rows(df, cfg: CustomerImportConfig,
+                       is_wg: bool = False) -> list[PreviewRow]:
+    """Build a list of PreviewRow from the DataFrame and config.
+
+    Im Genossenschafts-Modus (``is_wg``) werden zusaetzlich Status, Mitglied-seit
+    und Mitglied-bis gelesen und in ``fields`` abgelegt (Status als STATUS_*-Key,
+    Daten als ISO-String).
+    """
+    from app.wg import parse_status
     rows: list[PreviewRow] = []
 
     for idx, raw_row in enumerate(df.to_dict(orient="records")):
@@ -262,6 +303,11 @@ def build_preview_rows(df, cfg: CustomerImportConfig) -> list[PreviewRow]:
             "notes": notes,
         }
 
+        if is_wg:
+            fields["wg_status"] = parse_status(_cell(raw_row, cfg.col_wg_status)) or ""
+            fields["member_since"] = _parse_import_date(_cell(raw_row, cfg.col_member_since))
+            fields["member_until"] = _parse_import_date(_cell(raw_row, cfg.col_member_until))
+
         rows.append(PreviewRow(
             idx=idx,
             status=status,
@@ -298,6 +344,7 @@ def apply_edits(form, rows: list[PreviewRow]) -> list[PreviewRow]:
             "customer_number", "externe_kennung", "name",
             "strasse", "hausnummer", "plz", "ort", "land",
             "email", "phone", "notes",
+            "wg_status", "member_since", "member_until",
         ):
             if field_name in row_edits:
                 row.fields[field_name] = row_edits[field_name]
@@ -327,11 +374,47 @@ def apply_edits(form, rows: list[PreviewRow]) -> list[PreviewRow]:
 # Commit
 # ---------------------------------------------------------------------------
 
-def commit(rows: list[PreviewRow], cfg: CustomerImportConfig) -> ImportStats:
+def _apply_wg_to_customer(target, fields: dict, cfg: CustomerImportConfig,
+                          *, is_new: bool) -> None:
+    """Setzt im Genossenschafts-Modus Mitglied-seit (Customer) sowie Status und
+    Mitglied-bis (CustomerWgProfile) aus den (ggf. editierten) Vorschau-Feldern.
+
+    Im Update-Modus wird ein Feld nur angefasst, wenn seine Spalte gemappt ist
+    (leerer Wert leert das Feld dann gezielt); bei Neuanlage werden alle Werte
+    uebernommen. ``wg_status`` kommt bereits als validierter STATUS_*-Key aus der
+    Vorschau, Daten als ISO-String."""
+    from datetime import datetime
+    from app.wg import STATUS_LABELS
+
+    def _iso(s: str):
+        s = (s or "").strip()
+        if not s:
+            return None
+        try:
+            return datetime.strptime(s, "%Y-%m-%d").date()
+        except ValueError:
+            return None
+
+    if is_new or cfg.col_member_since:
+        target.member_since = _iso(fields.get("member_since", ""))
+
+    if is_new or cfg.col_wg_status or cfg.col_member_until:
+        profile = target.ensure_wg_profile()
+        if is_new or cfg.col_wg_status:
+            st = (fields.get("wg_status", "") or "").strip()
+            if st in STATUS_LABELS:
+                profile.status = st
+        if is_new or cfg.col_member_until:
+            profile.member_until = _iso(fields.get("member_until", ""))
+
+
+def commit(rows: list[PreviewRow], cfg: CustomerImportConfig,
+           is_wg: bool = False) -> ImportStats:
     """Write the (non-skipped, non-error) rows to the database.
 
     Uses ``db.session.begin_nested()`` savepoints so a single bad row does
-    not abort the entire import.
+    not abort the entire import.  Im Genossenschafts-Modus (``is_wg``) werden
+    zusaetzlich die WG-Felder (Status, Mitglied-seit/-bis) uebernommen.
     """
     from app.extensions import db
     from app.models import Customer
@@ -386,6 +469,8 @@ def commit(rows: list[PreviewRow], cfg: CustomerImportConfig) -> ImportStats:
                     existing.phone = row.fields.get("phone") or None
                 if cfg.col_notes:
                     existing.notes = row.fields.get("notes") or None
+                if is_wg:
+                    _apply_wg_to_customer(existing, row.fields, cfg, is_new=False)
                 stats.updated += 1
 
             else:
@@ -415,6 +500,8 @@ def commit(rows: list[PreviewRow], cfg: CustomerImportConfig) -> ImportStats:
                     notes=row.fields.get("notes") or None,
                 )
                 db.session.add(customer)
+                if is_wg:
+                    _apply_wg_to_customer(customer, row.fields, cfg, is_new=True)
                 stats.created += 1
 
             if row.warnings:

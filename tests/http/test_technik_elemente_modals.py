@@ -45,7 +45,7 @@ def _login(client, username="admin", password="secret"):
 def _make_point(client, ftype="hydrant", lng=16.37, lat=48.21, **props):
     body = {"geometry": {"type": "Point", "coordinates": [lng, lat]}, "feature_type": ftype}
     body.update(props)
-    return client.post("/technik/features", json=body)
+    return client.post("/network/features", json=body)
 
 
 def _customer(name):
@@ -74,12 +74,12 @@ _MOD = {"X-From-Modal": "1"}
 
 
 class TestFeaturePanel:
-    """Das Karten-Panel (technik.feature_panel) ist unveraendert in Verwendung."""
+    """Das Karten-Panel (network.feature_panel) ist unveraendert in Verwendung."""
 
     def test_panel_get_renders_form_and_maintenance(self, client, admin):
         _login(client)
         fid = _make_point(client, name="M1").get_json()["id"]
-        body = client.get(f"/technik/features/{fid}").get_data(as_text=True)
+        body = client.get(f"/network/features/{fid}").get_data(as_text=True)
         assert 'name="feature_type"' in body
         assert "Lagegenauigkeit" in body
         assert "Wartung" in body          # Panel enthält Wartungssektion
@@ -88,7 +88,7 @@ class TestFeaturePanel:
     def test_attribute_save_emits_featuresaved_trigger(self, client, admin):
         _login(client)
         fid = _make_point(client, name="M2").get_json()["id"]
-        r = client.post(f"/technik/features/{fid}", data={
+        r = client.post(f"/network/features/{fid}", data={
             "feature_type": "schieber", "name": "M2-neu", "accuracy": "exakt",
         }, headers={"HX-Request": "true"})
         assert r.status_code == 200
@@ -99,7 +99,7 @@ class TestFeaturePanel:
     def test_delete_emits_featuredeleted_trigger(self, client, admin):
         _login(client)
         fid = _make_point(client, name="M3").get_json()["id"]
-        r = client.post(f"/technik/features/{fid}/delete")
+        r = client.post(f"/network/features/{fid}/delete")
         assert r.status_code == 200
         assert "technik:featureDeleted" in r.headers.get("HX-Trigger", "")
         assert db.session.get(NetworkFeature, fid) is None
@@ -107,7 +107,7 @@ class TestFeaturePanel:
     def test_panel_has_no_meter_select(self, client, admin):
         _login(client)
         fid = _make_point(client, name="M4").get_json()["id"]
-        body = client.get(f"/technik/features/{fid}").get_data(as_text=True)
+        body = client.get(f"/network/features/{fid}").get_data(as_text=True)
         assert 'name="property_id"' in body
         assert 'name="meter_id"' not in body
         assert "Wasserzähler" not in body
@@ -118,7 +118,7 @@ class TestFeaturePanel:
         prop = _property("OBJ-7")
         _own(prop, cust)
         fid = _make_point(client, name="M5").get_json()["id"]
-        body = client.get(f"/technik/features/{fid}").get_data(as_text=True)
+        body = client.get(f"/network/features/{fid}").get_data(as_text=True)
         assert "OBJ-7" in body
         assert "Familie Huber" in body
 
@@ -127,7 +127,7 @@ class TestEditModal:
     def test_get_returns_fields_only(self, client, admin):
         _login(client)
         fid = _make_point(client, name="E1").get_json()["id"]
-        r = client.get(f"/technik/features/{fid}/edit", headers=_MOD)
+        r = client.get(f"/network/features/{fid}/edit", headers=_MOD)
         assert r.status_code == 200
         body = r.get_data(as_text=True)
         assert 'name="feature_type"' in body
@@ -139,7 +139,7 @@ class TestEditModal:
     def test_post_saves_and_closes(self, client, admin):
         _login(client)
         fid = _make_point(client, name="E2").get_json()["id"]
-        r = client.post(f"/technik/features/{fid}/edit", data={
+        r = client.post(f"/network/features/{fid}/edit", data={
             "feature_type": "schieber", "name": "E2-neu", "accuracy": "gut",
             "material": "Stahl", "dimension_dn": "80",
         }, headers=_MOD)
@@ -155,7 +155,7 @@ class TestMaintenanceModal:
     def test_get_returns_body(self, client, admin):
         _login(client)
         fid = _make_point(client, name="W1").get_json()["id"]
-        r = client.get(f"/technik/features/{fid}/maintenance", headers=_MOD)
+        r = client.get(f"/network/features/{fid}/maintenance", headers=_MOD)
         assert r.status_code == 200
         body = r.get_data(as_text=True)
         assert 'name="kind"' in body           # Eingabefelder vorhanden
@@ -164,7 +164,7 @@ class TestMaintenanceModal:
     def test_add_returns_body_and_stays_open(self, client, admin):
         _login(client)
         fid = _make_point(client, name="W2").get_json()["id"]
-        r = client.post(f"/technik/features/{fid}/maintenance", data={
+        r = client.post(f"/network/features/{fid}/maintenance", data={
             "date": "2026-01-01", "kind": "wartung", "interval_months": "12",
         }, headers=_MOD)
         assert r.status_code == 200                # Body-Fragment, kein 204/Redirect
@@ -177,10 +177,10 @@ class TestMaintenanceModal:
     def test_delete_returns_body(self, client, admin):
         _login(client)
         fid = _make_point(client, name="W3").get_json()["id"]
-        client.post(f"/technik/features/{fid}/maintenance",
+        client.post(f"/network/features/{fid}/maintenance",
                     data={"date": "2026-01-01", "kind": "inspektion"}, headers=_MOD)
         log = MaintenanceLog.query.filter_by(feature_id=fid).one()
-        r = client.post(f"/technik/maintenance/{log.id}/delete", headers=_MOD)
+        r = client.post(f"/network/maintenance/{log.id}/delete", headers=_MOD)
         assert r.status_code == 200
         assert 'name="kind"' in r.get_data(as_text=True)
         assert MaintenanceLog.query.filter_by(feature_id=fid).count() == 0
@@ -189,7 +189,7 @@ class TestMaintenanceModal:
         """Ohne X-From-Modal (Karten-Panel) kommt weiterhin das volle Panel."""
         _login(client)
         fid = _make_point(client, name="W4").get_json()["id"]
-        r = client.post(f"/technik/features/{fid}/maintenance",
+        r = client.post(f"/network/features/{fid}/maintenance",
                         data={"date": "2026-01-01", "kind": "spuelung"})
         assert r.status_code == 200
         body = r.get_data(as_text=True)

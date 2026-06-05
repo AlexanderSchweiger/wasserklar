@@ -8,7 +8,7 @@ from sqlalchemy import case as sa_case, exists, func as sa_func
 
 from app.properties import bp
 from app.extensions import db
-from app.models import Property, PropertyOwnership, Customer, NetworkFeature
+from app.models import Property, PropertyOwnership, Customer, NetworkFeature, PropertyWgProfile
 from app.pagination import paginate_query
 from app.imports import common as import_common
 from app.properties import import_service
@@ -16,7 +16,7 @@ from app.properties import import_service
 
 # Erlaubte Sort-Keys der Objektliste (Mapping URL-Param -> ORDER-BY-Logik
 # in ``_apply_property_sort``).
-_SORT_KEYS = {"nr", "type", "address", "owner"}
+_SORT_KEYS = {"nr", "type", "address", "owner", "shares"}
 _DEFAULT_SORT = "nr"
 
 
@@ -30,6 +30,9 @@ def index():
     direction = request.args.get("dir", "asc")
     if direction not in ("asc", "desc"):
         direction = "asc"
+    shares_filter = request.args.get("shares", "all")
+    if shares_filter not in ("all", "with", "without"):
+        shares_filter = "all"
 
     query = Property.query.filter_by(active=True)
     if q:
@@ -47,16 +50,41 @@ def index():
                 owner_match,
             )
         )
+    # WG-Filter: Liegenschaften mit / ohne Anteilen. Per Subquery (IN/NOT IN),
+    # damit es sich nicht mit dem optionalen shares-Sort-JOIN beisst. NOT IN
+    # deckt sowohl "kein Profil" als auch "Profil mit 0 Anteilen" ab.
+    if shares_filter in ("with", "without"):
+        with_shares = db.session.query(PropertyWgProfile.property_id).filter(
+            PropertyWgProfile.shares > 0
+        )
+        if shares_filter == "with":
+            query = query.filter(Property.id.in_(with_shares))
+        else:
+            query = query.filter(~Property.id.in_(with_shares))
+
     query = _apply_property_sort(query, sort, direction)
 
     pagination = paginate_query(query, page_key="properties")
     properties = pagination.items
+
+    # WG-Profile (Anteile/m2) der sichtbaren Objekte vorladen (N+1 vermeiden).
+    if properties:
+        _pids = [p.id for p in properties]
+        _wg = PropertyWgProfile.query.filter(
+            PropertyWgProfile.property_id.in_(_pids)
+        ).all()
+    else:
+        _wg = []
+    wg_property_map = {w.property_id: w for w in _wg}
+
     ctx = dict(
         properties=properties,
         pagination=pagination,
         q=q,
         sort=sort,
         dir=direction,
+        shares_filter=shares_filter,
+        wg_property_map=wg_property_map,
     )
     if request.headers.get("HX-Request"):
         return render_template("properties/_table.html", **ctx)
@@ -451,6 +479,14 @@ def _apply_property_sort(query, sort: str, direction: str):
             query.outerjoin(sub, sub.c.pid == Property.id)
             .order_by(*order(sub.c.owner_name), Property.object_number.asc())
         )
+    if sort == "shares":
+        # coalesce(shares,0): Objekte ohne WG-Profil zaehlen als 0 Anteile.
+        shares_col = sa_func.coalesce(PropertyWgProfile.shares, 0)
+        return (
+            query.outerjoin(PropertyWgProfile, PropertyWgProfile.property_id == Property.id)
+            .order_by(shares_col.desc() if desc else shares_col.asc(),
+                      Property.object_number.asc())
+        )
     # Default und sort == "nr"
     return query.order_by(*order(Property.object_number), Property.ort.asc())
 
@@ -469,6 +505,22 @@ def _property_from_form(prop):
     prop.base_fee_override = Decimal(raw_base) if raw_base else None
     raw_add = request.form.get("additional_fee_override", "").strip().replace(",", ".")
     prop.additional_fee_override = Decimal(raw_add) if raw_add else None
+
+    # WG-Felder (Anteile/m2) nur im Genossenschafts-Modus — im Versorger-Modus
+    # fehlen sie im Formular, bestehende Werte bleiben unangetastet.
+    from app.settings_service import is_wassergenossenschaft
+    if is_wassergenossenschaft():
+        profile = prop.ensure_wg_profile()
+        raw_shares = request.form.get("wg_shares", "").strip()
+        try:
+            profile.shares = int(raw_shares) if raw_shares else 0
+        except ValueError:
+            profile.shares = 0
+        raw_area = request.form.get("area_m2", "").strip()
+        try:
+            profile.area_m2 = int(raw_area) if raw_area else None
+        except ValueError:
+            profile.area_m2 = None
     return prop
 
 

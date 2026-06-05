@@ -1,5 +1,6 @@
 import io
 import csv
+import json
 import base64
 import difflib
 from collections import OrderedDict
@@ -8,7 +9,7 @@ from decimal import Decimal, InvalidOperation
 
 from flask import (
     render_template, redirect, url_for, flash, request,
-    Response, stream_with_context,
+    Response, stream_with_context, make_response,
 )
 from flask_login import login_required, current_user
 from sqlalchemy import extract, func
@@ -2763,11 +2764,24 @@ def fiscal_years():
 @bp.route("/fiscal-years/new", methods=["GET", "POST"])
 @login_required
 def fiscal_year_new():
+    is_modal = bool(request.headers.get("X-From-Modal"))
+    today = date.today()
+    default_year = today.year
+    default_start = date(default_year, 1, 1).isoformat()
+    default_end = date(default_year, 12, 31).isoformat()
+
+    def _body():
+        return render_template(
+            "accounting/_fiscal_year_form_body.html",
+            edit_mode=False, default_year=default_year,
+            default_start=default_start, default_end=default_end,
+        )
+
     if request.method == "POST":
         year = int(request.form["year"])
         if FiscalYear.query.get(year):
             flash(f"Buchungsjahr {year} existiert bereits.", "warning")
-            return redirect(url_for("accounting.fiscal_year_new"))
+            return _body() if is_modal else redirect(url_for("accounting.fiscal_year_new"))
         fy = FiscalYear(
             year=year,
             start_date=date.fromisoformat(request.form["start_date"]),
@@ -2777,11 +2791,12 @@ def fiscal_year_new():
         db.session.add(fy)
         db.session.commit()
         flash(f"Buchungsjahr {year} angelegt.", "success")
+        if is_modal:
+            return _fiscal_year_modal_saved(fy.year)
         return redirect(url_for("accounting.fiscal_years"))
-    today = date.today()
-    default_year = today.year
-    default_start = date(default_year, 1, 1).isoformat()
-    default_end = date(default_year, 12, 31).isoformat()
+
+    if is_modal:
+        return _body()
     return render_template(
         "accounting/fiscal_year_form.html",
         default_year=default_year,
@@ -2795,13 +2810,20 @@ def fiscal_year_new():
 @login_required
 def fiscal_year_edit(year):
     fy = db.get_or_404(FiscalYear, year)
+    is_modal = bool(request.headers.get("X-From-Modal"))
+
+    def _body():
+        return render_template(
+            "accounting/_fiscal_year_form_body.html", fiscal_year=fy, edit_mode=True,
+        )
+
     if request.method == "POST":
         if fy.closed:
             flash(
                 f"Buchungsjahr {year} ist abgeschlossen und kann nicht bearbeitet werden.",
                 "warning",
             )
-            return redirect(url_for("accounting.fiscal_years"))
+            return _body() if is_modal else redirect(url_for("accounting.fiscal_years"))
         try:
             fy.start_date = date.fromisoformat(request.form["start_date"])
             fy.end_date = date.fromisoformat(request.form["end_date"])
@@ -2810,14 +2832,30 @@ def fiscal_year_edit(year):
         except Exception as e:
             db.session.rollback()
             flash(f"Fehler beim Speichern: {e}", "danger")
-            return redirect(url_for("accounting.fiscal_year_edit", year=year))
+            return _body() if is_modal else redirect(
+                url_for("accounting.fiscal_year_edit", year=year))
         flash(f"Buchungsjahr {year} aktualisiert.", "success")
+        if is_modal:
+            return _fiscal_year_modal_saved(fy.year)
         return redirect(url_for("accounting.fiscal_years"))
+
+    if is_modal:
+        return _body()
     return render_template(
         "accounting/fiscal_year_form.html",
         fiscal_year=fy,
         edit_mode=True,
     )
+
+
+def _fiscal_year_modal_saved(year):
+    """204 + HX-Trigger fuer das Buchungsjahr-Modal (schliessen + neu laden)."""
+    resp = make_response("", 204)
+    resp.headers["HX-Trigger"] = json.dumps({
+        "closeFiscalYearModal": True,
+        "fiscalYearSaved": {"year": year},
+    })
+    return resp
 
 
 @bp.route("/fiscal-years/<int:year>/close", methods=["GET", "POST"])

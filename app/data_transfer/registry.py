@@ -15,6 +15,7 @@ from app.models import (
     DunningPolicy, DunningStage, DunningNotice,
     AppSetting, InvoiceCounter, CustomerCounter,
     NetworkPlan, NetworkFeature, MaintenanceLog,
+    CustomerWgProfile, PropertyWgProfile, WgFunction,
 )
 
 # Spalten die auf users.id verweisen — werden beim Import auf NULL gesetzt,
@@ -44,6 +45,7 @@ CATEGORIES = {
         Customer, Property, PropertyOwnership, WaterMeter,
         BillingPeriod, MeterReadingAccessCode, WaterTariff,
         NetworkPlan, NetworkFeature, MaintenanceLog,
+        CustomerWgProfile, PropertyWgProfile, WgFunction,
     ],
     "buchungen": [
         MeterReading, BillingRun, Invoice, InvoiceItem, OpenItem,
@@ -69,6 +71,7 @@ CATEGORIES = {
 INSERT_ORDER = [
     TaxRate, FiscalYear, Account, RealAccount, Project,
     Customer, Property, PropertyOwnership, WaterMeter,
+    CustomerWgProfile, PropertyWgProfile, WgFunction,
     BillingPeriod, MeterReadingAccessCode, WaterTariff, MeterReading,
     BillingRun, Invoice, InvoiceItem, OpenItem,
     BookingGroup, Booking, Transfer, RealAccountYearBalance,
@@ -106,6 +109,9 @@ NATURAL_KEYS = {
     Customer: ("customer_number",),     # unique; fallback handled in serializer wenn None
     Property: ("object_number",),       # unique; fallback handled in serializer wenn None
     PropertyOwnership: ("property_id", "customer_id", "valid_from"),
+    CustomerWgProfile: ("customer_id",),   # 1:1, PK=FK
+    PropertyWgProfile: ("property_id",),   # 1:1, PK=FK
+    WgFunction: ("customer_id", "function"),
     WaterMeter: ("meter_number",),
     BillingPeriod: ("name",),
     MeterReadingAccessCode: ("customer_id", "billing_period_id"),
@@ -136,6 +142,9 @@ NATURAL_KEYS = {
 # Format: {column_name: target_model}
 FOREIGN_KEYS = {
     PropertyOwnership: {"property_id": Property, "customer_id": Customer},
+    CustomerWgProfile: {"customer_id": Customer},
+    PropertyWgProfile: {"property_id": Property},
+    WgFunction: {"customer_id": Customer},
     WaterMeter: {"property_id": Property},
     MeterReadingAccessCode: {"customer_id": Customer, "billing_period_id": BillingPeriod},
     MeterReading: {"meter_id": WaterMeter, "self_service_code_id": MeterReadingAccessCode,

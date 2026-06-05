@@ -226,7 +226,7 @@ class TestHttpShapefileImport:
 
         # Schritt 1: Upload -> Vorschau (noch nichts in der DB).
         r = client.post(
-            "/technik/import/shapefile",
+            "/network/import/shapefile",
             data={"file": (io.BytesIO(zip_bytes), "kataster.zip")},
             content_type="multipart/form-data",
         )
@@ -237,7 +237,7 @@ class TestHttpShapefileImport:
         assert NetworkFeature.query.count() == 0
 
         # Schritt 2: Commit (Token sitzt in der Session).
-        r2 = client.post("/technik/import/shapefile/commit", follow_redirects=False)
+        r2 = client.post("/network/import/shapefile/commit", follow_redirects=False)
         assert r2.status_code == 302
         assert NetworkFeature.query.count() == 2
 
@@ -251,6 +251,6 @@ class TestHttpShapefileImport:
 
     def test_commit_without_session_redirects(self, client, admin, active_plan):
         _login(client)
-        r = client.post("/technik/import/shapefile/commit", follow_redirects=False)
+        r = client.post("/network/import/shapefile/commit", follow_redirects=False)
         assert r.status_code == 302
         assert NetworkFeature.query.count() == 0

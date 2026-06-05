@@ -121,6 +121,21 @@ def create_app(config_name=None):
     from app.auth.permissions import ALL_PERMISSIONS as _ALL_PERMISSIONS
     app.jinja_env.globals["ALL_PERMISSIONS"] = _ALL_PERMISSIONS
 
+    # WG-Domaene (Mandant-Typ Wassergenossenschaft): Label-/Badge-Dicts +
+    # Funktions-Label-Helper fuer Formulare und Listen.
+    from app.wg import (
+        STATUS_LABELS as _wg_status_labels,
+        STATUS_BADGE as _wg_status_badge,
+        FUNCTION_LABELS as _wg_function_labels,
+        function_label as _wg_function_label,
+        function_keys_ordered as _wg_function_keys_ordered,
+    )
+    app.jinja_env.globals["wg_status_labels"] = _wg_status_labels
+    app.jinja_env.globals["wg_status_badge"] = _wg_status_badge
+    app.jinja_env.globals["wg_function_labels"] = _wg_function_labels
+    app.jinja_env.globals["wg_function_label"] = _wg_function_label
+    app.jinja_env.globals["wg_function_keys_ordered"] = _wg_function_keys_ordered
+
     # Context Processor: WG-Einstellungen in alle Templates injizieren
     @app.context_processor
     def inject_wg_settings():
@@ -129,6 +144,18 @@ def create_app(config_name=None):
             return dict(wg=wg_settings())
         except Exception:
             return dict(wg={})
+
+    # Context Processor: Mandant-Typ in alle Templates injizieren. ``is_wg``
+    # schaltet die genossenschafts-spezifischen Felder/Spalten/Filter (Default
+    # True = Wassergenossenschaft, da das der Standardfall der App ist).
+    @app.context_processor
+    def inject_org_type():
+        from app.settings_service import org_type, is_wassergenossenschaft
+        try:
+            return dict(org_type=org_type(), is_wg=is_wassergenossenschaft())
+        except Exception:
+            from app.wg import ORG_COOPERATIVE
+            return dict(org_type=ORG_COOPERATIVE, is_wg=True)
 
     # Context Processor: OSS-Version fuer Footer/About — SaaS-Layer
     # ueberschreibt den Footer-Block selbst und kombiniert mit saas_version.

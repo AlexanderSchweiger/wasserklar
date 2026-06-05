@@ -48,6 +48,26 @@ _MAIL_RESET = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Mandant-Typ (Wassergenossenschaft vs. Versorger)
+# ---------------------------------------------------------------------------
+def org_type():
+    """Mandant-Typ dieses Mandanten: 'cooperative' (Wassergenossenschaft,
+    Default) oder 'utility' (Versorger). Gespeichert als AppSetting
+    ``org.type``; unbekannte/leere Werte fallen auf den Default zurueck."""
+    from app.models import AppSetting
+    from app.wg import ORG_COOPERATIVE, ORG_TYPES
+    val = AppSetting.get('org.type', ORG_COOPERATIVE)
+    return val if val in ORG_TYPES else ORG_COOPERATIVE
+
+
+def is_wassergenossenschaft():
+    """True, wenn der Mandant-Typ Wassergenossenschaft ist (Default).
+    Steuert die Sichtbarkeit der WG-spezifischen Felder/Spalten/Filter."""
+    from app.wg import ORG_COOPERATIVE
+    return org_type() == ORG_COOPERATIVE
+
+
 def _fernet():
     """Liefert eine MultiFernet-/Fernet-Instanz aus WASSERKLAR_MAIL_KEY.
 

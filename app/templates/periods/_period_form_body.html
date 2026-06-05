@@ -1,0 +1,56 @@
+{# Form-Body fuer das Abrechnungsperioden-Modal — per HTMX in den
+   periodModalBody geladen. Erwartet period (oder None) + optional form
+   (nach Validierungsfehler). #}
+{% include "_flash_inline.html" %}
+{% if form %}
+  {% set val_name = form.get('name', '') %}
+  {% set val_start = form.get('start_date', '') %}
+  {% set val_end = form.get('end_date', '') %}
+  {% set val_notes = form.get('notes', '') %}
+{% elif period %}
+  {% set val_name = period.name %}
+  {% set val_start = period.start_date.isoformat() %}
+  {% set val_end = period.end_date.isoformat() %}
+  {% set val_notes = period.notes or '' %}
+{% else %}
+  {% set val_name = '' %}
+  {% set val_start = '' %}
+  {% set val_end = '' %}
+  {% set val_notes = '' %}
+{% endif %}
+<div class="mb-3">
+  <label class="form-label">Name <span class="text-danger">*</span></label>
+  <input type="text" name="name" class="form-control" required maxlength="50"
+    value="{{ val_name }}" placeholder="z. B. 2025/26">
+  <small class="form-hint">Eindeutige Bezeichnung der Abrechnungsperiode.</small>
+</div>
+<div class="row g-2">
+  <div class="col-md-6">
+    <div class="mb-3">
+      <label class="form-label">Start <span class="text-danger">*</span></label>
+      <input type="date" name="start_date" class="form-control" required value="{{ val_start }}">
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="mb-3">
+      <label class="form-label">Ende <span class="text-danger">*</span></label>
+      <input type="date" name="end_date" class="form-control" required value="{{ val_end }}">
+    </div>
+  </div>
+</div>
+<div class="mb-3">
+  <small class="form-hint">
+    Abrechnungsperioden müssen lückenlos aneinander anschließen und
+    dürfen sich nicht überschneiden.
+  </small>
+</div>
+<div class="mb-3">
+  <label class="form-label">Notiz</label>
+  <textarea name="notes" class="form-control" rows="3">{{ val_notes }}</textarea>
+</div>
+{% if not period %}
+<label class="form-check">
+  <input type="checkbox" class="form-check-input" name="active" value="1">
+  <span class="form-check-label">Diese Periode sofort aktiv setzen</span>
+</label>
+{% endif %}

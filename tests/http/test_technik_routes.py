@@ -32,7 +32,7 @@ def admin(app):
 
 @pytest.fixture
 def plain_user(app):
-    """User mit einer Rolle OHNE 'technik'-Recht."""
+    """User mit einer Rolle OHNE 'network'-Recht."""
     role = _ensure_role("NurStammdaten", perms=["stammdaten"])
     u = User(username="hans", email="hans@test.test", role_id=role.id)
     u.set_password("secret")
@@ -61,25 +61,25 @@ def _login(client, username="admin", password="secret"):
 def _make_point(client, ftype="hydrant", lng=16.37, lat=48.21, **props):
     body = {"geometry": {"type": "Point", "coordinates": [lng, lat]}, "feature_type": ftype}
     body.update(props)
-    return client.post("/technik/features", json=body)
+    return client.post("/network/features", json=body)
 
 
 class TestAccess:
     def test_login_required(self, client, admin):
         client.get("/auth/logout")
-        r = client.get("/technik/")
+        r = client.get("/network/")
         assert r.status_code == 302
         assert "/auth/login" in r.headers["Location"]
 
     def test_permission_gate_redirects(self, client, plain_user):
         _login(client, "hans")
-        r = client.get("/technik/", follow_redirects=True)
+        r = client.get("/network/", follow_redirects=True)
         assert r.status_code == 200
         assert "Kein Zugriff" in r.get_data(as_text=True)
 
     def test_index_loads_for_admin(self, client, admin):
         _login(client)
-        r = client.get("/technik/")
+        r = client.get("/network/")
         assert r.status_code == 200
         assert "Leitungsplan" in r.get_data(as_text=True)
 
@@ -94,7 +94,7 @@ class TestFeatureCrud:
         fid = feat["id"]
         assert db.session.get(NetworkFeature, fid) is not None
 
-        r2 = client.get("/technik/features.geojson")
+        r2 = client.get("/network/features.geojson")
         assert r2.status_code == 200
         coll = r2.get_json()
         assert coll["type"] == "FeatureCollection"
@@ -102,7 +102,7 @@ class TestFeatureCrud:
 
     def test_create_invalid_geometry_400(self, client, admin):
         _login(client)
-        r = client.post("/technik/features", json={"geometry": {"type": "Polygon", "coordinates": []}})
+        r = client.post("/network/features", json={"geometry": {"type": "Polygon", "coordinates": []}})
         assert r.status_code == 400
 
     def test_unknown_type_defaults_to_sonstiges(self, client, admin):
@@ -113,7 +113,7 @@ class TestFeatureCrud:
     def test_update_attributes(self, client, admin):
         _login(client)
         fid = _make_point(client).get_json()["id"]
-        r = client.post(f"/technik/features/{fid}", data={
+        r = client.post(f"/network/features/{fid}", data={
             "feature_type": "schieber", "name": "S-1", "accuracy": "exakt",
             "material": "Guss (GG)", "dimension_dn": "100", "year_built": "1990",
         })
@@ -127,12 +127,12 @@ class TestFeatureCrud:
 
     def test_update_geometry_recomputes_length(self, client, admin):
         _login(client)
-        r = client.post("/technik/features", json={
+        r = client.post("/network/features", json={
             "geometry": {"type": "LineString", "coordinates": [[16.0, 48.0], [16.0, 48.001]]},
             "feature_type": "versorgungsleitung",
         })
         fid = r.get_json()["id"]
-        r2 = client.post(f"/technik/features/{fid}/geometry", json={
+        r2 = client.post(f"/network/features/{fid}/geometry", json={
             "geometry": {"type": "LineString", "coordinates": [[16.0, 48.0], [16.0, 48.002]]},
         })
         assert r2.status_code == 200
@@ -142,14 +142,14 @@ class TestFeatureCrud:
     def test_delete(self, client, admin):
         _login(client)
         fid = _make_point(client).get_json()["id"]
-        r = client.post(f"/technik/features/{fid}/delete")
+        r = client.post(f"/network/features/{fid}/delete")
         assert r.status_code == 200
         assert db.session.get(NetworkFeature, fid) is None
 
     def test_panel_loads(self, client, admin):
         _login(client)
         fid = _make_point(client).get_json()["id"]
-        r = client.get(f"/technik/features/{fid}")
+        r = client.get(f"/network/features/{fid}")
         assert r.status_code == 200
         body = r.get_data(as_text=True)
         assert "Lagegenauigkeit" in body
@@ -160,7 +160,7 @@ class TestPrint:
     def test_print_loads(self, client, admin):
         _login(client)
         _make_point(client, name="P1")
-        r = client.get("/technik/print")
+        r = client.get("/network/print")
         assert r.status_code == 200
         body = r.get_data(as_text=True)
         assert "Legende" in body
@@ -171,7 +171,7 @@ class TestMaintenance:
     def test_add_with_interval_sets_next_due(self, client, admin):
         _login(client)
         fid = _make_point(client).get_json()["id"]
-        r = client.post(f"/technik/features/{fid}/maintenance", data={
+        r = client.post(f"/network/features/{fid}/maintenance", data={
             "date": "2026-01-01", "kind": "spuelung", "result": "ok", "interval_months": "12",
         })
         assert r.status_code == 200
@@ -185,7 +185,7 @@ class TestImportExport:
     def test_export(self, client, admin):
         _login(client)
         _make_point(client, name="X")
-        r = client.get("/technik/export.geojson")
+        r = client.get("/network/export.geojson")
         assert r.status_code == 200
         assert "geo+json" in r.headers["Content-Type"]
         assert "attachment" in r.headers["Content-Disposition"]
@@ -201,7 +201,7 @@ class TestImportExport:
         ]})
         # Schritt 1: Vorschau
         r = client.post(
-            "/technik/import",
+            "/network/import",
             data={"file": (io.BytesIO(raw.encode("utf-8")), "plan.geojson")},
             content_type="multipart/form-data",
         )
@@ -210,7 +210,7 @@ class TestImportExport:
         assert NetworkFeature.query.count() == 0  # noch nichts geschrieben
 
         # Schritt 2: Commit
-        r2 = client.post("/technik/import", data={"confirm": "1", "geojson": raw}, follow_redirects=False)
+        r2 = client.post("/network/import", data={"confirm": "1", "geojson": raw}, follow_redirects=False)
         assert r2.status_code == 302
         assert NetworkFeature.query.count() == 2
 
@@ -222,7 +222,7 @@ class TestPhotos:
         _login(client)
         fid = _make_point(client).get_json()["id"]
         r = client.post(
-            f"/technik/features/{fid}/photos",
+            f"/network/features/{fid}/photos",
             data={"photo": (io.BytesIO(_PNG), "hydrant.png")},
             content_type="multipart/form-data",
         )
@@ -230,7 +230,7 @@ class TestPhotos:
         photo = FeaturePhoto.query.filter_by(feature_id=fid).one()
         assert (photo.content_type or "").startswith("image/")
 
-        r2 = client.get(f"/technik/photos/{photo.id}")
+        r2 = client.get(f"/network/photos/{photo.id}")
         assert r2.status_code == 200
         assert r2.data == _PNG
 
@@ -239,7 +239,7 @@ class TestPhotos:
         _login(client)
         fid = _make_point(client).get_json()["id"]
         r = client.post(
-            f"/technik/features/{fid}/photos",
+            f"/network/features/{fid}/photos",
             data={"photo": (io.BytesIO(b"not an image"), "evil.txt")},
             content_type="multipart/form-data",
         )
@@ -250,7 +250,7 @@ class TestPhotos:
 class TestPlans:
     def test_list_loads(self, client, admin):
         _login(client)
-        r = client.get("/technik/plans")
+        r = client.get("/network/plans")
         assert r.status_code == 200
         body = r.get_data(as_text=True)
         assert "Testplan" in body
@@ -259,7 +259,7 @@ class TestPlans:
     def test_create_and_edit(self, client, admin):
         from app.models import NetworkPlan
         _login(client)
-        r = client.post("/technik/plans", data={
+        r = client.post("/network/plans", data={
             "name": "Ausbau 2026", "status": "entwurf", "maintenance_enabled": "1",
         }, follow_redirects=True)
         assert r.status_code == 200
@@ -268,7 +268,7 @@ class TestPlans:
         pid = p.id
 
         # Bearbeiten: umbenennen, aktiv setzen, Wartung aus (Checkbox fehlt -> False).
-        client.post(f"/technik/plans/{pid}", data={
+        client.post(f"/network/plans/{pid}", data={
             "name": "Ausbau 2026/27", "status": "aktiv",
         }, follow_redirects=True)
         p2 = db.session.get(NetworkPlan, pid)
@@ -282,7 +282,7 @@ class TestPlans:
         _login(client)
         fid = _make_point(client, name="A").get_json()["id"]
 
-        client.post(f"/technik/plans/{src_id}/copy", follow_redirects=True)
+        client.post(f"/network/plans/{src_id}/copy", follow_redirects=True)
         dup = NetworkPlan.query.filter(NetworkPlan.source_plan_id == src_id).one()
         assert dup.maintenance_enabled is False
         assert len(dup.features) == 1
@@ -290,7 +290,7 @@ class TestPlans:
         # In der Kopie aendern, dann zurueck in den Quellplan uebertragen.
         dup.features[0].name = "A-neu"
         db.session.commit()
-        client.post(f"/technik/plans/{dup.id}/merge", follow_redirects=True)
+        client.post(f"/network/plans/{dup.id}/merge", follow_redirects=True)
         assert db.session.get(NetworkFeature, fid).name == "A-neu"
 
     def test_delete(self, client, admin):
@@ -300,5 +300,5 @@ class TestPlans:
         db.session.add(p)
         db.session.commit()
         pid = p.id
-        client.post(f"/technik/plans/{pid}/delete", follow_redirects=True)
+        client.post(f"/network/plans/{pid}/delete", follow_redirects=True)
         assert db.session.get(NetworkPlan, pid) is None

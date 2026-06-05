@@ -99,6 +99,51 @@ def _create_or_update_open_item(invoice, account_id=None):
             oi.account_id = account_id
 
 
+def _status_response(invoice):
+    """Einheitliche Antwort für ``set_status``: Fragment bei HTMX, sonst Redirect."""
+    if request.headers.get("HX-Request"):
+        return render_template("invoices/_status_badge.html", invoice=invoice)
+    return redirect(url_for("invoices.detail", invoice_id=invoice.id))
+
+
+def _book_invoice_payment_if_needed(invoice):
+    """Legt beim Markieren als 'Bezahlt' eine Zahlungsbuchung an – aber nur, wenn
+    noch keine wirksame Buchung für die Rechnung existiert.
+
+    Verhindert Doppelbuchungen, wenn die Rechnung bereits über die Zahlungs-
+    erfassung (``pay``) oder einen früheren Bezahlt-Wechsel verbucht wurde.
+    """
+    from app.accounting import services as acc_svc
+    existing = (
+        Booking.query
+        .filter(Booking.invoice_id == invoice.id)
+        .filter(acc_svc.storno_filter())
+        .first()
+    )
+    if existing is not None:
+        # Schon verbucht – nur den Offenen Posten schließen, nicht erneut buchen.
+        if invoice.open_item:
+            invoice.open_item.status = OpenItem.STATUS_PAID
+        return
+
+    default_ra = RealAccount.query.filter_by(is_default=True, active=True).first() \
+        or RealAccount.query.filter_by(active=True).first()
+    real_account_id = default_ra.id if default_ra else None
+    # Bei mehreren Dimensionen (Konto/Projekt/Steuersatz) entsteht automatisch
+    # eine Sammelbuchung (ADR-002), sonst eine Einzelbuchung.
+    acc_svc.booking_group_from_invoice_payment(
+        invoice=invoice,
+        amount=invoice.total_amount,
+        payment_date=date.today(),
+        real_account_id=real_account_id,
+        created_by_id=current_user.id,
+        open_item=invoice.open_item,
+        reference=invoice.invoice_number,
+    )
+    if invoice.open_item:
+        invoice.open_item.status = OpenItem.STATUS_PAID
+
+
 def _billing_period_list():
     """Alle Abrechnungsperioden, neueste zuerst (fuer Auswahl-Dropdowns)."""
     return BillingPeriod.query.order_by(
@@ -1082,69 +1127,136 @@ def set_status(invoice_id):
     if new_status not in Invoice.ALL_STATUSES:
         abort(400)
 
-    # Zurücksetzen auf Entwurf ist nicht erlaubt, sobald die Rechnung einmal
-    # einen höheren Status hatte.
-    if new_status == Invoice.STATUS_DRAFT and invoice.status != Invoice.STATUS_DRAFT:
-        flash("Eine Rechnung kann nicht mehr auf 'Entwurf' zurückgesetzt werden. "
-              "Zum Löschen bitte zuerst auf 'Storniert' setzen.", "danger")
-        if request.headers.get("HX-Request"):
-            return render_template("invoices/_status_badge.html", invoice=invoice)
-        return redirect(url_for("invoices.detail", invoice_id=invoice.id))
+    old_status = invoice.status
+
+    # Kein Wechsel → keine Aktion (verhindert versehentliches Neu-Verbuchen).
+    if new_status == old_status:
+        flash("Status unverändert.", "info")
+        return _status_response(invoice)
+
+    # State-Machine durchsetzen (siehe Invoice.ALLOWED_TRANSITIONS).
+    if new_status not in Invoice.ALLOWED_TRANSITIONS.get(old_status, []):
+        if old_status == Invoice.STATUS_DRAFT and new_status == Invoice.STATUS_CANCELLED:
+            msg = ("Ein Entwurf wird nicht storniert, sondern gelöscht "
+                   "(Schaltfläche „Löschen“). Stornieren ist nur für bereits "
+                   "versendete Rechnungen vorgesehen.")
+        elif old_status == Invoice.STATUS_DRAFT:
+            msg = ("Eine Entwurfs-Rechnung muss zuerst auf „Versendet“ gesetzt "
+                   "werden, bevor sie als bezahlt oder als Guthaben markiert "
+                   "werden kann.")
+        elif old_status == Invoice.STATUS_CANCELLED:
+            msg = "Eine stornierte Rechnung kann nicht wieder aktiviert werden."
+        elif new_status == Invoice.STATUS_DRAFT:
+            msg = "Eine Rechnung kann nicht auf „Entwurf“ zurückgesetzt werden."
+        else:
+            msg = (f"Statuswechsel von „{old_status}“ auf „{new_status}“ "
+                   f"ist nicht zulässig.")
+        flash(msg, "danger")
+        return _status_response(invoice)
 
     try:
-        old_status = invoice.status
-
         if new_status == Invoice.STATUS_SENT:
             form_account_id_raw = request.form.get("account_id") or None
             form_account_id = int(form_account_id_raw) if form_account_id_raw else None
             account_id = _resolve_open_item_account_id(invoice, form_account_id)
             invoice.status = new_status
             _create_or_update_open_item(invoice, account_id=account_id)
-        else:
-            invoice.status = new_status
-            if new_status == Invoice.STATUS_CANCELLED and invoice.open_item:
-                invoice.open_item.status = OpenItem.STATUS_PAID
-            # ADR-003: Storno → alle aktiven Mahnungen der Rechnung stornieren
-            if new_status == Invoice.STATUS_CANCELLED:
-                from app.dunning.services import cancel_dunnings_for_invoice
-                cancel_dunnings_for_invoice(invoice)
 
-        # Automatische Buchung bei Bezahlt-Markierung
-        if new_status == Invoice.STATUS_PAID and old_status != Invoice.STATUS_PAID:
-            # Zahlung über Service-Layer erzeugen. Bei mehreren Dimensionen
-            # (Konto/Projekt/Steuersatz) entsteht automatisch eine
-            # Sammelbuchung (ADR-002), sonst eine Einzelbuchung.
+        elif new_status == Invoice.STATUS_CANCELLED:
+            # Verknüpfte Buchungen rückabwickeln, sonst bleibt eine zuvor
+            # erzeugte Zahlungsbuchung als Phantom-Einnahme in den Auswertungen.
             from app.accounting import services as acc_svc
-            default_ra = RealAccount.query.filter_by(is_default=True, active=True).first() \
-                or RealAccount.query.filter_by(active=True).first()
-            real_account_id = default_ra.id if default_ra else None
-            try:
-                acc_svc.booking_group_from_invoice_payment(
-                    invoice=invoice,
-                    amount=invoice.total_amount,
-                    payment_date=date.today(),
-                    real_account_id=real_account_id,
-                    created_by_id=current_user.id,
-                    open_item=invoice.open_item,
-                    reference=invoice.invoice_number,
-                )
-            except ValueError as ve:
-                raise ve
+            err = acc_svc.storno_invoice_bookings(
+                invoice,
+                reason=f"Storno Rechnung {invoice.invoice_number}",
+                created_by_id=current_user.id,
+            )
+            if err:
+                raise ValueError(err)
+            invoice.status = new_status
             if invoice.open_item:
                 invoice.open_item.status = OpenItem.STATUS_PAID
+            # ADR-003: Storno → alle aktiven Mahnungen der Rechnung stornieren
+            from app.dunning.services import cancel_dunnings_for_invoice
+            cancel_dunnings_for_invoice(invoice)
+
+        elif new_status == Invoice.STATUS_PAID:
+            invoice.status = new_status
+            _book_invoice_payment_if_needed(invoice)
+
+        else:  # STATUS_CREDIT
+            invoice.status = new_status
 
         db.session.commit()
     except Exception as e:
         db.session.rollback()
         flash(f"Fehler beim Statuswechsel – alle Änderungen wurden zurückgesetzt: {e}", "danger")
-        if request.headers.get("HX-Request"):
-            return render_template("invoices/_status_badge.html", invoice=invoice)
-        return redirect(url_for("invoices.detail", invoice_id=invoice.id))
+        return _status_response(invoice)
 
     flash(f"Status auf '{new_status}' gesetzt.", "success")
-    if request.headers.get("HX-Request"):
-        return render_template("invoices/_status_badge.html", invoice=invoice)
-    return redirect(url_for("invoices.detail", invoice_id=invoice.id))
+    return _status_response(invoice)
+
+
+@bp.route("/<int:invoice_id>/delete", methods=["POST"])
+@login_required
+def delete(invoice_id):
+    """Löscht eine Entwurfs-Rechnung endgültig.
+
+    Nur im Entwurfsstatus erlaubt — eine versendete Rechnung wurde ausgestellt
+    und darf nur noch storniert (nicht gelöscht) werden. Da der Entwurf nie
+    ausgestellt war, ist die endgültige Löschung der saubere Weg statt einer
+    Pseudo-Stornierung. Optional wird der Rechnungsnummern-Zähler des Jahres
+    zurückgesetzt (analog zum Rechnungslauf-Löschen).
+    """
+    invoice = db.get_or_404(Invoice, invoice_id)
+    if invoice.status != Invoice.STATUS_DRAFT:
+        flash("Nur Entwürfe können gelöscht werden. Eine bereits ausgestellte "
+              "Rechnung muss storniert werden.", "danger")
+        return redirect(url_for("invoices.detail", invoice_id=invoice.id))
+
+    number = invoice.invoice_number
+    reset_counter = request.form.get("reset_counter") == "1"
+    try:
+        year = int(number.split("-")[0])
+    except (ValueError, IndexError):
+        year = None
+
+    try:
+        # Verknüpften Offenen Posten entfernen (bei Entwürfen normalerweise keiner).
+        if invoice.open_item is not None:
+            db.session.delete(invoice.open_item)
+        db.session.delete(invoice)  # InvoiceItems via cascade="all, delete-orphan"
+        db.session.flush()
+
+        if reset_counter and year is not None:
+            prefix = f"{year}-"
+            last = (
+                Invoice.query
+                .filter(Invoice.invoice_number.like(f"{prefix}%"))
+                .order_by(Invoice.invoice_number.desc())
+                .first()
+            )
+            if last:
+                try:
+                    new_seq = int(last.invoice_number.split("-")[-1]) + 1
+                except ValueError:
+                    new_seq = 1
+            else:
+                new_seq = 1
+            counter = db.session.get(InvoiceCounter, year)
+            if counter is None:
+                db.session.add(InvoiceCounter(year=year, next_seq=new_seq))
+            else:
+                counter.next_seq = new_seq
+
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        flash(f"Fehler beim Löschen – nichts wurde verändert: {e}", "danger")
+        return redirect(url_for("invoices.detail", invoice_id=invoice.id))
+
+    flash(f"Entwurf {number} wurde gelöscht.", "success")
+    return redirect(url_for("invoices.index"))
 
 
 @bp.route("/<int:invoice_id>/pay", methods=["POST"])

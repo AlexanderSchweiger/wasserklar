@@ -6,9 +6,10 @@
   <div class="card-header">
     <h3 class="card-title">Buchungsjahre verwalten</h3>
     <div class="card-options">
-      <a href="{{ url_for('accounting.fiscal_year_new') }}" class="btn btn-primary">
+      <button type="button" data-url="{{ url_for('accounting.fiscal_year_new') }}"
+              onclick="openFiscalYearModal(this)" class="btn btn-primary">
         <i class="fas fa-plus me-1"></i> Neues Buchungsjahr
-      </a>
+      </button>
     </div>
   </div>
   <div class="card-body p-0">
@@ -54,10 +55,10 @@
           </td>
           <td class="text-end text-nowrap">
             {% if not fy.closed %}
-            <a href="{{ url_for('accounting.fiscal_year_edit', year=fy.year) }}"
-               class="btn btn-outline-secondary btn-sm">
+            <button type="button" data-url="{{ url_for('accounting.fiscal_year_edit', year=fy.year) }}"
+               onclick="openFiscalYearModal(this)" class="btn btn-outline-secondary btn-sm">
               <i class="fas fa-edit me-1"></i> Bearbeiten
-            </a>
+            </button>
             <a href="{{ url_for('accounting.fiscal_year_close', year=fy.year) }}"
                class="btn btn-warning btn-sm">
               <i class="fas fa-lock me-1"></i> Abschließen
@@ -92,4 +93,22 @@
     {% endif %}
   </div>
 </div>
+{% endblock %}
+
+{% block modals %}
+{% include "accounting/_fiscal_year_modal.html" %}
+{% endblock %}
+
+{% block scripts %}
+{% include "_modal_edit_helpers.html" %}
+<script>
+setupEditModal({
+  formId: 'fiscalYearForm',
+  bodyId: 'fiscalYearModalBody',
+  modalId: 'fiscalYearModal',
+  openFn: 'openFiscalYearModal',
+  closeEvent: 'closeFiscalYearModal',
+  savedEvent: 'fiscalYearSaved',
+});
+</script>
 {% endblock %}

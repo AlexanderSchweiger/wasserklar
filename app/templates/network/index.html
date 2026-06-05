@@ -10,7 +10,7 @@
 {% endblock %}
 
 {% block content %}
-<div class="card">
+<div class="card" id="technik-card">
   <div class="card-header d-print-none">
     <div class="d-flex align-items-center flex-wrap" style="gap:.4rem">
       <i class="fas fa-water text-secondary"></i>
@@ -40,24 +40,31 @@
       {% endif %}
     </div>
     <div class="card-actions btn-list">
-      <button type="button" class="btn btn-sm" id="technik-edit-toggle" title="Stützpunkte / Position verschieben">
-        <i class="fas fa-arrows-alt me-1"></i>Bearbeiten
-      </button>
-      <button type="button" class="btn btn-sm" id="technik-locate">
-        <i class="fas fa-location-arrow me-1"></i>Meine Position
+      {# Primaeraktionen bleiben sichtbar; Import/Export/Drucken wandern in ein
+         "Mehr"-Dropdown, damit die Leiste auf Mobile nicht ueber mehrere Zeilen
+         umbricht. "Meine Position" liegt jetzt als Floating-Button auf der Karte. #}
+      <button type="button" class="btn btn-sm" id="technik-edit-toggle" title="Bearbeiten: Elemente hinzufügen, Stützpunkte / Position verschieben">
+        <i class="fas fa-pen me-1"></i>Bearbeiten
       </button>
       <button type="button" class="btn btn-sm" id="technik-list-toggle" title="Elementliste ein-/ausblenden">
         <i class="fas fa-list me-1"></i>Elementliste
       </button>
-      <a href="{{ url_for('network.import_view') }}" class="btn btn-sm">
-        <i class="fas fa-file-import me-1"></i>Import
-      </a>
-      <a href="{{ url_for('network.export_geojson') }}" class="btn btn-sm" download>
-        <i class="fas fa-file-export me-1"></i>Export
-      </a>
-      <a href="{{ url_for('network.print_view') }}" class="btn btn-sm" hx-boost="false" target="_blank" rel="noopener">
-        <i class="fas fa-print me-1"></i>Drucken
-      </a>
+      <div class="dropdown">
+        <button type="button" class="btn btn-sm dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" title="Weitere Aktionen">
+          <i class="fas fa-ellipsis-h"></i>
+        </button>
+        <div class="dropdown-menu dropdown-menu-end">
+          <a href="{{ url_for('network.import_view') }}" class="dropdown-item">
+            <i class="fas fa-file-import me-2"></i>Import
+          </a>
+          <a href="{{ url_for('network.export_geojson') }}" class="dropdown-item" download>
+            <i class="fas fa-file-export me-2"></i>Export
+          </a>
+          <a href="{{ url_for('network.print_view') }}" class="dropdown-item" hx-boost="false" target="_blank" rel="noopener">
+            <i class="fas fa-print me-2"></i>Drucken
+          </a>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -70,7 +77,10 @@
   </div>
   {% endif %}
 
-  <div class="card-body border-bottom d-print-none py-2">
+  {# Zeichnen-Palette: standardmaessig ausgeblendet, der "Bearbeiten"-Button
+     blendet sie ein (technik-map.js togglet .is-open). Spart auf Mobile viel
+     vertikalen Platz — wer nur schaut, braucht sie nie. #}
+  <div class="card-body border-bottom d-print-none py-2 technik-draw-bar" id="technik-draw-bar">
     <div class="d-flex flex-wrap align-items-center gap-1 mb-1">
       <span class="text-secondary small me-1" style="min-width:3rem">Punkt:</span>
       {% for key, t in vocab.POINT_TYPES.items() %}
@@ -96,17 +106,26 @@
     </div>
   </div>
 
-  <div class="card-body p-0">
+  <div class="card-body p-0 technik-card-body">
     <div class="row g-0">
       <div class="col-lg-8 col-12">
-        <div id="technik-map" style="height: 72vh; min-height: 460px;"></div>
+        <div class="technik-map-wrap">
+          <div id="technik-map"></div>
+          {# Floating-Button: auf Mobile draussen am Hydranten die Kernfunktion.
+             technik-map.js verdrahtet #technik-locate unveraendert. #}
+          <button type="button" class="btn btn-icon technik-locate-fab" id="technik-locate"
+                  title="Meine Position">
+            <i class="fas fa-location-arrow"></i>
+          </button>
+        </div>
       </div>
-      <div class="col-lg-4 col-12 border-start">
-        {# Rechte Spalte: standardmaessig das leere Detail-Panel (#technik-panel).
-           Der "Elementliste"-Button oder die Eingabe im Header-Filter blenden die
-           Liste (#technik-list-view) ein; das X im Listenkopf bzw. "Zurücksetzen"
-           blenden sie wieder aus. Klick auf einen Eintrag zentriert das Element und
-           zeigt das Detail-Panel. technik-map.js togglet #technik-list-view <-> #technik-panel. #}
+      {# Rechte Spalte: auf Desktop fixe Seitenspalte; auf Mobile (technik-card.technik-sheet-open)
+         ein Bottom-Sheet ueber der Karte. Standardinhalt ist das leere Detail-Panel
+         (#technik-panel). Der "Elementliste"-Button oder die Header-Suche blenden die
+         Liste (#technik-list-view) ein; das X im Listenkopf bzw. "Zurücksetzen" wieder aus.
+         technik-map.js togglet #technik-list-view <-> #technik-panel und den Sheet-State. #}
+      <div class="col-lg-4 col-12 border-start" id="technik-side">
+        <div class="technik-sheet-handle d-lg-none" title="Schließen"></div>
         <div id="technik-list-view" style="display:none">
           <div class="d-flex align-items-center p-2 border-bottom">
             <strong class="me-auto"><i class="fas fa-list me-1 text-secondary"></i>Elementliste</strong>
@@ -131,8 +150,9 @@
   <div class="technik-panel-empty text-center text-secondary p-4">
     <i class="fas fa-hand-pointer fa-2x mb-2 d-block opacity-50"></i>
     <p class="mb-1">Element auf der Karte anklicken, um Details zu sehen.</p>
-    <p class="small mb-0">Neue Elemente über die Leiste oben hinzufügen — danach auf die Karte klicken
-      (Punkt) bzw. klicken und doppelklicken zum Beenden (Linie).</p>
+    <p class="small mb-0">Zum Erfassen oben auf <strong>Bearbeiten</strong> tippen — dann erscheint die
+      Zeichnen-Leiste. Typ wählen, danach auf die Karte klicken (Punkt) bzw. klicken und
+      doppelklicken zum Beenden (Linie).</p>
     {% if feature_count == 0 %}
     <div class="mt-3">
       <span class="badge bg-azure-lt">Noch keine Elemente erfasst</span>

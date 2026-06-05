@@ -64,6 +64,13 @@
            class="btn btn-sm btn-secondary">
           <i class="fas fa-edit me-1"></i> Bearbeiten
         </a>
+        <form method="post" action="{{ url_for('invoices.delete', invoice_id=invoice.id) }}"
+              class="d-inline" id="deleteInvoiceForm">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-sm btn-outline-danger ms-1">
+            <i class="fas fa-trash me-1"></i> Löschen
+          </button>
+        </form>
         {% endif %}
         {% if doc_format in ('pdf', 'both') %}
         <a href="{{ url_for('invoices.pdf', invoice_id=invoice.id) }}?fmt=pdf"
@@ -92,20 +99,21 @@
     </div>
 
     <!-- Status setzen -->
+    {% set allowed_targets = invoice.ALLOWED_TRANSITIONS.get(invoice.status, []) %}
     <div class="card">
       <div class="card-header">
         <h3 class="card-title">Status ändern</h3>
       </div>
       <div class="card-body">
+        {% if allowed_targets %}
         <form method="post" action="{{ url_for('invoices.set_status', invoice_id=invoice.id) }}"
               id="statusForm">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <div class="input-group input-group-sm mb-2">
             <select name="status" class="form-select tom-select" id="statusSelect">
-              {% for s in invoice.ALL_STATUSES %}
-              {% if s != 'Entwurf' or invoice.status == 'Entwurf' %}
-              <option value="{{ s }}" {{ 'selected' if invoice.status == s }}>{{ s }}</option>
-              {% endif %}
+              <option value="{{ invoice.status }}" selected>{{ invoice.status }} (aktuell)</option>
+              {% for s in allowed_targets %}
+              <option value="{{ s }}">{{ s }}</option>
               {% endfor %}
             </select>
             <button type="submit" class="btn btn-outline-secondary">
@@ -113,6 +121,11 @@
             </button>
           </div>
         </form>
+        {% else %}
+        <p class="text-muted small mb-0">
+          Status „{{ invoice.status }}“ ist endgültig – ein weiterer Wechsel ist nicht möglich.
+        </p>
+        {% endif %}
       </div>
     </div>
   </div>

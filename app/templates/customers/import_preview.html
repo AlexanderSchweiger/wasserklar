@@ -19,6 +19,13 @@
   ('col_phone', 'Telefon'),
   ('col_notes', 'Notizen'),
 ] %}
+{% if is_wg %}
+{% set col_fields = col_fields + [
+  ('col_wg_status', 'Status'),
+  ('col_member_since', 'Mitglied seit'),
+  ('col_member_until', 'Mitglied bis'),
+] %}
+{% endif %}
 
 <form method="post" id="preview-form">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -124,6 +131,11 @@
               <th style="min-width:140px">E-Mail</th>
               <th style="min-width:100px">Telefon</th>
               <th style="min-width:120px">Notizen</th>
+              {% if is_wg %}
+              <th style="min-width:130px">Mitglieds-Status</th>
+              <th style="min-width:140px">Mitglied seit</th>
+              <th style="min-width:140px">Mitglied bis</th>
+              {% endif %}
               <th style="min-width:160px">Status</th>
             </tr>
           </thead>
@@ -198,11 +210,33 @@
                        class="form-control form-control-sm"
                        value="{{ row.fields.get('notes', '') }}">
               </td>
+              {% if is_wg %}
+              <td>
+                <select name="rows[{{ row.idx }}][wg_status]"
+                        class="form-select form-select-sm">
+                  <option value="">— kein —</option>
+                  {% for key, label in status_labels.items() %}
+                  <option value="{{ key }}"
+                    {{ 'selected' if row.fields.get('wg_status', '') == key }}>{{ label }}</option>
+                  {% endfor %}
+                </select>
+              </td>
+              <td>
+                <input type="date" name="rows[{{ row.idx }}][member_since]"
+                       class="form-control form-control-sm"
+                       value="{{ row.fields.get('member_since', '') }}">
+              </td>
+              <td>
+                <input type="date" name="rows[{{ row.idx }}][member_until]"
+                       class="form-control form-control-sm"
+                       value="{{ row.fields.get('member_until', '') }}">
+              </td>
+              {% endif %}
               <td>{{ status_cell(row) }}</td>
             </tr>
             {% else %}
             <tr>
-              <td colspan="13" class="text-center text-muted py-4">
+              <td colspan="{{ 16 if is_wg else 13 }}" class="text-center text-muted py-4">
                 Keine Zeilen — bitte mindestens eine Spalte zuordnen und auf
                 „Vorschau aktualisieren" klicken.
               </td>

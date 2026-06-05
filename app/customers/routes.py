@@ -1,14 +1,17 @@
+import json
 import re
 
-from flask import render_template, redirect, url_for, flash, request, jsonify, session
+from flask import (render_template, redirect, url_for, flash, request, jsonify,
+                   session, make_response)
 from flask_login import login_required
-from sqlalchemy import case as sa_case, func as sa_func
+from sqlalchemy import case as sa_case, func as sa_func, or_
 from sqlalchemy.exc import IntegrityError
 
 from app.customers import bp
 from app.customers.duplicate_check import find_similar_customers
 from app.extensions import db
-from app.models import Customer, Property, PropertyOwnership
+from app.models import Customer, Property, PropertyOwnership, CustomerWgProfile, WgFunction
+from app.wg import STATUS_LABELS, FUNCTION_LABELS
 from app.pagination import paginate_query
 from app.utils import bump_customer_counter_to, next_customer_number
 from app.imports import common as import_common
@@ -45,6 +48,8 @@ def index():
     if direction not in ("asc", "desc"):
         direction = "asc"
     country_filter = request.args.get("country", "").strip()
+    status_filter = request.args.get("status", "").strip()
+    func_filter = request.args.get("func", "").strip()
 
     query = Customer.query.filter_by(active=True)
     if type_filter == "customer":
@@ -55,6 +60,35 @@ def index():
         query = query.filter(Customer.name.ilike(f"%{q}%"))
     if country_filter:
         query = query.filter(Customer.land == country_filter)
+    # WG-Filter: Status (fehlendes Profil = Mitglied, Default) + Funktion.
+    if status_filter in STATUS_LABELS:
+        query = query.outerjoin(
+            CustomerWgProfile, CustomerWgProfile.customer_id == Customer.id
+        )
+        if status_filter == "member":
+            query = query.filter(or_(
+                CustomerWgProfile.status.is_(None),
+                CustomerWgProfile.status == "member",
+            ))
+        else:
+            query = query.filter(CustomerWgProfile.status == status_filter)
+    # Funktions-Filter: Sentinels __any__/__none__ fuer "hat irgendeine Funktion"
+    # bzw. "hat keine Funktion", sonst eine konkrete Funktion. customer_id ist
+    # NOT NULL -> NOT IN ist dialekt-portabel ohne NULL-Falle.
+    if func_filter == "__any__":
+        query = query.filter(Customer.id.in_(
+            db.session.query(WgFunction.customer_id)
+        ))
+    elif func_filter == "__none__":
+        query = query.filter(~Customer.id.in_(
+            db.session.query(WgFunction.customer_id)
+        ))
+    elif func_filter in FUNCTION_LABELS:
+        query = query.filter(Customer.id.in_(
+            db.session.query(WgFunction.customer_id).filter(
+                WgFunction.function == func_filter
+            )
+        ))
 
     query = _apply_customer_sort(query, sort, direction)
 
@@ -78,6 +112,20 @@ def index():
         ownerships = []
     property_map = {o.customer_id: o.property for o in ownerships}
 
+    # WG-Profile + Funktionen der sichtbaren Kontakte vorladen (N+1 vermeiden).
+    if customers:
+        _ids = [c.id for c in customers]
+        _profiles = CustomerWgProfile.query.filter(
+            CustomerWgProfile.customer_id.in_(_ids)
+        ).all()
+        _funcs = WgFunction.query.filter(WgFunction.customer_id.in_(_ids)).all()
+    else:
+        _profiles, _funcs = [], []
+    wg_profile_map = {p.customer_id: p for p in _profiles}
+    wg_functions_map = {}
+    for _f in _funcs:
+        wg_functions_map.setdefault(_f.customer_id, []).append(_f.function)
+
     # Back-URL fuer Edit-/Delete-Links: erhaelt alle aktuellen Filter, Such-
     # und Pagination-Parameter, damit der User nach dem Speichern wieder auf
     # derselben Liste landet.
@@ -96,6 +144,10 @@ def index():
         back_url=back_url,
         country_filter=country_filter,
         countries=countries,
+        status_filter=status_filter,
+        func_filter=func_filter,
+        wg_profile_map=wg_profile_map,
+        wg_functions_map=wg_functions_map,
     )
     # HTMX: nur Tabellen-Fragment zurueckgeben
     if request.headers.get("HX-Request"):
@@ -179,49 +231,52 @@ def detail(customer_id):
 @login_required
 def edit(customer_id):
     customer = db.get_or_404(Customer, customer_id)
+    # Edit laeuft wahlweise als Vollseite (form.html) oder im Modal: der
+    # X-From-Modal-Header steuert GET (Body-Fragment) und POST-Antwort
+    # (204 + HX-Trigger statt Redirect).
+    is_modal = bool(request.headers.get("X-From-Modal"))
+
     if request.method == "POST":
-        missing = _missing_required_fields(request.form)
-        if missing:
-            flash(
-                "Bitte folgende Pflichtfelder ausfüllen: " + ", ".join(missing),
-                "danger",
-            )
+        warnings = []
+        error = _validate_customer_form(request.form)
+        if not error:
+            error = _apply_customer_fields(customer, request.form, is_new=False)
+        if not error:
+            # WG-Funktions-Warnungen aus dem fertig befuellten Objekt ableiten
+            # (nur Warnung, kein Block) und nach erfolgreichem Speichern flashen.
+            from app.settings_service import is_wassergenossenschaft
+            from app.wg import function_warnings
+            if is_wassergenossenschaft():
+                warnings = function_warnings(customer.wg_status, customer.function_keys())
+            try:
+                db.session.commit()
+            except IntegrityError:
+                db.session.rollback()
+                error = ("Die Kundennummer wurde gerade von einem anderen Vorgang "
+                         "vergeben. Bitte erneut speichern.")
+
+        if error:
+            if is_modal:
+                return render_template(
+                    "customers/_customer_edit_form_body.html",
+                    customer=customer, form_data=request.form, error=error,
+                )
+            flash(error, "danger")
             return render_template(
-                "customers/form.html",
-                customer=customer,
-                form_data=request.form,
+                "customers/form.html", customer=customer, form_data=request.form,
             )
-        is_customer = request.form.get("is_customer") == "1"
-        is_supplier = request.form.get("is_supplier") == "1"
-        if not (is_customer or is_supplier):
-            flash("Bitte mindestens einen Kontakttyp wählen (Kunde oder Lieferant).", "danger")
-            return render_template(
-                "customers/form.html",
-                customer=customer,
-                form_data=request.form,
-            )
-        nr_error = _apply_customer_fields(customer, request.form, is_new=False)
-        if nr_error:
-            flash(nr_error, "danger")
-            return render_template(
-                "customers/form.html",
-                customer=customer,
-                form_data=request.form,
-            )
-        try:
-            db.session.commit()
-        except IntegrityError:
-            db.session.rollback()
-            flash(
-                "Die Kundennummer wurde gerade von einem anderen Vorgang vergeben. "
-                "Bitte erneut speichern.",
-                "danger",
-            )
-            return render_template(
-                "customers/form.html",
-                customer=customer,
-                form_data=request.form,
-            )
+
+        for w in warnings:
+            flash(w, "warning")
+
+        if is_modal:
+            resp = make_response("", 204)
+            resp.headers["HX-Trigger"] = json.dumps({
+                "closeCustomerEditModal": True,
+                "customerEdited": {"customer_id": customer.id},
+            })
+            return resp
+
         flash("Kontakt aktualisiert.", "success")
         # Redirect zurueck zur Uebersicht — bevorzugt zur exakten URL,
         # von der der User kam (mit Filter, Suche, Pagination). Open-Redirect-
@@ -230,12 +285,15 @@ def edit(customer_id):
         if next_url.startswith("/customers"):
             return redirect(next_url)
         return redirect(url_for("customers.index"))
+
+    # GET
+    if is_modal:
+        return render_template(
+            "customers/_customer_edit_form_body.html", customer=customer, form_data=None,
+        )
     next_url = request.args.get("next", "")
     return render_template(
-        "customers/form.html",
-        customer=customer,
-        form_data=None,
-        next_url=next_url,
+        "customers/form.html", customer=customer, form_data=None, next_url=next_url,
     )
 
 
@@ -520,6 +578,17 @@ def _missing_required_fields(form) -> list[str]:
     return missing
 
 
+def _validate_customer_form(form) -> str | None:
+    """Pflichtfeld- + Kontakttyp-Validierung. Gibt eine deutsche Fehlermeldung
+    zurueck oder None, wenn alles passt."""
+    missing = _missing_required_fields(form)
+    if missing:
+        return "Bitte folgende Pflichtfelder ausfüllen: " + ", ".join(missing)
+    if not (form.get("is_customer") == "1" or form.get("is_supplier") == "1"):
+        return "Bitte mindestens einen Kontakttyp wählen (Kunde oder Lieferant)."
+    return None
+
+
 def _render_new_form(form_data, suggested_nr=None):
     return render_template(
         "customers/form.html",
@@ -552,11 +621,13 @@ def _apply_customer_fields(customer, form, *, is_new: bool) -> str | None:
     customer.notes = form.get("notes", "").strip()
     if is_new:
         customer.active = True
-    ms = form.get("member_since", "")
-    if ms:
-        customer.member_since = datetime.strptime(ms, "%Y-%m-%d").date()
-    else:
-        customer.member_since = None
+    # member_since nur anfassen, wenn das Feld gesendet wurde — im Versorger-
+    # Modus ist der Mitgliedschafts-Block (inkl. member_since) ausgeblendet,
+    # ein blindes Ueberschreiben wuerde den Wert loeschen (Kundenauswertung
+    # nutzt member_since).
+    if "member_since" in form:
+        ms = form.get("member_since", "").strip()
+        customer.member_since = datetime.strptime(ms, "%Y-%m-%d").date() if ms else None
     customer.externe_kennung = form.get("externe_kennung", "").strip() or None
 
     raw_base = form.get("base_fee_override", "").strip().replace(",", ".")
@@ -599,7 +670,41 @@ def _apply_customer_fields(customer, form, *, is_new: bool) -> str | None:
         # wenn ein faelschlich als Kunde angelegter Datensatz auf reinen
         # Lieferanten umgestellt wird und die Kundennummer wegfallen soll.
         customer.customer_number = None
+
+    # WG-Felder nur im Genossenschafts-Modus anwenden — im Versorger-Modus
+    # fehlen sie im Formular, bestehende WG-Daten bleiben unangetastet.
+    from app.settings_service import is_wassergenossenschaft
+    if is_wassergenossenschaft():
+        _apply_wg_fields(customer, form)
     return None
+
+
+def _apply_wg_fields(customer, form):
+    """Setzt Status, Mitglied-bis und Funktionen am Kontakt (WG-Modus).
+
+    Funktions-Regeln sind bewusst nur Warnungen (siehe ``app.wg`` / Frontend) —
+    hier wird nichts blockiert, nur synchronisiert.
+    """
+    from datetime import datetime
+    from app.wg import STATUS_LABELS, FUNCTION_LABELS, STATUS_MEMBER
+    from app.models import WgFunction
+
+    profile = customer.ensure_wg_profile()
+    status = form.get("wg_status", STATUS_MEMBER)
+    profile.status = status if status in STATUS_LABELS else STATUS_MEMBER
+
+    mu = form.get("member_until", "").strip()
+    profile.member_until = datetime.strptime(mu, "%Y-%m-%d").date() if mu else None
+
+    # Funktionen gegen die Checkbox-Auswahl synchronisieren (nur gueltige Keys);
+    # delete-orphan-Cascade raeumt entfernte Eintraege beim Flush ab.
+    selected = {f for f in form.getlist("wg_functions") if f in FUNCTION_LABELS}
+    existing = {f.function: f for f in customer.wg_functions}
+    for key in selected - set(existing):
+        customer.wg_functions.append(WgFunction(function=key))
+    for key, obj in existing.items():
+        if key not in selected:
+            customer.wg_functions.remove(obj)
 
 
 # ---------------------------------------------------------------------------
@@ -670,6 +775,8 @@ def import_preview():
         return _abort_to_import_upload()
 
     columns = list(df.columns)
+    from app.settings_service import is_wassergenossenschaft
+    is_wg = is_wassergenossenschaft()
 
     if request.method == "POST":
         # Config immer aus dem Form übernehmen (beide Aktionen: refresh + confirm)
@@ -677,9 +784,9 @@ def import_preview():
         session[_CI_CFG_KEY] = cfg.to_dict()
 
         if request.form.get("action") == "confirm":
-            baseline = import_service.build_preview_rows(df, cfg)
+            baseline = import_service.build_preview_rows(df, cfg, is_wg=is_wg)
             merged = import_service.apply_edits(request.form, baseline)
-            stats = import_service.commit(merged, cfg)
+            stats = import_service.commit(merged, cfg, is_wg=is_wg)
 
             # Aufräumen
             path_to_delete = session.pop(_CI_FILE_KEY, None)
@@ -728,8 +835,15 @@ def import_preview():
             cfg.col_phone = suggested.col_phone
         if not cfg.col_notes:
             cfg.col_notes = suggested.col_notes
+        if is_wg:
+            if not cfg.col_wg_status:
+                cfg.col_wg_status = suggested.col_wg_status
+            if not cfg.col_member_since:
+                cfg.col_member_since = suggested.col_member_since
+            if not cfg.col_member_until:
+                cfg.col_member_until = suggested.col_member_until
 
-    rows = import_service.build_preview_rows(df, cfg)
+    rows = import_service.build_preview_rows(df, cfg, is_wg=is_wg)
 
     counts = {
         "count_new": sum(1 for r in rows if r.status == import_common.ROW_NEW),
@@ -744,6 +858,7 @@ def import_preview():
         columns=columns,
         rows=rows,
         counts=counts,
+        status_labels=STATUS_LABELS,
     )
 
 

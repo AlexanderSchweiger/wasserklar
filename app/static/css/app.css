@@ -223,6 +223,37 @@ tr.overdue { background-color: #fff3cd !important; }
   margin-bottom: 0;
 }
 
+/* ============================================================
+   Modale: Body scrollt bei zu wenig Platz
+   ============================================================
+   Bootstrap/Tabler-Modale OHNE .modal-dialog-scrollable laufen bei
+   niedrigem Fenster aus dem Viewport — Header und vor allem der
+   Speichern-Button im Footer werden unerreichbar (kein Scrollbalken).
+   Diese Regel deckelt JEDES Modal auf die Viewport-Hoehe und laesst nur
+   den .modal-body scrollen; Header/Footer bleiben stehen.
+
+   Besonderheit dieses Codebase: viele Modale umschliessen
+   .modal-body + .modal-footer mit einem <form> (HTMX-Submit). Genau das
+   bricht Bootstraps eigene .modal-dialog-scrollable-Klasse, weil deren
+   Flex-Kette an .modal-content endet und nicht durch den <form>-Wrapper
+   reicht. Wir reichen die Flex-Spalte explizit durch das <form> durch,
+   damit der Body schrumpfen und scrollen darf — fuer ALLE Modale, mit
+   und ohne Form-Wrapper, ohne pro-Modal eine Klasse setzen zu muessen. */
+.modal-content {
+  /* 100vh minus Standard-Modal-Margin (1.75rem oben + unten ab Breakpoint sm) */
+  max-height: calc(100vh - 3.5rem);
+}
+.modal-content > form {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.modal-body {
+  overflow-y: auto;
+  min-height: 0;
+}
+
 /* Seiten-Transitions
    Greifen in zwei Faellen:
    - Cross-Document-Navigation via @view-transition (voller Reload, z.B. Login-Redirect).
@@ -332,7 +363,18 @@ tr.overdue { background-color: #fff3cd !important; }
   background: #fff; padding: .4rem .6rem; max-height: 40vh; overflow-y: auto;
   font-size: .8rem; box-shadow: 0 1px 5px rgba(0, 0, 0, .3);
 }
-.technik-legend-head { margin-bottom: .25rem; }
+.technik-legend-head {
+  display: flex; align-items: center; width: 100%; gap: .15rem;
+  margin: -.4rem -.6rem .25rem; padding: .4rem .6rem;
+  background: none; border: 0; cursor: pointer; text-align: left;
+  color: inherit; font-size: inherit;
+}
+.technik-legend-caret { transition: transform .15s ease; }
+/* Eingeklappt: nur der Kopf bleibt sichtbar, Body raus, Caret zeigt nach rechts */
+.technik-legend.is-collapsed { max-height: none; overflow: visible; }
+.technik-legend.is-collapsed .technik-legend-head { margin-bottom: -.4rem; }
+.technik-legend.is-collapsed .technik-legend-body { display: none; }
+.technik-legend.is-collapsed .technik-legend-caret { transform: rotate(-90deg); }
 .technik-legend-row {
   display: flex; align-items: center; cursor: pointer;
   margin-bottom: .1rem; font-weight: 400;
@@ -357,3 +399,57 @@ tr.overdue { background-color: #fff3cd !important; }
 }
 .technik-measure-main { font-weight: 500; }
 .technik-measure-sub { display: block; font-size: .78rem; margin-top: .1rem; }
+
+/* --- Karten-Container + Floating "Meine Position" ------------------------- */
+.technik-map-wrap { position: relative; }
+#technik-map { height: 72vh; min-height: 460px; }
+/* Floating-Button unten rechts auf der Karte (ueber Leaflet-Panes/Attribution). */
+.technik-locate-fab {
+  position: absolute; right: .75rem; bottom: 1.75rem; z-index: 1000;
+  width: 2.75rem; height: 2.75rem; border-radius: 50%;
+  background: #fff; color: #206bc4; border: 1px solid rgba(0, 0, 0, .15);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, .3);
+}
+.technik-locate-fab:hover { background: #f1f5f9; color: #1c6bc4; }
+
+/* --- Zeichnen-Leiste: nur im Bearbeiten-Modus sichtbar (#technik-edit-toggle) */
+.technik-draw-bar { display: none; }
+.technik-draw-bar.is-open { display: block; }
+
+/* --- Mobile (< lg): rechte Spalte als Bottom-Sheet ueber der Karte --------- */
+.technik-sheet-handle { display: none; }
+@media (max-width: 991.98px) {
+  #technik-map { height: 60vh; min-height: 0; }   /* Karte + Header ohne Scroll */
+  .technik-card-body { position: relative; overflow: hidden; }  /* geschlossenes Sheet ausblenden */
+  #technik-side {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 1200;
+    max-height: 72%; overflow-y: auto; background: #fff;
+    border-top: 1px solid var(--tblr-border-color, #dee2e6);
+    border-top-left-radius: 14px; border-top-right-radius: 14px;
+    box-shadow: 0 -2px 14px rgba(0, 0, 0, .18);
+    transform: translateY(100%); transition: transform .25s ease;
+  }
+  #technik-side .border-start { border-left: 0 !important; }
+  #technik-card.technik-sheet-open #technik-side { transform: translateY(0); }
+  /* Floating-Button verstecken, solange das Sheet offen ist (wuerde sonst drunter liegen) */
+  #technik-card.technik-sheet-open .technik-locate-fab { display: none; }
+  /* Greifleiste oben am Sheet (tippen schliesst — JS) */
+  .technik-sheet-handle {
+    display: block; height: 1.5rem; cursor: pointer; position: sticky; top: 0;
+    background: #fff; border-top-left-radius: 14px; border-top-right-radius: 14px; z-index: 1;
+  }
+  .technik-sheet-handle::before {
+    content: ""; display: block; width: 2.5rem; height: .25rem; margin: .5rem auto 0;
+    background: #ced4da; border-radius: 999px;
+  }
+}
+
+/* --- Touch-Targets: auf Touch-Geraeten groessere Klickflaechen (#6) -------- */
+@media (pointer: coarse) {
+  #technik-card .card-header .btn,
+  #technik-card .card-header .form-select,
+  .technik-draw-bar .technik-add,
+  .technik-list-item { min-height: 2.5rem; }
+  .technik-draw-bar .technik-add { padding-top: .4rem; padding-bottom: .4rem; }
+  .technik-list-item { display: flex; align-items: center; flex-wrap: wrap; }
+}

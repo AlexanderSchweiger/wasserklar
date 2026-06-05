@@ -76,6 +76,31 @@
             <textarea name="notes" class="form-control" rows="3">{{ property.notes if property else '' }}</textarea>
           </div>
 
+          {% if is_wg %}
+          <hr>
+          <h6 class="text-muted mb-1"><i class="fas fa-coins me-2"></i>Genossenschaft</h6>
+          <div class="row">
+            <div class="col-md-6">
+              <div class="mb-3">
+                <label class="form-label">Anteile</label>
+                <input type="number" name="wg_shares" min="0" step="1" class="form-control"
+                  value="{{ property.wg_shares if property and property.wg_shares else '' }}">
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="mb-3">
+                <label class="form-label">Fläche (m²)</label>
+                <div class="input-group">
+                  <input type="number" name="area_m2" min="0" step="1" class="form-control"
+                    value="{{ property.wg_area_m2 if property and property.wg_area_m2 is not none else '' }}">
+                  <span class="input-group-text">m²</span>
+                </div>
+                <small class="text-muted">Bestimmt die Anzahl der Anteile.</small>
+              </div>
+            </div>
+          </div>
+          {% endif %}
+
           <hr>
           <h6 class="text-muted mb-1">Abrechnungseinstellungen</h6>
           <p class="text-muted small mb-3">Überschreibt Kunden- und Tarif-Gebühren für diese Liegenschaft (stärkste Priorität). Leer lassen = Kunden- oder Tarif-Wert verwenden.</p>

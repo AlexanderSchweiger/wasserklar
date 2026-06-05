@@ -10,8 +10,9 @@ from app.settings_service import (_WG_MAP, _MAIL_MAP, send_mail, encrypt_passwor
                                   validate_logo_data_uri, get_contact_info_font_size,
                                   CONTACT_INFO_FONT_MIN, CONTACT_INFO_FONT_MAX,
                                   CONTACT_INFO_FONT_DEFAULT,
-                                  get_invoice_sender_address)
+                                  get_invoice_sender_address, org_type)
 from app.invoices.design import INVOICE_DESIGNS, available_designs
+from app.wg import ORG_TYPES
 
 
 @bp.route('/', methods=['GET', 'POST'])
@@ -19,6 +20,12 @@ from app.invoices.design import INVOICE_DESIGNS, available_designs
 def index():
     """Einstellungsseite für WG-Kontaktdaten und E-Mail-Server (Verwaltungs-Recht)."""
     if request.method == 'POST':
+        # Mandant-Typ (Wassergenossenschaft vs. Versorger) — unbekannte Werte
+        # ignorieren, damit der Default (cooperative) nicht versehentlich geleert wird.
+        org_val = request.form.get('org_type', '')
+        if org_val in ORG_TYPES:
+            AppSetting.set('org.type', org_val)
+
         # WG-Kontaktdaten
         for attr in _WG_MAP:
             val = request.form.get(f'wg_{attr}', '').strip()
@@ -184,6 +191,7 @@ def index():
     show_payment_qr = AppSetting.get('invoice.show_payment_qr') == 'true'
     return render_template('settings/index.html', wg=wg, mail=mail_cfg, mail_raw=mail_raw,
                            db_info=db_info,
+                           org_type=org_type(),
                            doc_format=doc_format,
                            invoice_design=invoice_design,
                            invoice_designs=available_designs(),

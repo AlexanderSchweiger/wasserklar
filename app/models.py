@@ -184,6 +184,13 @@ class Customer(db.Model):
 
     invoices = db.relationship("Invoice", backref="customer", lazy="dynamic")
     ownerships = db.relationship("PropertyOwnership", backref="customer", lazy="dynamic")
+    # WG-spezifisch (Mandant-Typ Wassergenossenschaft): 1:1-Profil + mehrwertige
+    # Funktionen. Cascade delete-orphan, damit beim Hard-Delete eines Kontakts
+    # auch Profil und Funktionen verschwinden.
+    wg_profile = db.relationship("CustomerWgProfile", uselist=False,
+                                 back_populates="customer", cascade="all, delete-orphan")
+    wg_functions = db.relationship("WgFunction", back_populates="customer",
+                                   cascade="all, delete-orphan", order_by="WgFunction.id")
 
     @property
     def wants_email(self):
@@ -206,6 +213,40 @@ class Customer(db.Model):
         if self.land and self.land != "Österreich":
             parts.append(self.land)
         return ", ".join(parts)
+
+    @property
+    def wg_status(self):
+        """Gespeicherter WG-Status (prospect|member|resigned); Default
+        'member', solange kein Profil existiert (jeder Kontakt gilt als
+        Mitglied, bis er ausdruecklich anders gesetzt wird)."""
+        return self.wg_profile.status if self.wg_profile else "member"
+
+    @property
+    def wg_member_until(self):
+        return self.wg_profile.member_until if self.wg_profile else None
+
+    def function_keys(self):
+        """Set der Funktions-Keys dieses Kontakts (siehe app.wg.FUNCTION_LABELS)."""
+        return {f.function for f in self.wg_functions}
+
+    def has_paid_shares(self):
+        """True, wenn der Kontakt aktuell (aktive Ownership) mindestens eine
+        Liegenschaft mit >=1 Anteil besitzt — Basis fuer den Mitglied-Vorschlag
+        (hybrid). Dialekt-portabel via JOIN, kein dialektspezifisches SQL."""
+        return db.session.query(PropertyOwnership.id).join(
+            PropertyWgProfile,
+            PropertyWgProfile.property_id == PropertyOwnership.property_id,
+        ).filter(
+            PropertyOwnership.customer_id == self.id,
+            PropertyOwnership.valid_to.is_(None),
+            PropertyWgProfile.shares > 0,
+        ).first() is not None
+
+    def ensure_wg_profile(self):
+        """Liefert das WG-Profil; legt es bei Bedarf an (noch nicht committed)."""
+        if self.wg_profile is None:
+            self.wg_profile = CustomerWgProfile(status="member")
+        return self.wg_profile
 
     def __repr__(self):
         return f"<Customer {self.name}>"
@@ -239,6 +280,9 @@ class Property(db.Model):
     ownerships = db.relationship("PropertyOwnership", backref="property", lazy="dynamic",
                                  order_by="PropertyOwnership.valid_from.desc()")
     invoices = db.relationship("Invoice", backref="property", lazy="dynamic")
+    # WG-spezifisch (Mandant-Typ Wassergenossenschaft): Anteile + m2.
+    wg_profile = db.relationship("PropertyWgProfile", uselist=False,
+                                 back_populates="property", cascade="all, delete-orphan")
 
     def current_owner(self):
         return (
@@ -264,6 +308,21 @@ class Property(db.Model):
             return f"{self.object_number} – {self.address_display()}"
         return self.address_display() or f"Objekt #{self.id}"
 
+    @property
+    def wg_shares(self):
+        """Anzahl Anteile in der Genossenschaft (0, solange kein Profil)."""
+        return self.wg_profile.shares if self.wg_profile else 0
+
+    @property
+    def wg_area_m2(self):
+        return self.wg_profile.area_m2 if self.wg_profile else None
+
+    def ensure_wg_profile(self):
+        """Liefert das WG-Profil; legt es bei Bedarf an (noch nicht committed)."""
+        if self.wg_profile is None:
+            self.wg_profile = PropertyWgProfile(shares=0)
+        return self.wg_profile
+
     def __repr__(self):
         return f"<Property {self.label()}>"
 
@@ -279,6 +338,61 @@ class PropertyOwnership(db.Model):
 
     def __repr__(self):
         return f"<PropertyOwnership property={self.property_id} customer={self.customer_id}>"
+
+
+# ---------------------------------------------------------------------------
+# Wassergenossenschaft (Mandant-Typ-spezifisch — 1:1-Profile + Funktionen)
+# ---------------------------------------------------------------------------
+
+class CustomerWgProfile(db.Model):
+    """WG-spezifisches 1:1-Profil zu einem Kontakt (nur im Mandant-Typ
+    Wassergenossenschaft befuellt). Skalare Mitglieds-Daten; die mehrwertigen
+    Funktionen liegen in ``WgFunction``. ``member_since`` bleibt aus
+    Kompatibilitaet auf ``Customer`` (Kundenauswertung nutzt es)."""
+    __tablename__ = "customer_wg_profiles"
+
+    customer_id = db.Column(db.Integer, db.ForeignKey("customers.id"), primary_key=True)
+    # prospect | member | resigned  (siehe app.wg.STATUS_LABELS); Default = member
+    status = db.Column(db.String(20), nullable=False, default="member",
+                       server_default=db.text("'member'"))
+    member_until = db.Column(db.Date, nullable=True)
+
+    customer = db.relationship("Customer", back_populates="wg_profile")
+
+    def __repr__(self):
+        return f"<CustomerWgProfile customer={self.customer_id} status={self.status}>"
+
+
+class WgFunction(db.Model):
+    """Vorstands-/Pruef-Funktion eines Mitglieds (mehrwertig, 1:n zu Customer).
+    ``function`` ist einer der Keys aus ``app.wg.FUNCTION_LABELS``."""
+    __tablename__ = "wg_functions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    customer_id = db.Column(db.Integer, db.ForeignKey("customers.id"), nullable=False, index=True)
+    function = db.Column(db.String(40), nullable=False)
+
+    __table_args__ = (db.UniqueConstraint("customer_id", "function", name="uq_wg_function"),)
+
+    customer = db.relationship("Customer", back_populates="wg_functions")
+
+    def __repr__(self):
+        return f"<WgFunction customer={self.customer_id} {self.function}>"
+
+
+class PropertyWgProfile(db.Model):
+    """WG-spezifisches 1:1-Profil zu einer Liegenschaft: Anteile + Quadratmeter
+    (die m2 bestimmen die Anteils-Anzahl). Nur im WG-Modus befuellt."""
+    __tablename__ = "property_wg_profiles"
+
+    property_id = db.Column(db.Integer, db.ForeignKey("properties.id"), primary_key=True)
+    shares = db.Column(db.Integer, nullable=False, default=0, server_default=db.text("0"))
+    area_m2 = db.Column(db.Integer, nullable=True)
+
+    property = db.relationship("Property", back_populates="wg_profile")
+
+    def __repr__(self):
+        return f"<PropertyWgProfile property={self.property_id} shares={self.shares}>"
 
 
 # ---------------------------------------------------------------------------
@@ -742,6 +856,23 @@ class Invoice(EmailTrackableMixin, db.Model):
     STATUS_CANCELLED = "Storniert"
     STATUS_CREDIT = "Guthaben"
     ALL_STATUSES = [STATUS_DRAFT, STATUS_SENT, STATUS_PAID, STATUS_CANCELLED, STATUS_CREDIT]
+
+    # Erlaubte manuelle Statuswechsel (Dropdown auf der Detailseite via
+    # ``invoices.set_status``). Steuert den Lebenszyklus einer Rechnung:
+    #   Entwurf  → Versendet            (Entwurf wird sonst gelöscht, nicht storniert)
+    #   Versendet→ Bezahlt/Guthaben/Storniert
+    #   Bezahlt  → Versendet/Guthaben/Storniert  (Korrekturen)
+    #   Guthaben → Versendet/Bezahlt/Storniert
+    #   Storniert→ (terminal, kein Wechsel mehr)
+    # Ein Zurücksetzen auf 'Entwurf' ist nie erlaubt. Die ``pay``-Route folgt
+    # ihrer eigenen Betrags-Logik und ist von dieser Tabelle unberührt.
+    ALLOWED_TRANSITIONS = {
+        STATUS_DRAFT: [STATUS_SENT],
+        STATUS_SENT: [STATUS_PAID, STATUS_CREDIT, STATUS_CANCELLED],
+        STATUS_PAID: [STATUS_SENT, STATUS_CREDIT, STATUS_CANCELLED],
+        STATUS_CREDIT: [STATUS_SENT, STATUS_PAID, STATUS_CANCELLED],
+        STATUS_CANCELLED: [],
+    }
 
     id = db.Column(db.Integer, primary_key=True)
     invoice_number = db.Column(db.String(50), unique=True, nullable=False)

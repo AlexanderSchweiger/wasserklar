@@ -1,6 +1,7 @@
+import json
 from datetime import date, timedelta
 
-from flask import render_template, redirect, url_for, flash, request, abort
+from flask import render_template, redirect, url_for, flash, request, abort, make_response
 from flask_login import login_required
 
 from app.periods import bp
@@ -86,17 +87,35 @@ def _timeline_warnings(name, start_date, end_date, exclude_id=None):
     return warnings
 
 
+def _period_body(period, form):
+    """Rendert den Periodenformular-Body fuer das Modal."""
+    return render_template("periods/_period_form_body.html", period=period, form=form)
+
+
+def _period_modal_saved(period_id):
+    """204 + HX-Trigger fuer das Perioden-Modal (schliessen + neu laden)."""
+    resp = make_response("", 204)
+    resp.headers["HX-Trigger"] = json.dumps({
+        "closePeriodModal": True,
+        "periodSaved": {"period_id": period_id},
+    })
+    return resp
+
+
 @bp.route("/neu", methods=["GET", "POST"])
 @login_required
 def new():
+    is_modal = bool(request.headers.get("X-From-Modal"))
     if request.method == "POST":
         data, err = _parse_form()
         if err:
             flash(err, "danger")
-            return render_template("periods/form.html", period=None, form=request.form)
+            return _period_body(None, request.form) if is_modal else \
+                render_template("periods/form.html", period=None, form=request.form)
         if BillingPeriod.query.filter_by(name=data["name"]).first():
             flash(f"Eine Periode mit dem Namen '{data['name']}' existiert bereits.", "danger")
-            return render_template("periods/form.html", period=None, form=request.form)
+            return _period_body(None, request.form) if is_modal else \
+                render_template("periods/form.html", period=None, form=request.form)
         for w in _timeline_warnings(data["name"], data["start_date"], data["end_date"]):
             flash(w, "warning")
 
@@ -113,7 +132,11 @@ def new():
             period.activate()
         db.session.commit()
         flash(f"Abrechnungsperiode '{period.name}' angelegt.", "success")
+        if is_modal:
+            return _period_modal_saved(period.id)
         return redirect(url_for("periods.index"))
+    if is_modal:
+        return _period_body(None, None)
     return render_template("periods/form.html", period=None, form=None)
 
 
@@ -121,15 +144,18 @@ def new():
 @login_required
 def edit(period_id):
     period = db.session.get(BillingPeriod, period_id) or abort(404)
+    is_modal = bool(request.headers.get("X-From-Modal"))
     if request.method == "POST":
         data, err = _parse_form()
         if err:
             flash(err, "danger")
-            return render_template("periods/form.html", period=period, form=request.form)
+            return _period_body(period, request.form) if is_modal else \
+                render_template("periods/form.html", period=period, form=request.form)
         existing = BillingPeriod.query.filter_by(name=data["name"]).first()
         if existing and existing.id != period.id:
             flash(f"Eine Periode mit dem Namen '{data['name']}' existiert bereits.", "danger")
-            return render_template("periods/form.html", period=period, form=request.form)
+            return _period_body(period, request.form) if is_modal else \
+                render_template("periods/form.html", period=period, form=request.form)
         for w in _timeline_warnings(
             data["name"], data["start_date"], data["end_date"], exclude_id=period.id
         ):
@@ -140,7 +166,11 @@ def edit(period_id):
         period.notes = data["notes"]
         db.session.commit()
         flash(f"Abrechnungsperiode '{period.name}' gespeichert.", "success")
+        if is_modal:
+            return _period_modal_saved(period.id)
         return redirect(url_for("periods.index"))
+    if is_modal:
+        return _period_body(period, None)
     return render_template("periods/form.html", period=period, form=None)
 
 
