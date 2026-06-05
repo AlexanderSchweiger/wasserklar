@@ -1,12 +1,12 @@
 {% extends "base.html" %}
-{% block title %}{{ 'Objekt bearbeiten' if property else 'Neues Objekt' }}{% endblock %}
+{% block title %}{{ 'Liegenschaft bearbeiten' if property else 'Neue Liegenschaft' }}{% endblock %}
 {% block page_title %}
-  <i class="fas fa-home me-2"></i> {{ 'Objekt bearbeiten' if property else 'Neues Objekt' }}
+  <i class="fas fa-home me-2"></i> {{ 'Liegenschaft bearbeiten' if property else 'Neue Liegenschaft' }}
 {% endblock %}
 {% block content %}
 <div class="card">
       <div class="card-header">
-        <h3 class="card-title">{{ property.label() if property else 'Neues Objekt' }}</h3>
+        <h3 class="card-title">{{ property.label() if property else 'Neue Liegenschaft' }}</h3>
       </div>
       <form method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -14,7 +14,7 @@
           <div class="row">
             <div class="col-md-6">
               <div class="mb-3">
-                <label class="form-label">Objektnummer</label>
+                <label class="form-label">Liegenschaftsnummer</label>
                 <input type="text" name="object_number" class="form-control"
                   value="{{ property.object_number if property else '' }}"
                   placeholder="z.B. OBJ-001">
@@ -78,11 +78,11 @@
 
           <hr>
           <h6 class="text-muted mb-1">Abrechnungseinstellungen</h6>
-          <p class="text-muted small mb-3">Überschreibt Kunden- und Tarif-Gebühren für dieses Objekt (stärkste Priorität). Leer lassen = Kunden- oder Tarif-Wert verwenden.</p>
+          <p class="text-muted small mb-3">Überschreibt Kunden- und Tarif-Gebühren für diese Liegenschaft (stärkste Priorität). Leer lassen = Kunden- oder Tarif-Wert verwenden.</p>
           <div class="row">
             <div class="col-md-6">
               <div class="mb-3">
-                <label class="form-label">Grundgebühr – Objektwert (€/Jahr)</label>
+                <label class="form-label">Grundgebühr – Liegenschaftswert (€/Jahr)</label>
                 <div class="input-group">
                   <input type="number" name="base_fee_override" step="0.01" class="form-control"
                     placeholder="Kunden-/Tarif-Standard"
@@ -93,7 +93,7 @@
             </div>
             <div class="col-md-6">
               <div class="mb-3">
-                <label class="form-label">Zusatzgebühr – Objektwert (€/Jahr)</label>
+                <label class="form-label">Zusatzgebühr – Liegenschaftswert (€/Jahr)</label>
                 <div class="input-group">
                   <input type="number" name="additional_fee_override" step="0.01" class="form-control"
                     placeholder="Kunden-/Tarif-Standard"

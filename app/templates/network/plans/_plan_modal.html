@@ -1,9 +1,9 @@
-{# Gemeinsames Modal fuer „Neuer Plan" und „Plan bearbeiten" — das ausloesende
+﻿{# Gemeinsames Modal fuer „Neuer Plan" und „Plan bearbeiten" — das ausloesende
    Button setzt action + Werte per data-* (siehe plans/index.html scripts). #}
 <div class="modal fade" id="planModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-lg" role="document">
     <div class="modal-content">
-      <form method="post" id="planForm" hx-boost="false" action="{{ url_for('technik.plan_create') }}">
+      <form method="post" id="planForm" hx-boost="false" action="{{ url_for('network.plan_create') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="modal-header">
           <h5 class="modal-title" id="planModalTitle">Neuer Plan</h5>

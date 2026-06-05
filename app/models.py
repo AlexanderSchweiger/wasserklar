@@ -1609,6 +1609,14 @@ class NetworkFeature(db.Model):
     material = db.Column(db.String(60), nullable=True)
     dimension_dn = db.Column(db.Integer, nullable=True)
     year_built = db.Column(db.Integer, nullable=True)
+
+    # Technische Detailfelder (auch aus WLK-Notizen extrahierbar, siehe
+    # services.parse_note_fields): Fabrikat, Einbautiefe, GOK-Hoehe, Druckstufe.
+    manufacturer = db.Column(db.String(120), nullable=True)         # Fabrikat (z. B. HAWLE)
+    installation_depth_m = db.Column(db.Float, nullable=True)       # Einbautiefe in m
+    ground_level_m = db.Column(db.Float, nullable=True)             # GOK-Hoehe (Gelaendeoberkante) in m ue. A.
+    pressure_rating = db.Column(db.String(20), nullable=True)       # Druckstufe (z. B. "PN 10")
+
     notes = db.Column(db.Text, nullable=True)
 
     # Verknuepfung mit bestehenden Stammdaten (Hausanschluss -> Objekt/Zaehler).

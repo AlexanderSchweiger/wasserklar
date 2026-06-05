@@ -1,0 +1,61 @@
+{# Zwei Modals der Elementliste. Footer-Buttons wie bei anderen Modals positioniert
+   (sekundär links, primär rechts):
+   - „Element bearbeiten": Abbrechen / Speichern — schließt beim Speichern (204 +
+     HX-Trigger closeFeatureEditModal). Body = _feature_form_fields.html.
+   - „Wartung & Prüfung": Schließen / „Eintrag hinzufügen" — Modal bleibt offen,
+     schließt nur über „Schließen". Body = _maintenance_modal_body.html.
+   Beide Bodies werden per HTMX-GET geladen (siehe _elemente_modals_scripts.html). #}
+
+<div class="modal fade" id="featureEditModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="fas fa-edit me-2"></i>Element bearbeiten</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <form id="featureEditForm" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-body" id="featureEditModalBody">
+          <div class="text-center text-muted py-4">
+            <div class="spinner-border spinner-border-sm" role="status"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+            <i class="fas fa-times me-1"></i> Abbrechen
+          </button>
+          <button type="submit" class="btn btn-primary">
+            <i class="fas fa-save me-1"></i> Speichern
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="featureMaintenanceModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="fas fa-tools me-2"></i>Wartung &amp; Prüfung</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <form id="featureMaintenanceForm" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-body" id="featureMaintenanceModalBody">
+          <div class="text-center text-muted py-4">
+            <div class="spinner-border spinner-border-sm" role="status"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+            <i class="fas fa-times me-1"></i> Schließen
+          </button>
+          <button type="submit" class="btn btn-primary">
+            <i class="fas fa-plus me-1"></i> Eintrag hinzufügen
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>

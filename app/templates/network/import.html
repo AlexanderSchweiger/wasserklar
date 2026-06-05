@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+﻿{% extends "base.html" %}
 {% block title %}Wasserleitungsplan importieren{% endblock %}
 {% block page_title %}<i class="fas fa-file-import me-2"></i> Wasserleitungsplan importieren{% endblock %}
 
@@ -12,7 +12,7 @@
       <span>Import-Ziel:</span>
       {% if plans and plans|length > 1 %}
       <select class="form-select form-select-sm w-auto" aria-label="Ziel-Plan wählen"
-              onchange="if(this.value){window.location.href='{{ url_for('technik.import_view') }}?plan='+this.value;}">
+              onchange="if(this.value){window.location.href='{{ url_for('network.import_view') }}?plan='+this.value;}">
         {% for p in plans %}
         <option value="{{ p.id }}" {% if p.id == plan.id %}selected{% endif %}>{{ p.name }}</option>
         {% endfor %}
@@ -24,7 +24,7 @@
     </div>
     {% else %}
     <div class="alert alert-warning mb-3">
-      Kein Ziel-Plan vorhanden. Bitte zuerst <a href="{{ url_for('technik.plans_index') }}">einen Plan anlegen</a>.
+      Kein Ziel-Plan vorhanden. Bitte zuerst <a href="{{ url_for('network.plans_index') }}">einen Plan anlegen</a>.
     </div>
     {% endif %}
 
@@ -34,7 +34,7 @@
       <div class="card-body">
         <h3 class="card-title">Vorschau</h3>
         <p>
-          Es werden <strong>{{ total }}</strong> Objekt(e) importiert{% if skipped %},
+          Es werden <strong>{{ total }}</strong> Element(e) importiert{% if skipped %},
           <strong>{{ skipped }}</strong> übersprungen (nicht unterstützte Geometrie){% endif %}.
         </p>
         {% if counts %}
@@ -46,14 +46,19 @@
           {% endfor %}
         </ul>
         {% endif %}
+        {% include "network/_import_note_options.html" %}
         <form method="post" hx-boost="false">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="geojson" value="{{ geojson | e }}">
           <input type="hidden" name="confirm" value="1">
+          <label class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" name="keep_unknown_notes" checked>
+            <span class="form-check-label">Unbekannte Notiz-Inhalte behalten</span>
+          </label>
           <button type="submit" class="btn btn-primary" {{ 'disabled' if not total }}>
-            <i class="fas fa-check me-1"></i>{{ total }} Objekt(e) importieren
+            <i class="fas fa-check me-1"></i>{{ total }} Element(e) importieren
           </button>
-          <a href="{{ url_for('technik.import_view') }}" class="btn ms-2">Abbrechen</a>
+          <a href="{{ url_for('network.import_view') }}" class="btn ms-2">Abbrechen</a>
         </form>
       </div>
     </div>
@@ -64,7 +69,7 @@
       <div class="card-body">
         <h3 class="card-title">Vorschau – Wasserleitungskataster</h3>
         <p>
-          Es werden <strong>{{ total }}</strong> Objekt(e) importiert{% if skipped %},
+          Es werden <strong>{{ total }}</strong> Element(e) importiert{% if skipped %},
           <strong>{{ skipped }}</strong> übersprungen{% endif %}.
           {% if stats.maintenance_count %}
           Davon <strong>{{ stats.maintenance_count }}</strong> mit Wartungsdaten – dafür werden
@@ -94,12 +99,17 @@
           Verarbeitete Dateien: {{ stats.shapefiles | join(', ') }}
         </p>
 
-        <form method="post" action="{{ url_for('technik.import_shapefile_commit') }}" hx-boost="false">
+        {% include "network/_import_note_options.html" %}
+        <form method="post" action="{{ url_for('network.import_shapefile_commit') }}" hx-boost="false">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <label class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" name="keep_unknown_notes" checked>
+            <span class="form-check-label">Unbekannte Notiz-Inhalte behalten</span>
+          </label>
           <button type="submit" class="btn btn-primary" {{ 'disabled' if not total }}>
-            <i class="fas fa-check me-1"></i>{{ total }} Objekt(e) importieren
+            <i class="fas fa-check me-1"></i>{{ total }} Element(e) importieren
           </button>
-          <a href="{{ url_for('technik.import_view') }}" class="btn ms-2">Abbrechen</a>
+          <a href="{{ url_for('network.import_view') }}" class="btn ms-2">Abbrechen</a>
         </form>
       </div>
     </div>
@@ -119,14 +129,14 @@
           Material, Dimension, Baujahr und – wo vorhanden – Wartungsintervall übernommen.
         </p>
         {% if shapefile_available is not defined or shapefile_available %}
-        <form method="post" action="{{ url_for('technik.import_shapefile') }}" enctype="multipart/form-data" hx-boost="false">
+        <form method="post" action="{{ url_for('network.import_shapefile') }}" enctype="multipart/form-data" hx-boost="false">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <div class="mb-3">
             <label class="form-label">Kataster-ZIP</label>
             <input type="file" name="file" class="form-control" required accept=".zip,application/zip">
           </div>
           <button type="submit" class="btn btn-primary"><i class="fas fa-upload me-1"></i>Hochladen &amp; Vorschau</button>
-          <a href="{{ url_for('technik.index') }}" class="btn ms-2" hx-boost="false">Zurück zum Plan</a>
+          <a href="{{ url_for('network.index') }}" class="btn ms-2" hx-boost="false">Zurück zum Plan</a>
         </form>
         {% else %}
         <div class="alert alert-warning mb-0">

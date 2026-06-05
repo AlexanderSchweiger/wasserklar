@@ -1,0 +1,76 @@
+﻿{% extends "base.html" %}
+{% block title %}Elementliste{% endblock %}
+{% block page_title %}<i class="fas fa-list me-2"></i> Elementliste{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-header">
+    <div class="d-flex align-items-center flex-wrap" style="gap:.5rem">
+      <select class="form-select form-select-sm w-auto" name="plan" aria-label="Plan filtern"
+              hx-get="{{ url_for('network.elements') }}"
+              hx-trigger="change"
+              hx-target="#elemente-table"
+              hx-include="[name='q'], [name='type'], [name='sort'], [name='dir']">
+        <option value="">Alle Pläne</option>
+        {% for p in plans %}
+        <option value="{{ p.id }}" {% if plan_filter == p.id %}selected{% endif %}>{{ p.name }}</option>
+        {% endfor %}
+      </select>
+      <select class="form-select form-select-sm w-auto" name="type" aria-label="Typ filtern"
+              hx-get="{{ url_for('network.elements') }}"
+              hx-trigger="change"
+              hx-target="#elemente-table"
+              hx-include="[name='q'], [name='plan'], [name='sort'], [name='dir']">
+        <option value="">Alle Typen</option>
+        <optgroup label="Punkte">
+          {% for key, t in vocab.POINT_TYPES.items() %}
+          <option value="{{ key }}" {% if type_filter == key %}selected{% endif %}>{{ t.label }}</option>
+          {% endfor %}
+        </optgroup>
+        <optgroup label="Linien">
+          {% for key, t in vocab.LINE_TYPES.items() %}
+          <option value="{{ key }}" {% if type_filter == key %}selected{% endif %}>{{ t.label }}</option>
+          {% endfor %}
+        </optgroup>
+      </select>
+      <div class="input-group input-group-sm" style="width:300px">
+        <input type="search" name="q" value="{{ q }}" class="form-control"
+          placeholder="Bezeichnung, Notiz, Liegenschaft, Besitzer…"
+          hx-get="{{ url_for('network.elements') }}"
+          hx-trigger="input changed delay:300ms, search"
+          hx-target="#elemente-table"
+          hx-include="[name='plan'], [name='type'], [name='sort'], [name='dir']">
+        <span class="input-group-text"><i class="fas fa-search"></i></span>
+      </div>
+      <input type="hidden" name="sort" value="{{ sort }}">
+      <input type="hidden" name="dir" value="{{ dir }}">
+    </div>
+    <div class="card-actions">
+      <a href="{{ url_for('network.index') }}" class="btn btn-sm" hx-boost="false">
+        <i class="fas fa-map-marked-alt me-1"></i>Zur Karte
+      </a>
+    </div>
+  </div>
+
+  {% if not plans %}
+  <div class="card-body">
+    <div class="alert alert-warning mb-0">
+      Noch kein Leitungsplan vorhanden.
+      <a href="{{ url_for('network.plans_index') }}">Jetzt einen Plan anlegen</a>, um Elemente zu erfassen.
+    </div>
+  </div>
+  {% else %}
+  <div id="elemente-table">
+    {% include "network/_elemente_table.html" %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block modals %}
+{% include "network/_elemente_modals.html" %}
+{% endblock %}
+
+{% block scripts %}
+{% include "network/_elemente_modals_scripts.html" %}
+{% endblock %}

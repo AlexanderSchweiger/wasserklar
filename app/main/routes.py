@@ -7,8 +7,8 @@ from app.models import (Invoice, Booking, WaterMeter, MeterReading, Property,
                         BillingPeriod, DunningPolicy, DunningNotice)
 from app.accounting import services as acc_svc
 from app.dunning import services as dunning_svc
-from app.technik import services as technik_svc
-from app.technik import vocab as technik_vocab
+from app.network import services as technik_svc
+from app.network import vocab as technik_vocab
 from app.settings_service import meter_replacement_interval
 from datetime import date
 

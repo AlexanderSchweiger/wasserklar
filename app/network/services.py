@@ -9,13 +9,17 @@
 import json
 import math
 import os
+import re
 from datetime import date
 
 from flask import current_app
 
 from app.extensions import db
-from app.models import NetworkFeature, MaintenanceLog, NetworkPlan
-from app.technik import vocab
+from app.models import (
+    NetworkFeature, MaintenanceLog, NetworkPlan,
+    Property, PropertyOwnership, Customer,
+)
+from app.network import vocab
 
 
 # ---------------------------------------------------------------------------
@@ -26,12 +30,12 @@ def technik_upload_dir():
     """Tenant-sicherer Ordner fuer Feature-Fotos.
 
     Reitet auf dem bereits per-Request umgebogenen ``PDF_DIR``
-    (SaaS: ``instance/tenants/<slug>/pdfs`` -> ``.../technik``; OSS standalone:
-    ``instance/pdfs`` -> ``instance/technik``). Damit ist die Tenant-Trennung
+    (SaaS: ``instance/tenants/<slug>/pdfs`` -> ``.../network``; OSS standalone:
+    ``instance/pdfs`` -> ``instance/network``). Damit ist die Tenant-Trennung
     geschenkt, ohne dass die SaaS-Schicht angefasst werden muss.
     """
     base = os.path.dirname(current_app.config["PDF_DIR"])
-    path = os.path.join(base, "technik")
+    path = os.path.join(base, "network")
     os.makedirs(path, exist_ok=True)
     return path
 
@@ -47,6 +51,114 @@ def _to_int(value):
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _to_float(value):
+    """Float-Parse, das deutsches Komma als Dezimaltrenner toleriert."""
+    try:
+        if value is None or value == "":
+            return None
+        return float(str(value).strip().replace(",", "."))
+    except (TypeError, ValueError):
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Notiz-Feld-Extraktion (Fabrikat / Einbautiefe / GOK-Hoehe / Druckstufe)
+# ---------------------------------------------------------------------------
+
+# Eine zeilenbasierte Notiz (z. B. aus dem WLK-Import) enthaelt oft strukturierte
+# Fachwerte als „Label: Wert"-Zeilen. Diese werden in die eigenen Spalten gehoben,
+# der Rest bleibt (optional) als Freitext-Notiz stehen.
+
+def _parse_note_number(value):
+    """Erste Zahl aus einem Wert wie ``"1,6 m"`` / ``"776.71 m"`` als Float."""
+    m = re.search(r"-?\d+(?:[.,]\d+)?", value or "")
+    if not m:
+        return None
+    return float(m.group(0).replace(",", "."))
+
+
+def _parse_note_pressure(value):
+    """Druckstufe normalisieren: ``"10"`` / ``"PN 10"`` -> ``"PN 10"``.
+    Ohne Zahl bleibt der Rohtext erhalten."""
+    m = re.search(r"\d+", value or "")
+    if m:
+        return f"PN {m.group(0)}"
+    return (value or "").strip() or None
+
+
+# (Spalte, Zeilen-Regex, Wert-Parser). Reihenfolge = Prioritaet: spezifische
+# Label-Varianten vor generischen (``Druckstufe PN`` vor ``PN``).
+_NOTE_FIELD_PATTERNS = [
+    ("pressure_rating",
+     re.compile(r"^\s*Druckstufe(?:\s*[-/]?\s*PN)?\s*:\s*(.+)$", re.I),
+     _parse_note_pressure),
+    ("pressure_rating",
+     re.compile(r"^\s*PN\s*:\s*(.+)$", re.I),
+     _parse_note_pressure),
+    ("manufacturer",
+     re.compile(r"^\s*(?:Fabrikat|Hersteller)\s*:\s*(.+)$", re.I),
+     lambda v: (v or "").strip() or None),
+    ("installation_depth_m",
+     re.compile(r"^\s*(?:Einbautiefe|Tiefe)\s*:\s*(.+)$", re.I),
+     _parse_note_number),
+    ("ground_level_m",
+     re.compile(r"^\s*(?:GOK[-\s]?H(?:ö|oe)he|GOK|Gel(?:ä|ae)ndeoberkante(?:[-\s]?H(?:ö|oe)he)?)\s*:\s*(.+)$", re.I),
+     _parse_note_number),
+]
+
+
+def parse_note_fields(notes):
+    """Zerlegt eine zeilenbasierte Notiz und extrahiert die Fachfelder.
+
+    Liefert ``(fields, remaining_lines)`` — ``fields`` enthaelt nur erkannte,
+    nicht-leere Werte (je Spalte die erste Fundstelle gewinnt), ``remaining_lines``
+    sind die nicht zugeordneten Zeilen in Original-Reihenfolge.
+    """
+    fields, remaining = {}, []
+    if not notes:
+        return fields, remaining
+    for line in notes.splitlines():
+        if not line.strip():
+            continue
+        matched = False
+        for col, pattern, parser in _NOTE_FIELD_PATTERNS:
+            m = pattern.match(line)
+            if not m:
+                continue
+            matched = True
+            if col in fields:                 # zweite Fundstelle -> als Notiz behalten
+                remaining.append(line.rstrip())
+                break
+            parsed = parser(m.group(1))
+            if parsed is None or parsed == "":
+                remaining.append(line.rstrip())
+            else:
+                fields[col] = parsed
+            break
+        if not matched:
+            remaining.append(line.rstrip())
+    return fields, remaining
+
+
+def apply_note_field_extraction(feature, keep_unknown_notes=True):
+    """Hebt Fachwerte aus ``feature.notes`` in die Spalten (nur wenn die Spalte
+    noch leer ist) und bereinigt die Notiz. ``keep_unknown_notes=False`` verwirft
+    die restlichen, nicht zugeordneten Zeilen ganz (Notiz dann leer)."""
+    fields, remaining = parse_note_fields(feature.notes)
+    if fields.get("manufacturer") and not feature.manufacturer:
+        feature.manufacturer = fields["manufacturer"]
+    if fields.get("installation_depth_m") is not None and feature.installation_depth_m is None:
+        feature.installation_depth_m = fields["installation_depth_m"]
+    if fields.get("ground_level_m") is not None and feature.ground_level_m is None:
+        feature.ground_level_m = fields["ground_level_m"]
+    if fields.get("pressure_rating") and not feature.pressure_rating:
+        feature.pressure_rating = fields["pressure_rating"]
+    if keep_unknown_notes:
+        feature.notes = "\n".join(remaining) or None
+    else:
+        feature.notes = None
 
 
 def add_months(d, months):
@@ -125,13 +237,51 @@ def apply_attributes(feature, data):
     feature.material = (data.get("material") or "").strip() or None
     feature.dimension_dn = _to_int(data.get("dimension_dn"))
     feature.year_built = _to_int(data.get("year_built"))
+    feature.manufacturer = (data.get("manufacturer") or "").strip() or None
+    feature.installation_depth_m = _to_float(data.get("installation_depth_m"))
+    feature.ground_level_m = _to_float(data.get("ground_level_m"))
+    feature.pressure_rating = (data.get("pressure_rating") or "").strip() or None
     feature.notes = (data.get("notes") or "").strip() or None
     feature.property_id = _to_int(data.get("property_id"))
-    feature.meter_id = _to_int(data.get("meter_id"))
+    # Wasserzaehler-Zuordnung entfaellt bewusst (das Objekt genuegt) — meter_id
+    # wird hier nicht mehr gesetzt; Bestandswerte bleiben unangetastet.
 
 
-def feature_to_geojson(f):
-    """NetworkFeature -> GeoJSON-Feature-Dict (inkl. abgeleiteter Display-Props)."""
+def _owner_names_by_property(property_ids):
+    """{property_id: [Besitzer-Name, ...]} der aktuell gueltigen Eigentuemer
+    (``valid_to IS NULL``) — eine Query fuer alle uebergebenen Objekte."""
+    ids = list(property_ids)
+    if not ids:
+        return {}
+    rows = (
+        db.session.query(PropertyOwnership.property_id, Customer.name)
+        .join(Customer, PropertyOwnership.customer_id == Customer.id)
+        .filter(PropertyOwnership.property_id.in_(ids),
+                PropertyOwnership.valid_to.is_(None))
+        .all()
+    )
+    out = {}
+    for pid, name in rows:
+        out.setdefault(pid, []).append(name)
+    return out
+
+
+def feature_to_geojson(f, property_map=None, owner_map=None):
+    """NetworkFeature -> GeoJSON-Feature-Dict (inkl. abgeleiteter Display-Props).
+
+    ``property_map``/``owner_map`` erlauben N+1-freie Batch-Serialisierung
+    (siehe ``collection_geojson``); fehlen sie, wird das verknuepfte Objekt
+    per Relationship bzw. Einzelquery aufgeloest (Einzel-Feature-Responses).
+    """
+    pid = f.property_id
+    if pid:
+        prop = property_map.get(pid) if property_map is not None else f.linked_property
+        if owner_map is not None:
+            owners = owner_map.get(pid, [])
+        else:
+            owners = _owner_names_by_property([pid]).get(pid, [])
+    else:
+        prop, owners = None, []
     return {
         "type": "Feature",
         "id": f.id,
@@ -147,8 +297,16 @@ def feature_to_geojson(f):
             "material": f.material,
             "dimension_dn": f.dimension_dn,
             "year_built": f.year_built,
+            "manufacturer": f.manufacturer,
+            "installation_depth_m": f.installation_depth_m,
+            "ground_level_m": f.ground_level_m,
+            "pressure_rating": f.pressure_rating,
             "notes": f.notes,
             "property_id": f.property_id,
+            # Verknuepftes Objekt: fuer Volltextsuche (Objekt/Adresse/Besitzer)
+            "property_label": prop.label() if prop else None,
+            "property_address": prop.address_display() if prop else None,
+            "owner_names": owners,
             "meter_id": f.meter_id,
             "length_m": round(f.length_m, 1) if f.length_m is not None else None,
             "photo_count": len(f.photos),
@@ -158,9 +316,15 @@ def feature_to_geojson(f):
 
 
 def collection_geojson(features):
+    feats = list(features)
+    pids = {f.property_id for f in feats if f.property_id}
+    property_map, owner_map = {}, {}
+    if pids:
+        property_map = {p.id: p for p in Property.query.filter(Property.id.in_(pids)).all()}
+        owner_map = _owner_names_by_property(pids)
     return {
         "type": "FeatureCollection",
-        "features": [feature_to_geojson(f) for f in features],
+        "features": [feature_to_geojson(f, property_map, owner_map) for f in feats],
     }
 
 
@@ -184,13 +348,19 @@ def iter_geojson_features(raw_text):
     return [f for f in feats if isinstance(f, dict) and f.get("type") == "Feature"]
 
 
-def build_feature_from_geojson(feat, user_id=None, plan_id=None):
+def build_feature_from_geojson(feat, user_id=None, plan_id=None,
+                               extract_note_fields=False, keep_unknown_notes=True):
     """Baut (uncommitted) eine NetworkFeature aus einem GeoJSON-Feature.
     Wirft ``ValueError`` bei nicht unterstuetzter Geometrie.
 
     ``plan_id`` ordnet das Feature dem Ziel-Plan zu (Pflichtspalte) — beim Import
     der aktuell gewaehlte Plan. Bei der reinen Vorschau (``summarize_geojson``)
-    bleibt es ``None``, da dort nichts committed wird."""
+    bleibt es ``None``, da dort nichts committed wird.
+
+    ``extract_note_fields`` hebt beim Import strukturierte Fachwerte (Fabrikat,
+    Einbautiefe, GOK-Hoehe, Druckstufe) aus der Notiz in die eigenen Spalten und
+    bereinigt die Notiz; ``keep_unknown_notes=False`` verwirft die restlichen,
+    nicht zugeordneten Notiz-Zeilen."""
     geom = feat.get("geometry") or {}
     props = feat.get("properties") or {}
 
@@ -209,8 +379,16 @@ def build_feature_from_geojson(feat, user_id=None, plan_id=None):
     nf.material = (props.get("material") or "").strip() or None
     nf.dimension_dn = _to_int(props.get("dimension_dn"))
     nf.year_built = _to_int(props.get("year_built"))
+    nf.manufacturer = (props.get("manufacturer") or "").strip() or None
+    nf.installation_depth_m = _to_float(props.get("installation_depth_m"))
+    nf.ground_level_m = _to_float(props.get("ground_level_m"))
+    nf.pressure_rating = (props.get("pressure_rating") or "").strip() or None
     nf.notes = (props.get("notes") or "").strip() or None
     nf.created_by_id = user_id
+
+    # Optionale Extraktion strukturierter Fachwerte aus der Notiz (WLK-Import).
+    if extract_note_fields:
+        apply_note_field_extraction(nf, keep_unknown_notes)
 
     # Optionale Wartungsinfo aus dem Import (z.B. WLK-Shapefile: Wartungsintervall
     # + letzte Wartung) als MaintenanceLog mitnehmen, damit das Dashboard-Widget
@@ -273,7 +451,8 @@ def summarize_geojson(raw_text):
 FEATURE_COPY_ATTRS = (
     "geometry_kind", "feature_type", "name", "geometry",
     "lat", "lng", "length_m", "accuracy", "material",
-    "dimension_dn", "year_built", "notes", "property_id", "meter_id",
+    "dimension_dn", "year_built", "manufacturer", "installation_depth_m",
+    "ground_level_m", "pressure_rating", "notes", "property_id", "meter_id",
 )
 
 
@@ -423,3 +602,42 @@ def inspections_due(today=None, limit=None):
             })
     due.sort(key=lambda r: r["due"])
     return due[:limit] if limit else due
+
+
+def feature_maintenance_status(features, today=None):
+    """Wartungs-Status je Feature fuer die uebergebene Feature-Liste.
+
+    Nimmt je Feature den *juengsten* MaintenanceLog (Datum desc, id desc) und
+    leitet ``{feature_id: {log, next_due, overdue_days, due}}`` ab — ``due`` =
+    ``next_due`` gesetzt UND ``<= today``. Anders als ``inspections_due`` OHNE
+    Plan-Status-/``maintenance_enabled``-Filter (die Elementliste zeigt jeden
+    Plan, auch Entwuerfe/archivierte). Features ganz ohne Log fehlen im Ergebnis
+    (der Aufrufer rendert dann „—"). Ein neuerer Log ohne ``next_due`` setzt den
+    Zeitplan bewusst zurueck (``due=False, next_due=None`` → „geprueft, kein Termin").
+    """
+    today = today or date.today()
+    ids = [f.id for f in features]
+    out = {}
+    if not ids:
+        return out
+    logs = (
+        MaintenanceLog.query
+        .filter(MaintenanceLog.feature_id.in_(ids))
+        .order_by(
+            MaintenanceLog.feature_id,
+            MaintenanceLog.date.desc(),
+            MaintenanceLog.id.desc(),
+        )
+        .all()
+    )
+    latest = {}
+    for log in logs:
+        latest.setdefault(log.feature_id, log)  # erster je Feature = juengster
+    for fid, log in latest.items():
+        out[fid] = {
+            "log": log,
+            "next_due": log.next_due,
+            "overdue_days": (today - log.next_due).days if log.next_due else None,
+            "due": bool(log.next_due and log.next_due <= today),
+        }
+    return out

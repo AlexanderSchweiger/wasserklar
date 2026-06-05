@@ -1,0 +1,124 @@
+﻿{# Elementliste-Tabelle (Fragment) — Ziel #elemente-table.
+   Erwartet: pagination, status_map, property_map, owner_map, q, sort, dir, plan_filter, vocab, today. #}
+{% from "_pagination.html" import render_pagination %}
+{% macro sort_header(key, label) %}
+  {% set active = sort == key %}
+  {% set new_dir = 'desc' if (active and dir == 'asc') else 'asc' %}
+  <a href="{{ url_for('network.elements', q=q or none, plan=plan_filter or none, type=type_filter or none, sort=key, dir=new_dir) }}"
+     class="text-reset text-decoration-none d-inline-flex align-items-center gap-1">
+    {{ label }}
+    {% if active %}
+      <i class="fas fa-sort-{{ 'down' if dir == 'desc' else 'up' }}"></i>
+    {% else %}
+      <i class="fas fa-sort text-muted"></i>
+    {% endif %}
+  </a>
+{% endmacro %}
+<div class="table-responsive">
+<table class="table table-vcenter table-hover card-table mb-0">
+  <thead>
+    <tr>
+      <th>{{ sort_header('plan', 'Plan') }}</th>
+      <th>{{ sort_header('name', 'Bezeichnung') }}</th>
+      <th>{{ sort_header('feature_type', 'Typ') }}</th>
+      <th>{{ sort_header('objekt', 'Liegenschaft') }}</th>
+      <th>{{ sort_header('besitzer', 'Besitzer') }}</th>
+      <th>{{ sort_header('accuracy', 'Genauigkeit') }}</th>
+      <th>Material / DN</th>
+      <th>{{ sort_header('length_m', 'Länge') }} / {{ sort_header('year_built', 'Baujahr') }}</th>
+      <th>{{ sort_header('wartung', 'Wartung') }}</th>
+      <th>Weitere Daten</th>
+      <th>Notiz</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for f in pagination.items %}
+    {% set st = status_map.get(f.id) %}
+    {% set prop = property_map.get(f.property_id) %}
+    {% set owners = owner_map.get(f.property_id) %}
+    {% set _icon = vocab.POINT_TYPES[f.feature_type].icon if f.feature_type in vocab.POINT_TYPES else 'fa-route' %}
+    <tr>
+      <td class="text-nowrap">
+        {{ f.plan.name }}
+        <span class="badge {{ vocab.plan_status_badge(f.plan.status) }} ms-1">{{ vocab.plan_status_label(f.plan.status) }}</span>
+      </td>
+      <td>
+        <i class="fas {{ _icon }} me-1" style="color: {{ vocab.feature_type_color(f.feature_type) }}"></i>
+        <span class="fw-medium">{{ f.label() }}</span>
+      </td>
+      <td>{{ vocab.feature_type_label(f.feature_type) }}</td>
+      <td>{{ prop.label() if prop else '—' }}</td>
+      <td>{{ owners | join(', ') if owners else '—' }}</td>
+      <td>
+        <span class="badge {{ vocab.ACCURACIES[f.accuracy].badge if f.accuracy in vocab.ACCURACIES else 'bg-secondary-lt' }}">
+          {{ vocab.accuracy_label(f.accuracy) }}
+        </span>
+      </td>
+      <td class="text-nowrap">
+        {{ f.material or '—' }}{% if f.dimension_dn is not none %} · DN {{ f.dimension_dn }}{% endif %}
+      </td>
+      <td class="text-nowrap">
+        {% if f.is_line() and f.length_m is not none %}{{ f.length_m | de_number(1) }} m
+        {% elif f.is_point() and f.year_built is not none %}{{ f.year_built }}
+        {% else %}<span class="text-secondary">—</span>{% endif %}
+      </td>
+      <td class="text-nowrap">
+        {% if not f.plan.maintenance_enabled %}
+          <span class="text-secondary small"><i class="fas fa-tools me-1"></i>deaktiviert</span>
+        {% elif st and st.due %}
+          {% if st.overdue_days > 0 %}
+          <span class="badge bg-danger text-white">überfällig ({{ st.overdue_days }} T)</span>
+          {% else %}
+          <span class="badge bg-warning text-dark">heute fällig</span>
+          {% endif %}
+          <div class="text-secondary small">letzte: {{ st.log.date.strftime('%d.%m.%Y') }}</div>
+        {% elif st and st.next_due %}
+          <span class="badge bg-green-lt">ok</span>
+          <div class="text-secondary small">nächste: {{ st.next_due.strftime('%d.%m.%Y') }}</div>
+        {% elif st %}
+          <span class="badge bg-secondary-lt">geprüft</span>
+          <div class="text-secondary small">{{ st.log.date.strftime('%d.%m.%Y') }}</div>
+        {% else %}
+          <span class="text-secondary">—</span>
+        {% endif %}
+      </td>
+      <td class="small text-nowrap">
+        {% if f.pressure_rating %}<div>{{ f.pressure_rating }}</div>{% endif %}
+        {% if f.manufacturer %}<div class="text-secondary">{{ f.manufacturer }}</div>{% endif %}
+        {% if f.installation_depth_m is not none %}<div class="text-secondary">Tiefe {{ f.installation_depth_m | de_number(2) }} m</div>{% endif %}
+        {% if f.ground_level_m is not none %}<div class="text-secondary">GOK {{ f.ground_level_m | de_number(2) }} m</div>{% endif %}
+        {% if not f.pressure_rating and not f.manufacturer and f.installation_depth_m is none and f.ground_level_m is none %}<span class="text-secondary">—</span>{% endif %}
+      </td>
+      <td class="text-secondary small">{{ f.notes | truncate(60) if f.notes else '—' }}</td>
+      <td class="text-end text-nowrap">
+        <a href="{{ url_for('network.index', plan=f.plan_id, feature=f.id) }}"
+           class="btn btn-sm btn-outline-secondary me-1" hx-boost="false"
+           title="Im Plan anzeigen (zentriert)">
+          <i class="fas fa-map-marked-alt"></i>
+        </a>
+        <button type="button"
+           data-url="{{ url_for('network.feature_edit', feature_id=f.id) }}"
+           onclick="openFeatureEditModal(this)"
+           class="btn btn-sm btn-outline-secondary me-1">
+          <i class="fas fa-edit me-1"></i>Element bearbeiten
+        </button>
+        {% if f.plan.maintenance_enabled %}
+        <button type="button"
+           data-url="{{ url_for('network.maintenance_add', feature_id=f.id) }}"
+           onclick="openFeatureMaintenanceModal(this)"
+           class="btn btn-sm btn-outline-secondary">
+          <i class="fas fa-tools me-1"></i>Wartung und Prüfung
+        </button>
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr>
+      <td colspan="12" class="text-center text-muted py-4">Keine Elemente gefunden.</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{{ render_pagination(pagination) }}

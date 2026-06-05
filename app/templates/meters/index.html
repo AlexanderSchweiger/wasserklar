@@ -7,7 +7,7 @@
     <div class="filter-bar">
       <div class="input-group input-group-sm" style="width:280px">
         <input type="search" name="q" value="{{ q }}" class="form-control"
-          placeholder="Zählernr., Objekt, Besitzer, Standort…"
+          placeholder="Zählernr., Liegenschaft, Besitzer, Standort…"
           hx-get="{{ url_for('meters.index') }}"
           hx-trigger="input changed delay:300ms"
           hx-target="#meters-table"

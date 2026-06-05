@@ -1,12 +1,12 @@
 {% include "_flash_inline.html" %}
 
 {# Zaehler wird nur angezeigt (nicht waehlbar) — das Modal wird immer fuer einen
-   konkreten Zaehler geoeffnet. Anzeige: Zählernummer · Objektnummer · Kundenname. #}
+   konkreten Zaehler geoeffnet. Anzeige: Zählernummer · Liegenschaftsnummer · Kundenname. #}
 <div class="mb-3">
   <label class="form-label">Wasserzähler</label>
   <div class="form-control-plaintext py-0">
     <code>{{ meter.meter_number }}</code>
-    <span class="text-muted">· Obj. {{ meter.property.object_number or '—' }}
+    <span class="text-muted">· Lieg. {{ meter.property.object_number or '—' }}
       · {{ owner_display or 'kein Eigentümer' }}</span>
   </div>
 </div>

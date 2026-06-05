@@ -1,0 +1,77 @@
+﻿{# Body des „Wartung & Prüfung"-Modals (Elementliste). Liste + Eingabefelder OHNE
+   eigenes <form>/Submit — der Footer-Submit des Modals (#featureMaintenanceForm,
+   „Eintrag hinzufügen") sendet die Felder. Loeschen-Buttons sind eigenstaendige
+   HTMX-Calls (type=button) und zielen auf #featureMaintenanceModalBody; per
+   X-From-Modal liefert der Server dieses Fragment zurueck. Erwartet: f, vocab, today_iso. #}
+{% include "_flash_inline.html" %}
+{% if f.plan.maintenance_enabled %}
+{% if f.maintenance_logs %}
+<div class="list-group list-group-flush mb-3">
+  {% for log in f.maintenance_logs %}
+  <div class="list-group-item px-0 py-2">
+    <div class="d-flex align-items-center">
+      <span class="me-2">{{ log.date.strftime('%d.%m.%Y') }}</span>
+      <span class="badge bg-blue-lt me-1">{{ vocab.maintenance_kind_label(log.kind) }}</span>
+      {% if log.result and log.result in vocab.MAINTENANCE_RESULTS %}
+      <span class="badge {{ vocab.MAINTENANCE_RESULTS[log.result].badge }}">{{ vocab.MAINTENANCE_RESULTS[log.result].label }}</span>
+      {% endif %}
+      <button type="button" class="btn btn-icon btn-sm btn-ghost-secondary ms-auto"
+        hx-post="{{ url_for('network.maintenance_delete', log_id=log.id) }}"
+        hx-target="#featureMaintenanceModalBody" hx-swap="innerHTML"
+        hx-headers='{"X-From-Modal": "1"}'
+        hx-confirm="Eintrag löschen?" title="Löschen"><i class="fas fa-times"></i></button>
+    </div>
+    {% if log.next_due %}<div class="small text-secondary">Nächste Prüfung: {{ log.next_due.strftime('%d.%m.%Y') }}</div>{% endif %}
+    {% if log.performed_by %}<div class="small text-secondary">Durch: {{ log.performed_by }}</div>{% endif %}
+    {% if log.notes %}<div class="small">{{ log.notes }}</div>{% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<p class="text-secondary small mb-3">Noch keine Wartungs-/Prüfeinträge.</p>
+{% endif %}
+
+<div class="border-top pt-3">
+  <div class="fw-medium mb-2">Neuer Eintrag</div>
+  <div class="row g-2">
+    <div class="col-6 mb-2">
+      <label class="form-label">Datum</label>
+      <input type="date" name="date" class="form-control" value="{{ today_iso }}">
+    </div>
+    <div class="col-6 mb-2">
+      <label class="form-label">Art</label>
+      <select name="kind" class="form-select">
+        {% for key, label in vocab.MAINTENANCE_KINDS.items() %}
+        <option value="{{ key }}">{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-6 mb-2">
+      <label class="form-label">Ergebnis</label>
+      <select name="result" class="form-select">
+        <option value="">—</option>
+        {% for key, r in vocab.MAINTENANCE_RESULTS.items() %}
+        <option value="{{ key }}">{{ r.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-6 mb-2">
+      <label class="form-label">Intervall (Monate)</label>
+      <input type="number" name="interval_months" class="form-control" min="1" max="600" placeholder="z. B. 12">
+    </div>
+  </div>
+  <div class="mb-2">
+    <label class="form-label">Durchgeführt von</label>
+    <input type="text" name="performed_by" class="form-control" placeholder="Name">
+  </div>
+  <div class="mb-2">
+    <label class="form-label">Notiz</label>
+    <input type="text" name="notes" class="form-control">
+  </div>
+  <div class="form-hint">„Intervall" setzt automatisch die nächste Prüfung, wenn kein Datum angegeben ist.</div>
+</div>
+{% else %}
+<div class="text-secondary small">
+  <i class="fas fa-tools me-1"></i>Wartung/Prüfung ist für diesen Plan deaktiviert.
+</div>
+{% endif %}

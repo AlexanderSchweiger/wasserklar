@@ -7,6 +7,15 @@
     <div class="card">
       <div class="card-header">
         <h3 class="card-title">Schritt 1: Datei wählen</h3>
+        {% if config.HELP_BASE_URL %}
+        <div class="card-actions">
+          <a href="{{ config.HELP_BASE_URL }}/csv-import#zaehler"
+             target="_blank" rel="noopener" hx-boost="false"
+             class="btn btn-sm btn-outline-primary">
+            <i class="fas fa-book me-1"></i> Import-Anleitung
+          </a>
+        </div>
+        {% endif %}
       </div>
       <form method="post" enctype="multipart/form-data">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -20,12 +29,12 @@
               <li>Im nächsten Schritt können Sie die Spalten zuordnen und Zeilen einzeln bearbeiten.</li>
             </ul>
             <strong>Beispiel CSV:</strong>
-            <pre class="mb-0" style="font-size:.8rem;background:#f8f9fa;color:#1a1a1a;padding:.5rem;border-radius:4px">Zählernummer;Objekt-Nr.;Standort;Eichjahr
+            <pre class="mb-0" style="font-size:.8rem;background:#f8f9fa;color:#1a1a1a;padding:.5rem;border-radius:4px">Zählernummer;Lieg.-Nr.;Standort;Eichjahr
 Z-001;OBJ-001;Keller;2020
 Z-002;OBJ-002;Erdgeschoss;2021</pre>
             <small class="text-muted">
-              Die Spalte <em>Zählernummer</em> und <em>Objekt-Nr.</em> sind Pflichtfelder.
-              Das Objekt muss bereits in der Datenbank vorhanden sein — nicht gefundene Objekte ergeben eine Fehlerzeile.
+              Die Spalte <em>Zählernummer</em> und <em>Lieg.-Nr.</em> sind Pflichtfelder.
+              Die Liegenschaft muss bereits in der Datenbank vorhanden sein — nicht gefundene Liegenschaften ergeben eine Fehlerzeile.
               Eichjahr, Einbaudatum, Anfangsstand und Typ sind optional.
               Beim Typ <em>sub</em> wird der Zähler als Subzähler klassifiziert, sonst als Hauptzähler.
             </small>

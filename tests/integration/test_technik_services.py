@@ -8,7 +8,7 @@ import pytest
 
 from app.extensions import db
 from app.models import NetworkPlan, NetworkFeature, MaintenanceLog
-from app.technik import services as svc
+from app.network import services as svc
 
 
 def _make_plan(name="Plan", status=NetworkPlan.STATUS_ACTIVE, maintenance=True, source=None):
@@ -229,3 +229,80 @@ class TestPlanCopyMerge:
     def test_merge_without_source_returns_none(self):
         plan = _make_plan(name="Solo")
         assert svc.merge_plan_into_source(plan, uid=None) is None
+
+
+# ---------------------------------------------------------------------------
+# Notiz-Feld-Extraktion (Fabrikat / Einbautiefe / GOK-Hoehe / Druckstufe)
+# ---------------------------------------------------------------------------
+
+_SAMPLE_NOTE = (
+    "Kat.-Nr.: 683\n"
+    "Anmerkung: T-Stück\n"
+    "Eigentümer: WG Treffling\n"
+    "Druckstufe PN: 10\n"
+    "Betreiber: WG Treffling\n"
+    "Fabrikat: HAWLE\n"
+    "Tiefe: 1.6 m\n"
+    "GOK-Höhe: 776.71 m"
+)
+
+
+class TestParseNoteFields:
+    def test_extracts_all_four_fields(self):
+        fields, remaining = svc.parse_note_fields(_SAMPLE_NOTE)
+        assert fields["manufacturer"] == "HAWLE"
+        assert fields["installation_depth_m"] == 1.6
+        assert fields["ground_level_m"] == 776.71
+        assert fields["pressure_rating"] == "PN 10"
+
+    def test_remaining_keeps_unknown_lines_in_order(self):
+        _fields, remaining = svc.parse_note_fields(_SAMPLE_NOTE)
+        assert remaining == [
+            "Kat.-Nr.: 683",
+            "Anmerkung: T-Stück",
+            "Eigentümer: WG Treffling",
+            "Betreiber: WG Treffling",
+        ]
+
+    def test_german_comma_and_einbautiefe_label(self):
+        fields, _r = svc.parse_note_fields("Einbautiefe: 2,35 m\nDruckstufe: 16")
+        assert fields["installation_depth_m"] == 2.35
+        assert fields["pressure_rating"] == "PN 16"
+
+    def test_none_and_empty(self):
+        assert svc.parse_note_fields(None) == ({}, [])
+        assert svc.parse_note_fields("") == ({}, [])
+
+
+class TestNoteExtractionInImport:
+    def _feat(self, notes):
+        return {
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [16.0, 48.0]},
+            "properties": {"feature_type": "schieber", "notes": notes},
+        }
+
+    def test_keep_unknown_notes(self):
+        nf = svc.build_feature_from_geojson(
+            self._feat(_SAMPLE_NOTE), extract_note_fields=True, keep_unknown_notes=True,
+        )
+        assert nf.manufacturer == "HAWLE"
+        assert nf.installation_depth_m == 1.6
+        assert nf.ground_level_m == 776.71
+        assert nf.pressure_rating == "PN 10"
+        # Erkannte Feld-Zeilen sind raus, der Rest bleibt erhalten.
+        assert "Fabrikat" not in nf.notes
+        assert "Druckstufe" not in nf.notes
+        assert "Eigentümer: WG Treffling" in nf.notes
+
+    def test_discard_unknown_notes(self):
+        nf = svc.build_feature_from_geojson(
+            self._feat(_SAMPLE_NOTE), extract_note_fields=True, keep_unknown_notes=False,
+        )
+        assert nf.pressure_rating == "PN 10"
+        assert nf.notes is None
+
+    def test_no_extraction_by_default(self):
+        nf = svc.build_feature_from_geojson(self._feat(_SAMPLE_NOTE))
+        assert nf.manufacturer is None
+        assert "Fabrikat: HAWLE" in nf.notes

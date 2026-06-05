@@ -109,7 +109,7 @@
 <h1>Rechnung {{ invoice.invoice_number }}</h1>
 
 {% if invoice.property %}
-<p class="intro">Wir stellen für das Objekt <strong>„{{ invoice.property.address_display() or invoice.property.label() }}"</strong> wie folgt in Rechnung:</p>
+<p class="intro">Wir stellen für die Liegenschaft <strong>„{{ invoice.property.address_display() or invoice.property.label() }}"</strong> wie folgt in Rechnung:</p>
 {% else %}
 <p class="intro">Wir stellen wie folgt in Rechnung:</p>
 {% endif %}

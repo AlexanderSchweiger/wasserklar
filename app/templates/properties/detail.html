@@ -1,13 +1,20 @@
 {% extends "base.html" %}
 {% block title %}{{ property.label() }}{% endblock %}
 {% block page_title %}<i class="fas fa-home me-2"></i> {{ property.label() }}{% endblock %}
+
+{% block head_extra %}
+{% if network_features_display %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+{% endif %}
+{% endblock %}
+
 {% block content %}
 <div class="row">
-  <!-- Objektdaten -->
+  <!-- Liegenschaftsdaten -->
   <div class="col-md-4">
     <div class="card">
       <div class="card-header">
-        <h3 class="card-title">Objektdaten</h3>
+        <h3 class="card-title">Liegenschaftsdaten</h3>
         <div class="card-options">
           <button type="button"
              data-url="{{ url_for('properties.edit', property_id=property.id) }}"
@@ -53,7 +60,7 @@
         <form method="post" action="{{ url_for('properties.deactivate', property_id=property.id) }}" class="mt-3">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button type="submit" class="btn btn-sm btn-outline-danger"
-            onclick="return confirm('Objekt wirklich archivieren?')">
+            onclick="return confirm('Liegenschaft wirklich archivieren?')">
             <i class="fas fa-archive me-1"></i> Archivieren
           </button>
         </form>
@@ -200,6 +207,41 @@
         </ul>
       </div>
     </div>
+    {% if network_features_display %}
+    <!-- Leitungsplan-Elemente: eine Mini-Karte pro verknuepftem Netz-Element.
+         Klick auf die Karte oeffnet den Leitungsplan und fokusiert das Element. -->
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title"><i class="fas fa-map-marked-alt me-2"></i>Leitungsplan</h3>
+      </div>
+      <div class="list-group list-group-flush">
+        {% for feat in network_features_display %}
+        <a href="{{ url_for('network.index') }}?feature={{ feat.id }}"
+           hx-boost="false"
+           class="list-group-item list-group-item-action p-0 text-decoration-none">
+          <div class="position-relative">
+            <div id="mini-map-{{ feat.id }}" style="height:170px;"></div>
+            {# Transparente Schicht ueber der Karte: faengt Klick-Events ab,
+               damit der Link zuverlaessig funktioniert (Leaflet wuerde sonst
+               Maus-Events schlucken). Z-Index > Leaflet-popupPane (700). #}
+            <div class="position-absolute top-0 start-0 w-100 h-100"
+                 style="z-index:800;cursor:pointer;" title="Im Leitungsplan anzeigen"></div>
+          </div>
+          <div class="px-3 py-2 d-flex align-items-center gap-2 border-top bg-light">
+            <i class="fas {{ feat.icon }} fa-fw" style="color:{{ feat.color }};"></i>
+            <span class="small fw-semibold text-body">{{ feat.name or feat.type_label }}</span>
+            {% if feat.name %}
+            <span class="small text-muted">{{ feat.type_label }}</span>
+            {% endif %}
+            <span class="ms-auto text-muted">
+              <i class="fas fa-external-link-alt" style="font-size:.65rem"></i>
+            </span>
+          </div>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
   </div>
 
   <div class="col-md-8">
@@ -495,4 +537,61 @@
 {% include "properties/_property_modal_scripts.html" %}
 {% include "properties/_ownership_modal_scripts.html" %}
 {% include "meters/_modal_scripts.html" %}
+{% if network_features_display %}
+<script>
+(function () {
+  var features = {{ network_features_display | tojson }};
+  if (!features.length) return;
+
+  var TILE_URL = "https://mapsneu.wien.gv.at/basemap/geolandbasemap/normal/google3857/{z}/{y}/{x}.png";
+
+  function initMaps() {
+    features.forEach(function (f) {
+      var el = document.getElementById("mini-map-" + f.id);
+      if (!el) return;
+      var map = L.map(el, {
+        dragging: false, touchZoom: false, scrollWheelZoom: false,
+        boxZoom: false, keyboard: false, zoomControl: false,
+        attributionControl: false, doubleClickZoom: false,
+      });
+      L.tileLayer(TILE_URL, { maxZoom: 20, maxNativeZoom: 19 }).addTo(map);
+
+      if (f.geometry_kind === "point" && f.lat != null && f.lng != null) {
+        var icon = L.divIcon({
+          className: "",
+          html: '<div style="width:16px;height:16px;border-radius:50%;background:' + f.color +
+                ';border:3px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.5)"></div>',
+          iconSize: [16, 16],
+          iconAnchor: [8, 8],
+        });
+        L.marker([f.lat, f.lng], { icon: icon }).addTo(map);
+        map.setView([f.lat, f.lng], 17);
+      } else if (f.geometry) {
+        var layer = L.geoJSON(f.geometry, {
+          style: function () { return { color: f.color, weight: 5, opacity: 0.9 }; },
+        }).addTo(map);
+        var bounds = layer.getBounds();
+        if (bounds.isValid()) map.fitBounds(bounds.pad(0.4));
+      }
+    });
+  }
+
+  if (typeof L !== "undefined") {
+    initMaps();
+  } else {
+    // Leaflet noch nicht geladen (erste Seite nach Login ohne Leitungsplan-Besuch).
+    if (!document.querySelector('link[href*="leaflet@1.9.4"]')) {
+      var lnk = document.createElement("link");
+      lnk.rel = "stylesheet";
+      lnk.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+      document.head.appendChild(lnk);
+    }
+    var s = document.createElement("script");
+    s.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+    s.onload = initMaps;
+    document.head.appendChild(s);
+  }
+})();
+</script>
+{% endif %}
 {% endblock %}

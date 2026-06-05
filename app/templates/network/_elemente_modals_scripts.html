@@ -1,0 +1,78 @@
+﻿{# JS fuer die zwei Elementliste-Modals (Element bearbeiten + Wartung & Prüfung).
+   - open*Modal(btn): laedt den jeweiligen Body per HTMX-GET (X-From-Modal) und merkt
+     sich die Action-URL fuer den Footer-Submit.
+   - Element bearbeiten: Footer-Submit -> POST -> 204 + HX-Trigger closeFeatureEditModal
+     -> Modal schliessen.
+   - Wartung: Footer-Submit „Eintrag hinzufügen" -> POST -> Body-Fragment zurueck (Modal
+     bleibt offen, Liste/Felder aktualisiert). Schließen nur ueber den Schließen-Button.
+   - Tabelle bei jedem Modal-Schließen mit aktuellen Filtern neu laden. #}
+<script>
+(function () {
+  var editModal = document.getElementById('featureEditModal');
+  var mxModal = document.getElementById('featureMaintenanceModal');
+  if (!editModal || !mxModal || !window.htmx || !window.bootstrap) { return; }
+  var editForm = document.getElementById('featureEditForm');
+  var mxForm = document.getElementById('featureMaintenanceForm');
+
+  function spinner() {
+    return '<div class="text-center text-muted py-4">' +
+           '<div class="spinner-border spinner-border-sm" role="status"></div></div>';
+  }
+
+  function refreshTable() {
+    if (!document.getElementById('elemente-table')) { return; }
+    var p = new URLSearchParams();
+    ['q', 'plan', 'type', 'sort', 'dir'].forEach(function (name) {
+      var el = document.querySelector("[name='" + name + "']");
+      if (el && el.value) { p.set(name, el.value); }
+    });
+    var s = p.toString();
+    htmx.ajax('GET', '{{ url_for("network.elements") }}' + (s ? '?' + s : ''),
+              { target: '#elemente-table', swap: 'innerHTML' });
+  }
+
+  function openModal(modalEl, form, bodyId, url) {
+    if (!url) { return; }
+    form.dataset.actionUrl = url;
+    document.getElementById(bodyId).innerHTML = spinner();
+    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    htmx.ajax('GET', url, { target: '#' + bodyId, swap: 'innerHTML', headers: {'X-From-Modal': '1'} });
+  }
+
+  function submitForm(form, bodyId) {
+    var url = form.dataset.actionUrl;
+    if (!url) { return; }
+    var values = {};
+    new FormData(form).forEach(function (v, k) { values[k] = v; });
+    htmx.ajax('POST', url, {
+      target: '#' + bodyId, swap: 'innerHTML', values: values, headers: {'X-From-Modal': '1'},
+    });
+  }
+
+  // --- Element bearbeiten ---
+  window.openFeatureEditModal = function (btn) {
+    openModal(editModal, editForm, 'featureEditModalBody', btn.dataset.url);
+  };
+  editForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    submitForm(editForm, 'featureEditModalBody');  // POST -> 204 (kein Swap) + closeFeatureEditModal
+  });
+  document.addEventListener('closeFeatureEditModal', function () {
+    var m = bootstrap.Modal.getInstance(editModal);
+    if (m) { m.hide(); }
+  });
+
+  // --- Wartung & Prüfung ---
+  window.openFeatureMaintenanceModal = function (btn) {
+    openModal(mxModal, mxForm, 'featureMaintenanceModalBody', btn.dataset.url);
+  };
+  mxForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    submitForm(mxForm, 'featureMaintenanceModalBody');  // POST -> Body-Fragment (Modal bleibt offen)
+  });
+
+  // Tabelle bei jedem Schließen aktualisieren (Stammdaten- bzw. Wartungs-Änderungen).
+  editModal.addEventListener('hidden.bs.modal', refreshTable);
+  mxModal.addEventListener('hidden.bs.modal', refreshTable);
+})();
+</script>

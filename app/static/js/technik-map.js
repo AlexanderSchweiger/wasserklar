@@ -78,6 +78,8 @@
     html += '<br><span class="text-secondary">' + escapeHtml(props.type_label) + '</span>';
     if (props.length_m != null) html += '<br>Länge: ' + props.length_m + ' m';
     if (props.dimension_dn != null) html += ' · DN ' + props.dimension_dn;
+    if (props.pressure_rating) html += '<br>' + escapeHtml(props.pressure_rating);
+    if (props.manufacturer) html += '<br>Fabrikat: ' + escapeHtml(props.manufacturer);
     return html;
   }
 
@@ -106,17 +108,52 @@
 
   function toLatLng(coord) { return [coord[1], coord[0]]; } // GeoJSON [lng,lat] -> Leaflet [lat,lng]
 
+  // --- Vermessung (Laenge + Richtungswinkel) -------------------------------
+  // Spiegelt die Backend-Haversine (services.py) fuer die Live-Anzeige beim
+  // Zeichnen. a/b sind L.LatLng-Objekte.
+
+  function segLengthM(a, b) {
+    var R = 6371000.0;
+    var p1 = a.lat * Math.PI / 180, p2 = b.lat * Math.PI / 180;
+    var dp = (b.lat - a.lat) * Math.PI / 180, dl = (b.lng - a.lng) * Math.PI / 180;
+    var h = Math.sin(dp / 2) * Math.sin(dp / 2) +
+            Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) * Math.sin(dl / 2);
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+  }
+  function pathLengthM(latlngs) {
+    var total = 0;
+    for (var i = 1; i < latlngs.length; i++) total += segLengthM(latlngs[i - 1], latlngs[i]);
+    return total;
+  }
+  // Richtungswinkel (Azimut) von a nach b, 0–360° im Uhrzeigersinn ab Nord.
+  function bearingDeg(a, b) {
+    var p1 = a.lat * Math.PI / 180, p2 = b.lat * Math.PI / 180;
+    var dl = (b.lng - a.lng) * Math.PI / 180;
+    var y = Math.sin(dl) * Math.cos(p2);
+    var x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
+    return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+  }
+  function compassDir(deg) {
+    return ["N", "NO", "O", "SO", "S", "SW", "W", "NW"][Math.round(deg / 45) % 8];
+  }
+  function fmtLength(m) {
+    if (m >= 1000) return (m / 1000).toFixed(2).replace(".", ",") + " km";
+    return m.toFixed(1).replace(".", ",") + " m";
+  }
+
   // --- Feature-Verwaltung --------------------------------------------------
 
   function FeatureStore(map) {
     this.map = map;
     this.group = L.featureGroup().addTo(map);
     this.byId = {};
+    this.featById = {};   // rohes GeoJSON-Feature je id — fuer Liste/Suche
     this.hiddenTypes = {};
   }
   FeatureStore.prototype.add = function (feature, opts) {
     var layer = buildLayer(feature);
     this.byId[feature.id] = layer;
+    this.featById[feature.id] = feature;
     if (!this.hiddenTypes[layer._technikType]) this.group.addLayer(layer);
     if (opts && opts.onSelect) layer.on("click", function () { opts.onSelect(feature.id); });
     if (opts && opts.onGeometry) layer.on("pm:update", function () { opts.onGeometry(feature.id, layer); });
@@ -125,6 +162,7 @@
   FeatureStore.prototype.remove = function (id) {
     var layer = this.byId[id];
     if (layer) { this.group.removeLayer(layer); delete this.byId[id]; }
+    delete this.featById[id];
   };
   FeatureStore.prototype.fit = function () {
     if (this.group.getLayers().length) {
@@ -201,15 +239,15 @@
     }
   }
 
-  // Deep-Link vom Dashboard: ?feature=<id> -> Panel oeffnen und hinzoomen.
-  function focusFromUrl(map, store) {
-    var id = new URLSearchParams(window.location.search).get("feature");
-    if (!id) return;
+  // Auf ein Feature fokussieren: Panel laden, hinzoomen, Popup als Hervorhebung
+  // oeffnen. Genutzt vom Deep-Link (?feature=<id>) und vom Listen-/Marker-Klick.
+  function focusFeature(map, store, id) {
     var layer = store.byId[id];
     if (!layer) return;
     openPanel(id);
     if (layer.getLatLng) map.setView(layer.getLatLng(), 18);
     else if (layer.getBounds) map.fitBounds(layer.getBounds().pad(0.5));
+    if (layer.openPopup) layer.openPopup();
   }
 
   // --- Editor-Init ---------------------------------------------------------
@@ -223,6 +261,169 @@
     legendControl(store).addTo(map);
     resetPanel();
 
+    // --- Elementliste + Suche (rechte Spalte) ---
+    var listEl = document.getElementById("technik-list");
+    var listEmptyEl = document.getElementById("technik-list-empty");
+    var listViewEl = document.getElementById("technik-list-view");
+    var searchInput = document.getElementById("technik-list-search");
+    var listToggleBtn = document.getElementById("technik-list-toggle");
+    var currentFilter = "";
+    // Ob die Liste die aktive Basisansicht ist (vom "Elementliste"-Button bzw. der
+    // Suche geoeffnet). Bleibt true, waehrend ein Detail darueber liegt — beim
+    // Schliessen des Details kehren wir dann zur Liste statt zum leeren Panel zurueck.
+    var listMode = false;
+
+    // akzent-/case-insensitiv (z. B. "uberlauf" findet "Überlauf"). Combining-
+    // Marks-Range U+0300–U+036F als String-RegExp, damit der Quelltext ASCII bleibt.
+    var COMBINING_MARKS = new RegExp("[\\u0300-\\u036f]", "g");
+    function norm(s) {
+      return String(s == null ? "" : s).normalize("NFD").replace(COMBINING_MARKS, "").toLowerCase();
+    }
+    function featLabel(f) {
+      var p = f.properties || {};
+      return p.name || p.type_label || ("#" + f.id);
+    }
+    function matchFeature(f, q) {
+      var p = f.properties || {};
+      var owners = (p.owner_names || []).join(" ");
+      var hay = norm([p.name, p.type_label, p.notes, p.manufacturer,
+                      p.pressure_rating, p.material,
+                      p.property_label, p.property_address, owners].join(" "));
+      return norm(q).split(/\s+/).every(function (t) { return !t || hay.indexOf(t) >= 0; });
+    }
+    // Deutsche Zahl (Punkt -> Komma) fuer die kompakte Feldanzeige.
+    function fmtNum(n) {
+      return n == null ? "" : String(n).replace(".", ",");
+    }
+    // Strukturierte Fachfelder als abgekuerzte „Name Wert"-Kette (nur befuellte).
+    // Ersetzt die fruehere reine Notiz-Anzeige; die Notiz wandert ans Ende.
+    function fieldsHtml(p) {
+      var bits = [];
+      if (p.pressure_rating) bits.push(escapeHtml(p.pressure_rating));
+      if (p.manufacturer) bits.push("Fabr. " + escapeHtml(p.manufacturer));
+      if (p.material) bits.push("Mat. " + escapeHtml(p.material));
+      if (p.dimension_dn != null) bits.push("DN " + p.dimension_dn);
+      if (p.installation_depth_m != null) bits.push("Tiefe " + fmtNum(p.installation_depth_m) + " m");
+      if (p.ground_level_m != null) bits.push("GOK " + fmtNum(p.ground_level_m) + " m");
+      if (!bits.length) return "";
+      return '<span class="technik-list-fields text-secondary small">' + bits.join(" · ") + "</span>";
+    }
+    function liHtml(f) {
+      var p = f.properties || {};
+      var isLine = p.geometry_kind === "line";
+      var pt = V.pointTypes && V.pointTypes[p.feature_type];
+      var icon = isLine ? "fa-route" : (pt ? pt.icon : "fa-map-marker-alt");
+      var fields = fieldsHtml(p);
+      // Notiz nur noch als Anhang ganz am Ende (falls noch vorhanden).
+      var note = p.notes
+        ? '<span class="technik-list-note text-secondary text-truncate small">' + escapeHtml(p.notes) + "</span>"
+        : "";
+      return '<li class="list-group-item list-group-item-action technik-list-item" data-feature-id="' + p.id + '">' +
+        '<i class="fas ' + icon + ' me-2" style="color:' + typeColor(p) + '"></i>' +
+        '<span class="fw-medium">' + escapeHtml(featLabel(f)) + "</span> " +
+        '<span class="text-secondary small">' + escapeHtml(p.type_label || "") + "</span>" +
+        fields + note + "</li>";
+    }
+    function renderList() {
+      if (!listEl) return;
+      var items = [];
+      Object.keys(store.featById).forEach(function (id) {
+        var f = store.featById[id];
+        if (!currentFilter || matchFeature(f, currentFilter)) items.push(f);
+      });
+      items.sort(function (a, b) { return featLabel(a).localeCompare(featLabel(b), "de"); });
+      listEl.innerHTML = items.map(liHtml).join("");
+      if (listEmptyEl) listEmptyEl.style.display = items.length ? "none" : "";
+    }
+    function showList() {
+      listMode = true;
+      if (listToggleBtn) listToggleBtn.classList.add("active");
+      if (listViewEl) listViewEl.style.display = "";
+      var p = panelEl(); if (p) p.style.display = "none";
+    }
+    function showPanel() {   // nur DOM umschalten; listMode bleibt (Detail liegt ueber der Liste)
+      if (listViewEl) listViewEl.style.display = "none";
+      var p = panelEl(); if (p) p.style.display = "";
+    }
+    // Default-Ansicht: Liste aus, leeres Detail-Panel. Genutzt von "Zurücksetzen",
+    // dem Listen-X, beim Leeren der Suche und nach Schliessen/Loeschen ohne Liste.
+    function showEmpty() {
+      listMode = false;
+      if (listToggleBtn) listToggleBtn.classList.remove("active");
+      resetPanel();
+      showPanel();
+    }
+    function showDetail(id) {     // Panel einblenden + laden, Karte NICHT bewegen (Marker-Klick)
+      showPanel();
+      openPanel(id);
+    }
+    function selectFeature(id) {  // wie showDetail, zusaetzlich auf das Element zentrieren (Liste/Deep-Link)
+      showPanel();
+      focusFeature(map, store, id);
+    }
+
+    if (searchInput) {
+      // Tippen blendet die gefilterte Liste ein; leeres Feld faellt auf das
+      // Default-Panel zurueck (wie "Zurücksetzen").
+      searchInput.addEventListener("input", function () {
+        currentFilter = this.value || "";
+        if (currentFilter) { renderList(); showList(); }
+        else { showEmpty(); }
+      });
+    }
+    function clearAndClose() {   // Suche leeren + Liste schliessen (Zurücksetzen / Listen-X)
+      if (searchInput) searchInput.value = "";
+      currentFilter = "";
+      showEmpty();
+    }
+    var listResetBtn = document.getElementById("technik-list-reset");
+    if (listResetBtn) listResetBtn.addEventListener("click", clearAndClose);
+    var listCloseBtn = document.getElementById("technik-list-close");
+    if (listCloseBtn) listCloseBtn.addEventListener("click", clearAndClose);
+    // "Elementliste"-Button: blendet die vollstaendige Liste ein/aus (Toggle).
+    if (listToggleBtn) {
+      listToggleBtn.addEventListener("click", function () {
+        if (listMode) { clearAndClose(); }
+        else {
+          if (searchInput) searchInput.value = "";
+          currentFilter = "";
+          renderList();
+          showList();
+        }
+      });
+    }
+    // Layer auf der Karte hervorheben (Linie verstaerken / Marker vergroessern).
+    function highlightLayer(id, on) {
+      var layer = store.byId[id];
+      if (!layer) return;
+      if (layer.setStyle) {                  // Linie
+        layer.setStyle(on ? { weight: 7, opacity: 1 } : { weight: 4, opacity: 0.9 });
+        if (on && layer.bringToFront) layer.bringToFront();
+      } else if (layer.getElement) {         // Punkt-Marker (divIcon)
+        var el = layer.getElement();
+        if (el) el.classList.toggle("technik-marker-hl", on);
+      }
+    }
+    var hoveredId = null;
+    function setHover(id) {                   // flackerfrei: nur bei echtem Wechsel toggeln
+      if (hoveredId === id) return;
+      if (hoveredId != null) highlightLayer(hoveredId, false);
+      hoveredId = id;
+      if (hoveredId != null) highlightLayer(hoveredId, true);
+    }
+
+    if (listEl) {
+      listEl.addEventListener("click", function (e) {
+        var li = e.target.closest(".technik-list-item");
+        if (li) selectFeature(li.getAttribute("data-feature-id"));
+      });
+      listEl.addEventListener("mouseover", function (e) {
+        var li = e.target.closest(".technik-list-item");
+        setHover(li ? li.getAttribute("data-feature-id") : null);
+      });
+      listEl.addEventListener("mouseleave", function () { setHover(null); });
+    }
+
     var pending = null; // {feature_type, geometry}
     var editMode = false;
 
@@ -233,13 +434,16 @@
         .catch(function (err) { console.error("Geometrie speichern fehlgeschlagen", err); });
     }
 
-    var storeOpts = { onSelect: openPanel, onGeometry: persistGeometry };
+    var storeOpts = { onSelect: showDetail, onGeometry: persistGeometry };
 
     // Bestehende Features laden
     fetchFeatures(T.featuresUrl).then(function (fc) {
       (fc.features || []).forEach(function (f) { store.add(f, storeOpts); });
       store.fit();
-      focusFromUrl(map, store);
+      renderList();
+      // Deep-Link (Dashboard / Elementliste): ?feature=<id> -> auswaehlen + zentrieren.
+      var deepId = new URLSearchParams(window.location.search).get("feature");
+      if (deepId && store.byId[deepId]) selectFeature(deepId);
     });
 
     // --- Zeichnen ueber die Typ-Palette ---
@@ -274,6 +478,64 @@
       });
     }
 
+    // --- Live-Vermessung beim Linien-Zeichnen (Laenge + Richtungswinkel) ---
+    // Ein kleines Overlay oben mittig auf der Karte zeigt fuer das gerade
+    // gezogene Segment Laenge + Azimut sowie die Gesamtlaenge. pointer-events:none
+    // (CSS), damit Klicks zum Setzen der Stuetzpunkte durchgehen.
+    var measureBox = null;
+    var drawingLine = false;
+    var placedPts = [];   // tatsaechlich gesetzte Stuetzpunkte (via pm:vertexadded)
+    function ensureMeasureBox() {
+      if (!measureBox) {
+        measureBox = L.DomUtil.create("div", "technik-measure", map.getContainer());
+      }
+      return measureBox;
+    }
+    function hideMeasure() { if (measureBox) measureBox.style.display = "none"; }
+    function measureHint() {
+      ensureMeasureBox().innerHTML =
+        '<span class="text-secondary">Klicken, um den ersten Stützpunkt zu setzen…</span>';
+    }
+    function updateMeasure(cursor) {
+      var box = ensureMeasureBox();
+      if (!placedPts.length) { measureHint(); return; }
+      var last = placedPts[placedPts.length - 1];
+      var segM = segLengthM(last, cursor);
+      var brg = bearingDeg(last, cursor);
+      var html = '<span class="technik-measure-main">' +
+        '<i class="fas fa-ruler-horizontal me-1"></i>' + fmtLength(segM) +
+        ' &nbsp;·&nbsp; <i class="fas fa-drafting-compass me-1"></i>' +
+        Math.round(brg) + '° ' + compassDir(brg) + '</span>';
+      if (placedPts.length > 1) {
+        var totalM = pathLengthM(placedPts) + segM;
+        html += '<span class="technik-measure-sub text-secondary">Gesamt: ' +
+          fmtLength(totalM) + ' · ' + (placedPts.length + 1) + ' Stützpunkte</span>';
+      }
+      box.innerHTML = html;
+    }
+
+    if (map.pm) {
+      map.on("pm:drawstart", function (e) {
+        if (e.shape !== "Line") return;
+        drawingLine = true;
+        placedPts = [];
+        ensureMeasureBox().style.display = "";
+        measureHint();
+        e.workingLayer.on("pm:vertexadded", function (ev) {
+          if (ev.latlng) { placedPts.push(ev.latlng); updateMeasure(ev.latlng); }
+        });
+      });
+      map.on("pm:drawend", function (e) {
+        if (e.shape && e.shape !== "Line") return;
+        drawingLine = false;
+        placedPts = [];
+        hideMeasure();
+      });
+      map.on("mousemove", function (e) {
+        if (drawingLine) updateMeasure(e.latlng);
+      });
+    }
+
     if (map.pm) {
       map.on("pm:create", function (e) {
         var geometry = e.layer.toGeoJSON().geometry;
@@ -283,9 +545,10 @@
         postJson(T.createUrl, { geometry: geometry, feature_type: ftype, plan_id: T.planId })
           .then(function (feat) {
             store.add(feat, storeOpts);
-            openPanel(feat.id);
+            renderList();
+            selectFeature(feat.id);
           })
-          .catch(function (err) { console.error("Anlegen fehlgeschlagen", err); alert("Objekt konnte nicht angelegt werden."); });
+          .catch(function (err) { console.error("Anlegen fehlgeschlagen", err); alert("Element konnte nicht angelegt werden."); });
       });
     }
 
@@ -316,7 +579,10 @@
     var panel = panelEl();
     if (panel) {
       panel.addEventListener("click", function (e) {
-        if (e.target.closest("#technik-panel-close")) resetPanel();
+        if (e.target.closest("#technik-panel-close")) {
+          resetPanel();
+          if (listMode) showList(); else showPanel();
+        }
       });
     }
 
@@ -326,10 +592,13 @@
       if (!feat || feat.id == null) return;
       store.remove(feat.id);
       store.add(feat, storeOpts);
+      renderList();
     });
     document.body.addEventListener("technik:featureDeleted", function (e) {
       if (e.detail && e.detail.id != null) store.remove(e.detail.id);
       resetPanel();
+      renderList();
+      if (listMode) showList(); else showPanel();
     });
   }
 

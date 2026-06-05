@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+﻿{% extends "base.html" %}
 {% block title %}Wasserleitungsplan – Druck{% endblock %}
 
 {% block head_extra %}
@@ -19,7 +19,7 @@
 {% block content %}
 <div class="d-print-none mb-3 btn-list">
   <button type="button" onclick="window.print()" class="btn btn-primary"><i class="fas fa-print me-1"></i>Drucken</button>
-  <a href="{{ url_for('technik.index') }}" class="btn" hx-boost="false"><i class="fas fa-arrow-left me-1"></i>Zurück zum Plan</a>
+  <a href="{{ url_for('network.index') }}" class="btn" hx-boost="false"><i class="fas fa-arrow-left me-1"></i>Zurück zum Plan</a>
 </div>
 
 <div class="d-flex align-items-baseline mb-2">
@@ -46,12 +46,13 @@
   </div>
 </div>
 
-<h4>Objektliste ({{ features | length }})</h4>
+<h4>Elementliste ({{ features | length }})</h4>
 <table class="table table-sm table-bordered">
   <thead>
     <tr>
       <th>Typ</th><th>Bezeichnung</th><th>Genauigkeit</th><th>Material</th>
-      <th>DN</th><th>Baujahr</th><th>Länge (m)</th><th>Notiz</th>
+      <th>DN</th><th>Baujahr</th><th>Länge (m)</th>
+      <th>Fabrikat</th><th>Druckstufe</th><th>Tiefe (m)</th><th>GOK (m)</th><th>Notiz</th>
     </tr>
   </thead>
   <tbody>
@@ -64,6 +65,10 @@
       <td>{{ f.dimension_dn if f.dimension_dn is not none else '' }}</td>
       <td>{{ f.year_built if f.year_built is not none else '' }}</td>
       <td>{{ f.length_m | de_number(1) if f.length_m is not none else '' }}</td>
+      <td>{{ f.manufacturer or '' }}</td>
+      <td>{{ f.pressure_rating or '' }}</td>
+      <td>{{ f.installation_depth_m | de_number(2) if f.installation_depth_m is not none else '' }}</td>
+      <td>{{ f.ground_level_m | de_number(2) if f.ground_level_m is not none else '' }}</td>
       <td>{{ f.notes or '' }}</td>
     </tr>
     {% endfor %}

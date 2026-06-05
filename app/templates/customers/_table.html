@@ -21,7 +21,7 @@
       <th>{{ sort_header('name', 'Name') }}</th>
       <th>{{ sort_header('type', 'Typ') }}</th>
       <th>{{ sort_header('address', 'Rechnungsadresse') }}</th>
-      <th>{{ sort_header('object', 'Objekt') }}</th>
+      <th>{{ sort_header('object', 'Liegenschaft') }}</th>
       <th>{{ sort_header('email', 'E-Mail') }}</th>
       <th>Telefon</th>
       <th></th>
@@ -52,7 +52,7 @@
           {% if prop %}
             {{ prop.object_number or prop.address_display() or '—' }}
           {% else %}
-            <span class="text-muted"><em>kein Objekt</em></span>
+            <span class="text-muted"><em>keine Liegenschaft</em></span>
           {% endif %}
         {% else %}
           <span class="text-muted">—</span>

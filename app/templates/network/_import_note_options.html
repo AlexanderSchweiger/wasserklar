@@ -1,0 +1,15 @@
+{# Erklaerung zur Notiz-Feld-Extraktion beim Import. Eingebunden ueber beiden
+   Commit-Formularen (GeoJSON + Shapefile/WLK). Die zugehoerige Checkbox
+   `keep_unknown_notes` steht im jeweiligen <form>. #}
+<div class="alert alert-secondary">
+  <div class="fw-medium mb-1"><i class="fas fa-magic me-1"></i>Notiz-Felder werden automatisch übernommen</div>
+  <p class="mb-1 small">
+    Erkannte Fachangaben aus der Notiz werden in eigene Spalten übernommen und dort entfernt:
+    <strong>Fabrikat</strong>, <strong>Druckstufe</strong> (z.&nbsp;B. „PN 10"),
+    <strong>Einbautiefe</strong> („Tiefe") und <strong>GOK-Höhe</strong>.
+  </p>
+  <p class="mb-0 small text-secondary">
+    Die Checkbox steuert nur den <em>Rest</em> der Notiz: ist sie aktiv, bleiben nicht zugeordnete
+    Zeilen (z.&nbsp;B. Eigentümer, Anmerkung) als Notiz erhalten — sonst wird die Notiz vollständig verworfen.
+  </p>
+</div>

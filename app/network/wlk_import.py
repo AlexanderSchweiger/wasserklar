@@ -32,7 +32,7 @@ import tempfile
 import zipfile
 from datetime import date
 
-from app.technik import vocab
+from app.network import vocab
 
 
 class WlkImportError(Exception):

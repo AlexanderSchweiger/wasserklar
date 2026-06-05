@@ -1,8 +1,7 @@
-{# Feature-Detail-Panel — HTMX-Fragment, Ziel #technik-panel.
+﻿{# Feature-Detail-Panel — HTMX-Fragment, Ziel #technik-panel.
    Wird von technik.feature_panel (GET) und nach jeder Panel-Aktion (POST)
    gerendert. Erwartet: f, vocab, properties, meters, today_iso. #}
 {% include "_flash_inline.html" %}
-{% set types = vocab.LINE_TYPES if f.is_line() else vocab.POINT_TYPES %}
 {% set _icon = vocab.POINT_TYPES[f.feature_type].icon if f.feature_type in vocab.POINT_TYPES else 'fa-route' %}
 <div class="technik-detail p-3" data-feature-id="{{ f.id }}">
   <div class="d-flex align-items-center mb-3">
@@ -16,87 +15,17 @@
   </div>
 
   {# --- Sachattribute --- #}
-  <form hx-post="{{ url_for('technik.feature_update', feature_id=f.id) }}"
+  <form hx-post="{{ url_for('network.feature_update', feature_id=f.id) }}"
         hx-target="#technik-panel" hx-swap="innerHTML">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <div class="mb-2">
-      <label class="form-label">Typ</label>
-      <select name="feature_type" class="form-select">
-        {% for key, t in types.items() %}
-        <option value="{{ key }}" {{ 'selected' if f.feature_type == key }}>{{ t.label }}</option>
-        {% endfor %}
-      </select>
-    </div>
-    <div class="mb-2">
-      <label class="form-label">Bezeichnung</label>
-      <input type="text" name="name" class="form-control" value="{{ f.name or '' }}" placeholder="z. B. Hydrant Dorfplatz">
-    </div>
-    <div class="row g-2">
-      <div class="col-6 mb-2">
-        <label class="form-label">Lagegenauigkeit</label>
-        <select name="accuracy" class="form-select">
-          {% for key, a in vocab.ACCURACIES.items() %}
-          <option value="{{ key }}" {{ 'selected' if f.accuracy == key }}>{{ a.label }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="col-6 mb-2">
-        <label class="form-label">Material</label>
-        <select name="material" class="form-select tom-select" autocomplete="off">
-          <option value="">—</option>
-          {% for m in vocab.MATERIALS %}
-          <option value="{{ m }}" {{ 'selected' if f.material == m }}>{{ m }}</option>
-          {% endfor %}
-          {% if f.material and f.material not in vocab.MATERIALS %}
-          <option value="{{ f.material }}" selected>{{ f.material }}</option>
-          {% endif %}
-        </select>
-      </div>
-    </div>
-    <div class="row g-2">
-      <div class="col-6 mb-2">
-        <label class="form-label">Dimension (DN)</label>
-        <input type="number" name="dimension_dn" class="form-control" min="0" step="1"
-          value="{{ f.dimension_dn if f.dimension_dn is not none else '' }}" placeholder="z. B. 100">
-      </div>
-      <div class="col-6 mb-2">
-        <label class="form-label">Baujahr</label>
-        <input type="number" name="year_built" class="form-control" min="1850" max="2100"
-          value="{{ f.year_built if f.year_built is not none else '' }}">
-      </div>
-    </div>
-    <div class="mb-2">
-      <label class="form-label">Notizen</label>
-      <textarea name="notes" class="form-control" rows="2">{{ f.notes or '' }}</textarea>
-    </div>
-
-    <div class="mb-2">
-      <label class="form-label">Objekt (Liegenschaft)</label>
-      <select name="property_id" class="form-select tom-select" autocomplete="off">
-        <option value="">— keines —</option>
-        {% for p in properties %}
-        <option value="{{ p.id }}" {{ 'selected' if f.property_id == p.id }}>{{ p.label() }}</option>
-        {% endfor %}
-      </select>
-    </div>
-    <div class="mb-3">
-      <label class="form-label">Wasserzähler</label>
-      <select name="meter_id" class="form-select tom-select" autocomplete="off">
-        <option value="">— keiner —</option>
-        {% for m in meters %}
-        <option value="{{ m.id }}" {{ 'selected' if f.meter_id == m.id }}>
-          {{ m.meter_number }}{% if m.property %} — {{ m.property.label() }}{% endif %}
-        </option>
-        {% endfor %}
-      </select>
-    </div>
+    {% include "network/_feature_form_fields.html" %}
 
     <div class="d-flex mb-3">
       <button type="submit" class="btn btn-primary btn-sm"><i class="fas fa-save me-1"></i>Speichern</button>
       <button type="button" class="btn btn-outline-danger btn-sm ms-auto"
-        hx-post="{{ url_for('technik.feature_delete', feature_id=f.id) }}"
+        hx-post="{{ url_for('network.feature_delete', feature_id=f.id) }}"
         hx-target="#technik-panel" hx-swap="innerHTML"
-        hx-confirm="Dieses Objekt wirklich löschen? Fotos und Wartungseinträge werden mitgelöscht.">
+        hx-confirm="Dieses Element wirklich löschen? Fotos und Wartungseinträge werden mitgelöscht.">
         <i class="fas fa-trash me-1"></i>Löschen
       </button>
     </div>
@@ -129,13 +58,13 @@
       {% for photo in f.photos %}
       <div class="col-4">
         <div class="technik-photo">
-          <a href="{{ url_for('technik.photo_serve', photo_id=photo.id) }}" target="_blank"
+          <a href="{{ url_for('network.photo_serve', photo_id=photo.id) }}" target="_blank"
              rel="noopener" hx-boost="false">
-            <img src="{{ url_for('technik.photo_serve', photo_id=photo.id) }}"
+            <img src="{{ url_for('network.photo_serve', photo_id=photo.id) }}"
                  alt="{{ photo.caption or photo.original_name or 'Foto' }}" class="rounded" loading="lazy">
           </a>
           <button type="button" class="btn btn-icon btn-sm technik-photo-del"
-            hx-post="{{ url_for('technik.photo_delete', photo_id=photo.id) }}"
+            hx-post="{{ url_for('network.photo_delete', photo_id=photo.id) }}"
             hx-target="#technik-panel" hx-swap="innerHTML"
             hx-confirm="Foto löschen?" title="Foto löschen">
             <i class="fas fa-times"></i>
@@ -145,7 +74,7 @@
       {% endfor %}
     </div>
     {% endif %}
-    <form hx-post="{{ url_for('technik.photo_upload', feature_id=f.id) }}"
+    <form hx-post="{{ url_for('network.photo_upload', feature_id=f.id) }}"
           hx-target="#technik-panel" hx-swap="innerHTML" hx-encoding="multipart/form-data">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="input-group input-group-sm">
@@ -173,7 +102,7 @@
           <span class="badge {{ vocab.MAINTENANCE_RESULTS[log.result].badge }}">{{ vocab.MAINTENANCE_RESULTS[log.result].label }}</span>
           {% endif %}
           <button type="button" class="btn btn-icon btn-sm btn-ghost-secondary ms-auto"
-            hx-post="{{ url_for('technik.maintenance_delete', log_id=log.id) }}"
+            hx-post="{{ url_for('network.maintenance_delete', log_id=log.id) }}"
             hx-target="#technik-panel" hx-swap="innerHTML"
             hx-confirm="Eintrag löschen?" title="Löschen"><i class="fas fa-times"></i></button>
         </div>
@@ -185,7 +114,7 @@
     </div>
     {% endif %}
 
-    <form hx-post="{{ url_for('technik.maintenance_add', feature_id=f.id) }}"
+    <form hx-post="{{ url_for('network.maintenance_add', feature_id=f.id) }}"
           hx-target="#technik-panel" hx-swap="innerHTML" class="border-top pt-2">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="row g-2">

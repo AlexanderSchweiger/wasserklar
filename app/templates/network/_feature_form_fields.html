@@ -1,0 +1,88 @@
+{# Stammdaten-Felder eines NetworkFeature (Element). OHNE <form>/Buttons.
+   Eingebunden im Karten-Panel (_feature_panel.html, eigenes <form>) und als Body
+   des „Element bearbeiten"-Modals (technik.feature_edit, Footer-Form der Elementliste).
+   Erwartet: f, vocab, properties, owner_map. #}
+{% set types = vocab.LINE_TYPES if f.is_line() else vocab.POINT_TYPES %}
+<div class="mb-2">
+  <label class="form-label">Typ</label>
+  <select name="feature_type" class="form-select">
+    {% for key, t in types.items() %}
+    <option value="{{ key }}" {{ 'selected' if f.feature_type == key }}>{{ t.label }}</option>
+    {% endfor %}
+  </select>
+</div>
+<div class="mb-2">
+  <label class="form-label">Bezeichnung</label>
+  <input type="text" name="name" class="form-control" value="{{ f.name or '' }}" placeholder="z. B. Hydrant Dorfplatz">
+</div>
+<div class="row g-2">
+  <div class="col-6 mb-2">
+    <label class="form-label">Lagegenauigkeit</label>
+    <select name="accuracy" class="form-select">
+      {% for key, a in vocab.ACCURACIES.items() %}
+      <option value="{{ key }}" {{ 'selected' if f.accuracy == key }}>{{ a.label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-6 mb-2">
+    <label class="form-label">Material</label>
+    <select name="material" class="form-select tom-select" autocomplete="off">
+      <option value="">—</option>
+      {% for m in vocab.MATERIALS %}
+      <option value="{{ m }}" {{ 'selected' if f.material == m }}>{{ m }}</option>
+      {% endfor %}
+      {% if f.material and f.material not in vocab.MATERIALS %}
+      <option value="{{ f.material }}" selected>{{ f.material }}</option>
+      {% endif %}
+    </select>
+  </div>
+</div>
+<div class="row g-2">
+  <div class="col-6 mb-2">
+    <label class="form-label">Dimension (DN)</label>
+    <input type="number" name="dimension_dn" class="form-control" min="0" step="1"
+      value="{{ f.dimension_dn if f.dimension_dn is not none else '' }}" placeholder="z. B. 100">
+  </div>
+  <div class="col-6 mb-2">
+    <label class="form-label">Baujahr</label>
+    <input type="number" name="year_built" class="form-control" min="1850" max="2100"
+      value="{{ f.year_built if f.year_built is not none else '' }}">
+  </div>
+</div>
+<div class="row g-2">
+  <div class="col-6 mb-2">
+    <label class="form-label">Fabrikat</label>
+    <input type="text" name="manufacturer" class="form-control" value="{{ f.manufacturer or '' }}" placeholder="z. B. HAWLE">
+  </div>
+  <div class="col-6 mb-2">
+    <label class="form-label">Druckstufe</label>
+    <input type="text" name="pressure_rating" class="form-control" value="{{ f.pressure_rating or '' }}" placeholder="z. B. PN 10">
+  </div>
+</div>
+<div class="row g-2">
+  <div class="col-6 mb-2">
+    <label class="form-label">Einbautiefe (m)</label>
+    <input type="number" name="installation_depth_m" class="form-control" min="0" step="0.01"
+      value="{{ f.installation_depth_m if f.installation_depth_m is not none else '' }}" placeholder="z. B. 1.60">
+  </div>
+  <div class="col-6 mb-2">
+    <label class="form-label">GOK-Höhe (m)</label>
+    <input type="number" name="ground_level_m" class="form-control" step="0.01"
+      value="{{ f.ground_level_m if f.ground_level_m is not none else '' }}" placeholder="z. B. 776.71">
+  </div>
+</div>
+<div class="mb-2">
+  <label class="form-label">Notizen</label>
+  <textarea name="notes" class="form-control" rows="2">{{ f.notes or '' }}</textarea>
+</div>
+<div class="mb-3">
+  <label class="form-label">Liegenschaft</label>
+  <select name="property_id" class="form-select tom-select" autocomplete="off">
+    <option value="">— keine —</option>
+    {% for p in properties %}
+    <option value="{{ p.id }}" {{ 'selected' if f.property_id == p.id }}>
+      {{ p.label() }}{% if owner_map.get(p.id) %} — {{ owner_map[p.id] | join(', ') }}{% endif %}
+    </option>
+    {% endfor %}
+  </select>
+</div>

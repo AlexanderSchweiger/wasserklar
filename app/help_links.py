@@ -14,11 +14,17 @@ ENDPOINT_TO_DOC = {
     "customers.detail":            "mitglieder",
     "customers.new":               "mitglieder#anlegen",
     "customers.edit":              "mitglieder",
+    "customers.import_upload":     "csv-import#kunden",
+    "customers.import_preview":    "csv-import#kunden",
+    "customers.import_result":     "csv-import#kunden",
 
     "properties.index":            "objekte",
     "properties.detail":           "objekte",
     "properties.new":              "objekte#anlegen",
     "properties.edit":             "objekte",
+    "properties.import_upload":    "csv-import#objekte",
+    "properties.import_preview":   "csv-import#objekte",
+    "properties.import_result":    "csv-import#objekte",
 
     "meters.index":                "wasserzaehler",
     "meters.meter_new":            "wasserzaehler#zaehler-anlegen",
@@ -30,6 +36,12 @@ ENDPOINT_TO_DOC = {
     "meters.import_upload":        "wasserzaehler#csv-import",
     "meters.import_preview":       "wasserzaehler#csv-import",
     "meters.import_result":        "wasserzaehler#csv-import",
+    "meters.meter_master_import_upload":  "csv-import#zaehler",
+    "meters.meter_master_import_preview": "csv-import#zaehler",
+    "meters.meter_master_import_result":  "csv-import#zaehler",
+    "meters.swap_import_upload":   "csv-import#zaehlertausch",
+    "meters.swap_import_preview":  "csv-import#zaehlertausch",
+    "meters.swap_import_result":   "csv-import#zaehlertausch",
 
     # Rechnungen / OP
     "invoices.index":              "rechnungen",
@@ -79,9 +91,9 @@ ENDPOINT_TO_DOC = {
     "dunning.policy_new":          "mahnwesen#vorlagen",
     "dunning.policy_edit":         "mahnwesen#vorlagen",
 
-    # Stammdaten-Import
-    "import_csv.upload":           "csv-import",
-    "import_csv.preview":          "csv-import#schritte",
+    # Stammdaten-Import (kombiniert)
+    "import_csv.upload":           "csv-import#kombiniert",
+    "import_csv.preview":          "csv-import#kombiniert",
 
     # Verwaltung
     "settings.index":              "einstellungen",

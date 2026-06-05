@@ -67,7 +67,7 @@
         <label class="form-label fw-bold mb-1">Anzeigen</label>
         <select name="modus" class="form-select form-select-sm" style="width:230px">
           <option value="alle"            {% if modus == 'alle' %}selected{% endif %}>Alle Kunden</option>
-          <option value="mit_objekt"      {% if modus == 'mit_objekt' %}selected{% endif %}>Kunden mit Objekt</option>
+          <option value="mit_objekt"      {% if modus == 'mit_objekt' %}selected{% endif %}>Kunden mit Liegenschaft</option>
           <option value="aktiver_zaehler" {% if modus == 'aktiver_zaehler' %}selected{% endif %}>Kunden mit aktivem Wasserzähler</option>
         </select>
       </div>
@@ -113,7 +113,7 @@
         <thead>
           <tr style="height:32px">
             <th colspan="9"  class="text-center text-white" style="background:#1F497D">Kunde</th>
-            <th colspan="5"  class="text-center text-white" style="background:#2F6E3B">Objekt</th>
+            <th colspan="5"  class="text-center text-white" style="background:#2F6E3B">Liegenschaft</th>
             <th colspan="7"  class="text-center text-white" style="background:#7B3F00">Zähler</th>
             <th colspan="3"  class="text-center text-white" style="background:#4A4A4A">Letzter Zählerstand</th>
           </tr>
@@ -240,9 +240,9 @@
                 {{ row.ownership.valid_from.strftime('%d.%m.%Y') if row.ownership and row.ownership.valid_from else '' }}
               </td>
               {% else %}
-              {# Kunde ohne Objekt — Platzhalter über alle 5 Objekt-Spalten #}
+              {# Kunde ohne Liegenschaft — Platzhalter über alle 5 Liegenschafts-Spalten #}
               <td colspan="5" class="align-middle text-center text-muted fst-italic"
-                  style="border-right: 3px solid #2F6E3B">kein Objekt</td>
+                  style="border-right: 3px solid #2F6E3B">keine Liegenschaft</td>
               {% endif %}
             {% endif %}
             {# Wenn prop_rowspan == 0: alle 5 Objekt-Zellen durch rowspan belegt — nichts rendern #}

@@ -164,7 +164,7 @@ class TestPrint:
         assert r.status_code == 200
         body = r.get_data(as_text=True)
         assert "Legende" in body
-        assert "Objektliste" in body
+        assert "Elementliste" in body
 
 
 class TestMaintenance:

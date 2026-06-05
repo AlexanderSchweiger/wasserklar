@@ -14,7 +14,7 @@ import pytest
 
 from app.extensions import db
 from app.models import NetworkFeature, MaintenanceLog, User
-from app.technik import wlk_import as wlk
+from app.network import wlk_import as wlk
 from tests.conftest import _ensure_role
 
 # Reales GK M31 (EPSG:31255, MGI/Bessel) — identisch zu den WASKAT-Shapes.
@@ -161,7 +161,7 @@ class TestClassify:
     @pytest.mark.parametrize("layer,code,aanm,expected", [
         ("einbau", "ABSP", "", "schieber"),
         ("einbau", "HYO", "Oberflurhydrant", "hydrant"),
-        ("einbau", "ANSO", "Anbohrschelle", "hausanschluss"),
+        ("einbau", "ANSO", "Anbohrschelle", "anbohrschelle"),
         ("einbau", "SO", "HA", "hausanschluss"),       # Code unbekannt -> AANM "HA"
         ("einbau", "SO", "Leitungsende", "leitungsende"),
         ("einbau", "SO", "Material - Dimensionswechsel", "materialwechsel"),

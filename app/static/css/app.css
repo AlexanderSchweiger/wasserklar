@@ -300,6 +300,20 @@ tr.overdue { background-color: #fff3cd !important; }
 @media (max-width: 991.98px) { .technik-panel { max-height: none; } }
 .technik-panel-empty { min-height: 220px; display: flex; flex-direction: column; justify-content: center; }
 
+/* Elementliste + Suche in der rechten Spalte (Karte) */
+.technik-list-scroll { max-height: calc(72vh - 3.25rem); overflow-y: auto; }
+@media (max-width: 991.98px) { .technik-list-scroll { max-height: 50vh; } }
+#technik-list .technik-list-item { cursor: pointer; }
+#technik-list .technik-list-fields { display: block; }
+#technik-list .technik-list-note { display: block; }
+/* Hover ueber Listeneintrag -> Marker auf der Karte hervorheben */
+.technik-marker-wrap.technik-marker-hl { z-index: 1000 !important; }
+.technik-marker-hl .technik-marker {
+  transform: scale(1.35);
+  box-shadow: 0 0 0 3px rgba(32, 107, 196, .6), 0 1px 4px rgba(0, 0, 0, .4);
+  transition: transform .08s ease-out;
+}
+
 /* Foto-Galerie im Panel */
 .technik-photo { position: relative; }
 .technik-photo img {
@@ -332,3 +346,14 @@ tr.overdue { background-color: #fff3cd !important; }
   display: inline-block; width: 1.4rem; height: 0; border-top: 3px solid;
   vertical-align: middle; margin-right: .35rem;
 }
+
+/* Live-Vermessung beim Zeichnen (Laenge + Richtungswinkel) — Overlay oben mittig.
+   pointer-events:none, damit Klicks zum Setzen der Stuetzpunkte durchgehen. */
+.technik-measure {
+  position: absolute; top: .5rem; left: 50%; transform: translateX(-50%);
+  z-index: 1000; pointer-events: none; white-space: nowrap; text-align: center;
+  background: rgba(255, 255, 255, .95); padding: .3rem .65rem; border-radius: 4px;
+  font-size: .85rem; line-height: 1.25; box-shadow: 0 1px 5px rgba(0, 0, 0, .3);
+}
+.technik-measure-main { font-weight: 500; }
+.technik-measure-sub { display: block; font-size: .78rem; margin-top: .1rem; }

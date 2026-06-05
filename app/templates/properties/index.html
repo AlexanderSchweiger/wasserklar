@@ -1,6 +1,6 @@
 {% extends "base.html" %}
-{% block title %}Objekte{% endblock %}
-{% block page_title %}<i class="fas fa-home me-2"></i> Objekte{% endblock %}
+{% block title %}Liegenschaften{% endblock %}
+{% block page_title %}<i class="fas fa-home me-2"></i> Liegenschaften{% endblock %}
 {% block content %}
 <div class="card">
   <div class="card-header">
@@ -20,7 +20,7 @@
         <i class="fas fa-file-import me-1"></i> Importieren
       </a>
       <a href="{{ url_for('properties.new') }}" class="btn btn-primary">
-        <i class="fas fa-plus me-1"></i> Neues Objekt
+        <i class="fas fa-plus me-1"></i> Neue Liegenschaft
       </a>
       <div class="dropdown">
         <button class="btn btn-outline-secondary" type="button" data-bs-toggle="dropdown" aria-expanded="false">
@@ -56,16 +56,16 @@
       </div>
       <div class="modal-body">
         <p>
-          Bei einigen Objekten wurde die Hausnummer direkt im Straßenfeld eingetragen (z.&nbsp;B.
+          Bei einigen Liegenschaften wurde die Hausnummer direkt im Straßenfeld eingetragen (z.&nbsp;B.
           <em>„Hauptstraße 12a"</em> statt Straße <em>„Hauptstraße"</em> + Hausnummer <em>„12a"</em>).
         </p>
         <p>
-          Beim Bestätigen wird für alle Objekte, bei denen das Hausnummer-Feld noch leer ist,
+          Beim Bestätigen wird für alle Liegenschaften, bei denen das Hausnummer-Feld noch leer ist,
           alles ab der ersten Ziffer im Straßenfeld automatisch in das Hausnummer-Feld übertragen.
           Der Rest verbleibt als Straßenname.
         </p>
         <p class="mb-0 text-muted small">
-          Objekte mit bereits befülltem Hausnummer-Feld werden nicht verändert.
+          Liegenschaften mit bereits befülltem Hausnummer-Feld werden nicht verändert.
         </p>
       </div>
       <div class="modal-footer">

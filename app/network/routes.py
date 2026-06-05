@@ -14,6 +14,7 @@ authentifizierte Requests NICHT — daher traegt jede Route ``@login_required``.
 
 import json
 import os
+import unicodedata
 import uuid
 from datetime import date
 
@@ -24,17 +25,28 @@ from flask import (
 from flask_login import login_required, current_user
 from werkzeug.utils import secure_filename
 
-from app.technik import bp
-from app.technik import services as svc
-from app.technik import vocab
-from app.technik import wlk_import as wlk
+from app.network import bp
+from app.network import services as svc
+from app.network import vocab
+from app.network import wlk_import as wlk
 from app.extensions import db
+from app.pagination import paginate_list
 from app.models import (
     NetworkPlan, NetworkFeature, MaintenanceLog, FeaturePhoto,
-    Property, WaterMeter,
+    Property, PropertyOwnership, Customer,
 )
 
 _ALLOWED_IMG_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+
+# Elementliste: erlaubte Sort-Keys (URL-Param -> Sortier-Logik in ``_sort_features``).
+_ELEM_SORT_KEYS = {"plan", "name", "feature_type", "accuracy", "length_m",
+                   "year_built", "wartung", "objekt", "besitzer"}
+_ELEM_DEFAULT_SORT = "name"
+_ELEM_PAGE_KEY = "network_elemente"
+# Gueltige Feature-Typ-Keys (Punkt + Linie) fuer den Typ-Filter der Elementliste.
+_ALL_TYPE_KEYS = set(vocab.POINT_TYPES) | set(vocab.LINE_TYPES)
+# Sortier-Rang der Lagegenauigkeit aus der Vokabular-Reihenfolge (geschaetzt < gut < exakt).
+_ACCURACY_RANK = {key: i for i, key in enumerate(vocab.ACCURACIES)}
 
 
 # ---------------------------------------------------------------------------
@@ -49,9 +61,9 @@ def _map_config(plan):
     JS beim Anlegen neuer Features mit."""
     pid = plan.id if plan else None
     return {
-        "base": url_for("technik.index"),
-        "featuresUrl": url_for("technik.features_geojson", plan=pid),
-        "createUrl": url_for("technik.feature_create"),
+        "base": url_for("network.index"),
+        "featuresUrl": url_for("network.features_geojson", plan=pid),
+        "createUrl": url_for("network.feature_create"),
         "planId": pid,
         "vocab": vocab.as_client_dict(),
     }
@@ -69,7 +81,7 @@ def current_plan():
     if pid:
         plan = NetworkPlan.query.get(pid)
     if plan is None:
-        sid = session.get("technik_plan_id")
+        sid = session.get("network_plan_id")
         if sid:
             plan = NetworkPlan.query.get(sid)
     if plan is None:
@@ -80,30 +92,57 @@ def current_plan():
     if plan is None:
         plan = NetworkPlan.query.order_by(NetworkPlan.id.asc()).first()
     if plan is not None:
-        session["technik_plan_id"] = plan.id
+        session["network_plan_id"] = plan.id
     return plan
 
 
+def _owner_names_map(property_ids):
+    """{property_id: [Besitzer-Name, ...]} der aktuell gueltigen Eigentuemer
+    (``valid_to IS NULL``). Mehrere parallele Besitzer sind erlaubt (z.B.
+    Ehepaare/Erbengemeinschaften), daher eine Namensliste je Objekt."""
+    ids = list(property_ids)
+    if not ids:
+        return {}
+    rows = (
+        db.session.query(PropertyOwnership.property_id, Customer.name)
+        .join(Customer, PropertyOwnership.customer_id == Customer.id)
+        .filter(PropertyOwnership.property_id.in_(ids),
+                PropertyOwnership.valid_to.is_(None))
+        .all()
+    )
+    out = {}
+    for pid, name in rows:
+        out.setdefault(pid, []).append(name)
+    return out
+
+
 def _link_options():
-    """Objekte/Zaehler fuer die Verknuepfungs-Dropdowns im Feature-Panel."""
+    """Objekte (Liegenschaften) inkl. Besitzer fuer das Verknuepfungs-Dropdown im
+    Element-Panel. Eine Wasserzaehler-Zuordnung gibt es bewusst nicht mehr — das
+    zugeordnete Objekt genuegt."""
     properties = (
         Property.query.filter_by(active=True)
         .order_by(Property.object_number.asc())
         .all()
     )
-    meters = (
-        WaterMeter.query.join(Property)
-        .filter(WaterMeter.active.is_(True))
-        .order_by(WaterMeter.meter_number.asc())
-        .all()
-    )
-    return {"properties": properties, "meters": meters}
+    return {
+        "properties": properties,
+        "owner_map": _owner_names_map([p.id for p in properties]),
+    }
 
 
 def _render_panel(f):
     return render_template(
-        "technik/_feature_panel.html",
+        "network/_feature_panel.html",
         f=f, vocab=vocab, today_iso=date.today().isoformat(), **_link_options()
+    )
+
+
+def _render_maintenance_modal_body(f):
+    """Body des „Wartung & Prüfung"-Modals der Elementliste (Liste + Felder, ohne <form>)."""
+    return render_template(
+        "network/_maintenance_modal_body.html",
+        f=f, vocab=vocab, today_iso=date.today().isoformat(),
     )
 
 
@@ -144,7 +183,7 @@ def index():
         NetworkFeature.query.filter_by(plan_id=plan.id).count() if plan else 0
     )
     return render_template(
-        "technik/index.html",
+        "network/index.html",
         cfg=_map_config(plan),
         plan=plan,
         plans=plans,
@@ -165,6 +204,139 @@ def features_geojson():
     if ftype:
         query = query.filter(NetworkFeature.feature_type == ftype)
     return jsonify(svc.collection_geojson(query.all()))
+
+
+# ---------------------------------------------------------------------------
+# Elementliste (plan-uebergreifend, sortier- + durchsuchbar)
+# ---------------------------------------------------------------------------
+
+def _norm(s):
+    """Akzent-/Case-insensitiv normalisieren (z. B. „Überlauf" -> „uberlauf")."""
+    s = unicodedata.normalize("NFD", str(s or ""))
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return s.casefold()
+
+
+def _feature_property_owner_maps(features):
+    """({property_id: Property}, {property_id: [Besitzer-Name, ...]}) fuer die
+    verknuepften Objekte der uebergebenen Features — je eine Query, kein N+1."""
+    pids = {f.property_id for f in features if f.property_id}
+    if not pids:
+        return {}, {}
+    property_map = {p.id: p for p in Property.query.filter(Property.id.in_(pids)).all()}
+    return property_map, _owner_names_map(pids)
+
+
+def _matches_query(f, q, property_map, owner_map):
+    """Freitext-Filter (Mehrwort-UND, akzentfrei) ueber Bezeichnung, Notiz,
+    Material sowie das zugeordnete Objekt (Nr./Adresse) und dessen Besitzer.
+    Der Typ wird bewusst NICHT durchsucht — dafuer gibt es den eigenen Typ-Filter."""
+    prop = property_map.get(f.property_id)
+    owners = owner_map.get(f.property_id, [])
+    hay = _norm(" ".join(filter(None, [
+        f.name,
+        f.notes,
+        f.material,
+        f.manufacturer,
+        prop.label() if prop else None,
+        prop.object_number if prop else None,
+        " ".join(owners),
+    ])))
+    return all(tok in hay for tok in _norm(q).split())
+
+
+def _sort_features(features, sort, direction, status_map, property_map, owner_map):
+    """Sortiert die Feature-Liste in Python — ``wartung`` (``next_due``), ``objekt``
+    und ``besitzer`` sind abgeleitet und nicht direkt SQL-sortierbar, daher der
+    einheitliche Weg. NULL-/Leerwerte wandern in beiden Richtungen ans Ende
+    (Partition: vorhandene zuerst, fehlende anhaengen). Sekundaer stabil nach id.
+    Volumen klein (max. einige hundert Features ueber alle Plaene)."""
+    desc = direction == "desc"
+
+    def key_of(f):
+        if sort == "plan":
+            return (f.plan.name or "").casefold()
+        if sort == "feature_type":
+            return vocab.feature_type_label(f.feature_type).casefold()
+        if sort == "accuracy":
+            return _ACCURACY_RANK.get(f.accuracy)
+        if sort == "length_m":
+            return f.length_m
+        if sort == "year_built":
+            return f.year_built
+        if sort == "wartung":
+            st = status_map.get(f.id)
+            return st["next_due"] if st else None
+        if sort == "objekt":
+            prop = property_map.get(f.property_id)
+            return prop.label().casefold() if prop else None
+        if sort == "besitzer":
+            owners = owner_map.get(f.property_id)
+            return ", ".join(owners).casefold() if owners else None
+        return (f.label() or "").casefold()  # default: name
+
+    def is_missing(v):
+        return v is None or v == ""
+
+    feats = sorted(features, key=lambda f: f.id)  # stabiler Sekundaer-Sort
+    present = [f for f in feats if not is_missing(key_of(f))]
+    missing = [f for f in feats if is_missing(key_of(f))]
+    present.sort(key=key_of, reverse=desc)
+    return present + missing
+
+
+@bp.route("/elements")
+@login_required
+def elements():
+    """Plan-uebergreifende, sortier- + durchsuchbare Elementliste mit Wartungs-
+    Status, zugeordnetem Objekt (Liegenschaft) und dessen Besitzer. Optionale
+    Filter: ``?plan=<id>`` und ``?type=<feature_type>`` (kein Session-Merker wie
+    ``current_plan`` — die Liste ist bewusst plan-uebergreifend).
+
+    URL bewusst englisch (``/technik/elements``); UI-Texte bleiben deutsch."""
+    q = request.args.get("q", "").strip()
+    sort = request.args.get("sort", _ELEM_DEFAULT_SORT)
+    if sort not in _ELEM_SORT_KEYS:
+        sort = _ELEM_DEFAULT_SORT
+    direction = request.args.get("dir", "asc")
+    if direction not in ("asc", "desc"):
+        direction = "asc"
+    plan_filter = request.args.get("plan", type=int)
+    type_filter = request.args.get("type", "").strip() or None
+    if type_filter not in _ALL_TYPE_KEYS:
+        type_filter = None
+
+    plans = NetworkPlan.query.order_by(NetworkPlan.name.asc()).all()
+
+    query = NetworkFeature.query
+    if plan_filter:
+        query = query.filter(NetworkFeature.plan_id == plan_filter)
+    if type_filter:
+        query = query.filter(NetworkFeature.feature_type == type_filter)
+    features = query.all()
+
+    # Objekt (Liegenschaft) + Besitzer je Element vorladen — fuer Anzeige, Filter
+    # und Sortierung. Die Suche laeuft in Python, damit Objekt/Besitzer gleichwertig
+    # zu Bezeichnung/Notiz durchsuchbar sind (der Typ hat seinen eigenen Filter).
+    property_map, owner_map = _feature_property_owner_maps(features)
+    if q:
+        features = [f for f in features if _matches_query(f, q, property_map, owner_map)]
+
+    status_map = svc.feature_maintenance_status(features)
+    features = _sort_features(features, sort, direction, status_map, property_map, owner_map)
+    # In Python paginieren — Wartungs-/Objekt-/Besitzer-Sort sind abgeleitet,
+    # daher nicht SQL-LIMIT/OFFSET-faehig (paginate_list statt paginate_query).
+    pagination = paginate_list(features, _ELEM_PAGE_KEY)
+
+    ctx = dict(
+        plans=plans, pagination=pagination, status_map=status_map,
+        property_map=property_map, owner_map=owner_map,
+        q=q, sort=sort, dir=direction, plan_filter=plan_filter, type_filter=type_filter,
+        vocab=vocab, today=date.today(),
+    )
+    if request.headers.get("HX-Request"):
+        return render_template("network/_elemente_table.html", **ctx)
+    return render_template("network/elemente.html", **ctx)
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +411,25 @@ def feature_update(feature_id):
     return resp
 
 
+@bp.route("/features/<int:feature_id>/edit", methods=["GET", "POST"])
+@login_required
+def feature_edit(feature_id):
+    """Stammdaten-Bearbeiten als eigenstaendiges Modal (Elementliste). GET liefert
+    das Felder-Fragment, POST speichert und schliesst das Modal (204 + HX-Trigger
+    ``closeFeatureEditModal``). Geometrie/Fotos/Wartung sind hier bewusst NICHT
+    dabei — Wartung hat ein eigenes Modal, Geometrie/Fotos das Karten-Panel."""
+    f = NetworkFeature.query.get_or_404(feature_id)
+    if request.method == "POST":
+        svc.apply_attributes(f, request.form)
+        db.session.commit()
+        resp = make_response("", 204)
+        resp.headers["HX-Trigger"] = json.dumps({"closeFeatureEditModal": True})
+        return resp
+    return render_template(
+        "network/_feature_form_fields.html", f=f, vocab=vocab, **_link_options()
+    )
+
+
 @bp.route("/features/<int:feature_id>/delete", methods=["POST"])
 @login_required
 def feature_delete(feature_id):
@@ -255,39 +446,50 @@ def feature_delete(feature_id):
 # Wartung / Pruefung
 # ---------------------------------------------------------------------------
 
-@bp.route("/features/<int:feature_id>/maintenance", methods=["POST"])
+@bp.route("/features/<int:feature_id>/maintenance", methods=["GET", "POST"])
 @login_required
 def maintenance_add(feature_id):
+    """GET: Wartungs-Modal-Body (Elementliste) laden. POST: Wartungs-/Pruefeintrag
+    anlegen. Antwort kontextabhaengig — aus dem Modal (X-From-Modal) das Modal-Body-
+    Fragment (Modal bleibt offen), sonst das volle Karten-Panel."""
     f = NetworkFeature.query.get_or_404(feature_id)
-    if not f.plan.maintenance_enabled:
-        flash("Wartung ist für diesen Plan deaktiviert.", "warning")
-        return _render_panel(f)
-    when = _parse_date(request.form.get("date")) or date.today()
-    interval = svc._to_int(request.form.get("interval_months"))
-    next_due = _parse_date(request.form.get("next_due"))
-    if next_due is None and interval:
-        next_due = _add_months(when, interval)
+    from_modal = bool(request.headers.get("X-From-Modal"))
 
-    kind = request.form.get("kind") or MaintenanceLog.KIND_INSPECTION
-    if kind not in vocab.MAINTENANCE_KINDS:
-        kind = MaintenanceLog.KIND_INSPECTION
-    result = request.form.get("result") or None
-    if result not in vocab.MAINTENANCE_RESULTS:
-        result = None
+    if request.method == "POST":
+        if not f.plan.maintenance_enabled:
+            if from_modal:
+                return _render_maintenance_modal_body(f)
+            flash("Wartung ist für diesen Plan deaktiviert.", "warning")
+            return _render_panel(f)
+        when = _parse_date(request.form.get("date")) or date.today()
+        interval = svc._to_int(request.form.get("interval_months"))
+        next_due = _parse_date(request.form.get("next_due"))
+        if next_due is None and interval:
+            next_due = _add_months(when, interval)
 
-    log = MaintenanceLog(
-        feature_id=f.id,
-        date=when,
-        kind=kind,
-        result=result,
-        interval_months=interval,
-        next_due=next_due,
-        performed_by=(request.form.get("performed_by") or "").strip() or None,
-        notes=(request.form.get("notes") or "").strip() or None,
-        created_by_id=current_user.id,
-    )
-    db.session.add(log)
-    db.session.commit()
+        kind = request.form.get("kind") or MaintenanceLog.KIND_INSPECTION
+        if kind not in vocab.MAINTENANCE_KINDS:
+            kind = MaintenanceLog.KIND_INSPECTION
+        result = request.form.get("result") or None
+        if result not in vocab.MAINTENANCE_RESULTS:
+            result = None
+
+        log = MaintenanceLog(
+            feature_id=f.id,
+            date=when,
+            kind=kind,
+            result=result,
+            interval_months=interval,
+            next_due=next_due,
+            performed_by=(request.form.get("performed_by") or "").strip() or None,
+            notes=(request.form.get("notes") or "").strip() or None,
+            created_by_id=current_user.id,
+        )
+        db.session.add(log)
+        db.session.commit()
+
+    if from_modal:
+        return _render_maintenance_modal_body(f)
     return _render_panel(f)
 
 
@@ -298,6 +500,8 @@ def maintenance_delete(log_id):
     f = log.feature
     db.session.delete(log)
     db.session.commit()
+    if request.headers.get("X-From-Modal"):
+        return _render_maintenance_modal_body(f)
     return _render_panel(f)
 
 
@@ -380,7 +584,7 @@ def _render_import(**kwargs):
     kwargs.setdefault("plans", NetworkPlan.query.order_by(NetworkPlan.name.asc()).all())
     kwargs.setdefault("shapefile_available", wlk.dependencies_available())
     kwargs.setdefault("vocab", vocab)
-    return render_template("technik/import.html", **kwargs)
+    return render_template("network/import.html", **kwargs)
 
 
 @bp.route("/import", methods=["GET", "POST"])
@@ -392,18 +596,22 @@ def import_view():
     if request.method == "POST" and request.form.get("confirm"):
         if plan is None:
             flash("Kein Ziel-Plan vorhanden. Bitte zuerst einen Plan anlegen.", "warning")
-            return redirect(url_for("technik.plans_index"))
+            return redirect(url_for("network.plans_index"))
         raw = request.form.get("geojson", "")
         try:
             feats = svc.iter_geojson_features(raw)
         except (ValueError, json.JSONDecodeError) as exc:
             flash(f"Ungültiges GeoJSON: {exc}", "danger")
-            return redirect(url_for("technik.import_view"))
+            return redirect(url_for("network.import_view"))
 
+        keep_unknown = bool(request.form.get("keep_unknown_notes"))
         created, skipped = 0, 0
         for feat in feats:
             try:
-                nf = svc.build_feature_from_geojson(feat, current_user.id, plan.id)
+                nf = svc.build_feature_from_geojson(
+                    feat, current_user.id, plan.id,
+                    extract_note_fields=True, keep_unknown_notes=keep_unknown,
+                )
             except (ValueError, TypeError):
                 skipped += 1
                 continue
@@ -411,11 +619,11 @@ def import_view():
             created += 1
         db.session.commit()
 
-        msg = f"{created} Objekt(e) importiert (Ziel: {plan.name})"
+        msg = f"{created} Element(e) importiert (Ziel: {plan.name})"
         if skipped:
             msg += f", {skipped} übersprungen (nicht unterstützte Geometrie)"
         flash(msg + ".", "success")
-        return redirect(url_for("technik.index"))
+        return redirect(url_for("network.index"))
 
     # Schritt 1: Datei hochladen -> Vorschau.
     if request.method == "POST":
@@ -454,21 +662,21 @@ def import_shapefile():
     file = request.files.get("file")
     if not file or not file.filename:
         flash("Keine ZIP-Datei gewählt.", "warning")
-        return redirect(url_for("technik.import_view"))
+        return redirect(url_for("network.import_view"))
 
     try:
         result = wlk.convert_zip(file)
     except wlk.WlkImportError as exc:
         flash(str(exc), "danger")
-        return redirect(url_for("technik.import_view"))
+        return redirect(url_for("network.import_view"))
 
     stats = result["stats"]
     token = uuid.uuid4().hex
     os.makedirs(current_app.instance_path, exist_ok=True)
-    path = os.path.join(current_app.instance_path, f"technik_import_{token}.json")
+    path = os.path.join(current_app.instance_path, f"network_import_{token}.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"type": "FeatureCollection", "features": result["features"]}, f)
-    session["technik_import_file"] = path
+    session["network_import_file"] = path
 
     return _render_import(
         preview=False,
@@ -488,24 +696,28 @@ def import_shapefile_commit():
     plan = current_plan()
     if plan is None:
         flash("Kein Ziel-Plan vorhanden. Bitte zuerst einen Plan anlegen.", "warning")
-        return redirect(url_for("technik.plans_index"))
+        return redirect(url_for("network.plans_index"))
 
-    path = session.get("technik_import_file")
+    path = session.get("network_import_file")
     if not path or not os.path.exists(path):
         flash("Die Import-Sitzung ist abgelaufen. Bitte die ZIP-Datei erneut hochladen.", "warning")
-        return redirect(url_for("technik.import_view"))
+        return redirect(url_for("network.import_view"))
 
     try:
         with open(path, encoding="utf-8") as f:
             feats = svc.iter_geojson_features(f.read())
     except (OSError, ValueError, json.JSONDecodeError):
         flash("Die Import-Daten konnten nicht gelesen werden.", "danger")
-        return redirect(url_for("technik.import_view"))
+        return redirect(url_for("network.import_view"))
 
+    keep_unknown = bool(request.form.get("keep_unknown_notes"))
     created, created_logs, skipped = 0, 0, 0
     for feat in feats:
         try:
-            nf = svc.build_feature_from_geojson(feat, current_user.id, plan.id)
+            nf = svc.build_feature_from_geojson(
+                feat, current_user.id, plan.id,
+                extract_note_fields=True, keep_unknown_notes=keep_unknown,
+            )
         except (ValueError, TypeError):
             skipped += 1
             continue
@@ -518,15 +730,15 @@ def import_shapefile_commit():
         os.remove(path)
     except OSError:
         pass
-    session.pop("technik_import_file", None)
+    session.pop("network_import_file", None)
 
-    msg = f"{created} Objekt(e) importiert (Ziel: {plan.name})"
+    msg = f"{created} Element(e) importiert (Ziel: {plan.name})"
     if created_logs:
         msg += f", {created_logs} Wartungseintrag/-einträge angelegt"
     if skipped:
         msg += f", {skipped} übersprungen"
     flash(msg + ".", "success")
-    return redirect(url_for("technik.index"))
+    return redirect(url_for("network.index"))
 
 
 @bp.route("/print")
@@ -539,7 +751,7 @@ def print_view():
         .all() if plan else []
     )
     return render_template(
-        "technik/print.html",
+        "network/print.html",
         cfg=_map_config(plan),
         plan=plan,
         features=features,
@@ -556,7 +768,7 @@ def print_view():
 @login_required
 def plans_index():
     plans = NetworkPlan.query.order_by(NetworkPlan.name.asc()).all()
-    return render_template("technik/plans/index.html", plans=plans, vocab=vocab)
+    return render_template("network/plans/index.html", plans=plans, vocab=vocab)
 
 
 @bp.route("/plans", methods=["POST"])
@@ -565,7 +777,7 @@ def plan_create():
     name = (request.form.get("name") or "").strip()
     if not name:
         flash("Bitte einen Namen für den Plan angeben.", "warning")
-        return redirect(url_for("technik.plans_index"))
+        return redirect(url_for("network.plans_index"))
     status = request.form.get("status")
     if status not in NetworkPlan.STATUSES:
         status = NetworkPlan.STATUS_DRAFT
@@ -581,7 +793,7 @@ def plan_create():
     db.session.add(plan)
     db.session.commit()
     flash(f"Plan '{name}' angelegt.", "success")
-    return redirect(url_for("technik.plans_index"))
+    return redirect(url_for("network.plans_index"))
 
 
 @bp.route("/plans/<int:plan_id>", methods=["POST"])
@@ -591,7 +803,7 @@ def plan_update(plan_id):
     name = (request.form.get("name") or "").strip()
     if not name:
         flash("Bitte einen Namen für den Plan angeben.", "warning")
-        return redirect(url_for("technik.plans_index"))
+        return redirect(url_for("network.plans_index"))
     status = request.form.get("status")
     if status in NetworkPlan.STATUSES:
         plan.status = status
@@ -601,7 +813,7 @@ def plan_update(plan_id):
     plan.updated_by_id = current_user.id
     db.session.commit()
     flash(f"Plan '{name}' gespeichert.", "success")
-    return redirect(url_for("technik.plans_index"))
+    return redirect(url_for("network.plans_index"))
 
 
 @bp.route("/plans/<int:plan_id>/copy", methods=["POST"])
@@ -610,11 +822,11 @@ def plan_copy(plan_id):
     src = NetworkPlan.query.get_or_404(plan_id)
     dup, count = svc.copy_plan(src, current_user.id)
     flash(
-        f"Plan '{src.name}' kopiert ({count} Objekt(e)). "
+        f"Plan '{src.name}' kopiert ({count} Element(e)). "
         f"Die Kopie '{dup.name}' ist ein Entwurf mit deaktivierter Wartung.",
         "success",
     )
-    return redirect(url_for("technik.plans_index"))
+    return redirect(url_for("network.plans_index"))
 
 
 @bp.route("/plans/<int:plan_id>/merge", methods=["POST"])
@@ -626,12 +838,12 @@ def plan_merge(plan_id):
     res = svc.merge_plan_into_source(cp, current_user.id)
     if res is None:
         flash("Dieser Plan ist keine Kopie (kein Quellplan) — Übertragen nicht möglich.", "warning")
-        return redirect(url_for("technik.plans_index"))
+        return redirect(url_for("network.plans_index"))
     flash(
         f"Änderungen in '{res['source'].name}' übertragen: {res['added']} neu, "
         f"{res['updated']} aktualisiert, {res['deleted']} gelöscht.", "success"
     )
-    return redirect(url_for("technik.plans_index"))
+    return redirect(url_for("network.plans_index"))
 
 
 @bp.route("/plans/<int:plan_id>/delete", methods=["POST"])
@@ -642,10 +854,10 @@ def plan_delete(plan_id):
     for f in plan.features:
         _delete_photo_files(list(f.photos))
     name = plan.name
-    was_current = session.get("technik_plan_id") == plan.id
+    was_current = session.get("network_plan_id") == plan.id
     db.session.delete(plan)
     db.session.commit()
     if was_current:
-        session.pop("technik_plan_id", None)  # Auswahl neu aufloesen lassen
-    flash(f"Plan '{name}' und alle zugehörigen Objekte gelöscht.", "success")
-    return redirect(url_for("technik.plans_index"))
+        session.pop("network_plan_id", None)  # Auswahl neu aufloesen lassen
+    flash(f"Plan '{name}' und alle zugehörigen Elemente gelöscht.", "success")
+    return redirect(url_for("network.plans_index"))

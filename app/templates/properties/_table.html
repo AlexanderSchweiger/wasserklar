@@ -51,7 +51,7 @@
       </td>
       <td class="text-end">
         <a href="{{ url_for('properties.detail', property_id=prop.id) }}"
-           class="btn btn-sm btn-outline-primary" title="Objektdetails">
+           class="btn btn-sm btn-outline-primary" title="Liegenschaftsdetails">
           <i class="fas fa-home"></i>
         </a>
         <button type="button"
@@ -64,7 +64,7 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="5" class="text-center text-muted py-3">Keine Objekte gefunden.</td></tr>
+    <tr><td colspan="5" class="text-center text-muted py-3">Keine Liegenschaften gefunden.</td></tr>
     {% endfor %}
   </tbody>
 </table>

@@ -1,12 +1,21 @@
 {% extends "base.html" %}
-{% block title %}Objekte importieren{% endblock %}
-{% block page_title %}<i class="fas fa-file-import me-2"></i> Objekte importieren{% endblock %}
+{% block title %}Liegenschaften importieren{% endblock %}
+{% block page_title %}<i class="fas fa-file-import me-2"></i> Liegenschaften importieren{% endblock %}
 {% block content %}
 <div class="row">
   <div class="col-lg-8">
     <div class="card">
       <div class="card-header">
         <h3 class="card-title">Schritt 1: Datei wählen</h3>
+        {% if config.HELP_BASE_URL %}
+        <div class="card-actions">
+          <a href="{{ config.HELP_BASE_URL }}/csv-import#objekte"
+             target="_blank" rel="noopener" hx-boost="false"
+             class="btn btn-sm btn-outline-primary">
+            <i class="fas fa-book me-1"></i> Import-Anleitung
+          </a>
+        </div>
+        {% endif %}
       </div>
       <form method="post" enctype="multipart/form-data">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -20,11 +29,11 @@
               <li>Im nächsten Schritt können Sie die Spalten zuordnen und Zeilen einzeln bearbeiten.</li>
             </ul>
             <strong>Beispiel CSV:</strong>
-            <pre class="mb-0" style="font-size:.8rem;background:#f8f9fa;color:#1a1a1a;padding:.5rem;border-radius:4px">Objekt-Nr.;Typ;Straße;Ort
+            <pre class="mb-0" style="font-size:.8rem;background:#f8f9fa;color:#1a1a1a;padding:.5rem;border-radius:4px">Lieg.-Nr.;Typ;Straße;Ort
 1;Haus;Hauptstraße;Wien
 2;Garten;Gartenweg;Linz</pre>
             <small class="text-muted">
-              Die Spalte <em>Objekt-Nr.</em> ist optional — fehlt sie, wird das Objekt ohne Nummer angelegt.
+              Die Spalte <em>Lieg.-Nr.</em> ist optional — fehlt sie, wird die Liegenschaft ohne Nummer angelegt.
               Der Typ-Spalte akzeptiert „Haus", „Garten" oder „Sonstiges"; unbekannte Werte und fehlende Einträge
               werden als „Haus" behandelt (Sonderwerte wie „Stall" → „Sonstiges").
               Optional: Spalte <em>Besitzer (Kunden-Nr.)</em> für direkte Eigentümer-Zuweisung.
@@ -32,7 +41,7 @@
           </div>
 
           <div class="mb-3">
-            <label class="form-label">Bei bestehendem Objekt (gleiche Objekt-Nr.)</label>
+            <label class="form-label">Bei bestehender Liegenschaft (gleiche Lieg.-Nr.)</label>
             <div>
               <div class="form-check">
                 <input class="form-check-input" type="radio" name="duplicate_mode" id="dup_skip"

@@ -65,8 +65,8 @@ def create_app(config_name=None):
     from app.bank_import import bp as bank_import_bp
     app.register_blueprint(bank_import_bp)
 
-    from app.technik import bp as technik_bp
-    app.register_blueprint(technik_bp)
+    from app.network import bp as network_bp
+    app.register_blueprint(network_bp)
 
     # hx-boost-Navigationen (base.html: <body hx-boost="true">) senden
     # sowohl "HX-Request: true" als auch "HX-Boosted: true". Unsere Routen

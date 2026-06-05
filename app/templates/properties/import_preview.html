@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}Objekte-Import Vorschau{% endblock %}
-{% block page_title %}<i class="fas fa-eye me-2"></i> Objekte importieren: Vorschau{% endblock %}
+{% block title %}Liegenschaften-Import Vorschau{% endblock %}
+{% block page_title %}<i class="fas fa-eye me-2"></i> Liegenschaften importieren: Vorschau{% endblock %}
 {% block content %}
 {% from "imports/_preview_macros.html" import status_cell %}
 
 {% set col_fields = [
-  ('col_object_number', 'Objekt-Nr.'),
+  ('col_object_number', 'Lieg.-Nr.'),
   ('col_object_type', 'Typ'),
   ('col_strasse', 'Straße'),
   ('col_hausnummer', 'Hausnummer'),
@@ -110,7 +110,7 @@
             <tr>
               <th style="width:40px">#</th>
               <th style="width:50px">Skip</th>
-              <th style="min-width:80px">Objekt-Nr.</th>
+              <th style="min-width:80px">Lieg.-Nr.</th>
               <th style="min-width:90px">Typ</th>
               <th style="min-width:140px">Straße + Nr.</th>
               <th style="min-width:60px">PLZ</th>

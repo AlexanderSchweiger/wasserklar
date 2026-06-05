@@ -20,7 +20,7 @@
             </a>
           </dd>
           {% if invoice.property %}
-          <dt class="col-sm-5">Objekt</dt>
+          <dt class="col-sm-5">Liegenschaft</dt>
           <dd class="col-sm-7">
             <a href="{{ url_for('properties.detail', property_id=invoice.property_id) }}">
               {{ invoice.property.label() }}

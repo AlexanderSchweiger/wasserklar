@@ -7,6 +7,15 @@
     <div class="card">
       <div class="card-header">
         <h3 class="card-title">Schritt 1: Datei mit Zählertäuschen wählen</h3>
+        {% if config.HELP_BASE_URL %}
+        <div class="card-actions">
+          <a href="{{ config.HELP_BASE_URL }}/csv-import#zaehlertausch"
+             target="_blank" rel="noopener" hx-boost="false"
+             class="btn btn-sm btn-outline-primary">
+            <i class="fas fa-book me-1"></i> Import-Anleitung
+          </a>
+        </div>
+        {% endif %}
       </div>
       <form method="post" enctype="multipart/form-data">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -34,14 +43,14 @@
                     <td>Eichjahr des neuen Zählers (Standard: leer)</td></tr>
                 <tr><td><code>Tauschdatum</code></td><td>nein</td>
                     <td>Datum des Tauschs im Format <strong>TT.MM.JJJJ</strong> (Standard: heute)</td></tr>
-                <tr><td><code>Objekt-Nr.</code></td><td>nein</td>
-                    <td>Objekt-Zuordnung — nur für Neuanlagen genutzt</td></tr>
+                <tr><td><code>Lieg.-Nr.</code></td><td>nein</td>
+                    <td>Liegenschafts-Zuordnung — nur für Neuanlagen genutzt</td></tr>
               </tbody>
             </table>
             <small class="text-muted">
               Wird der alte Zähler nicht im System gefunden, kann der neue Zähler
-              trotzdem als <strong>Neuanlage</strong> importiert werden — das Objekt
-              wählen Sie dann in der Vorschau (oder über die Spalte <em>Objekt-Nr.</em>).
+              trotzdem als <strong>Neuanlage</strong> importiert werden — die Liegenschaft
+              wählen Sie dann in der Vorschau (oder über die Spalte <em>Lieg.-Nr.</em>).
             </small>
           </div>
 

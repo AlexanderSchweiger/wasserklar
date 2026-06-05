@@ -7,6 +7,15 @@
     <div class="card">
       <div class="card-header">
         <h3 class="card-title">CSV / Excel hochladen</h3>
+        {% if config.HELP_BASE_URL %}
+        <div class="card-actions">
+          <a href="{{ config.HELP_BASE_URL }}/csv-import#kombiniert"
+             target="_blank" rel="noopener" hx-boost="false"
+             class="btn btn-sm btn-outline-primary">
+            <i class="fas fa-book me-1"></i> Import-Anleitung
+          </a>
+        </div>
+        {% endif %}
       </div>
       <form method="post" enctype="multipart/form-data">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

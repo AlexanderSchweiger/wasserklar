@@ -31,7 +31,7 @@
   {% if 'object_number' not in cols %}
   <div class="alert alert-secondary">
     <i class="fas fa-info-circle me-1"></i>
-    Keine Spalte <em>Objekt-Nr.</em> erkannt — Objekte für Neuanlagen bitte unten auswählen.
+    Keine Spalte <em>Lieg.-Nr.</em> erkannt — Liegenschaften für Neuanlagen bitte unten auswählen.
   </div>
   {% endif %}
 
@@ -64,7 +64,7 @@
               <th style="width:50px">Skip</th>
               <th style="width:110px">Status</th>
               <th style="min-width:200px">Alter Zähler</th>
-              <th style="min-width:180px">Objekt / Eigentümer</th>
+              <th style="min-width:180px">Liegenschaft / Eigentümer</th>
               <th style="width:130px">Ausbau-Stand (m³)</th>
               <th style="width:140px">Neuer Zähler</th>
               <th style="width:120px">Anfangsstand (m³)</th>
@@ -113,7 +113,7 @@
                 {% else %}
                   <select name="rows[{{ r.idx }}][property_id]"
                           class="form-select form-select-sm">
-                    <option value="">— Objekt wählen —</option>
+                    <option value="">— Liegenschaft wählen —</option>
                     {% for p in properties %}
                     <option value="{{ p.id }}" {{ 'selected' if r.property_id == p.id }}>
                       {{ p.label() }}

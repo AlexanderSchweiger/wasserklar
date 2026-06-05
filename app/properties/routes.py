@@ -8,7 +8,7 @@ from sqlalchemy import case as sa_case, exists, func as sa_func
 
 from app.properties import bp
 from app.extensions import db
-from app.models import Property, PropertyOwnership, Customer
+from app.models import Property, PropertyOwnership, Customer, NetworkFeature
 from app.pagination import paginate_query
 from app.imports import common as import_common
 from app.properties import import_service
@@ -159,6 +159,37 @@ def detail(property_id):
         per_page=5,
     ) if active_customer_ids else None
 
+    from app.network import vocab as network_vocab
+
+    network_features = NetworkFeature.query.filter_by(
+        property_id=property_id
+    ).order_by(NetworkFeature.id).all()
+
+    network_features_display = []
+    for nf in network_features:
+        geom = None
+        if nf.geometry:
+            try:
+                geom = json.loads(nf.geometry)
+            except (ValueError, TypeError):
+                pass
+        type_vocab = (
+            network_vocab.POINT_TYPES.get(nf.feature_type)
+            if nf.geometry_kind == "point"
+            else network_vocab.LINE_TYPES.get(nf.feature_type)
+        ) or {}
+        network_features_display.append({
+            "id": nf.id,
+            "name": nf.name,
+            "type_label": type_vocab.get("label", nf.feature_type),
+            "icon": type_vocab.get("icon", "fa-map-marker-alt"),
+            "color": type_vocab.get("color", "#868e96"),
+            "geometry_kind": nf.geometry_kind,
+            "geometry": geom,
+            "lat": nf.lat,
+            "lng": nf.lng,
+        })
+
     return render_template(
         "properties/detail.html",
         property=prop,
@@ -168,6 +199,7 @@ def detail(property_id):
         bookings_pag=bookings_pag,
         has_active_owner=bool(active_customer_ids),
         today=date.today(),
+        network_features_display=network_features_display,
     )
 
 

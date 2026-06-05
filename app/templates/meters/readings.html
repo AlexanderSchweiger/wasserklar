@@ -25,7 +25,7 @@
       </div>
       <div class="input-group input-group-sm" style="width:240px">
         <input type="search" name="q" value="{{ q }}" class="form-control"
-          placeholder="Objekt, Besitzer oder Zählernr. suchen…"
+          placeholder="Liegenschaft, Besitzer oder Zählernr. suchen…"
           hx-get="{{ url_for('meters.readings') }}"
           hx-trigger="input changed delay:300ms"
           hx-target="#meters-table"

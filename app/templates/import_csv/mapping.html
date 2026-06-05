@@ -65,11 +65,11 @@
               {{ col_select("email", "E-Mail") }}
               {{ col_select("notes", "Kommentar / Notizen") }}
 
-              {# Objekt-Felder #}
+              {# Liegenschaft-Felder #}
               <tr class="table-secondary">
-                <td colspan="2"><strong>Objekt</strong></td>
+                <td colspan="2"><strong>Liegenschaft</strong></td>
               </tr>
-              {{ col_select("property_name", "Objekt (Bezeichnung / Adresse)", required=True) }}
+              {{ col_select("property_name", "Liegenschaft (Bezeichnung / Adresse)", required=True) }}
               {{ col_select("property_type", "Typ (Stall → Sonstiges)") }}
 
               {# Zähler-Felder #}
@@ -113,7 +113,7 @@
         </div>
         <div class="card-body">
           <p class="text-muted mb-2">
-            Neue Objekte, Zähler und Ablesungen werden bestehenden Kunden in
+            Neue Liegenschaften, Zähler und Ablesungen werden bestehenden Kunden in
             <strong>jedem</strong> Fall ergänzt. Diese Einstellung steuert nur,
             ob bereits vorhandene Daten aus der Datei aktualisiert werden.
           </p>
