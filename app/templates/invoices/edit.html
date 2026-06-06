@@ -17,6 +17,10 @@
                 <label class="form-label">Rechnungsdatum</label>
                 <input type="date" name="date" class="form-control"
                   value="{{ invoice.date.isoformat() }}" required>
+                <div class="alert alert-warning d-none mt-1 mb-0 py-1 px-2" id="invoice-date-future-warning">
+                  <i class="fas fa-triangle-exclamation me-1"></i>
+                  <small>Das Rechnungsdatum liegt in der Zukunft.</small>
+                </div>
               </div>
             </div>
             <div class="col-md-6">
@@ -43,4 +47,28 @@
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var dateInput = document.querySelector('input[name="date"]');
+  var warn = document.getElementById('invoice-date-future-warning');
+  if (!dateInput || !warn) return;
+  function todayISO() {
+    var d = new Date();
+    var off = d.getTimezoneOffset();
+    return new Date(d.getTime() - off * 60000).toISOString().slice(0, 10);
+  }
+  function check() {
+    if (dateInput.value && dateInput.value > todayISO()) {
+      warn.classList.remove('d-none');
+    } else {
+      warn.classList.add('d-none');
+    }
+  }
+  dateInput.addEventListener('input', check);
+  check();
+})();
+</script>
 {% endblock %}

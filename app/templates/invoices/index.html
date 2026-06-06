@@ -122,12 +122,14 @@
   <!-- Sammelaktion-Leiste -->
   <form method="post" action="{{ url_for('invoices.bulk_action') }}" id="bulk-form" class="table-fill">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="new_date" id="bulk-new-date">
     <div id="bulk-toolbar" class="px-3 py-2 border-bottom bg-light d-none"
          style="display:flex; align-items:center; gap:12px; flex-wrap:wrap">
       <span class="text-muted" id="bulk-count">0 ausgewählt</span>
       <div class="input-group input-group-sm" style="width:auto">
         <select name="action" class="form-control form-control-sm" id="bulk-action-select" style="min-width:180px">
           <option value="">— Aktion wählen —</option>
+          <option value="set-date">Rechnungsdatum setzen (nur Entwürfe)</option>
           <optgroup label="Status setzen">
             {% for s in statuses %}
             <option value="{{ s }}">Status: {{ s }}</option>
@@ -187,6 +189,40 @@
       </div>
       <div class="modal-footer justify-content-center">
         <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Schließen</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Rechnungsdatum setzen Modal -->
+<div class="modal fade" id="setDateModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">
+          <i class="fas fa-calendar-day me-2"></i> Rechnungsdatum setzen
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted mb-3">
+          Das Rechnungsdatum wird bei <strong id="setDateCount">0</strong> ausgewählten Rechnung(en) gesetzt.
+          Nur Entwürfe werden geändert.
+        </p>
+        <div class="mb-2">
+          <label class="form-label">Neues Rechnungsdatum</label>
+          <input type="date" class="form-control" id="setDateInput" oninput="checkSetDateFuture()">
+        </div>
+        <div class="alert alert-warning d-none mb-0" id="setDateFutureWarning">
+          <i class="fas fa-triangle-exclamation me-1"></i>
+          Das gewählte Datum liegt in der Zukunft.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+        <button type="button" class="btn btn-primary" onclick="confirmSetDate()">
+          <i class="fas fa-check me-1"></i> Datum setzen
+        </button>
       </div>
     </div>
   </div>
@@ -299,6 +335,10 @@ function handleBulkAction() {
     openMassenmailModal();
     return;
   }
+  if (action === 'set-date') {
+    openSetDateModal();
+    return;
+  }
   if (action === 'bulk-pdf-merged' || action === 'bulk-pdf-zip' ||
       action === 'bulk-docx-merged' || action === 'bulk-docx-zip') {
     const urlMap = {
@@ -368,6 +408,42 @@ async function bulkDownload(url, title) {
     errMsg.textContent = err.message || 'Fehler beim Erstellen des Dokuments.';
     errBox.classList.remove('d-none');
   }
+}
+
+function wkTodayISO() {
+  const d = new Date();
+  const off = d.getTimezoneOffset();
+  return new Date(d.getTime() - off * 60000).toISOString().slice(0, 10);
+}
+
+function checkSetDateFuture() {
+  const input = document.getElementById('setDateInput');
+  const warn = document.getElementById('setDateFutureWarning');
+  if (input.value && input.value > wkTodayISO()) {
+    warn.classList.remove('d-none');
+  } else {
+    warn.classList.add('d-none');
+  }
+}
+
+function openSetDateModal() {
+  const count = document.querySelectorAll('.invoice-cb:checked').length;
+  document.getElementById('setDateCount').textContent = count;
+  const input = document.getElementById('setDateInput');
+  if (!input.value) input.value = wkTodayISO();
+  checkSetDateFuture();
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('setDateModal')).show();
+}
+
+function confirmSetDate() {
+  const input = document.getElementById('setDateInput');
+  if (!input.value) { alert('Bitte ein Datum wählen.'); return; }
+  if (input.value > wkTodayISO()) {
+    if (!confirm('Das Rechnungsdatum liegt in der Zukunft. Wirklich setzen?')) return;
+  }
+  document.getElementById('bulk-new-date').value = input.value;
+  document.getElementById('bulk-action-select').value = 'set-date';
+  document.getElementById('bulk-form').submit();
 }
 
 function openMassenmailModal() {

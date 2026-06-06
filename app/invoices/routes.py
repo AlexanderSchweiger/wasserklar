@@ -848,6 +848,8 @@ def edit(invoice_id):
         invoice.notes = request.form.get("notes", "")
         db.session.commit()
         flash("Rechnung gespeichert.", "success")
+        if invoice.date > date.today():
+            flash("Achtung: Das Rechnungsdatum liegt in der Zukunft.", "warning")
         return redirect(url_for("invoices.detail", invoice_id=invoice.id))
     return render_template("invoices/edit.html", invoice=invoice, customers=customers)
 
@@ -961,6 +963,31 @@ def bulk_action():
             flash(f"Fehler beim Statuswechsel – alle Änderungen wurden zurückgesetzt: {e}", "danger")
             return redirect(url_for("invoices.index"))
         flash(f"{changed} Rechnung(en) auf '{action}' gesetzt.", "success")
+
+    elif action == "set-date":
+        new_date_raw = request.form.get("new_date", "")
+        try:
+            new_date = date.fromisoformat(new_date_raw)
+        except (ValueError, TypeError):
+            flash("Ungültiges Datum.", "danger")
+            return redirect(url_for("invoices.index"))
+        # Nur Entwürfe dürfen ihr Rechnungsdatum ändern (analog Einzel-Edit).
+        editable = [inv for inv in invoices if inv.status == Invoice.STATUS_DRAFT]
+        skipped = len(invoices) - len(editable)
+        try:
+            for inv in editable:
+                inv.date = new_date
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            flash(f"Fehler beim Setzen des Datums – alle Änderungen wurden zurückgesetzt: {e}", "danger")
+            return redirect(url_for("invoices.index"))
+        msg = f"Rechnungsdatum bei {len(editable)} Rechnung(en) auf {new_date.strftime('%d.%m.%Y')} gesetzt."
+        if skipped:
+            msg += f" {skipped} übersprungen (nur Entwürfe können geändert werden)."
+        flash(msg, "success" if editable else "warning")
+        if editable and new_date > date.today():
+            flash("Achtung: Das gesetzte Rechnungsdatum liegt in der Zukunft.", "warning")
 
     else:
         flash("Ungültige Aktion.", "danger")
