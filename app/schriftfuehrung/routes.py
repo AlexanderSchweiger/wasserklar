@@ -24,6 +24,7 @@ from app.models import (
     SchriftverkehrDocument,
 )
 from app.email_tracking import record_email_sent
+from app.schriftfuehrung.send_email_hooks import run_before_send
 from app.settings_service import send_mail, sanitize_rich_text, wg_settings
 
 _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -422,6 +423,7 @@ def invitations_email(meeting_id):
         _attach_invitation_docs(msg, meeting, customer, fmt)
         if ics_bytes:
             msg.attach("Termin.ics", "text/calendar", ics_bytes)
+        run_before_send(customer, msg)
         try:
             send_mail(msg)
         except Exception as exc:
@@ -493,6 +495,7 @@ def invitations_email_ajax(meeting_id):
         ics = ical.build_meeting_ics(meeting, description=_agenda_description(meeting))
         if ics:
             msg.attach("Termin.ics", "text/calendar", ics)
+        run_before_send(customer, msg)
         send_mail(msg)
 
         if not test_mode:
