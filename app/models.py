@@ -110,6 +110,13 @@ class User(UserMixin, db.Model):
     )
     active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    # Einladungs-Flow (SaaS-Feature, Logik liegt in der SaaS-Schicht):
+    # invited_at  -> Zeitpunkt der (letzten) Einladung; NULL = nie eingeladen.
+    # invitation_accepted_at -> gesetzt, sobald der User per Link sein Passwort
+    # gesetzt und sich aktiviert hat. "Einladung ausstehend" :=
+    # invited_at IS NOT NULL AND invitation_accepted_at IS NULL.
+    invited_at = db.Column(db.DateTime, nullable=True)
+    invitation_accepted_at = db.Column(db.DateTime, nullable=True)
 
     role = db.relationship("Role", lazy="joined")
 
