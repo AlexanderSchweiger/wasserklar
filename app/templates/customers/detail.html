@@ -12,10 +12,11 @@
       <div class="card-header">
         <h3 class="card-title">Kontaktdaten</h3>
         <div class="card-options">
-          <a href="{{ url_for('customers.edit', customer_id=customer.id) }}"
-             class="btn btn-sm btn-outline-primary">
+          <button type="button" class="btn btn-sm btn-outline-primary"
+                  data-url="{{ url_for('customers.edit', customer_id=customer.id) }}"
+                  onclick="openCustomerEditModal(this)">
             <i class="fas fa-edit me-1"></i> Bearbeiten
-          </a>
+          </button>
         </div>
       </div>
       <div class="card-body">
@@ -143,4 +144,25 @@
   </div>
   {% endif %}
 </div>
+{% endblock %}
+
+{% block modals %}
+{% include "customers/_customer_edit_modal.html" %}
+{% endblock %}
+
+{% block scripts %}
+{% include "_modal_edit_helpers.html" %}
+<script>
+// Auf der Detailseite gibt es keine Filter/Pagination zu erhalten — nach dem
+// Modal-Speichern die Seite neu laden, damit die aktualisierten Kontaktdaten
+// erscheinen (Default-Verhalten von setupEditModal ohne savedHandler).
+setupEditModal({
+  formId: 'customerEditForm',
+  bodyId: 'customerEditModalBody',
+  modalId: 'customerEditModal',
+  openFn: 'openCustomerEditModal',
+  closeEvent: 'closeCustomerEditModal',
+  savedEvent: 'customerEdited',
+});
+</script>
 {% endblock %}
