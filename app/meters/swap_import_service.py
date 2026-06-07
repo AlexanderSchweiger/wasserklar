@@ -20,7 +20,8 @@ from typing import Any
 
 from app.extensions import db
 from app.models import (
-    BillingPeriod, Customer, MeterReading, Property, PropertyOwnership, WaterMeter,
+    BillingPeriod, Customer, MeterReading, MeterReplacement, Property,
+    PropertyOwnership, WaterMeter,
 )
 from app.meters.services import recompute_meter_chain
 from app.meters.import_service import (
@@ -515,8 +516,9 @@ def commit_swap_import(rows: list[SwapRow], user_id: int,
                     ))
                 affected_meters[old.id] = old
 
-                # 3. Neuen Zaehler anlegen
-                db.session.add(WaterMeter(
+                # 3. Neuen Zaehler anlegen (in Variable + flush -> new.id fuer
+                #    das Tausch-Event; flush laeuft im begin_nested-Savepoint).
+                new = WaterMeter(
                     property_id=old.property_id,
                     meter_number=row.new_meter_number,
                     location=old.location,
@@ -526,6 +528,20 @@ def commit_swap_import(rows: list[SwapRow], user_id: int,
                     meter_type=old.meter_type,
                     parent_meter_id=old.parent_meter_id,
                     notes=f"Nachfolger von {old.meter_number}",
+                )
+                db.session.add(new)
+                db.session.flush()
+
+                # 4. Explizites Tausch-Event (alt->neu-Paarung + Snapshot)
+                db.session.add(MeterReplacement(
+                    property_id=old.property_id,
+                    old_meter_id=old.id,
+                    new_meter_id=new.id,
+                    billing_period_id=billing_period.id,
+                    replacement_date=row.swap_date,
+                    final_value=row.dismount_value,
+                    new_initial_value=row.new_initial_value,
+                    created_by_id=user_id,
                 ))
                 stats.swapped += 1
 

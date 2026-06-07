@@ -9,7 +9,7 @@ Export nicht erfasst.
 from app.models import (
     Customer, Property, PropertyOwnership, WaterMeter,
     WaterTariff, TaxRate, Account, RealAccount, Project,
-    FiscalYear, MeterReadingAccessCode, MeterReading,
+    FiscalYear, MeterReadingAccessCode, MeterReading, MeterReplacement,
     Invoice, InvoiceItem, BillingRun, BillingPeriod, OpenItem,
     BookingGroup, Booking, Transfer, RealAccountYearBalance,
     DunningPolicy, DunningStage, DunningNotice,
@@ -22,6 +22,7 @@ from app.models import (
 # weil 'users' in EXCLUDED_TABLES ist und IDs im Ziel-System abweichen.
 NULL_ON_IMPORT_COLS = {
     MeterReading: ["created_by_id"],
+    MeterReplacement: ["created_by_id"],
     MeterReadingAccessCode: ["created_by_id"],
     BillingRun: ["created_by_id"],
     Invoice: ["created_by_id"],
@@ -48,7 +49,7 @@ CATEGORIES = {
         CustomerWgProfile, PropertyWgProfile, WgFunction,
     ],
     "buchungen": [
-        MeterReading, BillingRun, Invoice, InvoiceItem, OpenItem,
+        MeterReading, MeterReplacement, BillingRun, Invoice, InvoiceItem, OpenItem,
         BookingGroup, Booking, Transfer, RealAccountYearBalance,
         InvoiceCounter, CustomerCounter,
     ],
@@ -73,6 +74,7 @@ INSERT_ORDER = [
     Customer, Property, PropertyOwnership, WaterMeter,
     CustomerWgProfile, PropertyWgProfile, WgFunction,
     BillingPeriod, MeterReadingAccessCode, WaterTariff, MeterReading,
+    MeterReplacement,
     BillingRun, Invoice, InvoiceItem, OpenItem,
     BookingGroup, Booking, Transfer, RealAccountYearBalance,
     DunningPolicy, DunningStage, DunningNotice,
@@ -86,6 +88,7 @@ INSERT_ORDER = [
 # Date-/DateTime-Spalten, bei denen das Jahr per EXTRACT gezogen wird.
 YEAR_FILTERS = {
     MeterReading: ("date_year", "reading_date"),
+    MeterReplacement: ("date_year", "replacement_date"),
     BillingRun: ("date_year", "created_at"),
     Invoice: ("date_year", "date"),
     OpenItem: "period_year",
@@ -117,6 +120,7 @@ NATURAL_KEYS = {
     MeterReadingAccessCode: ("customer_id", "billing_period_id"),
     WaterTariff: ("name", "valid_from"),
     MeterReading: ("meter_id", "billing_period_id"),
+    MeterReplacement: ("old_meter_id",),  # ein alter Zaehler wird hoechstens einmal ersetzt
     BillingRun: None,                   # kein natuerlicher Schluessel
     Invoice: ("invoice_number",),
     InvoiceItem: None,
@@ -149,6 +153,8 @@ FOREIGN_KEYS = {
     MeterReadingAccessCode: {"customer_id": Customer, "billing_period_id": BillingPeriod},
     MeterReading: {"meter_id": WaterMeter, "self_service_code_id": MeterReadingAccessCode,
                    "billing_period_id": BillingPeriod},
+    MeterReplacement: {"property_id": Property, "old_meter_id": WaterMeter,
+                       "new_meter_id": WaterMeter, "billing_period_id": BillingPeriod},
     BillingRun: {"billing_period_id": BillingPeriod},
     Invoice: {"customer_id": Customer, "property_id": Property, "billing_run_id": BillingRun,
               "billing_period_id": BillingPeriod},

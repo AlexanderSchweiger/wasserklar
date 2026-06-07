@@ -910,6 +910,10 @@ def import_preview():
             cfg.col_name_last = suggested.col_name_last
         if not cfg.col_name_first:
             cfg.col_name_first = suggested.col_name_first
+        if not cfg.col_salutation:
+            cfg.col_salutation = suggested.col_salutation
+        if not cfg.col_is_company:
+            cfg.col_is_company = suggested.col_is_company
         if not cfg.col_strasse:
             cfg.col_strasse = suggested.col_strasse
         if not cfg.col_hausnummer:

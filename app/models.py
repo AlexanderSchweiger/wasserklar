@@ -545,6 +545,50 @@ class MeterReading(db.Model):
         return f"<MeterReading {self.meter.meter_number} {self.reading_date}: {self.value}>"
 
 
+class MeterReplacement(db.Model):
+    """Explizites Zaehlertausch-Event: alt->neu-Paarung + Snapshot der
+    Tausch-Metadaten. Ersetzt die fruehere Datums-Heuristik (alter Zaehler
+    ``active=False`` mit ``installed_to == neuer.installed_from`` am selben
+    Objekt), die bei zwei am selben Tag am selben Objekt getauschten Zaehlern
+    nicht aufloesbar war. ``property_id`` ist redundant zu
+    ``old_meter.property_id``, wird aber direkt gehalten -> Per-Objekt-Abfragen
+    ohne Join. ``final_value`` / ``new_initial_value`` sind Snapshots zum
+    Tauschzeitpunkt (Audit/Backfill); die Live-Anzeige nutzt weiterhin die
+    Ablesungen in ``meter_readings``."""
+    __tablename__ = "meter_replacements"
+
+    id = db.Column(db.Integer, primary_key=True)
+    property_id = db.Column(
+        db.Integer, db.ForeignKey("properties.id"), nullable=False, index=True)
+    # ondelete RESTRICT: ein dokumentierter Tausch darf nicht verwaisen.
+    # Zaehler werden ohnehin soft-deleted (active=False) statt hart geloescht;
+    # meter_delete bekommt zusaetzlich einen Guard (freundlicher Flash statt 500).
+    old_meter_id = db.Column(
+        db.Integer, db.ForeignKey("water_meters.id", ondelete="RESTRICT"),
+        nullable=False, unique=True)
+    new_meter_id = db.Column(
+        db.Integer, db.ForeignKey("water_meters.id", ondelete="RESTRICT"),
+        nullable=False, index=True)
+    billing_period_id = db.Column(
+        db.Integer, db.ForeignKey("billing_periods.id"), nullable=False, index=True)
+    replacement_date = db.Column(db.Date, nullable=False)
+    final_value = db.Column(db.Numeric(12, 3), nullable=True)        # Endstand alt
+    new_initial_value = db.Column(db.Numeric(12, 3), nullable=True)  # Anfangsstand neu
+    created_by_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    old_meter = db.relationship("WaterMeter", foreign_keys=[old_meter_id])
+    new_meter = db.relationship("WaterMeter", foreign_keys=[new_meter_id])
+    property = db.relationship("Property")
+    billing_period = db.relationship("BillingPeriod")
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+
+    def __repr__(self):
+        return (f"<MeterReplacement old={self.old_meter_id} "
+                f"new={self.new_meter_id} {self.replacement_date}>")
+
+
 class MeterReadingAccessCode(EmailTrackableMixin, db.Model):
     """SaaS-Self-Service: Kurzer Zugangscode pro Kunde+Abrechnungsperiode
     fuer die Zaehlerstands-Selbsteingabe ohne User-Account.

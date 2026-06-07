@@ -470,3 +470,156 @@ def suggest_column(columns: list[str], hints: list[str]) -> str:
             if norm == hint or hint in norm:
                 return col
     return ""
+
+
+# ---------------------------------------------------------------------------
+# Contact name / type normalisation (shared by both customer importers)
+# ---------------------------------------------------------------------------
+#
+# Single source of truth for turning the loosely-formatted name columns of an
+# import file into the canonical Customer split (see
+# ``customers/routes.py:_apply_customer_fields``): the combined ``name`` is
+# "Nachname Vorname", companies carry only ``name`` (no Anrede/Vor-/Nachname).
+
+# Werte, die eindeutig eine Privatperson kennzeichnen.
+_PERSON_TOKENS = {
+    "person", "privat", "privatperson", "privatkunde", "priv", "p",
+    "natürliche person", "natuerliche person",
+    "nein", "n", "no", "0", "false", "falsch", "kein", "keine",
+}
+# Werte, die eindeutig eine Firma kennzeichnen.
+_COMPANY_TOKENS = {
+    "firma", "fa", "unternehmen", "company", "betrieb", "firmenkunde",
+    "geschäftskunde", "geschaeftskunde", "gewerbe", "verein", "gesellschaft",
+    "juristische person", "juristisch",
+    "ja", "j", "yes", "y", "x", "1", "true", "wahr",
+}
+# Rechtsform-Kürzel: tauchen sie als eigenes Wort in der Zelle auf, ist es eine Firma.
+_COMPANY_LEGAL_TOKENS = {
+    "gmbh", "gesmbh", "ag", "kg", "og", "ohg", "gesbr", "ug", "kgaa", "eu",
+}
+
+_RE_WORD_SPLIT = re.compile(r"[^a-z0-9äöüß]+")
+
+
+def normalize_salutation(raw: str) -> str:
+    """Normalise an imported salutation to ``'Herr' | 'Frau' | 'Familie' | ''``.
+
+    Note: ``'Fa'`` / ``'Fa.'`` is treated as a company indicator (see
+    :func:`salutation_is_company`), NOT as ``Familie`` — ``Familie`` only matches
+    the long form and ``'Fam'``.
+    """
+    s = (raw or "").strip().lower().rstrip(".")
+    if s in ("herr", "hr"):
+        return "Herr"
+    if s in ("frau", "fr"):
+        return "Frau"
+    if s in ("familie", "fam"):
+        return "Familie"
+    return ""
+
+
+def salutation_is_company(raw: str) -> bool:
+    """True if an Anrede cell itself signals a company (``'Firma'`` / ``'Fa.'``)."""
+    s = (raw or "").strip().lower().rstrip(".")
+    return s in ("firma", "fa")
+
+
+def parse_is_company(raw: str) -> bool | None:
+    """Interpret a company/person indicator cell.
+
+    Returns ``True`` for company markers, ``False`` for person markers and
+    ``None`` when the value is empty or unrecognised (caller decides the
+    default — a contact whose type is not stated is treated as a person).
+    """
+    s = (raw or "").strip().lower()
+    if not s:
+        return None
+    norm = s.rstrip(".")
+    if norm in _PERSON_TOKENS:
+        return False
+    if norm in _COMPANY_TOKENS:
+        return True
+    # Rechtsform als eigenes Wort irgendwo in der Zelle?
+    if any(tok in _COMPANY_LEGAL_TOKENS for tok in _RE_WORD_SPLIT.split(s) if tok):
+        return True
+    return None
+
+
+def resolve_contact_name(*, combined: str = "", last: str = "", first: str = "",
+                         salutation: str = "", company: str = "") -> dict:
+    """Normalise raw imported name fields into the canonical customer split.
+
+    Returns a dict with ``is_company`` (bool), ``name`` (combined
+    "Nachname Vorname" / company name), ``salutation``, ``first_name`` and
+    ``last_name`` — all strings (``name`` may be empty if nothing was given).
+
+    Rules (mirroring the customer form):
+    - Companies keep only ``name`` (Anrede/Vor-/Nachname cleared).
+    - For persons the combined ``name`` is derived as "Nachname Vorname".
+    - A single, undistinguished name field (only ``combined``, no split) is
+      assigned to the **last name** — so Anschrift/Anrede stay meaningful.
+    - Salutation ``Familie`` has no first name.
+    """
+    combined = (combined or "").strip()
+    last = (last or "").strip()
+    first = (first or "").strip()
+
+    is_comp = parse_is_company(company)
+    if is_comp is None:
+        is_comp = salutation_is_company(salutation)
+
+    if is_comp:
+        name = combined or " ".join(p for p in (last, first) if p)
+        return {"is_company": True, "name": name, "salutation": "",
+                "first_name": "", "last_name": ""}
+
+    sal = normalize_salutation(salutation)
+    # Nur ein kombiniertes Feld vorhanden → in den Nachnamen übernehmen.
+    if combined and not last and not first:
+        last = combined
+    if sal == "Familie":
+        first = ""
+    name = " ".join(p for p in (last, first) if p) or combined
+    return {"is_company": False, "name": name, "salutation": sal,
+            "first_name": first, "last_name": last}
+
+
+# ---------------------------------------------------------------------------
+# Street / house-number splitting (shared by both customer importers)
+# ---------------------------------------------------------------------------
+#
+# Manche Quellen führen Straße und Hausnummer in EINEM Textfeld ("Hauptstraße
+# 12a"). Österr./dt. Konvention: die Hausnummer steht am Ende — eine Zahl,
+# optional mit einem Buchstaben und ``/``- bzw. ``-``-getrennten Zusätzen
+# (12, 12a, 12/3, 1-3, 5/2/14). Der Straßenname davor muss mindestens einen
+# Buchstaben enthalten, sonst wird nicht getrennt.
+_RE_STREET_NUMBER = re.compile(
+    r"^(?P<street>.*?\S)[\s,]+"
+    r"(?P<number>\d+\s*[a-zA-Z]?(?:\s*[/-]\s*\d+\s*[a-zA-Z]?)*)[\s,]*$"
+)
+
+
+def split_street_number(strasse: str, hausnummer: str = "") -> tuple[str, str]:
+    """Split a combined "street + house number" field into ``(strasse, hausnummer)``.
+
+    If ``hausnummer`` is already set it is kept verbatim and ``strasse`` returned
+    unchanged (explicit columns win). Otherwise, when ``strasse`` ends in a
+    house-number block (number-last convention), that block is moved into the
+    house number; if no trailing number is found, ``strasse`` is kept whole and
+    the house number stays empty.
+    """
+    strasse = (strasse or "").strip()
+    hausnummer = (hausnummer or "").strip()
+    if hausnummer or not strasse:
+        return strasse, hausnummer
+    m = _RE_STREET_NUMBER.match(strasse)
+    if not m:
+        return strasse, ""
+    street = m.group("street").strip().rstrip(",").strip()
+    number = re.sub(r"\s+", "", m.group("number"))  # "12 a" → "12a"
+    # Straßenname muss einen Buchstaben enthalten, sonst nicht trennen
+    # (z.B. ein Feld, das nur aus Zahlen besteht, bleibt unangetastet).
+    if not any(ch.isalpha() for ch in street):
+        return strasse, ""
+    return street, number

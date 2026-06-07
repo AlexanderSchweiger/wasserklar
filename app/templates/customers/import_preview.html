@@ -11,6 +11,7 @@
   ('col_name_last', 'Nachname'),
   ('col_name_first', 'Vorname'),
   ('col_salutation', 'Anrede'),
+  ('col_is_company', 'Firma / Person'),
   ('col_strasse', 'Straße'),
   ('col_hausnummer', 'Hausnummer'),
   ('col_plz', 'PLZ'),
@@ -124,6 +125,7 @@
               <th style="width:50px">Skip</th>
               <th style="min-width:90px">Kunden-Nr.</th>
               <th style="min-width:180px">Name</th>
+              <th style="min-width:110px">Typ</th>
               <th style="min-width:120px">Ext. Kennung</th>
               <th style="min-width:140px">Straße + Nr.</th>
               <th style="min-width:60px">PLZ</th>
@@ -159,6 +161,21 @@
                 <input type="text" name="rows[{{ row.idx }}][name]"
                        class="form-control form-control-sm"
                        value="{{ row.fields.get('name', '') }}">
+                {% set _ln = row.fields.get('last_name', '') %}
+                {% set _fn = row.fields.get('first_name', '') %}
+                {% set _sal = row.fields.get('salutation', '') %}
+                {% if row.fields.get('is_company') != '1' and (_ln or _fn or _sal) %}
+                <small class="text-muted d-block" style="font-size:.72rem">
+                  {{ _sal }}{% if _sal %} · {% endif %}Nachname: {{ _ln or '—' }} · Vorname: {{ _fn or '—' }}
+                </small>
+                {% endif %}
+              </td>
+              <td>
+                <select name="rows[{{ row.idx }}][is_company]"
+                        class="form-select form-select-sm">
+                  <option value="" {{ 'selected' if row.fields.get('is_company') != '1' }}>Person</option>
+                  <option value="1" {{ 'selected' if row.fields.get('is_company') == '1' }}>Firma</option>
+                </select>
               </td>
               <td>
                 <input type="text" name="rows[{{ row.idx }}][externe_kennung]"
@@ -237,7 +254,7 @@
             </tr>
             {% else %}
             <tr>
-              <td colspan="{{ 16 if is_wg else 13 }}" class="text-center text-muted py-4">
+              <td colspan="{{ 17 if is_wg else 14 }}" class="text-center text-muted py-4">
                 Keine Zeilen — bitte mindestens eine Spalte zuordnen und auf
                 „Vorschau aktualisieren" klicken.
               </td>

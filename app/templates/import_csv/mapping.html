@@ -55,9 +55,12 @@
               </tr>
               {{ col_select("customer_number", "Kunden-Nr.", required=True) }}
               {{ col_select("customer_name", "Name / Kombinierter Name") }}
-              {{ col_select("name_last", "Nachname (Fallback)") }}
-              {{ col_select("name_first", "Vorname (Fallback)") }}
+              {{ col_select("name_last", "Nachname") }}
+              {{ col_select("name_first", "Vorname") }}
+              {{ col_select("salutation", "Anrede (Herr / Frau / Familie)") }}
+              {{ col_select("is_company", "Firma / Person") }}
               {{ col_select("strasse", "Straße (Rechnungsadresse)") }}
+              {{ col_select("hausnummer", "Hausnummer (sonst aus Straße erkannt)") }}
               {{ col_select("plz", "PLZ (Rechnungsadresse)") }}
               {{ col_select("ort", "Ort (Rechnungsadresse)") }}
               {{ col_select("land", "Land (Rechnungsadresse)") }}

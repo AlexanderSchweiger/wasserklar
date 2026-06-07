@@ -242,6 +242,10 @@ class TestSuggestConfig:
         assert cfg.col_name_last == "Nachname"
         assert cfg.col_name_first == "Vorname"
 
+    def test_suggests_company_column(self, app):
+        cfg = suggest_config(["Firma", "Name", "Ort"])
+        assert cfg.col_is_company == "Firma"
+
 
 # ---------------------------------------------------------------------------
 # Name-Aufspaltung beim Import (oss-v1.21.0)
@@ -274,12 +278,140 @@ class TestNameSplitImport:
         assert c.letter_name == "Max Mustermann"
         assert c.salutation_line == "Sehr geehrter Herr Mustermann"
 
-    def test_combined_only_leaves_split_empty(self, app):
+    def test_combined_only_goes_to_last_name(self, app):
+        """Nur ein kombiniertes Namensfeld → als Privatperson in den Nachnamen."""
         df = _df(("", "Nur Kombiniert", "Wien", ""))
         rows = build_preview_rows(df, _cfg())
+        assert rows[0].fields["last_name"] == "Nur Kombiniert"
+        assert rows[0].fields["first_name"] == ""
+        assert rows[0].fields["is_company"] == ""
+
         stats = commit(rows, _cfg())
         assert stats.created == 1
         c = Customer.query.filter_by(name="Nur Kombiniert").first()
-        assert c.first_name is None and c.last_name is None
-        # letter_name faellt auf das kombinierte name zurueck
+        assert c.last_name == "Nur Kombiniert"
+        assert c.first_name is None
+        assert c.is_company is False
+        # letter_name = "Vorname Nachname" → nur Nachname vorhanden
         assert c.letter_name == "Nur Kombiniert"
+
+
+# ---------------------------------------------------------------------------
+# Firma / Person beim Import (oss-v1.23.0)
+# ---------------------------------------------------------------------------
+
+class TestCompanyImport:
+    def test_company_via_type_column(self, app):
+        df = _df(
+            ("Wasser GmbH", "Firma", "Graz"),
+            columns=("Name", "Typ", "Ort"),
+        )
+        cfg = CustomerImportConfig(
+            col_name="Name", col_is_company="Typ", col_ort="Ort",
+        )
+        rows = build_preview_rows(df, cfg)
+        assert rows[0].fields["is_company"] == "1"
+        # Firma räumt die Personen-Felder ab.
+        assert rows[0].fields["last_name"] == ""
+        assert rows[0].fields["first_name"] == ""
+
+        stats = commit(rows, cfg)
+        assert stats.created == 1
+        c = Customer.query.filter_by(name="Wasser GmbH").first()
+        assert c.is_company is True
+        assert c.last_name is None and c.first_name is None and c.salutation is None
+        assert c.letter_name == "Wasser GmbH"
+        assert c.salutation_line == "Sehr geehrte Damen und Herren"
+
+    def test_person_via_type_column_keeps_split(self, app):
+        df = _df(
+            ("Mustermann", "Max", "Person"),
+            columns=("Nachname", "Vorname", "Typ"),
+        )
+        cfg = CustomerImportConfig(
+            col_name_last="Nachname", col_name_first="Vorname", col_is_company="Typ",
+        )
+        rows = build_preview_rows(df, cfg)
+        assert rows[0].fields["is_company"] == ""
+        stats = commit(rows, cfg)
+        assert stats.created == 1
+        c = Customer.query.filter_by(last_name="Mustermann").first()
+        assert c.is_company is False
+        assert c.first_name == "Max"
+        assert c.name == "Mustermann Max"
+
+    def test_anrede_firma_implies_company(self, app):
+        """Anrede 'Firma' kennzeichnet eine Firma, auch ohne eigene Typ-Spalte."""
+        df = _df(
+            ("Wasser GmbH", "Firma", "Wien"),
+            columns=("Name", "Anrede", "Ort"),
+        )
+        cfg = CustomerImportConfig(
+            col_name="Name", col_salutation="Anrede", col_ort="Ort",
+        )
+        rows = build_preview_rows(df, cfg)
+        assert rows[0].fields["is_company"] == "1"
+        stats = commit(rows, cfg)
+        c = Customer.query.filter_by(name="Wasser GmbH").first()
+        assert c.is_company is True
+
+    def test_update_sets_company_flag(self, app):
+        c = Customer(name="Alt", customer_number=42, is_company=False)
+        db.session.add(c)
+        db.session.commit()
+
+        df = _df(("42", "Neu GmbH", "Firma"), columns=("Kunden-Nr.", "Name", "Typ"))
+        cfg = CustomerImportConfig(
+            col_customer_number="Kunden-Nr.", col_name="Name",
+            col_is_company="Typ", duplicate_mode="update",
+        )
+        rows = build_preview_rows(df, cfg)
+        assert rows[0].status == ROW_UPDATE
+        commit(rows, cfg)
+        db.session.refresh(c)
+        assert c.is_company is True
+        assert c.last_name is None and c.first_name is None
+        assert c.letter_name == "Neu GmbH"
+
+
+# ---------------------------------------------------------------------------
+# Straße / Hausnummer beim Import (oss-v1.23.0)
+# ---------------------------------------------------------------------------
+
+class TestAddressSplit:
+    def test_combined_street_number_split(self, app):
+        df = _df(("100", "Huber", "Hauptstraße 12a"),
+                 columns=("Kunden-Nr.", "Name", "Straße"))
+        cfg = CustomerImportConfig(
+            col_customer_number="Kunden-Nr.", col_name="Name", col_strasse="Straße",
+        )
+        rows = build_preview_rows(df, cfg)
+        assert rows[0].fields["strasse"] == "Hauptstraße"
+        assert rows[0].fields["hausnummer"] == "12a"
+
+        commit(rows, cfg)
+        c = Customer.query.filter_by(customer_number=100).first()
+        assert c.strasse == "Hauptstraße"
+        assert c.hausnummer == "12a"
+
+    def test_separate_house_number_column_wins(self, app):
+        df = _df(("101", "Maier", "Hauptstraße 12", "9"),
+                 columns=("Kunden-Nr.", "Name", "Straße", "Hausnr"))
+        cfg = CustomerImportConfig(
+            col_customer_number="Kunden-Nr.", col_name="Name",
+            col_strasse="Straße", col_hausnummer="Hausnr",
+        )
+        rows = build_preview_rows(df, cfg)
+        # Eigene Hausnummer-Spalte gefüllt → Straße bleibt unangetastet.
+        assert rows[0].fields["strasse"] == "Hauptstraße 12"
+        assert rows[0].fields["hausnummer"] == "9"
+
+    def test_street_without_number_kept_whole(self, app):
+        df = _df(("102", "Bauer", "Siedlung"),
+                 columns=("Kunden-Nr.", "Name", "Straße"))
+        cfg = CustomerImportConfig(
+            col_customer_number="Kunden-Nr.", col_name="Name", col_strasse="Straße",
+        )
+        rows = build_preview_rows(df, cfg)
+        assert rows[0].fields["strasse"] == "Siedlung"
+        assert rows[0].fields["hausnummer"] == ""

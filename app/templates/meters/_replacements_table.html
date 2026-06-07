@@ -1,0 +1,45 @@
+{% from "_pagination.html" import render_pagination %}
+<div class="card-body p-0 table-scroll">
+<table class="table table-hover table-striped mb-0">
+  <thead>
+    <tr>
+      <th>Datum</th>
+      <th>Objekt</th>
+      <th>Eigentümer</th>
+      <th>Alter Zähler</th>
+      <th class="text-end">Endstand</th>
+      <th>Neuer Zähler</th>
+      <th class="text-end">Anfangsstand</th>
+      <th>Periode</th>
+      <th>Erfasst von</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for repl in replacements %}
+    <tr>
+      <td>{{ repl.replacement_date.strftime('%d.%m.%Y') if repl.replacement_date else '—' }}</td>
+      <td>
+        <a href="{{ url_for('properties.detail', property_id=repl.property_id) }}">
+          {{ repl.property.object_number or ('#' ~ repl.property_id) }}
+        </a>
+        {% if repl.property.ort %}<small class="text-muted d-block">{{ repl.property.ort }}</small>{% endif %}
+      </td>
+      <td>{{ owners_map.get(repl.property_id) or '—' }}</td>
+      <td>{{ repl.old_meter.meter_number if repl.old_meter else '—' }}</td>
+      <td class="text-end">
+        {{ "%d"|format(repl.final_value) ~ ' m³' if repl.final_value is not none else '—' }}
+      </td>
+      <td>{{ repl.new_meter.meter_number if repl.new_meter else '—' }}</td>
+      <td class="text-end">
+        {{ "%d"|format(repl.new_initial_value) ~ ' m³' if repl.new_initial_value is not none else '—' }}
+      </td>
+      <td>{{ repl.billing_period.name if repl.billing_period else '—' }}</td>
+      <td>{{ repl.created_by.username if repl.created_by else '—' }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="9" class="text-center text-muted py-3">Keine Zählertausche gefunden.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{{ render_pagination(pagination) }}

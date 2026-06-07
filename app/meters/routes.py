@@ -9,6 +9,7 @@ from flask import (
 )
 from flask_login import login_required, current_user
 from sqlalchemy import case as sa_case
+from sqlalchemy.orm import aliased
 
 from app.meters import bp
 from app.meters import import_service
@@ -18,8 +19,8 @@ from app.imports import common as import_common
 from app.meters.services import save_reading, recompute_meter_chain
 from app.extensions import db
 from app.models import (
-    WaterMeter, MeterReading, Property, PropertyOwnership, Customer,
-    BillingPeriod,
+    WaterMeter, MeterReading, MeterReplacement, Property, PropertyOwnership,
+    Customer, BillingPeriod,
 )
 from app.pagination import paginate_query
 
@@ -75,38 +76,52 @@ def _apply_meter_sort(query, sort: str, direction: str):
 
 
 def _build_replacement_map(meters, period):
-    """Gibt für jeden Zähler, der in der angegebenen Abrechnungsperiode
-    eingebaut wurde, den Vorgänger-Zähler, dessen Abschlussablesung in
-    dieser Periode und dessen Ablesung aus der Vorperiode zurück."""
+    """Gibt für jeden in ``meters`` enthaltenen NEUEN Zähler eines in ``period``
+    gebuchten Zählertauschs den Vorgänger-Zähler, dessen Abschlussablesung in
+    dieser Periode und dessen Ablesung aus der Vorperiode zurück.
+
+    Quelle ist die ``meter_replacements``-Event-Tabelle (explizite alt->neu-
+    Paarung), nicht mehr die fruehere Datums-Heuristik — dadurch auch bei zwei
+    am selben Tag am selben Objekt getauschten Zaehlern eindeutig. Die Dict-Form
+    (keyed by NEU-Meter-ID, Werte-Keys ``old_meter``/``old_reading``/
+    ``old_prev_reading``) bleibt identisch, damit ``_row.html`` und
+    ``_table_quick.html`` unveraendert bleiben. ``old_reading`` /
+    ``old_prev_reading`` werden bewusst live aus ``meter_readings`` gelesen (nicht
+    der ``final_value``-Snapshot), damit nachtraegliche Stand-Korrekturen sichtbar
+    bleiben."""
     result = {}
     if period is None:
         return result
+    new_ids = [m.id for m in meters]
+    if not new_ids:
+        return result
     prev_period = _previous_period(period)
-    for meter in meters:
-        if not (meter.installed_from
-                and period.start_date <= meter.installed_from <= period.end_date):
-            continue
-        old_meter = (
-            WaterMeter.query
-            .filter_by(property_id=meter.property_id, active=False)
-            .filter(WaterMeter.installed_to == meter.installed_from)
-            .first()
+    repls = (
+        MeterReplacement.query
+        .filter(
+            MeterReplacement.billing_period_id == period.id,
+            MeterReplacement.new_meter_id.in_(new_ids),
         )
-        if old_meter:
-            old_reading = MeterReading.query.filter_by(
-                meter_id=old_meter.id, billing_period_id=period.id
+        .all()
+    )
+    for repl in repls:
+        old_meter = repl.old_meter
+        if old_meter is None:
+            continue
+        old_reading = MeterReading.query.filter_by(
+            meter_id=old_meter.id, billing_period_id=period.id
+        ).first()
+        old_prev_reading = (
+            MeterReading.query.filter_by(
+                meter_id=old_meter.id, billing_period_id=prev_period.id
             ).first()
-            old_prev_reading = (
-                MeterReading.query.filter_by(
-                    meter_id=old_meter.id, billing_period_id=prev_period.id
-                ).first()
-                if prev_period else None
-            )
-            result[meter.id] = {
-                "old_meter": old_meter,
-                "old_reading": old_reading,
-                "old_prev_reading": old_prev_reading,
-            }
+            if prev_period else None
+        )
+        result[repl.new_meter_id] = {
+            "old_meter": old_meter,
+            "old_reading": old_reading,
+            "old_prev_reading": old_prev_reading,
+        }
     return result
 
 
@@ -431,6 +446,54 @@ def readings():
         template = "meters/_table_quick.html" if mode == "quick" else "meters/_table.html"
         return render_template(template, **ctx)
     return render_template("meters/readings.html", q=q, mode=mode, **ctx)
+
+
+@bp.route("/replacements")
+@login_required
+def replacements():
+    """Zaehlertausch-Historie: alle dokumentierten Tausche, neueste zuerst.
+
+    Liest direkt aus ``meter_replacements`` (Event-Tabelle). Filterbar nach
+    Abrechnungsperiode (``?period_id=``) und Freitext (Objekt-Nr./Ort/Strasse/
+    alte+neue Zaehlernummer). Ohne ``period_id`` werden alle Perioden gezeigt."""
+    period = _resolve_period_arg() if request.args.get("period_id") else None
+    q = request.args.get("q", "").strip()
+
+    query = (
+        MeterReplacement.query
+        .join(Property, Property.id == MeterReplacement.property_id)
+        .order_by(
+            MeterReplacement.replacement_date.desc(),
+            MeterReplacement.id.desc(),
+        )
+    )
+    if period is not None:
+        query = query.filter(MeterReplacement.billing_period_id == period.id)
+    if q:
+        old_m = aliased(WaterMeter)
+        new_m = aliased(WaterMeter)
+        query = (
+            query
+            .join(old_m, old_m.id == MeterReplacement.old_meter_id)
+            .join(new_m, new_m.id == MeterReplacement.new_meter_id)
+            .filter(db.or_(
+                Property.object_number.ilike(f"%{q}%"),
+                Property.ort.ilike(f"%{q}%"),
+                Property.strasse.ilike(f"%{q}%"),
+                old_m.meter_number.ilike(f"%{q}%"),
+                new_m.meter_number.ilike(f"%{q}%"),
+            ))
+        )
+
+    pagination = paginate_query(query, page_key="replacements")
+    ctx = dict(
+        replacements=pagination.items, pagination=pagination,
+        period=period, periods=_all_periods(), q=q,
+        owners_map=_build_owners_map(),
+    )
+    if request.headers.get("HX-Request"):
+        return render_template("meters/_replacements_table.html", **ctx)
+    return render_template("meters/replacements.html", **ctx)
 
 
 @bp.route("/bulk_read", methods=["POST"])
@@ -1274,6 +1337,19 @@ def meter_replace(meter_id):
         )
         db.session.add(new_meter)
         db.session.flush()
+
+        # Explizites Tausch-Event: alt->neu-Paarung + Snapshot festhalten.
+        db.session.add(MeterReplacement(
+            property_id=old_meter.property_id,
+            old_meter_id=old_meter.id,
+            new_meter_id=new_meter.id,
+            billing_period_id=period.id,
+            replacement_date=replacement_date,
+            final_value=final_value,
+            new_initial_value=new_initial_value,
+            created_by_id=current_user.id,
+        ))
+
         recompute_meter_chain(old_meter)
         db.session.commit()
 
@@ -1494,6 +1570,19 @@ def meter_delete(meter_id):
             f"Zähler '{meter.meter_number}' kann nicht gelöscht werden — "
             "es existieren bereits Ablesungen. Stattdessen Zählertausch verwenden "
             "oder den Zähler manuell ausbauen.",
+            "danger",
+        )
+        return redirect(url_for("meters.index"))
+    # Zaehler ist Teil eines dokumentierten Tauschs -> die meter_replacements-FK
+    # ist ondelete RESTRICT; ohne diesen Guard wuerde delete() einen 500 werfen.
+    if MeterReplacement.query.filter(db.or_(
+        MeterReplacement.old_meter_id == meter.id,
+        MeterReplacement.new_meter_id == meter.id,
+    )).count() > 0:
+        flash(
+            f"Zähler '{meter.meter_number}' kann nicht gelöscht werden — "
+            "er ist Teil eines dokumentierten Zählertauschs (siehe "
+            "Zählertausch-Historie).",
             "danger",
         )
         return redirect(url_for("meters.index"))

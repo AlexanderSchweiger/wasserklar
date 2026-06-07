@@ -211,6 +211,43 @@ def index():
                            meter_replacement_interval=meter_replacement_interval())
 
 
+@bp.route('/reset', methods=['POST'])
+@login_required
+def reset_tenant():
+    """Setzt den aktuellen Mandanten zurueck ("Danger Zone").
+
+    Loescht alle Geschaefts-Daten, behaelt aber Einstellungen sowie Benutzer +
+    Rollen und re-seedet die Defaults (siehe app.settings.reset). Doppelt
+    abgesichert: nur die Admin-Rolle UND erneute Passworteingabe. Im SaaS wirkt
+    die Loeschung dank Schema-per-Tenant ausschliesslich auf das eigene
+    Tenant-Schema.
+    """
+    # Gate 1: nur Admin (das Settings-Blueprint ist bereits auf 'verwaltung'
+    # gegated, der Reset ist aber strikter — Admin-Rolle Pflicht).
+    if not current_user.is_admin:
+        flash('Nur Administratoren dürfen den Mandanten zurücksetzen.', 'danger')
+        return redirect(url_for('settings.index'))
+
+    # Gate 2: erneute Passwortbestaetigung des ausfuehrenden Admins.
+    password = request.form.get('confirm_password', '')
+    if not password or not current_user.check_password(password):
+        flash('Passwort falsch — der Mandant wurde NICHT zurückgesetzt.', 'danger')
+        return redirect(url_for('settings.index', _anchor='pane-danger'))
+
+    from app.settings.reset import reset_tenant_data
+    try:
+        result = reset_tenant_data()
+    except Exception as exc:  # noqa: BLE001 — Fehler dem Admin sichtbar machen
+        db.session.rollback()
+        current_app.logger.exception('Mandant-Reset fehlgeschlagen')
+        flash(f'Zurücksetzen fehlgeschlagen: {exc}', 'danger')
+        return redirect(url_for('settings.index', _anchor='pane-danger'))
+
+    flash('Mandant wurde zurückgesetzt: alle Daten gelöscht, Einstellungen erhalten. '
+          f'({result["cleared_tables"]} Tabellen geleert)', 'success')
+    return redirect(url_for('settings.index'))
+
+
 @bp.route('/test-mail', methods=['POST'])
 @login_required
 def send_test_mail():

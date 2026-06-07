@@ -23,6 +23,8 @@ from app.imports.common import (
     _cell,
     parse_row_edits,
     suggest_column,
+    resolve_contact_name,
+    split_street_number,
 )
 
 # ---------------------------------------------------------------------------
@@ -42,6 +44,10 @@ HINTS: dict[str, list[str]] = {
     "name_last": ["nachname", "familienname"],
     "name_first": ["vorname"],
     "salutation": ["anrede"],
+    "is_company": [
+        "firma", "kontaktart", "kontakttyp", "kundenart", "kundentyp",
+        "rechtsform", "unternehmen", "company", "geschäftskunde",
+    ],
     "strasse": ["strasse", "straße"],
     "hausnummer": ["hausnummer", "hausnr", "haus-nr"],
     "plz": ["plz", "postleitzahl"],
@@ -77,6 +83,7 @@ class CustomerImportConfig:
     col_name_last: str = ""
     col_name_first: str = ""
     col_salutation: str = ""
+    col_is_company: str = ""
     col_strasse: str = ""
     col_hausnummer: str = ""
     col_plz: str = ""
@@ -101,6 +108,7 @@ class CustomerImportConfig:
             "col_name_last": self.col_name_last,
             "col_name_first": self.col_name_first,
             "col_salutation": self.col_salutation,
+            "col_is_company": self.col_is_company,
             "col_strasse": self.col_strasse,
             "col_hausnummer": self.col_hausnummer,
             "col_plz": self.col_plz,
@@ -130,6 +138,7 @@ class CustomerImportConfig:
             col_name_last=d.get("col_name_last", ""),
             col_name_first=d.get("col_name_first", ""),
             col_salutation=d.get("col_salutation", ""),
+            col_is_company=d.get("col_is_company", ""),
             col_strasse=d.get("col_strasse", ""),
             col_hausnummer=d.get("col_hausnummer", ""),
             col_plz=d.get("col_plz", ""),
@@ -157,6 +166,7 @@ class CustomerImportConfig:
             col_name_last=form.get("col_name_last", ""),
             col_name_first=form.get("col_name_first", ""),
             col_salutation=form.get("col_salutation", ""),
+            col_is_company=form.get("col_is_company", ""),
             col_strasse=form.get("col_strasse", ""),
             col_hausnummer=form.get("col_hausnummer", ""),
             col_plz=form.get("col_plz", ""),
@@ -185,6 +195,7 @@ def suggest_config(columns: list[str]) -> CustomerImportConfig:
         col_name_last=suggest_column(columns, HINTS["name_last"]),
         col_name_first=suggest_column(columns, HINTS["name_first"]),
         col_salutation=suggest_column(columns, HINTS["salutation"]),
+        col_is_company=suggest_column(columns, HINTS["is_company"]),
         col_strasse=suggest_column(columns, HINTS["strasse"]),
         col_hausnummer=suggest_column(columns, HINTS["hausnummer"]),
         col_plz=suggest_column(columns, HINTS["plz"]),
@@ -233,18 +244,6 @@ def _parse_import_date(raw: str):
     return d.isoformat() if d else ""
 
 
-def _norm_salutation(raw: str) -> str:
-    """Normalisiert eine importierte Anrede auf 'Herr' | 'Frau' | 'Familie' | ''."""
-    s = (raw or "").strip().lower().rstrip(".")
-    if s in ("herr", "hr"):
-        return "Herr"
-    if s in ("frau", "fr"):
-        return "Frau"
-    if s in ("familie", "fam", "fa"):
-        return "Familie"
-    return ""
-
-
 def build_preview_rows(df, cfg: CustomerImportConfig,
                        is_wg: bool = False) -> list[PreviewRow]:
     """Build a list of PreviewRow from the DataFrame and config.
@@ -263,9 +262,20 @@ def build_preview_rows(df, cfg: CustomerImportConfig,
         name_raw = _cell(raw_row, cfg.col_name)
         name_last = _cell(raw_row, cfg.col_name_last)
         name_first = _cell(raw_row, cfg.col_name_first)
-        salutation = _norm_salutation(_cell(raw_row, cfg.col_salutation))
+        # Normalisierte Namens-Aufspaltung (Firma/Person, Anrede, Vor-/Nachname,
+        # kombinierter Name) — eine Quelle der Wahrheit für beide Importer.
+        resolved = resolve_contact_name(
+            combined=name_raw,
+            last=name_last,
+            first=name_first,
+            salutation=_cell(raw_row, cfg.col_salutation),
+            company=_cell(raw_row, cfg.col_is_company),
+        )
         strasse = _cell(raw_row, cfg.col_strasse)
         hausnummer = _cell(raw_row, cfg.col_hausnummer)
+        # Straße + Hausnummer in einem Feld? Hausnummer abspalten, sofern keine
+        # eigene Hausnummer-Spalte gemappt/gefüllt ist (number-last-Konvention).
+        strasse, hausnummer = split_street_number(strasse, hausnummer)
         plz = _cell(raw_row, cfg.col_plz)
         ort = _cell(raw_row, cfg.col_ort)
         land = _cell(raw_row, cfg.col_land)
@@ -274,7 +284,7 @@ def build_preview_rows(df, cfg: CustomerImportConfig,
         notes = _cell(raw_row, cfg.col_notes)
 
         # --- empty row guard --------------------------------------------------
-        if not name_raw and not name_last and not cnum_raw and not ext_key:
+        if not resolved["name"] and not cnum_raw and not ext_key:
             rows.append(PreviewRow(
                 idx=idx,
                 status=ROW_ERROR,
@@ -296,11 +306,6 @@ def build_preview_rows(df, cfg: CustomerImportConfig,
                 ))
                 continue
 
-        # --- name fallback ----------------------------------------------------
-        if not name_raw:
-            parts = [p for p in [name_last, name_first] if p]
-            name_raw = " ".join(parts).strip()
-
         # --- match against DB -------------------------------------------------
         existing = _resolve_customer(cnum, ext_key)
         if existing:
@@ -311,12 +316,14 @@ def build_preview_rows(df, cfg: CustomerImportConfig,
         fields = {
             "customer_number": str(cnum) if cnum is not None else "",
             "externe_kennung": ext_key,
-            "name": name_raw,
-            # Aufgespaltene Namensfelder (fuer Brief-/Rechnungsanrede); nicht in
-            # der Vorschau editierbar, daher direkt aus der Quelle uebernommen.
-            "salutation": salutation,
-            "first_name": name_first,
-            "last_name": name_last,
+            "name": resolved["name"],
+            # Aufgespaltene Namensfelder (Firma/Person + Anrede + Vor-/Nachname)
+            # aus dem gemeinsamen Resolver. ``is_company`` ist als Vorschau-Select
+            # editierbar; Anrede/Vor-/Nachname werden aus der Quelle übernommen.
+            "is_company": "1" if resolved["is_company"] else "",
+            "salutation": resolved["salutation"],
+            "first_name": resolved["first_name"],
+            "last_name": resolved["last_name"],
             "strasse": strasse,
             "hausnummer": hausnummer,
             "plz": plz,
@@ -365,7 +372,7 @@ def apply_edits(form, rows: list[PreviewRow]) -> list[PreviewRow]:
 
         # overwrite editable fields
         for field_name in (
-            "customer_number", "externe_kennung", "name",
+            "customer_number", "externe_kennung", "name", "is_company",
             "strasse", "hausnummer", "plz", "ort", "land",
             "email", "phone", "notes",
             "wg_status", "member_since", "member_until",
@@ -473,14 +480,22 @@ def commit(rows: list[PreviewRow], cfg: CustomerImportConfig,
 
             if existing and cfg.duplicate_mode == "update":
                 # Update all mapped fields (empty value clears the field)
-                if cfg.col_name or name:
+                # Sobald irgendeine Namensspalte gemappt ist, kommen kombinierter
+                # Name + Aufspaltung aus dem Resolver (kombiniert-only → Nachname).
+                if cfg.col_name or cfg.col_name_last or cfg.col_name_first:
                     existing.name = name or existing.name
-                if cfg.col_name_last:
                     existing.last_name = row.fields.get("last_name") or None
-                if cfg.col_name_first:
                     existing.first_name = row.fields.get("first_name") or None
                 if cfg.col_salutation:
                     existing.salutation = row.fields.get("salutation") or None
+                if cfg.col_is_company:
+                    existing.is_company = row.fields.get("is_company") == "1"
+                # Firma hat keine Anrede/Vor-/Nachnamen — abräumen, damit
+                # letter_name/salutation_line den Firmennamen nutzen.
+                if existing.is_company:
+                    existing.salutation = None
+                    existing.first_name = None
+                    existing.last_name = None
                 if cfg.col_externe_kennung:
                     existing.externe_kennung = ext_key or None
                 if cfg.col_strasse:
@@ -514,14 +529,17 @@ def commit(rows: list[PreviewRow], cfg: CustomerImportConfig,
                 if not name:
                     name = f"Kunde {nr}"
 
+                is_company = row.fields.get("is_company") == "1"
                 customer = Customer(
                     customer_number=nr,
                     is_customer=True,
                     active=True,
                     name=name,
-                    salutation=row.fields.get("salutation") or None,
-                    first_name=row.fields.get("first_name") or None,
-                    last_name=row.fields.get("last_name") or None,
+                    is_company=is_company,
+                    # Firma: keine Anrede/Vor-/Nachnamen.
+                    salutation=None if is_company else (row.fields.get("salutation") or None),
+                    first_name=None if is_company else (row.fields.get("first_name") or None),
+                    last_name=None if is_company else (row.fields.get("last_name") or None),
                     externe_kennung=ext_key or None,
                     strasse=row.fields.get("strasse") or None,
                     hausnummer=row.fields.get("hausnummer") or None,

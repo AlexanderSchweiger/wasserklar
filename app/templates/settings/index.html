@@ -37,6 +37,13 @@
         <i class="fas fa-database me-1"></i> Datenbankverbindung
       </a>
     </li>
+    {% if current_user.is_admin %}
+    <li class="nav-item" role="presentation">
+      <a class="nav-link text-danger" id="tab-danger" data-bs-toggle="tab" href="#pane-danger" role="tab">
+        <i class="fas fa-exclamation-triangle me-1"></i> Danger Zone
+      </a>
+    </li>
+    {% endif %}
   </ul>
 
   <div class="tab-content" id="settingsTabContent">
@@ -477,6 +484,59 @@
       </div>
     </div>
 
+    {# ── Tab: Danger Zone (nur Admin) ────────────────────────────────── #}
+    {% if current_user.is_admin %}
+    <div class="tab-pane fade" id="pane-danger" role="tabpanel">
+      <div class="card border-danger">
+        <div class="card-header bg-danger text-white">
+          <h3 class="card-title"><i class="fas fa-exclamation-triangle me-1"></i> Danger Zone</h3>
+        </div>
+        <div class="card-body">
+          <h4 class="text-danger mb-2">Mandanten zurücksetzen</h4>
+          <p class="mb-2">
+            Löscht <strong>alle Daten dieses Mandanten</strong> und versetzt ihn in den
+            Zustand eines frisch angelegten Mandanten.
+          </p>
+          <div class="row g-3 mb-3">
+            <div class="col-md-6">
+              <div class="fw-bold text-danger mb-1"><i class="fas fa-trash-alt me-1"></i> Wird gelöscht</div>
+              <ul class="small mb-0 ps-3">
+                <li>Kunden, Liegenschaften, Eigentümer</li>
+                <li>Zähler, Ablesungen, Zählertausche</li>
+                <li>Rechnungen, Rechnungsläufe & Mahnungen</li>
+                <li>Buchungen, Konten, Tarife, Projekte</li>
+                <li>Technik-/Netzdaten, Schriftführung</li>
+                <li>alle erzeugten PDFs und Foto-Anhänge</li>
+              </ul>
+            </div>
+            <div class="col-md-6">
+              <div class="fw-bold text-success mb-1"><i class="fas fa-shield-alt me-1"></i> Bleibt erhalten</div>
+              <ul class="small mb-0 ps-3">
+                <li>alle <strong>Einstellungen</strong> (Kontaktdaten, E-Mail, Rechnungsformat …)</li>
+                <li>Benutzer & Rollen (Sie bleiben angemeldet)</li>
+              </ul>
+              <div class="text-muted small mt-2">
+                Danach werden Standard-Steuersätze, Standard-Mahnstufen und eine
+                aktive Abrechnungsperiode neu angelegt.
+              </div>
+            </div>
+          </div>
+          <div class="alert alert-danger mb-3">
+            <i class="fas fa-exclamation-triangle me-1"></i>
+            <strong>Dieser Vorgang ist endgültig und kann nicht rückgängig gemacht werden.</strong>
+            Erstellen Sie bei Bedarf vorher einen Export bzw. ein Backup.
+          </div>
+          {# type="button": loest NICHT das umschliessende Settings-Formular aus,
+             sondern oeffnet das Bestaetigungs-Modal (liegt in block modals). #}
+          <button type="button" class="btn btn-danger"
+                  data-bs-toggle="modal" data-bs-target="#resetTenantModal">
+            <i class="fas fa-trash-alt me-1"></i> Mandanten zurücksetzen …
+          </button>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
   </div>
 
   {# ── Speicherbutton (ausgeblendet auf Datenbankverbindung-Tab) ──────── #}
@@ -503,7 +563,7 @@
       if (tab && window.bootstrap) bootstrap.Tab.getOrCreateInstance(tab).show();
     }
     const saveRow = document.getElementById('saveRow');
-    if (hash === '#pane-db' && saveRow) saveRow.style.display = 'none';
+    if ((hash === '#pane-db' || hash === '#pane-danger') && saveRow) saveRow.style.display = 'none';
   }
   if (window.bootstrap) { activateHashTab(); }
   else { window.addEventListener('load', activateHashTab); }
@@ -512,8 +572,9 @@
     el.addEventListener('shown.bs.tab', function (e) {
       history.replaceState(null, '', e.target.getAttribute('href'));
       const saveRow = document.getElementById('saveRow');
+      const href = e.target.getAttribute('href');
       if (saveRow) saveRow.style.display =
-        e.target.getAttribute('href') === '#pane-db' ? 'none' : '';
+        (href === '#pane-db' || href === '#pane-danger') ? 'none' : '';
     });
   });
 })();
@@ -712,6 +773,51 @@ document.getElementById('btnTestMail')?.addEventListener('click', function () {
     </div>
   </div>
 </div>
+
+{# ── Mandant zurücksetzen — Bestätigung mit Passwort (nur Admin) ─────────
+   Eigenes Formular mit eigenem Endpunkt; bewusst hx-boost="false", damit eine
+   harte Navigation mit Flash-Message erfolgt (kein HTMX-Body-Swap bei einem so
+   destruktiven, einmaligen Vorgang). #}
+{% if current_user.is_admin %}
+<div class="modal modal-blur fade" id="resetTenantModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered" role="document">
+    <div class="modal-content">
+      <form action="{{ url_for('settings.reset_tenant') }}" method="post"
+            hx-boost="false" id="resetTenantForm">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-header bg-danger text-white">
+          <h5 class="modal-title"><i class="fas fa-exclamation-triangle me-2"></i>Mandanten zurücksetzen</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Schließen"></button>
+        </div>
+        <div class="modal-body">
+          <div class="alert alert-danger">
+            <strong>Achtung – unwiderruflich!</strong>
+            Alle Daten dieses Mandanten werden gelöscht. Die Einstellungen sowie
+            Benutzer und Rollen bleiben erhalten.
+          </div>
+          <label class="form-check mb-3">
+            <input type="checkbox" class="form-check-input" id="resetConfirmCheck">
+            <span class="form-check-label">
+              Ja, ich will alle Daten dieses Mandanten unwiderruflich löschen.
+            </span>
+          </label>
+          <div class="mb-1">
+            <label class="form-label">Zur Bestätigung Ihr Passwort eingeben</label>
+            <input type="password" name="confirm_password" id="resetConfirmPassword"
+                   class="form-control" autocomplete="current-password" required>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">Abbrechen</button>
+          <button type="submit" class="btn btn-danger" id="resetConfirmSubmit" disabled>
+            <i class="fas fa-trash-alt me-1"></i> Endgültig zurücksetzen
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
 {% endblock %}
 
 {% block scripts %}
@@ -812,6 +918,26 @@ document.getElementById('btnTestMail')?.addEventListener('click', function () {
       getModal().hide();
     });
   }
+})();
+
+// ── Mandant zurücksetzen: Submit erst aktiv mit Häkchen + Passwort ───────
+// Liegt bewusst im scripts-Block (NACH block modals), damit das Modal beim
+// harten Reload schon im DOM ist — im content-Block lief das Skript davor und
+// fand das Formular nicht (Button blieb dauerhaft disabled).
+// Doppelte Absicherung gegen Fehlklicks; der eigentliche Schutz (Admin +
+// Passwortprüfung) sitzt serverseitig in der reset_tenant-Route.
+(function () {
+  const form = document.getElementById('resetTenantForm');
+  if (!form) return;  // Nicht-Admin: Modal wird gar nicht gerendert.
+  const check = document.getElementById('resetConfirmCheck');
+  const pwd = document.getElementById('resetConfirmPassword');
+  const submit = document.getElementById('resetConfirmSubmit');
+  function sync() {
+    submit.disabled = !(check.checked && pwd.value.trim().length > 0);
+  }
+  check.addEventListener('change', sync);
+  pwd.addEventListener('input', sync);
+  sync();
 })();
 </script>
 {% endblock %}

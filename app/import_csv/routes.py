@@ -12,6 +12,7 @@ from flask_login import login_required
 
 from app.import_csv import bp
 from app.extensions import db
+from app.imports.common import resolve_contact_name, split_street_number
 from app.imports.relations import OwnerConflictTracker, MeterObjectTracker
 from app.models import (
     Customer, Property, PropertyOwnership, WaterMeter, MeterReading,
@@ -31,13 +32,19 @@ _COLUMN_HINTS = {
     "customer_name": [
         "kombinierter name", "kombinierter_name", "name",
     ],
-    "name_last": ["nachname"],
+    "name_last": ["nachname", "familienname"],
     "name_first": ["vorname"],
+    "salutation": ["anrede"],
+    "is_company": [
+        "firma", "kontaktart", "kontakttyp", "kundenart", "kundentyp",
+        "rechtsform", "unternehmen", "company", "geschäftskunde",
+    ],
     "property_name": ["objekt"],
     "property_type": ["typ"],
     "meter_number": ["zählernummer", "zahlernummer", "zähler-nr", "zaehlernummer", "zähler nr"],
     "meter_eichjahr": ["eichjahr"],
     "strasse": ["strasse", "straße"],
+    "hausnummer": ["hausnummer", "hausnr", "haus-nr", "haus nr", "nr."],
     "plz": ["plz"],
     "ort": ["ort"],
     "land": ["land"],
@@ -227,11 +234,14 @@ def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str,
     col_name = col_map.get("customer_name", "")
     col_last = col_map.get("name_last", "")
     col_first = col_map.get("name_first", "")
+    col_salutation = col_map.get("salutation", "")
+    col_is_company = col_map.get("is_company", "")
     col_prop = col_map.get("property_name", "")
     col_typ = col_map.get("property_type", "")
     col_meter = col_map.get("meter_number", "")
     col_eichjahr = col_map.get("meter_eichjahr", "")
     col_strasse = col_map.get("strasse", "")
+    col_hausnummer = col_map.get("hausnummer", "")
     col_plz = col_map.get("plz", "")
     col_ort = col_map.get("ort", "")
     col_land = col_map.get("land", "")
@@ -342,12 +352,18 @@ def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str,
                 sp.rollback()
                 continue
 
-            # --- Kunden-Name ---
-            raw_name = _get_cell(row, col_name)
-            if not raw_name:
-                last = _get_cell(row, col_last)
-                first = _get_cell(row, col_first)
-                raw_name = f"{last} {first}".strip() if (last or first) else f"Kunde {cnum}"
+            # --- Kunden-Name (Firma/Person + Anrede + Vor-/Nachname) ---
+            # Gemeinsamer Resolver: kombinierter Name = "Nachname Vorname";
+            # ein einzelnes, nicht aufgespaltenes Namensfeld → Nachname.
+            resolved = resolve_contact_name(
+                combined=_get_cell(row, col_name),
+                last=_get_cell(row, col_last),
+                first=_get_cell(row, col_first),
+                salutation=_get_cell(row, col_salutation),
+                company=_get_cell(row, col_is_company),
+            )
+            raw_name = resolved["name"] or f"Kunde {cnum}"
+            name_mapped = bool(col_name or col_last or col_first)
 
             raw_objekt = _get_cell(row, col_prop) or f"Objekt-{cnum}"
             raw_meter = _get_cell(row, col_meter)
@@ -356,9 +372,17 @@ def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str,
             new_count = 0       # Anzahl neu angelegter Datensätze in dieser Zeile
             updated = False     # wurde Bestehendes aktualisiert?
 
+            # Straße + Hausnummer ggf. aus einem kombinierten Feld trennen
+            # (number-last); eine eigene Hausnummer-Spalte hat Vorrang.
+            _strasse, _hausnummer = split_street_number(
+                _get_cell(row, col_strasse), _get_cell(row, col_hausnummer)
+            )
+
+            # Adress-/Kontaktfelder werden im overwrite-Modus immer gesetzt;
+            # die Namens-/Typ-Felder weiter unten nur, wenn ihre Spalte gemappt ist.
             cust_fields = dict(
-                name=raw_name,
-                strasse=_get_cell(row, col_strasse),
+                strasse=_strasse,
+                hausnummer=_hausnummer,
                 plz=_get_cell(row, col_plz),
                 ort=_get_cell(row, col_ort),
                 land=_get_cell(row, col_land) or "Österreich",
@@ -367,6 +391,33 @@ def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str,
                 phone=_get_cell(row, col_phone),
                 notes=_get_cell(row, col_notes),
             )
+
+            def _apply_name_fields(cust, *, is_new):
+                """Setzt Name-Aufspaltung + Firma/Person aus ``resolved``.
+
+                Bei Neuanlage werden alle Werte übernommen (Firma/Person inkl. der
+                Anrede-'Firma'-Heuristik). Im overwrite-Modus nur, was gemappt ist
+                — Namensfelder bei gemappter Namensspalte, ``is_company`` bei
+                gemappter Firma-Spalte. Eine Firma räumt Anrede/Vor-/Nachnamen ab,
+                damit letter_name/salutation_line den Firmennamen nutzen."""
+                if is_new:
+                    cust.name = raw_name
+                    cust.is_company = resolved["is_company"]
+                    cust.salutation = resolved["salutation"] or None
+                    cust.first_name = resolved["first_name"] or None
+                    cust.last_name = resolved["last_name"] or None
+                else:
+                    if name_mapped:
+                        cust.name = raw_name
+                        cust.salutation = resolved["salutation"] or None
+                        cust.first_name = resolved["first_name"] or None
+                        cust.last_name = resolved["last_name"] or None
+                    if col_is_company:
+                        cust.is_company = resolved["is_company"]
+                if cust.is_company:
+                    cust.salutation = None
+                    cust.first_name = None
+                    cust.last_name = None
 
             # --- Kunde bestimmen (neu / aus DB / aus diesem Lauf) ---
             if cnum in seen_customers:
@@ -380,6 +431,7 @@ def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str,
                     if duplicate_mode == "overwrite":
                         for key, val in cust_fields.items():
                             setattr(customer, key, val)
+                        _apply_name_fields(customer, is_new=False)
                         db.session.flush()
                         if is_wg:
                             _apply_wg_customer(customer, row, wg_customer_cols, actions)
@@ -394,6 +446,7 @@ def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str,
                             f"Stammdaten unverändert"))
                 else:
                     customer = Customer(customer_number=cnum, active=True, **cust_fields)
+                    _apply_name_fields(customer, is_new=True)
                     db.session.add(customer)
                     db.session.flush()
                     seen_customers[cnum] = customer

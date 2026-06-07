@@ -71,7 +71,8 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), verbose: bool = True)
     from datetime import datetime
     from app.models import (
         Role, User, Customer, Property, PropertyOwnership, WaterMeter,
-        MeterReading, BillingPeriod, WaterTariff, Account, Project, RealAccount,
+        MeterReading, MeterReplacement, BillingPeriod, WaterTariff, Account,
+        Project, RealAccount,
         Transfer, Invoice, InvoiceItem, BookingGroup, Booking, OpenItem,
         DunningPolicy, DunningStage, DunningNotice, FiscalYear,
     )
@@ -458,10 +459,22 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), verbose: bool = True)
             created_by_id=admin.id,
         )
         db.session.add(r_new)
+        # Explizites Tausch-Event (alt->neu-Paarung + Snapshot)
+        db.session.add(MeterReplacement(
+            property_id=old_meter.property_id,
+            old_meter_id=old_meter.id,
+            new_meter_id=m_new.id,
+            billing_period_id=p_curr.id,
+            replacement_date=swap_date,
+            final_value=end_old,
+            new_initial_value=Decimal("0.000"),
+            created_by_id=admin.id,
+        ))
         # Update main_meter_for_prop, falls Folge-Aktion noch zugreift
         main_meter_for_prop[old_meter.property_id] = m_new
         swap_count += 1
     counts["meter_swaps"] = swap_count
+    counts["meter_replacements"] = swap_count
 
     # Nicht getauschte Zaehler: ein Reading per Stichtag fuer die aktuelle Periode
     swapped_ids = {m.id for m in swap_meters}

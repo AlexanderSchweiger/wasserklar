@@ -426,3 +426,110 @@ class TestSkippedRows:
         assert len(res["warnings"]) == 1
         assert res["plan"][0]["category"] == "import"
         assert WaterMeter.query.count() == 0
+
+
+# ---------------------------------------------------------------------------
+# Name-Aufspaltung + Firma/Person (oss-v1.23.0)
+# ---------------------------------------------------------------------------
+
+# Erweiterte Spalten-Zuordnung inkl. Anrede / Nachname / Vorname / Firma.
+COLS_NAME = dict(
+    COLS,
+    customer_name="Name",
+    name_last="Nachname",
+    name_first="Vorname",
+    salutation="Anrede",
+    is_company="Firma",
+)
+
+
+def _run_named(rows, mode="skip"):
+    df = pd.DataFrame(rows).fillna("")
+    stand_columns = _detect_stand_columns(df.columns.tolist())
+    return _run_import(df, COLS_NAME, stand_columns, mode, dry_run=False)
+
+
+class TestNameSplitAndCompany:
+    def test_split_columns_are_stored(self, app):
+        _run_named([
+            {"Kunden-Nr.": "100", "Anrede": "Herr", "Nachname": "Mustermann",
+             "Vorname": "Max", "Objekt": "Haus A", "Zählernummer": "Z1"},
+        ])
+        c = _customer(100)
+        assert c.last_name == "Mustermann"
+        assert c.first_name == "Max"
+        assert c.salutation == "Herr"
+        assert c.name == "Mustermann Max"          # kombiniert "Nachname Vorname"
+        assert c.is_company is False
+        assert c.letter_name == "Max Mustermann"
+        assert c.salutation_line == "Sehr geehrter Herr Mustermann"
+
+    def test_combined_only_goes_to_last_name(self, app):
+        # Nur die "Name"-Spalte gemappt (kein Nachname/Vorname in der Datei).
+        cols = dict(COLS, customer_name="Name")
+        df = pd.DataFrame([
+            {"Kunden-Nr.": "101", "Name": "Nur Kombiniert", "Objekt": "Haus B",
+             "Zählernummer": "Z2"},
+        ]).fillna("")
+        _run_import(df, cols, [], "skip", dry_run=False)
+        c = _customer(101)
+        assert c.name == "Nur Kombiniert"
+        assert c.last_name == "Nur Kombiniert"
+        assert c.first_name is None
+        assert c.is_company is False
+
+    def test_company_via_firma_column(self, app):
+        _run_named([
+            {"Kunden-Nr.": "102", "Name": "Wasser GmbH", "Firma": "Firma",
+             "Objekt": "Haus C", "Zählernummer": "Z3"},
+        ])
+        c = _customer(102)
+        assert c.is_company is True
+        assert c.name == "Wasser GmbH"
+        assert c.first_name is None and c.last_name is None and c.salutation is None
+        assert c.letter_name == "Wasser GmbH"
+
+    def test_overwrite_updates_split_and_company(self, app):
+        _run_named([
+            {"Kunden-Nr.": "103", "Nachname": "Alt", "Vorname": "Anna",
+             "Objekt": "Haus D", "Zählernummer": "Z4"},
+        ])
+        c = _customer(103)
+        assert c.last_name == "Alt"
+
+        _run_named([
+            {"Kunden-Nr.": "103", "Name": "Neu GmbH", "Firma": "Firma",
+             "Objekt": "Haus D", "Zählernummer": "Z4"},
+        ], mode="overwrite")
+        db.session.refresh(c)
+        assert c.is_company is True
+        assert c.name == "Neu GmbH"
+        assert c.last_name is None and c.first_name is None
+
+
+# ---------------------------------------------------------------------------
+# Straße / Hausnummer (oss-v1.23.0)
+# ---------------------------------------------------------------------------
+
+class TestAddressSplit:
+    def test_combined_street_number_split(self, app):
+        cols = dict(COLS, strasse="Straße")
+        df = pd.DataFrame([
+            {"Kunden-Nr.": "200", "Name": "Huber", "Straße": "Hauptstraße 7b",
+             "Objekt": "Haus A", "Zählernummer": "Z1"},
+        ]).fillna("")
+        _run_import(df, cols, [], "skip", dry_run=False)
+        c = _customer(200)
+        assert c.strasse == "Hauptstraße"
+        assert c.hausnummer == "7b"
+
+    def test_separate_house_number_column(self, app):
+        cols = dict(COLS, strasse="Straße", hausnummer="Hausnummer")
+        df = pd.DataFrame([
+            {"Kunden-Nr.": "201", "Name": "Maier", "Straße": "Hauptstraße",
+             "Hausnummer": "5", "Objekt": "Haus B", "Zählernummer": "Z2"},
+        ]).fillna("")
+        _run_import(df, cols, [], "skip", dry_run=False)
+        c = _customer(201)
+        assert c.strasse == "Hauptstraße"
+        assert c.hausnummer == "5"

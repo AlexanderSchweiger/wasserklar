@@ -122,6 +122,7 @@
             {% set _nav_ablesungen        = request.endpoint in ('meters.readings','meters.add_reading','meters.bulk_read') %}
             {% set _nav_ablesungen_import = request.endpoint in ('meters.import_upload','meters.import_preview','meters.import_result') %}
             {% set _nav_zaehlertausch     = request.endpoint in ('meters.swap_import_upload','meters.swap_import_preview','meters.swap_import_result') %}
+            {% set _nav_zaehlertausch_hist = request.endpoint == 'meters.replacements' %}
             {% set _nav_import         = request.blueprint == 'import_csv' %}
 
             {% set _nav_bankimport     = request.blueprint == 'bank_import' %}
@@ -141,7 +142,7 @@
             {% set accounting_active   = _nav_buchungen or _nav_umbuchungen or _nav_bankkonten or _nav_kontenplan or _nav_projekte or _nav_bankimport %}
             {% set invoices_active     = _nav_neue_rechnung or _nav_alle_rechnungen or _nav_offene_posten or _nav_rechnungslauf or _nav_rechnungslaeufe or _nav_email_settings or _nav_tarife %}
             {% set auswertungen_active = _nav_jahresbericht or _nav_ust or _nav_kundenauswertung %}
-            {% set zaehler_active      = _nav_zaehler or _nav_ablesungen or _nav_ablesungen_import or _nav_zaehlertausch or _nav_selbsterfassung %}
+            {% set zaehler_active      = _nav_zaehler or _nav_ablesungen or _nav_ablesungen_import or _nav_zaehlertausch or _nav_zaehlertausch_hist or _nav_selbsterfassung %}
             {% set stammdaten_active   = _nav_kunden or _nav_objekte or _nav_import or _nav_buchungsjahre or _nav_perioden %}
             {% set verwaltung_active   = _nav_benutzer or _nav_einstellungen or _nav_data_transfer or _nav_dokumente or _nav_export or _nav_backups or _nav_support or _nav_abonnement %}
 
@@ -224,6 +225,12 @@
                     <a class="nav-link {% if _nav_zaehlertausch %}active{% endif %}"
                       href="{{ url_for('meters.swap_import_upload') }}">
                       <i class="fas fa-exchange-alt me-2"></i>Zählertausch-Import
+                    </a>
+                  </li>
+                  <li class="nav-item">
+                    <a class="nav-link {% if _nav_zaehlertausch_hist %}active{% endif %}"
+                      href="{{ url_for('meters.replacements') }}">
+                      <i class="fas fa-history me-2"></i>Zählertausch-Historie
                     </a>
                   </li>
                   {% block saas_zaehler_extra %}{% endblock %}
