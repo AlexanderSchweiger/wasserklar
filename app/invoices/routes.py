@@ -214,7 +214,7 @@ DEFAULT_INVOICE_EMAIL_SUBJECT = "{{ wg_name }} - Rechnung {{ rechnungsnummer }}"
 def _email_template_context(invoice):
     """Gemeinsame Platzhalter fuer Betreff- und Body-Vorlage des Rechnungsmails."""
     return dict(
-        name=invoice.customer.name,
+        name=invoice.customer.letter_name,
         rechnungsnummer=invoice.invoice_number,
         buchungsjahr=(invoice.billing_period.name if invoice.billing_period else ""),
         betrag=f"{invoice.total_amount:.2f}",
@@ -1750,13 +1750,109 @@ def billing_runs():
     return render_template("invoices/billing_runs.html", runs=runs)
 
 
+def _billing_run_amounts(invoice, base_label, add_label):
+    """Kennzahlen einer Lauf-Rechnung für die Detail-Tabelle (eine Items-Iteration).
+
+    Klassifiziert die Positionen anhand der Lauf-Snapshot-Labels: ``unit == "m³"``
+    ist der Wasserverbrauch, ``description`` == Grund-/Zusatzgebühr-Label die
+    Pauschalen. ``ust`` = Brutto (gespeichert in ``total_amount``) − Netto;
+    bei nicht USt-pflichtigen Läufen 0. Mahngebühr-Items werden ignoriert.
+    """
+    m3 = Decimal("0")
+    water_net = Decimal("0")
+    base_fee = Decimal("0")
+    add_fee = Decimal("0")
+    net = Decimal("0")
+    for item in invoice.items:
+        if getattr(item, "is_dunning_fee", 0):
+            continue
+        amount = Decimal(str(item.amount or 0))
+        net += amount
+        if item.unit == "m³":
+            water_net += amount
+            m3 += item.quantity or Decimal("0")
+        elif item.description == base_label:
+            base_fee += amount
+        elif item.description == add_label:
+            add_fee += amount
+    gross = Decimal(str(invoice.total_amount or 0))
+    return {
+        "m3": m3 or None,
+        "water_net": water_net,
+        "base_fee": base_fee,
+        "additional_fee": add_fee,
+        "net": net,
+        "ust": gross - net,
+        "gross": gross,
+    }
+
+
 @bp.route("/billing-runs/<int:run_id>")
 @login_required
 def billing_run_detail(run_id):
+    from sqlalchemy.orm import selectinload, joinedload
+
     run = db.get_or_404(BillingRun, run_id)
-    invoices = run.invoices.order_by(Invoice.invoice_number, Invoice.id).all()
+    invoices = (
+        run.invoices
+        .options(
+            selectinload(Invoice.items),
+            joinedload(Invoice.customer),
+            joinedload(Invoice.property),
+        )
+        .order_by(Invoice.invoice_number, Invoice.id)
+        .all()
+    )
     doc_format = AppSetting.get("invoice.document_format", "pdf")
-    return render_template("invoices/billing_run_detail.html", run=run, invoices=invoices, doc_format=doc_format)
+
+    base_label = run.tariff_base_fee_label or "Grundgebühr"
+    add_label = run.tariff_additional_fee_label or "Zusatzgebühr"
+
+    rows = []
+    count_draft = count_sent = count_mail = count_post = 0
+    other_status_counts = {}
+    sum_gross_sent = Decimal("0")
+    sum_gross_draft = Decimal("0")
+    run_has_vat = False
+    mailable = []   # versandbereite Entwürfe per Mail (für den Versenden-Dialog)
+    post_ids = []   # versandbereite Entwürfe per Post
+
+    for inv in invoices:
+        amt = _billing_run_amounts(inv, base_label, add_label)
+        if amt["ust"] and amt["ust"] > 0:
+            run_has_vat = True
+        wants_email = inv.customer.wants_email
+        rows.append({"inv": inv, "amt": amt, "wants_email": wants_email})
+
+        if inv.status == Invoice.STATUS_DRAFT:
+            count_draft += 1
+            sum_gross_draft += amt["gross"]
+            if wants_email:
+                count_mail += 1
+                mailable.append({
+                    "id": inv.id,
+                    "number": inv.invoice_number,
+                    "name": inv.customer.name,
+                    "email": inv.customer.email,
+                })
+            else:
+                count_post += 1
+                post_ids.append(inv.id)
+        elif inv.status == Invoice.STATUS_SENT:
+            count_sent += 1
+            sum_gross_sent += amt["gross"]
+        else:
+            other_status_counts[inv.status] = other_status_counts.get(inv.status, 0) + 1
+
+    return render_template(
+        "invoices/billing_run_detail.html",
+        run=run, rows=rows, invoices=invoices, doc_format=doc_format,
+        count_draft=count_draft, count_sent=count_sent,
+        count_mail=count_mail, count_post=count_post,
+        other_status_counts=other_status_counts,
+        sum_gross_sent=sum_gross_sent, sum_gross_draft=sum_gross_draft,
+        run_has_vat=run_has_vat, mailable=mailable, post_ids=post_ids,
+    )
 
 
 @bp.route("/billing-runs/<int:run_id>/delete", methods=["POST"])
@@ -1826,6 +1922,72 @@ def billing_run_delete(run_id):
     else:
         flash(f"Rechnungslauf und {len(deletable)} Rechnung(en) wurden gelöscht.", "success")
     return redirect(url_for("invoices.billing_runs"))
+
+
+@bp.route("/billing-runs/<int:run_id>/post-bulk-merged", methods=["POST"])
+@login_required
+def billing_run_post_bulk(run_id):
+    """Post-Versand eines Rechnungslaufs: markierte Rechnungen als zusammengeführtes
+    PDF zum Download — und markiert dabei alle enthaltenen Entwürfe als „Versendet".
+
+    Spiegelt die Seiteneffekte des Mailversands: das erzeugte PDF wird persistiert
+    (Post-Versand-Beleg) und für Entwürfe der Offene Posten angelegt
+    (``_create_or_update_open_item``). Bereits versendete/bezahlte Rechnungen im
+    Bulk bleiben statusseitig unverändert, werden aber mit ausgeliefert.
+    """
+    import io
+
+    run = db.get_or_404(BillingRun, run_id)
+    invoice_ids = request.form.getlist("invoice_ids", type=int)
+    if not invoice_ids:
+        flash("Keine Rechnungen ausgewählt.", "warning")
+        return redirect(url_for("invoices.billing_run_detail", run_id=run_id))
+    if (resp := _bulk_print_limit_exceeded(invoice_ids)):
+        return resp
+    try:
+        from weasyprint import HTML
+    except (ImportError, OSError):
+        if current_app.debug:
+            flash("WeasyPrint nicht verfügbar. PDF-Export nur im Docker-Container verfügbar.", "info")
+        else:
+            flash("WeasyPrint ist nicht installiert. PDF-Export nur im Docker-Container verfügbar.", "danger")
+        return redirect(url_for("invoices.billing_run_detail", run_id=run_id))
+    from pypdf import PdfWriter
+
+    # Auf den Lauf einschränken: keine fremden Rechnungen über manipulierte IDs.
+    invoices = (
+        run.invoices
+        .filter(Invoice.id.in_(invoice_ids))
+        .order_by(Invoice.invoice_number)
+        .all()
+    )
+    if not invoices:
+        flash("Keine Rechnungen gefunden.", "warning")
+        return redirect(url_for("invoices.billing_run_detail", run_id=run_id))
+
+    writer = PdfWriter()
+    for invoice in invoices:
+        html_content = _render_pdf_html(invoice)
+        pdf_bytes = HTML(string=html_content).render().write_pdf()
+        # Erzeugtes PDF immer persistieren (der heruntergeladene Post-Beleg).
+        pdf_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "pdf")
+        with open(pdf_path, "wb") as fh:
+            fh.write(pdf_bytes)
+        invoice.pdf_path = pdf_path
+        # Nur Entwürfe auf „Versendet" setzen; Offenen Posten wie beim Mailversand anlegen.
+        if invoice.status == Invoice.STATUS_DRAFT:
+            invoice.status = Invoice.STATUS_SENT
+            account_id = _resolve_open_item_account_id(invoice, None)
+            _create_or_update_open_item(invoice, account_id=account_id)
+        writer.append(io.BytesIO(pdf_bytes))
+    db.session.commit()
+    writer.compress_identical_objects()
+    merged_path = os.path.join(current_app.config["PDF_DIR"], "_bulk_merged.pdf")
+    os.makedirs(current_app.config["PDF_DIR"], exist_ok=True)
+    with open(merged_path, "wb") as fh:
+        writer.write(fh)
+    writer.close()
+    return send_file(merged_path, as_attachment=True, download_name="Rechnungen_Post.pdf")
 
 
 # ---------------------------------------------------------------------------

@@ -110,7 +110,7 @@
 
 <div class="recipient">
   {% if invoice_sender_address %}<div class="sender-return">{{ invoice_sender_address | e }}</div>{% endif %}
-  {{ invoice.customer.name }}<br>
+  {{ invoice.customer.letter_name }}<br>
   {% set street = [invoice.customer.strasse, invoice.customer.hausnummer] | select | join(' ') %}
   {% set city = [invoice.customer.plz, invoice.customer.ort] | select | join(' ') %}
   {% if street %}{{ street }}<br>{% endif %}

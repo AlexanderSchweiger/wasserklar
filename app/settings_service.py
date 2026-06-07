@@ -184,6 +184,43 @@ def platform_relay_active():
     return str(val).lower() in ('true', '1', 'yes')
 
 
+# ── Massenversand-Drossel ────────────────────────────────────────────────────
+#
+# Das Massenmailing (Rechnungen/Mahnungen/Sitzungseinladungen) laeuft
+# frontend-getrieben: das JS verschickt seriell einen Empfaenger pro
+# AJAX-Request und legt zwischen zwei Mails eine Pause ein. Die Pause ist nur
+# bei **eigenem SMTP** sinnvoll — kleine/fremde Mailserver drosseln Bursts und
+# greylisten/blocken sonst. Beim **Plattform-Relay** (Postmark/Brevo) ist die
+# Pause 0: managed ESPs schlucken das Volumen selbst und managen die
+# IP-Reputation, Selbst-Drosseln bringt dort nichts ausser Langsamkeit.
+BULK_MAIL_DELAY_DEFAULT_S = 0.3
+BULK_MAIL_DELAY_MAX_S = 5.0
+
+
+def bulk_mail_delay_ms():
+    """Pause (Millisekunden) zwischen zwei Mails im seriellen Massenversand.
+
+    0 beim Plattform-Relay (Vollgas — der ESP queued/drosselt selbst). Bei
+    eigenem SMTP der konfigurierte Wert (AppSetting
+    ``mail.bulk_send_delay_seconds``, Default 0,3 s), nach unten auf 0 und nach
+    oben auf ``BULK_MAIL_DELAY_MAX_S`` gekappt, damit ein Tippfehler nicht die
+    Versand-UI blockiert.
+    """
+    if platform_relay_active():
+        return 0
+    from app.models import AppSetting
+    try:
+        raw = AppSetting.get('mail.bulk_send_delay_seconds')
+    except Exception:
+        raw = None
+    try:
+        seconds = float(raw)
+    except (TypeError, ValueError):
+        seconds = BULK_MAIL_DELAY_DEFAULT_S
+    seconds = max(0.0, min(seconds, BULK_MAIL_DELAY_MAX_S))
+    return int(round(seconds * 1000))
+
+
 # ── Rechnungs-Kontakttext (einfaches Rich-Text) ──────────────────────────────
 #
 # Der Kontakttext fuer Rechnungen/Briefe wird als stark reduziertes HTML

@@ -173,6 +173,18 @@ def create_app(config_name=None):
         from app.__version__ import __version__
         return dict(oss_version=__version__)
 
+    # Context Processor: Massenversand-Pause (ms) fuers frontend-getriebene
+    # serielle Massenmailing. 0 beim Plattform-Relay (Vollgas), sonst die
+    # konfigurierte Drossel fuer eigenen SMTP. Siehe
+    # settings_service.bulk_mail_delay_ms.
+    @app.context_processor
+    def inject_bulk_mail_delay():
+        from app.settings_service import bulk_mail_delay_ms, BULK_MAIL_DELAY_DEFAULT_S
+        try:
+            return dict(bulk_mail_delay_ms=bulk_mail_delay_ms())
+        except Exception:
+            return dict(bulk_mail_delay_ms=int(BULK_MAIL_DELAY_DEFAULT_S * 1000))
+
     # Context Processor: flag setzen, wenn mindestens ein USt-pflichtiges Jahr existiert
     @app.context_processor
     def inject_vat_flag():

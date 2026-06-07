@@ -235,3 +235,51 @@ class TestSuggestConfig:
         cfg = suggest_config(["Spalte1", "Spalte2"])
         assert cfg.col_customer_number == ""
         assert cfg.col_email == ""
+
+    def test_suggests_salutation_column(self, app):
+        cfg = suggest_config(["Anrede", "Nachname", "Vorname"])
+        assert cfg.col_salutation == "Anrede"
+        assert cfg.col_name_last == "Nachname"
+        assert cfg.col_name_first == "Vorname"
+
+
+# ---------------------------------------------------------------------------
+# Name-Aufspaltung beim Import (oss-v1.21.0)
+# ---------------------------------------------------------------------------
+
+class TestNameSplitImport:
+    def test_split_columns_persist_and_combine(self, app):
+        df = _df(
+            ("Mustermann", "Max", "Herr"),
+            columns=("Nachname", "Vorname", "Anrede"),
+        )
+        cfg = CustomerImportConfig(
+            col_name_last="Nachname",
+            col_name_first="Vorname",
+            col_salutation="Anrede",
+        )
+        rows = build_preview_rows(df, cfg)
+        assert rows[0].status == ROW_NEW
+        assert rows[0].fields["name"] == "Mustermann Max"   # kombiniert
+        assert rows[0].fields["last_name"] == "Mustermann"
+        assert rows[0].fields["first_name"] == "Max"
+        assert rows[0].fields["salutation"] == "Herr"
+
+        stats = commit(rows, cfg)
+        assert stats.created == 1
+        c = Customer.query.filter_by(last_name="Mustermann").first()
+        assert c.name == "Mustermann Max"
+        assert c.first_name == "Max"
+        assert c.salutation == "Herr"
+        assert c.letter_name == "Max Mustermann"
+        assert c.salutation_line == "Sehr geehrter Herr Mustermann"
+
+    def test_combined_only_leaves_split_empty(self, app):
+        df = _df(("", "Nur Kombiniert", "Wien", ""))
+        rows = build_preview_rows(df, _cfg())
+        stats = commit(rows, _cfg())
+        assert stats.created == 1
+        c = Customer.query.filter_by(name="Nur Kombiniert").first()
+        assert c.first_name is None and c.last_name is None
+        # letter_name faellt auf das kombinierte name zurueck
+        assert c.letter_name == "Nur Kombiniert"

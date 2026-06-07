@@ -159,13 +159,10 @@ def index():
 @login_required
 def new():
     if request.method == "POST":
-        # 1) Pflichtfeld-Validierung
-        missing = _missing_required_fields(request.form)
-        if missing:
-            flash(
-                "Bitte folgende Pflichtfelder ausfüllen: " + ", ".join(missing),
-                "danger",
-            )
+        # 1) Pflichtfeld-Validierung (Nachname bzw. Firmenname)
+        name_err = _validate_name_fields(request.form)
+        if name_err:
+            flash(name_err, "danger")
             return _render_new_form(request.form)
 
         # 2) Mindestens ein Kontakttyp
@@ -181,7 +178,7 @@ def new():
         force = request.form.get("force") == "1"
         if not force:
             similar = find_similar_customers(
-                name=request.form.get("name", ""),
+                name=_derived_name_from_form(request.form),
                 strasse=request.form.get("strasse", ""),
                 plz=request.form.get("plz", ""),
                 ort=request.form.get("ort", ""),
@@ -443,7 +440,17 @@ def fix_housenumbers():
 def check_duplicates():
     """HTMX-Endpoint: liefert ein HTML-Fragment mit ähnlichen Kunden
     für die Live-Anzeige im Quick-Create-Modal oder Formular."""
+    # Das Anlage-/Edit-Formular hat kein kombiniertes ``name``-Feld mehr —
+    # dort kommen die aufgespaltenen Felder. Quick-Create sendet weiter ``name``.
     name = request.args.get("name", "").strip()
+    if not name:
+        company = request.args.get("company_name", "").strip()
+        if company:
+            name = company
+        else:
+            parts = [request.args.get("last_name", "").strip(),
+                     request.args.get("first_name", "").strip()]
+            name = " ".join(p for p in parts if p)
     strasse = request.args.get("strasse", "").strip()
     plz = request.args.get("plz", "").strip()
     ort = request.args.get("ort", "").strip()
@@ -611,7 +618,7 @@ def _apply_customer_sort(query, sort: str, direction: str):
 
 
 def _missing_required_fields(form) -> list[str]:
-    """Gibt die Labels der leeren Pflichtfelder zurück."""
+    """Gibt die Labels der leeren Pflichtfelder zurück (Quick-Create: ``name``)."""
     missing = []
     for field, label in REQUIRED_ADDRESS_FIELDS:
         if not form.get(field, "").strip():
@@ -619,12 +626,33 @@ def _missing_required_fields(form) -> list[str]:
     return missing
 
 
+def _derived_name_from_form(form) -> str:
+    """Baut den kombinierten Namen ('Nachname Vorname' bzw. Firmenname) aus den
+    aufgespaltenen Formularfeldern — fuer Dubletten-Check und Flash-Texte, bevor
+    der Customer gespeichert ist."""
+    if form.get("is_company") == "1":
+        return form.get("company_name", "").strip()
+    parts = [form.get("last_name", "").strip(), form.get("first_name", "").strip()]
+    return " ".join(p for p in parts if p)
+
+
+def _validate_name_fields(form) -> str | None:
+    """Pflichtfeld-Check fuer den (aufgespaltenen) Namen: Firmenname bei Firmen,
+    sonst Nachname. Gibt eine deutsche Fehlermeldung oder None zurueck."""
+    if form.get("is_company") == "1":
+        if not form.get("company_name", "").strip():
+            return "Bitte einen Firmennamen angeben."
+    elif not form.get("last_name", "").strip():
+        return "Bitte einen Nachnamen angeben."
+    return None
+
+
 def _validate_customer_form(form) -> str | None:
-    """Pflichtfeld- + Kontakttyp-Validierung. Gibt eine deutsche Fehlermeldung
+    """Name- + Kontakttyp-Validierung. Gibt eine deutsche Fehlermeldung
     zurueck oder None, wenn alles passt."""
-    missing = _missing_required_fields(form)
-    if missing:
-        return "Bitte folgende Pflichtfelder ausfüllen: " + ", ".join(missing)
+    name_err = _validate_name_fields(form)
+    if name_err:
+        return name_err
     if not (form.get("is_customer") == "1" or form.get("is_supplier") == "1"):
         return "Bitte mindestens einen Kontakttyp wählen (Kunde oder Lieferant)."
     return None
@@ -648,7 +676,29 @@ def _apply_customer_fields(customer, form, *, is_new: bool) -> str | None:
     from datetime import datetime
     from decimal import Decimal, InvalidOperation
 
-    customer.name = form.get("name", "").strip()
+    # Name-Aufspaltung: Firmen haben nur den Firmennamen (-> name), Personen
+    # Anrede + Vorname + Nachname. Das kombinierte ``name`` (Sortier-/Listen-/
+    # Suchfeld) wird als "Nachname Vorname" abgeleitet — Pflichtfelder sind
+    # vorher in _validate_name_fields geprueft, daher ist ``name`` nie leer.
+    is_company = form.get("is_company") == "1"
+    customer.is_company = is_company
+    if is_company:
+        customer.name = form.get("company_name", "").strip()
+        customer.salutation = None
+        customer.first_name = None
+        customer.last_name = None
+    else:
+        sal = form.get("salutation", "").strip()
+        customer.salutation = sal if sal in ("Herr", "Frau", "Familie") else None
+        customer.last_name = form.get("last_name", "").strip() or None
+        # "Familie" hat keinen Vornamen.
+        if customer.salutation == "Familie":
+            customer.first_name = None
+        else:
+            customer.first_name = form.get("first_name", "").strip() or None
+        customer.name = " ".join(
+            p for p in (customer.last_name, customer.first_name) if p
+        )
     customer.is_customer = form.get("is_customer") == "1"
     customer.is_supplier = form.get("is_supplier") == "1"
     customer.strasse = form.get("strasse", "").strip()

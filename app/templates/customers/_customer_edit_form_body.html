@@ -31,6 +31,28 @@
 {% else %}
   {% set kdnr_value = '' %}
 {% endif %}
+{# Name-Aufspaltung: Vorbelegung. Altbestand/Quick-Create haben nur `name` —
+   dann den kombinierten Namen ins Nachname-Feld spiegeln, damit beim Speichern
+   nichts verloren geht und der User Vor-/Nachname sauber nachpflegen kann. #}
+{% if form_data is defined and form_data %}
+  {% set is_company_checked = form_data.get('is_company') == '1' %}
+  {% set v_salutation = form_data.get('salutation', '') %}
+  {% set v_first = form_data.get('first_name', '') %}
+  {% set v_last = form_data.get('last_name', '') %}
+  {% set v_company = form_data.get('company_name', '') %}
+{% elif customer %}
+  {% set is_company_checked = customer.is_company %}
+  {% set v_salutation = customer.salutation or '' %}
+  {% set v_first = customer.first_name or '' %}
+  {% set v_last = customer.last_name or ('' if customer.is_company else customer.name) %}
+  {% set v_company = customer.name if customer.is_company else '' %}
+{% else %}
+  {% set is_company_checked = false %}
+  {% set v_salutation = '' %}
+  {% set v_first = '' %}
+  {% set v_last = '' %}
+  {% set v_company = '' %}
+{% endif %}
 {% if error is defined and error %}
 <div class="alert alert-danger" role="alert">
   <i class="fas fa-exclamation-triangle me-1"></i>{{ error }}
@@ -84,22 +106,84 @@
   </div>
   <div class="col-md-9">
     <div class="mb-3">
-      <label class="form-label">Name <span class="text-danger">*</span></label>
+      <label class="form-label d-block">Art</label>
+      <div class="btn-group" role="group" aria-label="Personentyp">
+        <input type="radio" class="btn-check" name="is_company" id="type-person" value="0"
+               {% if not is_company_checked %}checked{% endif %}>
+        <label class="btn btn-outline-primary btn-sm" for="type-person">
+          <i class="fas fa-user me-1"></i> Privatperson
+        </label>
+        <input type="radio" class="btn-check" name="is_company" id="type-company" value="1"
+               {% if is_company_checked %}checked{% endif %}>
+        <label class="btn btn-outline-primary btn-sm" for="type-company">
+          <i class="fas fa-building me-1"></i> Firma
+        </label>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# Personen-Felder: Anrede + Vorname + Nachname. `name` (Sortier-/Listenfeld)
+   wird daraus serverseitig als "Nachname Vorname" abgeleitet. #}
+<div class="row name-person-fields" {% if is_company_checked %}style="display:none"{% endif %}>
+  <div class="col-md-3">
+    <div class="mb-3">
+      <label class="form-label">Anrede</label>
+      <select name="salutation" id="cust-salutation" class="form-select">
+        <option value="" {% if not v_salutation %}selected{% endif %}>—</option>
+        <option value="Herr" {% if v_salutation == 'Herr' %}selected{% endif %}>Herr</option>
+        <option value="Frau" {% if v_salutation == 'Frau' %}selected{% endif %}>Frau</option>
+        <option value="Familie" {% if v_salutation == 'Familie' %}selected{% endif %}>Familie</option>
+      </select>
+    </div>
+  </div>
+  <div class="col-md-4" id="cust-firstname-col">
+    <div class="mb-3">
+      <label class="form-label">Vorname</label>
+      <input type="text" name="first_name" id="cust-first-name" class="form-control"
+        value="{{ v_first }}"
+        hx-get="{{ url_for('customers.check_duplicates') }}"
+        hx-trigger="keyup changed delay:500ms, change"
+        hx-target="#cust-duplicates"
+        hx-include="#cust-last-name, #cust-plz, #cust-ort{% if customer %}, [name=exclude_id]{% endif %}">
+    </div>
+  </div>
+  <div class="col-md-5">
+    <div class="mb-3">
+      <label class="form-label">Nachname <span class="text-danger">*</span></label>
       <div class="input-group">
         <span class="input-group-text"><i class="fas fa-user text-primary"></i></span>
-        <input type="text" name="name" id="cust-name" class="form-control"
-          value="{{ fval('name') }}" required
+        <input type="text" name="last_name" id="cust-last-name" class="form-control"
+          value="{{ v_last }}"
+          hx-get="{{ url_for('customers.check_duplicates') }}"
+          hx-trigger="keyup changed delay:500ms, change"
+          hx-target="#cust-duplicates"
+          hx-include="#cust-first-name, #cust-plz, #cust-ort{% if customer %}, [name=exclude_id]{% endif %}">
+      </div>
+    </div>
+  </div>
+</div>
+
+{# Firmen-Feld: nur der Firmenname, gespeichert als `name`. #}
+<div class="row name-company-fields" {% if not is_company_checked %}style="display:none"{% endif %}>
+  <div class="col-md-9">
+    <div class="mb-3">
+      <label class="form-label">Firmenname <span class="text-danger">*</span></label>
+      <div class="input-group">
+        <span class="input-group-text"><i class="fas fa-building text-primary"></i></span>
+        <input type="text" name="company_name" id="cust-company-name" class="form-control"
+          value="{{ v_company }}"
           hx-get="{{ url_for('customers.check_duplicates') }}"
           hx-trigger="keyup changed delay:500ms, change"
           hx-target="#cust-duplicates"
           hx-include="#cust-plz, #cust-ort{% if customer %}, [name=exclude_id]{% endif %}">
       </div>
-      {% if customer %}
-      <input type="hidden" name="exclude_id" value="{{ customer.id }}">
-      {% endif %}
     </div>
   </div>
 </div>
+{% if customer %}
+<input type="hidden" name="exclude_id" value="{{ customer.id }}">
+{% endif %}
 
 <hr class="my-2">
 <h6 class="text-muted mb-2"><i class="fas fa-map-marker-alt me-2"></i>Rechnungsadresse</h6>
@@ -358,6 +442,35 @@
     }
   }
   custCb.addEventListener('change', sync);
+})();
+
+// Personentyp-Umschalter (Privatperson/Firma); "Familie" blendet den Vornamen aus.
+(function () {
+  var personRadio = document.getElementById('type-person');
+  var companyRadio = document.getElementById('type-company');
+  if (!personRadio || !companyRadio) return;
+  var personFields = document.querySelector('.name-person-fields');
+  var companyFields = document.querySelector('.name-company-fields');
+  var salSel = document.getElementById('cust-salutation');
+  var firstCol = document.getElementById('cust-firstname-col');
+  var firstInput = document.getElementById('cust-first-name');
+
+  function syncType() {
+    var isCompany = companyRadio.checked;
+    if (personFields) personFields.style.display = isCompany ? 'none' : '';
+    if (companyFields) companyFields.style.display = isCompany ? '' : 'none';
+  }
+  function syncSalutation() {
+    // "Familie" hat keinen Vornamen → Feld ausblenden und leeren.
+    var fam = salSel && salSel.value === 'Familie';
+    if (firstCol) firstCol.style.display = fam ? 'none' : '';
+    if (fam && firstInput) firstInput.value = '';
+  }
+  personRadio.addEventListener('change', syncType);
+  companyRadio.addEventListener('change', syncType);
+  if (salSel) salSel.addEventListener('change', syncSalutation);
+  syncType();
+  syncSalutation();
 })();
 
 // WG-Funktions-/Status-Plausibilitaet (nur Warnung, blockiert nichts).

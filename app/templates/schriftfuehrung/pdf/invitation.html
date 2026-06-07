@@ -45,7 +45,7 @@
 
   <div class="recipient">
     {% if sender_address %}<div class="sender">{{ sender_address }}</div>{% endif %}
-    {{ customer.name }}<br>
+    {{ customer.letter_name }}<br>
     {% if customer.address_display() %}{{ customer.address_display() }}{% endif %}
   </div>
 

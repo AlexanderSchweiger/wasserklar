@@ -112,3 +112,57 @@ class TestBillingRun:
         }, follow_redirects=False)
         assert r.status_code == 302
         assert Invoice.query.count() == 0
+
+
+class TestBillingRunDetail:
+    def _generate(self, client, billing_setup):
+        return client.post("/invoices/generate", data={
+            "billing_period_id": str(billing_setup["period"].id),
+            "tariff_id": str(billing_setup["tariff"].id),
+            "account_id": str(billing_setup["account"].id),
+            "due_days": "30",
+        }, follow_redirects=False)
+
+    def test_detail_page_renders(self, client, admin, billing_setup):
+        _login(client)
+        self._generate(client, billing_setup)
+        run = BillingRun.query.one()
+        r = client.get(f"/invoices/billing-runs/{run.id}")
+        assert r.status_code == 200
+        html = r.get_data(as_text=True)
+        # Neue Bausteine sind da (faengt Template-Runtime-Fehler ab).
+        assert "Zusammenfassung" in html
+        assert "Versenden" in html
+        assert "Per Post n" in html       # "Per Post nötig"
+        assert "Brutto" in html
+        # Kunde ohne Mail-Einwilligung -> Post-Versand vorausgewaehlt.
+        assert 'data-versandart="post"' in html
+
+    def test_detail_partitions_mail_vs_post(self, client, admin, billing_setup):
+        # Kunde auf E-Mail-Versand umstellen (email + rechnung_per_email).
+        cust = Customer.query.one()
+        cust.email = "k@k.test"
+        cust.rechnung_per_email = True
+        db.session.commit()
+        _login(client)
+        self._generate(client, billing_setup)
+        run = BillingRun.query.one()
+        r = client.get(f"/invoices/billing-runs/{run.id}")
+        assert r.status_code == 200
+        html = r.get_data(as_text=True)
+        # Mailbare Rechnung erscheint im Versenden-Dialog.
+        assert "k@k.test" in html
+        assert 'data-versandart="mail"' in html
+
+    def test_post_bulk_without_weasyprint_redirects(self, client, admin, billing_setup):
+        # Ohne WeasyPrint (requirements-dev) faellt der Post-Bulk sauber auf
+        # Flash+Redirect zurueck statt zu crashen; Status bleibt Entwurf.
+        _login(client)
+        self._generate(client, billing_setup)
+        run = BillingRun.query.one()
+        inv = Invoice.query.one()
+        r = client.post(
+            f"/invoices/billing-runs/{run.id}/post-bulk-merged",
+            data={"invoice_ids": str(inv.id)}, follow_redirects=False)
+        assert r.status_code == 302
+        assert inv.status == Invoice.STATUS_DRAFT

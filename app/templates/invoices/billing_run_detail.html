@@ -6,11 +6,56 @@
 {# Zähle löschbare und gesperrte Rechnungen #}
 {% set deletable = invoices | selectattr('status', 'equalto', 'Entwurf') | list %}
 {% set locked = invoices | rejectattr('status', 'equalto', 'Entwurf') | list %}
+{% set status_badge_lt = {'Bezahlt': 'bg-success-lt', 'Storniert': 'bg-danger-lt', 'Guthaben': 'bg-azure-lt'} %}
 
+<!-- Zusammenfassung (ganz oben, volle Breite) -->
+<div class="card mb-3">
+  <div class="card-header">
+    <h3 class="card-title"><i class="fas fa-chart-pie me-2"></i> Zusammenfassung</h3>
+  </div>
+  <div class="card-body">
+    <div class="row g-3 text-center">
+      <div class="col-6 col-sm-4 col-xl">
+        <div class="text-muted small text-uppercase">Noch nicht versandt</div>
+        <div class="h1 mb-0">{{ count_draft }}</div>
+      </div>
+      <div class="col-6 col-sm-4 col-xl">
+        <div class="text-muted small text-uppercase"><i class="fas fa-envelope me-1"></i> Per Mail möglich</div>
+        <div class="h1 mb-0 text-azure">{{ count_mail }}</div>
+      </div>
+      <div class="col-6 col-sm-4 col-xl">
+        <div class="text-muted small text-uppercase"><i class="fas fa-inbox me-1"></i> Per Post nötig</div>
+        <div class="h1 mb-0 text-orange">{{ count_post }}</div>
+      </div>
+      <div class="col-6 col-sm-4 col-xl">
+        <div class="text-muted small text-uppercase">Schon versendet</div>
+        <div class="h1 mb-0 text-green">{{ count_sent }}</div>
+      </div>
+      <div class="col-6 col-sm-4 col-xl">
+        <div class="text-muted small text-uppercase">Σ Brutto versendet</div>
+        <div class="h3 mb-0">{{ sum_gross_sent | de_number }} €</div>
+      </div>
+      <div class="col-6 col-sm-4 col-xl">
+        <div class="text-muted small text-uppercase">Σ Brutto Entwurf</div>
+        <div class="h3 mb-0">{{ sum_gross_draft | de_number }} €</div>
+      </div>
+    </div>
+    {% if other_status_counts %}
+    <div class="mt-3 pt-3 border-top">
+      <span class="text-muted small me-2">Weitere Status:</span>
+      {% for st, cnt in other_status_counts.items() %}
+        <span class="badge {{ status_badge_lt.get(st, 'bg-secondary-lt') }} me-1">{{ st }}: {{ cnt }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Metadaten / Tarif / Löschen -->
 <div class="row">
   <!-- Lauf-Metadaten -->
-  <div class="col-md-5 mb-3">
-    <div class="card">
+  <div class="col-lg-4 mb-3">
+    <div class="card h-100">
       <div class="card-header">
         <h3 class="card-title">Details</h3>
         <div class="card-options">
@@ -52,9 +97,11 @@
         </dl>
       </div>
     </div>
+  </div>
 
-    <!-- Tarif-Snapshot -->
-    <div class="card mt-3">
+  <!-- Tarif-Snapshot -->
+  <div class="col-lg-4 mb-3">
+    <div class="card h-100">
       <div class="card-header">
         <h3 class="card-title"><i class="fas fa-sliders-h me-1"></i> Verwendeter Tarif (Kopie)</h3>
       </div>
@@ -92,9 +139,11 @@
         </dl>
       </div>
     </div>
+  </div>
 
-    <!-- Löschen -->
-    <div class="card mt-3 border-danger">
+  <!-- Löschen -->
+  <div class="col-lg-4 mb-3">
+    <div class="card h-100 border-danger">
       <div class="card-header bg-danger-lt">
         <h3 class="card-title text-danger"><i class="fas fa-trash me-1"></i> Rechnungslauf löschen</h3>
       </div>
@@ -102,15 +151,13 @@
         {% if locked %}
         <div class="alert alert-warning mb-3">
           <strong>{{ locked | length }} Rechnung(en) können nicht gelöscht werden</strong>,
-          da sie nicht mehr im Entwurfsstatus sind
-          ({% for inv in locked %}<code>{{ inv.invoice_number }}</code>{% if not loop.last %}, {% endif %}{% endfor %}).
+          da sie nicht mehr im Entwurfsstatus sind.
           <br>Diese Rechnungen müssen manuell storniert oder entfernt werden.
         </div>
         {% if deletable %}
         <p class="text-muted mb-3">
           Die verbleibenden <strong>{{ deletable | length }} Entwurf-Rechnung(en)</strong>
-          können einzeln gelöscht werden:
-          {% for inv in deletable %}<code>{{ inv.invoice_number }}</code>{% if not loop.last %}, {% endif %}{% endfor %}.
+          können gelöscht werden.
         </p>
         {% endif %}
         <button class="btn btn-danger" disabled title="Zuerst gesperrte Rechnungen manuell entfernen">
@@ -133,103 +180,164 @@
       </div>
     </div>
   </div>
+</div>
 
-  <!-- Rechnungen des Laufs -->
-  <div class="col-md-7 mb-3">
-    <div class="card">
-      <div class="card-header">
-        <h3 class="card-title">
-          Rechnungen dieses Laufs
-          <span class="badge bg-primary text-white ms-1">{{ invoices | length }}</span>
-        </h3>
-        <div class="card-options">
-          <a href="{{ url_for('invoices.index', period_id=run.billing_period_id) }}"
-             class="btn btn-outline-secondary btn-sm">
-            <i class="fas fa-list me-1"></i> Alle Rechnungen dieser Periode
-          </a>
-        </div>
+<!-- Rechnungen des Laufs (volle Breite) -->
+<div class="card">
+  <div class="card-header d-flex flex-wrap align-items-center gap-2">
+    <h3 class="card-title mb-0">
+      Rechnungen dieses Laufs
+      <span class="badge bg-primary text-white ms-1">{{ rows | length }}</span>
+    </h3>
+    <div class="d-flex flex-wrap align-items-center gap-2">
+      <div class="input-group input-group-sm" style="width:250px">
+        <input type="search" id="br-search" class="form-control form-control-sm"
+               placeholder="Nr., Kunde, Liegenschaft, Adresse…">
+        <span class="input-group-text"><i class="fas fa-search"></i></span>
       </div>
-      <div class="card-body p-0">
-        <table class="table table-hover table-striped mb-0">
-          <thead>
-            <tr>
-              <th>Rechnungsnr.</th>
-              <th>Kunde</th>
-              <th>Liegenschaft</th>
-              <th class="text-end">Betrag</th>
-              <th>Status</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for inv in invoices %}
-            <tr>
-              <td><code>{{ inv.invoice_number }}</code></td>
-              <td>
-                <a href="{{ url_for('customers.detail', customer_id=inv.customer_id) }}">
-                  {{ inv.customer.name }}
-                </a>
-              </td>
-              <td>
-                {% if inv.property %}
-                <a href="{{ url_for('properties.detail', property_id=inv.property_id) }}">
-                  {{ inv.property.object_number or inv.property_id }}
-                </a>
-                {% set addr = [inv.property.strasse, inv.property.hausnummer] | select | join(' ') %}
-                {% if addr %}
-                <br><small class="text-muted">{{ addr }}</small>
-                {% endif %}
-                {% else %}—{% endif %}
-              </td>
-              <td class="text-end">{{ inv.total_amount | de_number }} €</td>
-              <td>
-                {% if inv.status == 'Entwurf' %}
-                  <span class="badge bg-secondary text-white">{{ inv.status }}</span>
-                {% elif inv.status == 'Versendet' %}
-                  <span class="badge bg-info text-white">{{ inv.status }}</span>
-                {% elif inv.status == 'Bezahlt' %}
-                  <span class="badge bg-success text-white">{{ inv.status }}</span>
-                {% elif inv.status == 'Storniert' %}
-                  <span class="badge bg-danger text-white">{{ inv.status }}</span>
-                {% else %}
-                  <span class="badge bg-warning text-white">{{ inv.status }}</span>
-                {% endif %}
-              </td>
-              <td class="text-nowrap">
-                <a href="{{ url_for('invoices.detail', invoice_id=inv.id) }}"
-                   class="btn btn-sm btn-outline-secondary" title="Rechnungsdetail">
-                  <i class="fas fa-eye"></i>
-                </a>
-                {% if doc_format in ('pdf', 'both') %}
-                <a href="{{ url_for('invoices.pdf', invoice_id=inv.id) }}?fmt=pdf"
-                   class="btn btn-sm btn-outline-danger ms-1" target="_blank" title="PDF">
-                  <i class="fas fa-file-pdf"></i>
-                </a>
-                {% endif %}
-                {% if doc_format in ('docx', 'both') %}
-                <a href="{{ url_for('invoices.pdf', invoice_id=inv.id) }}?fmt=docx"
-                   class="btn btn-sm btn-outline-secondary ms-1" target="_blank" title="Word">
-                  <i class="fas fa-file-word"></i>
-                </a>
-                {% endif %}
-              </td>
-            </tr>
-            {% else %}
-            <tr>
-              <td colspan="6" class="text-center text-muted py-4">
-                Keine Rechnungen in diesem Lauf.
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
+      <select id="br-versand-filter" class="form-select form-select-sm" style="width:155px">
+        <option value="">Versandart: alle</option>
+        <option value="mail">Nur per Mail</option>
+        <option value="post">Nur per Post</option>
+      </select>
+      <button type="button" class="btn btn-sm btn-outline-secondary" id="br-reset">
+        <i class="fas fa-times me-1"></i> Filter zurücksetzen
+      </button>
+      <a href="{{ url_for('invoices.index', period_id=run.billing_period_id) }}"
+         class="btn btn-sm btn-outline-secondary" title="Alle Rechnungen dieser Periode">
+        <i class="fas fa-list me-1"></i> Alle der Periode
+      </a>
     </div>
+    <button type="button" class="btn btn-primary ms-auto" data-bs-toggle="modal" data-bs-target="#versendenModal">
+      <i class="fas fa-paper-plane me-1"></i> Mailing &amp; Druck
+    </button>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover table-striped mb-0 align-middle" id="br-table">
+        <thead>
+          <tr>
+            <th class="br-sort" data-key="invnr" data-type="text">Rechnungsnr. <i class="fas fa-sort text-muted"></i></th>
+            <th class="br-sort" data-key="kunde" data-type="text">Kunde <i class="fas fa-sort text-muted"></i></th>
+            <th class="br-sort" data-key="adresse" data-type="text" title="Sortiert nach Straße, dann Hausnummer">Liegenschaft <i class="fas fa-sort text-muted"></i></th>
+            <th class="br-sort" data-key="versandart" data-type="text">Versandart <i class="fas fa-sort text-muted"></i></th>
+            <th class="br-sort text-end" data-key="m3" data-type="num">m³ <i class="fas fa-sort text-muted"></i></th>
+            <th class="br-sort text-end" data-key="wasser" data-type="num">Wasser <i class="fas fa-sort text-muted"></i></th>
+            <th class="br-sort text-end" data-key="grund" data-type="num">Grundgeb. <i class="fas fa-sort text-muted"></i></th>
+            <th class="br-sort text-end" data-key="zusatz" data-type="num">Zusatzgeb. <i class="fas fa-sort text-muted"></i></th>
+            <th class="br-sort text-end" data-key="netto" data-type="num">Netto <i class="fas fa-sort text-muted"></i></th>
+            {% if run_has_vat %}
+            <th class="br-sort text-end" data-key="ust" data-type="num">USt <i class="fas fa-sort text-muted"></i></th>
+            {% endif %}
+            <th class="br-sort text-end" data-key="brutto" data-type="num">Brutto <i class="fas fa-sort text-muted"></i></th>
+            <th class="br-sort" data-key="mailstatus" data-type="text">Mail-Status <i class="fas fa-sort text-muted"></i></th>
+            <th class="br-sort" data-key="status" data-type="text">Status <i class="fas fa-sort text-muted"></i></th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          {% set inv = row.inv %}{% set amt = row.amt %}
+          <tr data-id="{{ inv.id }}"
+              data-invnr="{{ inv.invoice_number }}"
+              data-kunde="{{ inv.customer.name }}"
+              data-objektnr="{{ inv.property.object_number if inv.property else '' }}"
+              data-strasse="{{ inv.property.strasse if inv.property else '' }}"
+              data-hausnr="{{ inv.property.hausnummer if inv.property else '' }}"
+              data-versandart="{{ 'mail' if row.wants_email else 'post' }}"
+              data-email="{{ inv.customer.email or '' }}"
+              data-m3="{{ amt.m3 or 0 }}"
+              data-wasser="{{ amt.water_net }}"
+              data-grund="{{ amt.base_fee }}"
+              data-zusatz="{{ amt.additional_fee }}"
+              data-netto="{{ amt.net }}"
+              data-ust="{{ amt.ust }}"
+              data-brutto="{{ amt.gross }}"
+              data-status="{{ inv.status }}"
+              data-mailstatus="{{ inv.last_email_status_de or '' }}">
+            <td><code>{{ inv.invoice_number }}</code></td>
+            <td>
+              <a href="{{ url_for('customers.detail', customer_id=inv.customer_id) }}">
+                {{ inv.customer.name }}
+              </a>
+            </td>
+            <td>
+              {% if inv.property %}
+              <a href="{{ url_for('properties.detail', property_id=inv.property_id) }}">
+                {{ inv.property.object_number or inv.property_id }}
+              </a>
+              {% set addr = [inv.property.strasse, inv.property.hausnummer] | select | join(' ') %}
+              {% if addr %}
+              <br><small class="text-muted">{{ addr }}</small>
+              {% endif %}
+              {% else %}—{% endif %}
+            </td>
+            <td>
+              {% if row.wants_email %}
+              <span class="badge bg-azure-lt"><i class="fas fa-envelope me-1"></i>Mail</span>
+              {% if inv.customer.email %}<br><small class="text-muted">{{ inv.customer.email }}</small>{% endif %}
+              {% else %}
+              <span class="badge bg-secondary-lt"><i class="fas fa-inbox me-1"></i>Post</span>
+              {% endif %}
+            </td>
+            <td class="text-end">{{ amt.m3 | de_number(2) if amt.m3 else '—' }}</td>
+            <td class="text-end">{{ amt.water_net | de_number }} €</td>
+            <td class="text-end">{{ amt.base_fee | de_number }} €</td>
+            <td class="text-end">{{ amt.additional_fee | de_number }} €</td>
+            <td class="text-end">{{ amt.net | de_number }} €</td>
+            {% if run_has_vat %}
+            <td class="text-end">{{ amt.ust | de_number }} €</td>
+            {% endif %}
+            <td class="text-end fw-semibold">{{ amt.gross | de_number }} €</td>
+            <td>{% with subject = inv %}{% include "invoices/_email_status_badge.html" %}{% endwith %}</td>
+            <td>
+              {% if inv.status == 'Entwurf' %}
+                <span class="badge bg-secondary text-white">{{ inv.status }}</span>
+              {% elif inv.status == 'Versendet' %}
+                <span class="badge bg-info text-white">{{ inv.status }}</span>
+              {% elif inv.status == 'Bezahlt' %}
+                <span class="badge bg-success text-white">{{ inv.status }}</span>
+              {% elif inv.status == 'Storniert' %}
+                <span class="badge bg-danger text-white">{{ inv.status }}</span>
+              {% else %}
+                <span class="badge bg-warning text-dark">{{ inv.status }}</span>
+              {% endif %}
+            </td>
+            <td class="text-nowrap">
+              <a href="{{ url_for('invoices.detail', invoice_id=inv.id) }}"
+                 class="btn btn-sm btn-outline-secondary" title="Rechnungsdetail">
+                <i class="fas fa-eye"></i>
+              </a>
+              {% if doc_format in ('pdf', 'both') %}
+              <a href="{{ url_for('invoices.pdf', invoice_id=inv.id) }}?fmt=pdf"
+                 class="btn btn-sm btn-outline-danger ms-1" target="_blank" title="PDF">
+                <i class="fas fa-file-pdf"></i>
+              </a>
+              {% endif %}
+              {% if doc_format in ('docx', 'both') %}
+              <a href="{{ url_for('invoices.pdf', invoice_id=inv.id) }}?fmt=docx"
+                 class="btn btn-sm btn-outline-secondary ms-1" target="_blank" title="Word">
+                <i class="fas fa-file-word"></i>
+              </a>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div id="br-empty" class="text-center text-muted py-4 d-none">
+      Keine Rechnungen entsprechen dem Filter.
+    </div>
+    {% if not rows %}
+    <div class="text-center text-muted py-4">Keine Rechnungen in diesem Lauf.</div>
+    {% endif %}
   </div>
 </div>
 {% endblock %}
 
 {% block modals %}
+<!-- Rechnungslauf löschen -->
 <div class="modal fade" id="deleteLaufModal" tabindex="-1" aria-labelledby="deleteLaufModalLabel" aria-hidden="true">
   <div class="modal-dialog">
     <form method="post" action="{{ url_for('invoices.billing_run_delete', run_id=run.id) }}">
@@ -269,4 +377,283 @@
     </form>
   </div>
 </div>
+
+<!-- Versenden -->
+<div class="modal fade" id="versendenModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="fas fa-paper-plane me-2"></i> Rechnungen versenden</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <div class="modal-body">
+        <!-- Per E-Mail -->
+        <h6 class="mb-2">
+          <i class="fas fa-envelope me-1"></i> Per E-Mail versenden
+          <span class="badge bg-azure-lt ms-1">{{ mailable | length }}</span>
+        </h6>
+        {% if mailable %}
+        <p class="text-muted small mb-2">
+          Versendet alle versandbereiten Entwürfe, deren Kunde „Schriftverkehr per E-Mail" aktiviert hat.
+          Nach dem Versand wird die Rechnung auf „Versendet" gesetzt und das Dokument gespeichert.
+        </p>
+        <div class="d-flex align-items-center flex-wrap gap-3 mb-2">
+          <button type="button" class="btn btn-primary btn-sm" id="br-mail-start">
+            <i class="fas fa-paper-plane me-1"></i> Alle {{ mailable | length }} per Mail versenden
+          </button>
+          <div class="form-check mb-0">
+            <input type="checkbox" class="form-check-input" id="br-mail-testmode">
+            <label class="form-check-label text-warning small" for="br-mail-testmode">
+              <i class="fas fa-flask me-1"></i> Testmodus (an Admin-Adresse)
+            </label>
+          </div>
+          <span class="text-success small fw-semibold" id="br-mail-msg"></span>
+        </div>
+        <div class="table-responsive" style="max-height:240px;overflow:auto">
+          <table class="table table-sm mb-0">
+            <thead>
+              <tr><th>Nr.</th><th>Kunde</th><th>E-Mail</th><th style="width:60px">Status</th></tr>
+            </thead>
+            <tbody>
+              {% for m in mailable %}
+              <tr id="br-mm-{{ m.id }}" data-id="{{ m.id }}">
+                <td><code>{{ m.number }}</code></td>
+                <td>{{ m.name }}</td>
+                <td>{{ m.email }}</td>
+                <td><i class="fas fa-clock text-muted" id="br-mm-icon-{{ m.id }}"></i></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="text-muted mb-0">Keine versandbereiten Rechnungen für den E-Mail-Versand.</p>
+        {% endif %}
+
+        <hr class="my-4">
+
+        <!-- Per Post -->
+        <h6 class="mb-2">
+          <i class="fas fa-inbox me-1"></i> Per Post (Download)
+          <span class="badge bg-secondary-lt ms-1">{{ post_ids | length }}</span>
+        </h6>
+        {% if post_ids %}
+          {% if doc_format in ('pdf', 'both') %}
+          <p class="text-muted small mb-2">
+            Zusammengeführte PDFs der per Post zu versendenden Rechnungen – in Gruppen zu max.
+            {{ config.get('BULK_PRINT_MAX', 100) }} Dokumenten. Jeder geladene Bulk setzt die enthaltenen
+            Entwürfe auf „Versendet" und speichert das erzeugte Dokument.
+          </p>
+          <div class="list-group" id="br-post-list"></div>
+          {% else %}
+          <div class="alert alert-info mb-0">
+            Der Post-Download ist nur im PDF-Format verfügbar (aktuelles Dokumentformat: <strong>{{ doc_format }}</strong>).
+          </div>
+          {% endif %}
+        {% else %}
+        <p class="text-muted mb-0">Keine per Post zu versendenden Rechnungen.</p>
+        {% endif %}
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Schließen</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// In EINE IIFE gewickelt: hx-boost tauscht <body> aus und fuehrt dieses Inline-
+// Skript bei jeder geboosteten Navigation erneut aus. Top-level `const`/`let`
+// wuerden beim zweiten Lauf mit dem bereits existierenden globalen Binding
+// kollidieren ("Identifier already declared") und das gesamte Skript abbrechen
+// (Folge: Filter/Sortierung/Versenden-Dialog tot). Lokale Variablen in der IIFE
+// sind bei jedem Lauf frisch -> re-execution-sicher.
+(function () {
+  const BR_CSRF = "{{ csrf_token() }}";
+  const BR_POST_IDS = [{{ post_ids | join(',') }}];
+  const BR_POST_URL = "{{ url_for('invoices.billing_run_post_bulk', run_id=run.id) }}";
+  const BR_BULK_MAX = {{ config.get('BULK_PRINT_MAX', 100) }};
+  let brVersandDirty = false;
+
+  // ---------- Tabelle: Filter / Volltextsuche / Sortierung (clientseitig) ----------
+  const table = document.getElementById('br-table');
+  if (table) {
+    const tbody = table.tBodies[0];
+    const rows = Array.from(tbody.rows);
+    const search = document.getElementById('br-search');
+    const versand = document.getElementById('br-versand-filter');
+    const reset = document.getElementById('br-reset');
+    const empty = document.getElementById('br-empty');
+
+    function applyFilter() {
+      const q = (search.value || '').trim().toLowerCase();
+      const v = versand.value;
+      let visible = 0;
+      rows.forEach(r => {
+        const hay = [r.dataset.invnr, r.dataset.kunde, r.dataset.objektnr,
+                     r.dataset.strasse, r.dataset.hausnr, r.dataset.email].join(' ').toLowerCase();
+        const show = (!q || hay.includes(q)) && (!v || r.dataset.versandart === v);
+        r.style.display = show ? '' : 'none';
+        if (show) visible++;
+      });
+      if (empty) empty.classList.toggle('d-none', visible !== 0 || rows.length === 0);
+    }
+    if (search) search.addEventListener('input', applyFilter);
+    if (versand) versand.addEventListener('change', applyFilter);
+    if (reset) reset.addEventListener('click', function () {
+      if (search) search.value = '';
+      if (versand) versand.value = '';
+      applyFilter();
+    });
+
+    let sortDir = 1, sortKeyCur = null;
+    table.querySelectorAll('th.br-sort').forEach(th => {
+      th.style.cursor = 'pointer';
+      th.addEventListener('click', function () {
+        const key = th.dataset.key;
+        const type = th.dataset.type || 'text';
+        if (sortKeyCur === key) { sortDir = -sortDir; } else { sortKeyCur = key; sortDir = 1; }
+        const sorted = rows.slice().sort((a, b) => {
+          if (key === 'adresse') {
+            const as = (a.dataset.strasse || '').toLowerCase();
+            const bs = (b.dataset.strasse || '').toLowerCase();
+            if (as !== bs) return as < bs ? -sortDir : sortDir;
+            const ah = parseInt(((a.dataset.hausnr || '').match(/\d+/) || ['0'])[0], 10);
+            const bh = parseInt(((b.dataset.hausnr || '').match(/\d+/) || ['0'])[0], 10);
+            return (ah - bh) * sortDir;
+          }
+          let av = a.dataset[key] || '', bv = b.dataset[key] || '';
+          if (type === 'num') {
+            return ((parseFloat(av) || 0) - (parseFloat(bv) || 0)) * sortDir;
+          }
+          av = av.toLowerCase(); bv = bv.toLowerCase();
+          if (av < bv) return -sortDir;
+          if (av > bv) return sortDir;
+          return 0;
+        });
+        sorted.forEach(r => tbody.appendChild(r));
+        table.querySelectorAll('th.br-sort i').forEach(i => { i.className = 'fas fa-sort text-muted'; });
+        const ic = th.querySelector('i');
+        if (ic) ic.className = sortDir > 0 ? 'fas fa-sort-up' : 'fas fa-sort-down';
+      });
+    });
+  }
+
+  // ---------- Versenden: Mail-Bulk ----------
+  async function brStartMail() {
+    const btn = document.getElementById('br-mail-start');
+    if (!btn) return;
+    btn.disabled = true;
+    const testMode = document.getElementById('br-mail-testmode').checked;
+    const rows = Array.from(document.querySelectorAll('#versendenModal tr[id^="br-mm-"]'));
+    let ok = 0, fail = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const id = rows[i].dataset.id;
+      const icon = document.getElementById('br-mm-icon-' + id);
+      if (icon) icon.className = 'fas fa-spinner fa-spin text-primary';
+      try {
+        let body = 'csrf_token=' + encodeURIComponent(BR_CSRF);
+        if (testMode) body += '&test_mode=1';
+        const resp = await fetch('/invoices/' + id + '/send-email-ajax', {
+          method: 'POST',
+          headers: { 'X-CSRFToken': BR_CSRF, 'Content-Type': 'application/x-www-form-urlencoded' },
+          body,
+        });
+        const json = await resp.json();
+        if (json.ok) {
+          ok++;
+          if (icon) icon.className = json.test_mode
+            ? 'fas fa-check-circle text-warning'
+            : 'fas fa-check-circle text-success';
+          if (!json.test_mode) brVersandDirty = true;
+        } else {
+          fail++;
+          const td = icon ? icon.closest('td') : null;
+          if (td) td.innerHTML = '<i class="fas fa-times-circle text-danger" title="'
+            + (json.error || 'Fehler') + '"></i>';
+        }
+      } catch (err) {
+        fail++;
+        if (icon) icon.className = 'fas fa-times-circle text-danger';
+      }
+      if (i < rows.length - 1) {
+        await new Promise(r => setTimeout(r, {{ bulk_mail_delay_ms }}));  // 0 = Relay (Vollgas), sonst SMTP-Drossel
+      }
+    }
+    const msg = document.getElementById('br-mail-msg');
+    if (msg) msg.textContent = 'Fertig: ' + ok + ' versendet'
+      + (fail ? ', ' + fail + ' fehlgeschlagen' : '') + '.';
+  }
+  const mailStartBtn = document.getElementById('br-mail-start');
+  if (mailStartBtn) mailStartBtn.addEventListener('click', brStartMail);
+
+  // ---------- Versenden: Post-Download in 100er-Gruppen ----------
+  function brBuildPostList() {
+    const list = document.getElementById('br-post-list');
+    if (!list || !BR_POST_IDS.length || list.dataset.built === '1') return;
+    list.dataset.built = '1';
+    for (let start = 0; start < BR_POST_IDS.length; start += BR_BULK_MAX) {
+      const chunk = BR_POST_IDS.slice(start, start + BR_BULK_MAX);
+      const from = start + 1, to = start + chunk.length;
+      const row = document.createElement('div');
+      row.className = 'list-group-item d-flex justify-content-between align-items-center';
+      const label = document.createElement('span');
+      label.innerHTML = 'Rechnungen <strong>' + from + '</strong>–<strong>' + to + '</strong>'
+        + ' <span class="text-muted ms-1">(' + chunk.length + ' Stück)</span>';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn-sm btn-primary';
+      btn.innerHTML = '<i class="fas fa-download me-1"></i> Laden &amp; als versendet markieren';
+      btn.addEventListener('click', function () { brDownloadPostBatch(chunk, from, to, btn); });
+      row.appendChild(label);
+      row.appendChild(btn);
+      list.appendChild(row);
+    }
+  }
+
+  async function brDownloadPostBatch(ids, from, to, btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status"></span> Wird erstellt…';
+    try {
+      const fd = new FormData();
+      fd.append('csrf_token', BR_CSRF);
+      ids.forEach(id => fd.append('invoice_ids', id));
+      const resp = await fetch(BR_POST_URL, { method: 'POST', body: fd, headers: { 'X-CSRFToken': BR_CSRF } });
+      const disp = resp.headers.get('Content-Disposition') || '';
+      if (!resp.ok || !disp.toLowerCase().includes('attachment')) {
+        throw new Error('Erstellung fehlgeschlagen.');
+      }
+      const blob = await resp.blob();
+      const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disp);
+      let name = m ? decodeURIComponent(m[1]) : 'Rechnungen_Post.pdf';
+      const dot = name.lastIndexOf('.');
+      name = dot < 0 ? name + '_' + from + '-' + to : name.slice(0, dot) + '_' + from + '-' + to + name.slice(dot);
+      const objUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objUrl; a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(objUrl); }, 10000);
+      brVersandDirty = true;
+      btn.classList.remove('btn-primary', 'btn-danger');
+      btn.classList.add('btn-success');
+      btn.innerHTML = '<i class="fas fa-check me-1"></i> Erstellt';
+    } catch (err) {
+      btn.disabled = false;
+      btn.classList.remove('btn-primary');
+      btn.classList.add('btn-danger');
+      btn.innerHTML = '<i class="fas fa-rotate-right me-1"></i> Erneut versuchen';
+    }
+  }
+
+  const modalEl = document.getElementById('versendenModal');
+  if (modalEl) {
+    modalEl.addEventListener('shown.bs.modal', brBuildPostList);
+    modalEl.addEventListener('hidden.bs.modal', function () {
+      if (brVersandDirty) window.location.reload();
+    });
+  }
+})();
+</script>
 {% endblock %}

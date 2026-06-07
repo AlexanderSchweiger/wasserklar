@@ -1,4 +1,4 @@
-Sehr geehrte(r) {{ invoice.customer.name }},
+{{ invoice.customer.salutation_line }},
 
 anbei erhalten Sie Ihre Rechnung {{ invoice.invoice_number }} vom {{ invoice.date.strftime('%d.%m.%Y') }}.
 

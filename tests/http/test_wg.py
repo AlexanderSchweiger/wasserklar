@@ -125,7 +125,8 @@ class TestCustomerEditModal:
             f"/customers/{c.id}/edit",
             headers={"X-From-Modal": "1"},
             data={
-                "name": "Save Me",
+                "is_company": "0",
+                "last_name": "Save Me",
                 "is_customer": "1",
                 "wg_status": "member",
                 "wg_functions": ["treasurer", "secretary"],

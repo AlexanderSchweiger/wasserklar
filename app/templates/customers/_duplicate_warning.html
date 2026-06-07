@@ -9,8 +9,10 @@
     <h3 class="card-title">Bitte prüfen: Dublette möglich</h3>
   </div>
   <div class="card-body">
+    {% set _disp = (form_data.get('company_name', '') if form_data.get('is_company') == '1'
+                    else (form_data.get('last_name', '') ~ ' ' ~ form_data.get('first_name', ''))) | trim %}
     <p class="mb-3">
-      Beim Anlegen des Kunden <strong>„{{ form_data.get('name', '') }}"</strong>
+      Beim Anlegen des Kunden <strong>„{{ _disp }}"</strong>
       wurden {{ similar|length }} ähnliche Kunden gefunden. Wähle einen
       bestehenden Kunden aus oder lege den neuen Datensatz trotzdem an.
     </p>

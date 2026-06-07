@@ -691,7 +691,7 @@ async function startMassenmail() {
       icon.title = 'Netzwerkfehler';
     }
     if (i < eligible.length - 1) {
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise(r => setTimeout(r, {{ bulk_mail_delay_ms }}));  // 0 = Relay (Vollgas), sonst SMTP-Drossel
     }
   }
 }

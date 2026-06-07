@@ -172,6 +172,16 @@ class Customer(db.Model):
     customer_number = db.Column(db.Integer, unique=True, nullable=True)    # fortlaufende Kundennummer (nur fuer Kunden vergeben)
     externe_kennung = db.Column(db.String(100), nullable=True)             # optionale externe Kennung
     name = db.Column(db.String(200), nullable=False)
+    # Aufgespaltener Name fuer die Brief-/Rechnungsanrede. ``name`` bleibt das
+    # kombinierte Sortier-/Listen-/Suchfeld (Konvention "Nachname Vorname") und
+    # wird beim Speichern aus last_name + first_name abgeleitet; die Einzelfelder
+    # speisen ``letter_name`` (Anschrift) und ``salutation_line`` (Anrede).
+    # Firmen haben nur ``name`` (Firmenname), keine Vor-/Nachnamen, keine Anrede.
+    salutation = db.Column(db.String(10))    # "Herr" | "Frau" | "Familie" | None
+    first_name = db.Column(db.String(100))   # Vorname (Person)
+    last_name = db.Column(db.String(100))    # Nachname (Person/Familie)
+    is_company = db.Column(db.Boolean, nullable=False, default=False,
+                           server_default=sa.false())
     is_customer = db.Column(db.Boolean, default=True, nullable=False)
     is_supplier = db.Column(db.Boolean, default=False, nullable=False)
     strasse = db.Column(db.String(200))
@@ -220,6 +230,37 @@ class Customer(db.Model):
         if self.land and self.land != "Österreich":
             parts.append(self.land)
         return ", ".join(parts)
+
+    @property
+    def letter_name(self):
+        """Name fuer die Anschrift in Briefen/Rechnungen: 'Vorname Nachname'
+        bei Personen, 'Familie Nachname' bei Familien, Firmenname bei Firmen.
+        Faellt auf das kombinierte ``name`` zurueck, solange Vor-/Nachname noch
+        nicht gepflegt sind (Altbestand, Quick-Create, kombinierter Import)."""
+        if self.is_company:
+            return self.name
+        if self.salutation == "Familie" and self.last_name:
+            return f"Familie {self.last_name}"
+        full = " ".join(p for p in (self.first_name, self.last_name) if p)
+        return full or self.name
+
+    @property
+    def salutation_line(self):
+        """Komplette Anredezeile fuer Briefe/Mails (ohne abschliessendes Komma).
+
+        Herr/Frau/Familie sprechen formell nur mit dem Nachnamen an; bei
+        unbekannter Anrede wird geschlechtsneutral mit dem vollen Namen
+        gegruesst, Firmen mit der Sammelanrede."""
+        if self.is_company:
+            return "Sehr geehrte Damen und Herren"
+        if self.salutation == "Herr" and self.last_name:
+            return f"Sehr geehrter Herr {self.last_name}"
+        if self.salutation == "Frau" and self.last_name:
+            return f"Sehr geehrte Frau {self.last_name}"
+        if self.salutation == "Familie" and self.last_name:
+            return f"Sehr geehrte Familie {self.last_name}"
+        full = " ".join(p for p in (self.first_name, self.last_name) if p)
+        return f"Sehr geehrte/r {full or self.name}"
 
     @property
     def wg_status(self):

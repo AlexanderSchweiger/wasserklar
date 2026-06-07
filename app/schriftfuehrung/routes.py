@@ -374,9 +374,9 @@ def _agenda_description(meeting):
 
 def _invitation_email_body(meeting, customer, type_label):
     wg = wg_settings()
-    lines = [f"Sehr geehrte Damen und Herren,", ""]
-    if customer and customer.name:
-        lines[0] = f"Sehr geehrte/r {customer.name},"
+    lines = ["Sehr geehrte Damen und Herren,", ""]
+    if customer:
+        lines[0] = f"{customer.salutation_line},"
     lines.append(f"wir laden Sie herzlich zur {type_label} ein.")
     lines.append("")
     when = _meeting_when(meeting)

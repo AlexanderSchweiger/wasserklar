@@ -794,6 +794,66 @@ def register_commands(app):
         db.session.commit()
         print(f"{updated} Buchung(en) als 'Verbucht' markiert.")
 
+    @app.cli.command("split-customer-names")
+    @click.option("--dry-run", is_flag=True, default=False,
+                  help="Nur anzeigen, was passieren würde — nichts speichern.")
+    def split_customer_names(dry_run):
+        """Heuristik-Starthilfe fuer die Namens-Aufspaltung (oss-v1.21.0).
+
+        Fuellt fuer Kontakte, deren Vor-/Nachname noch leer sind, eine erste
+        Schaetzung: Firmen-Namen (GmbH/AG/Gemeinde/Verein ...) werden als Firma
+        markiert; sonst wird der kombinierte ``name`` an der ersten Leerstelle in
+        Nachname + Vorname zerlegt (Konvention "Nachname Vorname"). Das
+        kombinierte ``name`` bleibt unveraendert (Sortier-/Listen-Schluessel).
+        Bereits gepflegte oder als Firma markierte Kontakte werden
+        uebersprungen. Anrede/Geschlecht laesst sich nicht zuverlaessig raten und
+        bleibt leer — bitte in der Kontaktmaske nachpflegen.
+        """
+        import re
+        from app.models import Customer
+
+        company_re = re.compile(
+            r"\b(gmbh|ges\.?\s?m\.?\s?b\.?\s?h|ag|og|kg|keg|ohg|gbr|ug|se|kft|"
+            r"srl|e\.?\s?u\.?|gen\.?|egen|genossenschaft|verein|verband|"
+            r"gemeinde|marktgemeinde|stadtgemeinde|stadtwerke|pfarre|stiftung|"
+            r"co\.?\s?kg)\b",
+            re.IGNORECASE,
+        )
+
+        candidates = Customer.query.filter(
+            Customer.is_company.is_(False),
+            (Customer.last_name.is_(None)) | (Customer.last_name == ""),
+            (Customer.first_name.is_(None)) | (Customer.first_name == ""),
+        ).all()
+
+        companies = 0
+        persons = 0
+        for c in candidates:
+            raw = (c.name or "").strip()
+            if not raw:
+                continue
+            if company_re.search(raw):
+                c.is_company = True
+                companies += 1
+                continue
+            parts = raw.split()
+            if len(parts) >= 2:
+                c.last_name = parts[0]
+                c.first_name = " ".join(parts[1:])
+            else:
+                c.last_name = raw
+            persons += 1
+
+        if dry_run:
+            db.session.rollback()
+            print(f"[Probelauf] {persons} Person(en) würden aufgeteilt, "
+                  f"{companies} als Firma markiert. Nichts gespeichert.")
+            return
+        db.session.commit()
+        print(f"{persons} Person(en) aufgeteilt (Nachname/Vorname aus 'name'), "
+              f"{companies} als Firma markiert. "
+              f"Anrede bitte in der Kontaktmaske nachpflegen.")
+
     @app.cli.command("reset-db")
     def reset_db():
         """ALLE Daten löschen und Datenbank neu initialisieren (mit Bestätigung)."""

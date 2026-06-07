@@ -301,7 +301,7 @@ def generate_docx(invoice, wg: dict, design: dict | None = None,
         run_ret.font.color.rgb = muted_rgb
         p_cust.paragraph_format.space_after = Pt(0)
         p_cust = recipient_cell.add_paragraph()
-    p_cust.add_run(invoice.customer.name).bold = True
+    p_cust.add_run(invoice.customer.letter_name).bold = True
 
     street_parts = [invoice.customer.strasse, invoice.customer.hausnummer]
     street = " ".join(p for p in street_parts if p)

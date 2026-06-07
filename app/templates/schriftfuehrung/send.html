@@ -281,7 +281,7 @@ Einladungen versenden
         if (icon) { icon.className = 'fas fa-times-circle text-danger'; icon.title = 'Netzwerkfehler'; }
       }
       if (i < rows.length - 1) {
-        await new Promise(r => setTimeout(r, 600));  // seriell mit Pause
+        await new Promise(r => setTimeout(r, {{ bulk_mail_delay_ms }}));  // 0 = Relay (Vollgas), sonst SMTP-Drossel
       }
     }
     document.getElementById('email-done-btn').classList.remove('d-none');

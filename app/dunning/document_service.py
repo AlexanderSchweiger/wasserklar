@@ -206,7 +206,7 @@ def generate_dunning_docx(notice, wg: dict, design: dict | None = None) -> bytes
     doc.add_paragraph()  # Abstand
 
     # ── Empfänger ────────────────────────────────────────────────────────
-    p_cust = doc.add_paragraph(customer.name)
+    p_cust = doc.add_paragraph(customer.letter_name)
     p_cust.runs[0].bold = True
 
     street_parts = [customer.strasse, customer.hausnummer]

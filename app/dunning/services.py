@@ -86,7 +86,7 @@ def dunning_text_context(notice, summary=None, wg=None):
         return dt.strftime("%d.%m.%Y") if dt else "—"
 
     return {
-        "kunde": invoice.customer.name,
+        "kunde": invoice.customer.letter_name,
         "rechnungsnummer": invoice.invoice_number,
         "rechnungsdatum": _d(invoice.date),
         "faelligkeit": _d(invoice.due_date),

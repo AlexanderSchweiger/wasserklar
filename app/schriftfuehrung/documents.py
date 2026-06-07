@@ -107,7 +107,7 @@ def build_invitation_docx(meeting, customer, agenda_items, type_label):
     # Empfänger-Adressblock.
     doc.add_paragraph()
     addr = doc.add_paragraph()
-    addr.add_run(customer.name).bold = True
+    addr.add_run(customer.letter_name).bold = True
     if customer.address_display():
         addr.add_run("\n" + customer.address_display())
 
