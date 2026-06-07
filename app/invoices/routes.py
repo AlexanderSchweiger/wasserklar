@@ -205,21 +205,50 @@ def _sync_open_item(invoice):
     return False
 
 
+# Standard-Betreff fuer den Rechnungsversand. WG-Name zuerst, damit der Kunde
+# den Absender erkennt — Mails mit nackter Rechnungsnummer im Betreff wirken
+# unserioes. Jinja-Platzhalter wie in der Body-Vorlage.
+DEFAULT_INVOICE_EMAIL_SUBJECT = "{{ wg_name }} - Rechnung {{ rechnungsnummer }}"
+
+
+def _email_template_context(invoice):
+    """Gemeinsame Platzhalter fuer Betreff- und Body-Vorlage des Rechnungsmails."""
+    return dict(
+        name=invoice.customer.name,
+        rechnungsnummer=invoice.invoice_number,
+        buchungsjahr=(invoice.billing_period.name if invoice.billing_period else ""),
+        betrag=f"{invoice.total_amount:.2f}",
+        faelligkeitsdatum=(
+            invoice.due_date.strftime("%d.%m.%Y") if invoice.due_date else "—"
+        ),
+        iban=get_wg('iban'),
+        wg_name=get_wg('name'),
+    )
+
+
+def _render_email_subject(invoice):
+    """Rendert den E-Mail-Betreff: DB-Vorlage wenn vorhanden, sonst Standard.
+
+    Faellt bei kaputter/leerer Vorlage auf einen simplen Default zurueck, damit
+    ein Tippfehler in der Betreff-Vorlage nicht den gesamten Versand blockiert.
+    """
+    from jinja2 import Environment
+    tpl = AppSetting.get("email_subject_template") or DEFAULT_INVOICE_EMAIL_SUBJECT
+    try:
+        rendered = (
+            Environment().from_string(tpl).render(**_email_template_context(invoice)).strip()
+        )
+    except Exception:
+        rendered = ""
+    return rendered or f"Rechnung {invoice.invoice_number}"
+
+
 def _render_email_body(invoice):
     """Rendert den E-Mail-Text: DB-Vorlage wenn vorhanden, sonst statisches Template."""
     from jinja2 import Environment
     custom = AppSetting.get("email_body_template")
     if custom:
-        return Environment().from_string(custom).render(
-            name=invoice.customer.name,
-            rechnungsnummer=invoice.invoice_number,
-            buchungsjahr=(invoice.billing_period.name if invoice.billing_period else ""),
-            betrag=f"{invoice.total_amount:.2f}",
-            faelligkeitsdatum=(
-                invoice.due_date.strftime("%d.%m.%Y") if invoice.due_date else "—"
-            ),
-            iban=get_wg('iban'),
-        )
+        return Environment().from_string(custom).render(**_email_template_context(invoice))
     return render_template("invoices/email_body.txt", invoice=invoice)
 
 
@@ -1513,7 +1542,7 @@ def send_email(invoice_id):
 
     fmt = _get_document_format()
 
-    subject = f"Rechnung {invoice.invoice_number}"
+    subject = _render_email_subject(invoice)
     body = _render_email_body(invoice)
     if test_mode:
         subject = f"[TEST – an: {invoice.customer.email}] {subject}"
@@ -1607,7 +1636,7 @@ def send_email_ajax(invoice_id):
     fmt = _get_document_format()
 
     try:
-        subject = f"Rechnung {invoice.invoice_number}"
+        subject = _render_email_subject(invoice)
         if test_mode:
             subject = f"[TEST – an: {invoice.customer.email}] {subject}"
         body = _render_email_body(invoice)
@@ -1693,15 +1722,21 @@ def email_settings():
     """E-Mail-Vorlage für den Rechnungsversand konfigurieren (Verwaltungs-Recht)."""
     import pathlib
     if request.method == "POST":
+        AppSetting.set("email_subject_template", request.form.get("email_subject_template", "").strip())
         AppSetting.set("email_body_template", request.form.get("email_body_template", "").strip())
         db.session.commit()
         flash("E-Mail-Vorlage gespeichert.", "success")
         return redirect(url_for("invoices.email_settings"))
+    current_subject = AppSetting.get("email_subject_template") or DEFAULT_INVOICE_EMAIL_SUBJECT
     current_body = AppSetting.get("email_body_template")
     if not current_body:
         tpl_path = pathlib.Path(current_app.root_path) / "templates" / "invoices" / "email_body.txt"
         current_body = tpl_path.read_text(encoding="utf-8") if tpl_path.exists() else ""
-    return render_template("invoices/email_settings.html", current_body=current_body)
+    return render_template(
+        "invoices/email_settings.html",
+        current_subject=current_subject,
+        current_body=current_body,
+    )
 
 
 # ---------------------------------------------------------------------------
