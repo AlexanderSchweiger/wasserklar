@@ -34,6 +34,14 @@ class Config:
     # PDF-Ausgabeverzeichnis
     PDF_DIR = os.path.join(BASE_DIR, "instance", "pdfs")
 
+    # Obergrenze fuer Massendruck/-export von Dokumenten pro Durchgang.
+    # Schuetzt vor Speicher-/CPU-Last und Timeouts: WeasyPrint rendert jedes
+    # Dokument einzeln in den RAM. Wird die Auswahl groesser, bietet die UI
+    # einen Gruppen-Dialog (je BULK_PRINT_MAX Dokumente ein eigener Download);
+    # die Server-Routen kappen zusaetzlich hart als Sicherheitsnetz. Im SaaS
+    # ggf. strenger per Env setzen.
+    BULK_PRINT_MAX = int(os.environ.get("BULK_PRINT_MAX", 100))
+
     # Genossenschaft (für Rechnungskopf)
     WG_NAME = os.environ.get("WG_NAME", "Wassergenossenschaft")
     WG_ADDRESS = os.environ.get("WG_ADDRESS", "")

@@ -113,6 +113,11 @@ def wg_settings():
     # Logo (Data-URI) hat keinen .env-Fallback, daher separat — nicht in _WG_MAP,
     # das auch im Settings-POST-Loop iteriert wird und Config-Keys voraussetzt.
     result['logo'] = AppSetting.get('wg.logo') or ''
+    # Logo-Text/-Untertitel: Wortmarke als Alternative zum Logo-Bild. Wird im
+    # Rechnungskopf nur gerendert, wenn kein Logo-Bild gesetzt ist (siehe
+    # PDF-Templates). Ebenfalls DB-only, kein .env-Fallback.
+    result['logo_text'] = AppSetting.get('wg.logo_text') or ''
+    result['logo_subtitle'] = AppSetting.get('wg.logo_subtitle') or ''
     return result
 
 

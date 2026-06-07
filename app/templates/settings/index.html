@@ -162,6 +162,25 @@
 
             <input type="hidden" name="wg_logo_data" id="logoDataInput">
           </div>
+
+          <hr class="my-3">
+
+          {# ── Logo-Text (Alternative zum Logo-Bild) ─────────────────────── #}
+          <div class="mb-2">
+            <label class="form-label">Logo-Text <small class="text-muted">(Alternative zum Logo-Bild)</small></label>
+            <p class="text-muted small mb-2">
+              Wird auf der Rechnung links oben als Wortmarke angezeigt –
+              <strong>nur wenn kein Logo-Bild gesetzt ist</strong>. Bleiben Bild
+              und Text leer, bleibt der Kopf frei.
+            </p>
+            <input type="text" name="wg_logo_text" class="form-control mb-2"
+                   value="{{ wg.logo_text }}" placeholder="z. B. Wassergenossenschaft Almtal">
+            <input type="text" name="wg_logo_subtitle" class="form-control"
+                   value="{{ wg.logo_subtitle }}" placeholder="Untertitel, z. B. Trinkwasserversorgung">
+            <div class="form-text">
+              Der Untertitel ist optional und erscheint klein unter dem Logo-Text.
+            </div>
+          </div>
         </div>
       </div>
 

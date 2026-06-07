@@ -123,6 +123,7 @@
   <form method="post" action="{{ url_for('invoices.bulk_action') }}" id="bulk-form" class="table-fill">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="new_date" id="bulk-new-date">
+    <input type="hidden" name="new_due_date" id="bulk-new-due-date">
     <div id="bulk-toolbar" class="px-3 py-2 border-bottom bg-light d-none"
          style="display:flex; align-items:center; gap:12px; flex-wrap:wrap">
       <span class="text-muted" id="bulk-count">0 ausgewählt</span>
@@ -130,6 +131,7 @@
         <select name="action" class="form-control form-control-sm" id="bulk-action-select" style="min-width:180px">
           <option value="">— Aktion wählen —</option>
           <option value="set-date">Rechnungsdatum setzen (nur Entwürfe)</option>
+          <option value="set-due-date">Fälligkeitsdatum setzen (nur Entwürfe)</option>
           <optgroup label="Status setzen">
             {% for s in statuses %}
             <option value="{{ s }}">Status: {{ s }}</option>
@@ -165,6 +167,31 @@
 {% endblock %}
 
 {% block modals %}
+<!-- Massendruck in Gruppen (>{{ config.get('BULK_PRINT_MAX', 100) }} ausgewählte Dokumente) -->
+<div class="modal fade" id="bulkBatchModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">
+          <i class="fas fa-layer-group me-2"></i> <span id="bulkBatchTitle">Dokumente erstellen</span>
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted">
+          Sie haben <strong id="bulkBatchTotal">0</strong> Dokumente ausgewählt. Aus Performance-Gründen
+          werden maximal <strong id="bulkBatchMax">100</strong> Dokumente pro Durchgang erstellt.
+          Bitte erzeugen Sie die Gruppen nacheinander – jede startet einen eigenen Download.
+        </p>
+        <div class="list-group" id="bulkBatchList"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Schließen</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Bulk-Download Ladehinweis -->
 <div class="modal fade" id="bulkDownloadModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
   <div class="modal-dialog modal-sm">
@@ -221,6 +248,36 @@
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
         <button type="button" class="btn btn-primary" onclick="confirmSetDate()">
+          <i class="fas fa-check me-1"></i> Datum setzen
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Fälligkeitsdatum setzen Modal -->
+<div class="modal fade" id="setDueDateModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">
+          <i class="fas fa-calendar-check me-2"></i> Fälligkeitsdatum setzen
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted mb-3">
+          Das Fälligkeitsdatum wird bei <strong id="setDueDateCount">0</strong> ausgewählten Rechnung(en) gesetzt.
+          Nur Entwürfe werden geändert.
+        </p>
+        <div class="mb-0">
+          <label class="form-label">Neues Fälligkeitsdatum</label>
+          <input type="date" class="form-control" id="setDueDateInput">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+        <button type="button" class="btn btn-primary" onclick="confirmSetDueDate()">
           <i class="fas fa-check me-1"></i> Datum setzen
         </button>
       </div>
@@ -339,6 +396,10 @@ function handleBulkAction() {
     openSetDateModal();
     return;
   }
+  if (action === 'set-due-date') {
+    openSetDueDateModal();
+    return;
+  }
   if (action === 'bulk-pdf-merged' || action === 'bulk-pdf-zip' ||
       action === 'bulk-docx-merged' || action === 'bulk-docx-zip') {
     const urlMap = {
@@ -353,7 +414,19 @@ function handleBulkAction() {
       'bulk-docx-merged': 'Word-Dokument wird erstellt',
       'bulk-docx-zip':    'Word-Dateien werden als ZIP erstellt',
     };
-    bulkDownload(urlMap[action], titleMap[action]);
+    const batchTitleMap = {
+      'bulk-pdf-merged':  'Zusammengeführte PDF gruppenweise erstellen',
+      'bulk-pdf-zip':     'PDF-ZIP gruppenweise erstellen',
+      'bulk-docx-merged': 'Zusammengeführtes Word gruppenweise erstellen',
+      'bulk-docx-zip':    'Word-ZIP gruppenweise erstellen',
+    };
+    // Bei zu großer Auswahl nicht alles auf einmal rendern (RAM/Timeout),
+    // sondern den Gruppen-Dialog öffnen — der Server kappt zusätzlich hart.
+    if (count > BULK_PRINT_MAX) {
+      openBulkBatchModal(urlMap[action], batchTitleMap[action]);
+    } else {
+      bulkDownload(urlMap[action], titleMap[action]);
+    }
     return;
   }
   if (action === 'delete') {
@@ -410,6 +483,87 @@ async function bulkDownload(url, title) {
   }
 }
 
+// Obergrenze pro Druck-/Export-Durchgang (serverseitig identisch gekappt).
+const BULK_PRINT_MAX = {{ config.get('BULK_PRINT_MAX', 100) }};
+
+// Server liefert einen festen Dateinamen (z.B. Rechnungen_gesamt.pdf); pro
+// Gruppe den Bereich einfügen, damit die Downloads unterscheidbar bleiben.
+function rangedName(name, from, to) {
+  const suffix = '_' + from + '-' + to;
+  const dot = name.lastIndexOf('.');
+  return dot < 0 ? name + suffix : name.slice(0, dot) + suffix + name.slice(dot);
+}
+
+// Auswahl in 100er-Gruppen aufteilen und je Gruppe eine Erzeugen-Zeile bauen.
+// Nichts wird persistiert: bei erneutem Druck entsteht ein frischer Dialog.
+function openBulkBatchModal(url, title) {
+  const ids = Array.from(document.querySelectorAll('.invoice-cb:checked')).map(cb => cb.value);
+  const list = document.getElementById('bulkBatchList');
+  list.innerHTML = '';
+  document.getElementById('bulkBatchTotal').textContent = ids.length;
+  document.getElementById('bulkBatchMax').textContent = BULK_PRINT_MAX;
+  document.getElementById('bulkBatchTitle').textContent = title;
+  for (let start = 0; start < ids.length; start += BULK_PRINT_MAX) {
+    const chunk = ids.slice(start, start + BULK_PRINT_MAX);
+    const from = start + 1;
+    const to = start + chunk.length;
+    const row = document.createElement('div');
+    row.className = 'list-group-item d-flex justify-content-between align-items-center';
+    const label = document.createElement('span');
+    label.innerHTML = 'Gewählte Dokumente <strong>' + from + '</strong> bis <strong>' + to + '</strong>'
+      + ' <span class="text-muted ms-1">(' + chunk.length + ' Stück)</span>';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-sm btn-primary';
+    btn.innerHTML = '<i class="fas fa-download me-1"></i> Erstellen';
+    btn.addEventListener('click', function () {
+      bulkDownloadBatch(url, chunk, from, to, btn);
+    });
+    row.appendChild(label);
+    row.appendChild(btn);
+    list.appendChild(row);
+  }
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('bulkBatchModal')).show();
+}
+
+// Genau eine Gruppe rendern + herunterladen, danach Button deaktivieren.
+// Bei Fehler bleibt der Button als „Erneut versuchen" aktiv.
+async function bulkDownloadBatch(url, ids, from, to, btn) {
+  const form = document.getElementById('bulk-form');
+  const csrf = form.querySelector('input[name="csrf_token"]').value;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status"></span> Wird erstellt…';
+  try {
+    const fd = new FormData();
+    fd.append('csrf_token', csrf);
+    ids.forEach(id => fd.append('invoice_ids', id));
+    const resp = await fetch(url, { method: 'POST', body: fd, headers: { 'X-CSRFToken': csrf } });
+    const disposition = resp.headers.get('Content-Disposition') || '';
+    if (!resp.ok || !disposition.toLowerCase().includes('attachment')) {
+      throw new Error('Erstellung fehlgeschlagen.');
+    }
+    const blob = await resp.blob();
+    const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition);
+    const name = rangedName(m ? decodeURIComponent(m[1]) : 'download', from, to);
+    const objUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objUrl;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(objUrl); }, 10000);
+    btn.classList.remove('btn-primary', 'btn-danger');
+    btn.classList.add('btn-success');
+    btn.innerHTML = '<i class="fas fa-check me-1"></i> Erstellt';
+  } catch (err) {
+    btn.disabled = false;
+    btn.classList.remove('btn-primary');
+    btn.classList.add('btn-danger');
+    btn.innerHTML = '<i class="fas fa-rotate-right me-1"></i> Erneut versuchen';
+  }
+}
+
 function wkTodayISO() {
   const d = new Date();
   const off = d.getTimezoneOffset();
@@ -443,6 +597,22 @@ function confirmSetDate() {
   }
   document.getElementById('bulk-new-date').value = input.value;
   document.getElementById('bulk-action-select').value = 'set-date';
+  document.getElementById('bulk-form').submit();
+}
+
+function openSetDueDateModal() {
+  const count = document.querySelectorAll('.invoice-cb:checked').length;
+  document.getElementById('setDueDateCount').textContent = count;
+  const input = document.getElementById('setDueDateInput');
+  if (!input.value) input.value = wkTodayISO();
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('setDueDateModal')).show();
+}
+
+function confirmSetDueDate() {
+  const input = document.getElementById('setDueDateInput');
+  if (!input.value) { alert('Bitte ein Datum wählen.'); return; }
+  document.getElementById('bulk-new-due-date').value = input.value;
+  document.getElementById('bulk-action-select').value = 'set-due-date';
   document.getElementById('bulk-form').submit();
 }
 

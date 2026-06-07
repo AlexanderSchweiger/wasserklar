@@ -31,6 +31,11 @@ def index():
             val = request.form.get(f'wg_{attr}', '').strip()
             AppSetting.set(f'wg.{attr}', val if val else None)
 
+        # Logo-Text/-Untertitel (Wortmarke als Alternative zum Logo-Bild).
+        for attr in ('logo_text', 'logo_subtitle'):
+            val = request.form.get(f'wg_{attr}', '').strip()
+            AppSetting.set(f'wg.{attr}', val if val else None)
+
         # WG-Logo (Data-URI aus dem Cropper). "Entfernen" hat Vorrang vor einem
         # neu hochgeladenen Bild.
         if request.form.get('wg_logo_remove'):
@@ -131,6 +136,8 @@ def index():
 
     wg = {attr: _get(f'wg.{attr}', cfg_key) for attr, cfg_key in _WG_MAP.items()}
     wg['logo'] = AppSetting.get('wg.logo') or ''
+    wg['logo_text'] = AppSetting.get('wg.logo_text') or ''
+    wg['logo_subtitle'] = AppSetting.get('wg.logo_subtitle') or ''
 
     mail_cfg = {}
     mail_defaults = {

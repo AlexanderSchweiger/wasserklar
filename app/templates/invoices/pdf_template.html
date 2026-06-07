@@ -11,6 +11,14 @@
   }
   .header { display: flex; justify-content: space-between; margin-bottom: 2cm; }
   .invoice-logo { max-height: 60px; max-width: 220px; margin-bottom: 6px; }
+  .brand-wordmark .bw-name {
+    font-size: 15pt; font-weight: bold; line-height: 1.1;
+    color: {{ design.heading_color }};
+  }
+  .brand-wordmark .bw-sub {
+    font-size: 8pt; letter-spacing: 0.15em; text-transform: uppercase;
+    margin-top: 3px; color: {{ design.muted_color }};
+  }
   .sender-name { color: {{ design.heading_color }}; }
   .sender-info { font-size: 9pt; color: {{ design.muted_color }}; }
   .contact-info { color: {{ design.accent_color }}; line-height: 1.15; }
@@ -78,7 +86,13 @@
 
 <div class="header">
   <div>
-    {% if wg.logo %}<img class="invoice-logo" src="{{ wg.logo }}" alt="{{ wg.name }}">{% endif %}
+    {% if wg.logo %}<img class="invoice-logo" src="{{ wg.logo }}" alt="{{ wg.name }}">
+    {% elif wg.logo_text %}
+    <div class="brand-wordmark">
+      <div class="bw-name">{{ wg.logo_text }}</div>
+      {% if wg.logo_subtitle %}<div class="bw-sub">{{ wg.logo_subtitle }}</div>{% endif %}
+    </div>
+    {% endif %}
   </div>
   <div class="contact-info">
     {% if contact_info %}<div style="font-size:{{ contact_info_font_size | default(10) }}pt">{{ contact_info | safe }}</div>{% endif %}

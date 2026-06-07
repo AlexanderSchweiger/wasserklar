@@ -989,10 +989,46 @@ def bulk_action():
         if editable and new_date > date.today():
             flash("Achtung: Das gesetzte Rechnungsdatum liegt in der Zukunft.", "warning")
 
+    elif action == "set-due-date":
+        new_due_raw = request.form.get("new_due_date", "")
+        try:
+            new_due = date.fromisoformat(new_due_raw)
+        except (ValueError, TypeError):
+            flash("Ungültiges Datum.", "danger")
+            return redirect(url_for("invoices.index"))
+        # Nur Entwürfe dürfen ihr Fälligkeitsdatum ändern (analog Einzel-Edit).
+        editable = [inv for inv in invoices if inv.status == Invoice.STATUS_DRAFT]
+        skipped = len(invoices) - len(editable)
+        try:
+            for inv in editable:
+                inv.due_date = new_due
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            flash(f"Fehler beim Setzen des Fälligkeitsdatums – alle Änderungen wurden zurückgesetzt: {e}", "danger")
+            return redirect(url_for("invoices.index"))
+        msg = f"Fälligkeitsdatum bei {len(editable)} Rechnung(en) auf {new_due.strftime('%d.%m.%Y')} gesetzt."
+        if skipped:
+            msg += f" {skipped} übersprungen (nur Entwürfe können geändert werden)."
+        flash(msg, "success" if editable else "warning")
+
     else:
         flash("Ungültige Aktion.", "danger")
 
     return redirect(url_for("invoices.index"))
+
+
+def _bulk_print_limit_exceeded(ids):
+    """Sicherheitsnetz fuer Massendruck/-export: gibt eine Redirect-Response
+    zurueck, wenn die Auswahl das konfigurierte Limit (BULK_PRINT_MAX) ueber-
+    schreitet, sonst None. Die UI batcht bereits in Gruppen, der Cap faengt
+    direkte/veraltete Clients ab und schuetzt vor RAM-/Timeout-Last."""
+    limit = current_app.config.get("BULK_PRINT_MAX", 100)
+    if len(ids) > limit:
+        flash(f"Es können maximal {limit} Dokumente pro Durchgang erstellt werden. "
+              f"Bitte die Auswahl in kleinere Gruppen aufteilen.", "warning")
+        return redirect(url_for("invoices.index"))
+    return None
 
 
 @bp.route("/bulk-pdf-merged", methods=["POST"])
@@ -1004,6 +1040,8 @@ def bulk_pdf_merged():
     if not invoice_ids:
         flash("Keine Rechnungen ausgewählt.", "warning")
         return redirect(url_for("invoices.index"))
+    if (resp := _bulk_print_limit_exceeded(invoice_ids)):
+        return resp
     try:
         from weasyprint import HTML
     except (ImportError, OSError):
@@ -1058,6 +1096,8 @@ def bulk_pdf_zip():
     if not invoice_ids:
         flash("Keine Rechnungen ausgewählt.", "warning")
         return redirect(url_for("invoices.index"))
+    if (resp := _bulk_print_limit_exceeded(invoice_ids)):
+        return resp
     try:
         from weasyprint import HTML
     except (ImportError, OSError):
@@ -1096,6 +1136,8 @@ def bulk_docx_zip():
     if not invoice_ids:
         flash("Keine Rechnungen ausgewählt.", "warning")
         return redirect(url_for("invoices.index"))
+    if (resp := _bulk_print_limit_exceeded(invoice_ids)):
+        return resp
     invoices = Invoice.query.filter(Invoice.id.in_(invoice_ids)).order_by(Invoice.invoice_number).all()
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -1126,6 +1168,8 @@ def bulk_docx_merged():
     if not invoice_ids:
         flash("Keine Rechnungen ausgewählt.", "warning")
         return redirect(url_for("invoices.index"))
+    if (resp := _bulk_print_limit_exceeded(invoice_ids)):
+        return resp
     invoices = Invoice.query.filter(Invoice.id.in_(invoice_ids)).order_by(Invoice.invoice_number).all()
     sources = []
     for invoice in invoices:

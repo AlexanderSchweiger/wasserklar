@@ -505,6 +505,20 @@ def notice_email_events(notice_id):
 # Bulk-Dokumente
 # ---------------------------------------------------------------------------
 
+def _bulk_print_limit_exceeded(ids):
+    """Sicherheitsnetz fuer Massendruck/-export der Mahnungen: gibt eine
+    Redirect-Response zurueck, wenn die Auswahl das konfigurierte Limit
+    (BULK_PRINT_MAX) ueberschreitet, sonst None. Die UI batcht bereits in
+    Gruppen, der Cap faengt direkte/veraltete Clients ab und schuetzt vor
+    RAM-/Timeout-Last."""
+    limit = current_app.config.get("BULK_PRINT_MAX", 100)
+    if len(ids) > limit:
+        flash(f"Es können maximal {limit} Dokumente pro Durchgang erstellt werden. "
+              f"Bitte die Auswahl in kleinere Gruppen aufteilen.", "warning")
+        return redirect(url_for("dunning.notices"))
+    return None
+
+
 @bp.route("/bulk-docx-merged", methods=["POST"])
 @login_required
 def bulk_docx_merged():
@@ -513,6 +527,8 @@ def bulk_docx_merged():
     if not notice_ids:
         flash("Keine Mahnungen ausgewählt.", "warning")
         return redirect(url_for("dunning.notices"))
+    if (resp := _bulk_print_limit_exceeded(notice_ids)):
+        return resp
 
     from app.invoices.document_service import merge_docx_files
 
@@ -542,6 +558,8 @@ def bulk_pdf_merged():
     if not notice_ids:
         flash("Keine Mahnungen ausgewählt.", "warning")
         return redirect(url_for("dunning.notices"))
+    if (resp := _bulk_print_limit_exceeded(notice_ids)):
+        return resp
 
     try:
         import weasyprint

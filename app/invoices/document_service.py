@@ -222,11 +222,26 @@ def generate_docx(invoice, wg: dict, design: dict | None = None,
     header_tbl.columns[0].width = Cm(10)
     header_tbl.columns[1].width = Cm(6)
 
-    # Linke Spalte bleibt leer: die WG-Identitaet (Name/Adresse/E-Mail/Telefon)
-    # wird nicht mehr automatisch gesetzt — der Briefkopf besteht jetzt allein aus
-    # dem frei gestaltbaren Kontaktinfo-Block (rechts).
+    # Linke Spalte: die WG-Identitaet (Name/Adresse/E-Mail/Telefon) wird nicht
+    # automatisch gesetzt — der Briefkopf besteht aus dem frei gestaltbaren
+    # Kontaktinfo-Block (rechts). Ist ein Logo-Text konfiguriert, erscheint er
+    # hier als Wortmarke (Textalternative zum Logo-Bild, das im DOCX bewusst
+    # nicht gerendert wird).
     left_cell = header_tbl.cell(0, 0)
     left_cell.paragraphs[0].clear()
+    if wg.get("logo_text"):
+        p_brand = left_cell.paragraphs[0]
+        p_brand.paragraph_format.space_after = Pt(0)
+        run_name = p_brand.add_run(wg["logo_text"])
+        run_name.bold = True
+        run_name.font.size = Pt(15)
+        run_name.font.color.rgb = heading_rgb
+        if wg.get("logo_subtitle"):
+            p_sub = left_cell.add_paragraph()
+            p_sub.paragraph_format.space_before = Pt(2)
+            run_sub = p_sub.add_run(wg["logo_subtitle"])
+            run_sub.font.size = Pt(8)
+            run_sub.font.color.rgb = muted_rgb
 
     right_cell = header_tbl.cell(0, 1)
     right_cell.paragraphs[0].clear()

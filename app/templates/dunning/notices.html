@@ -52,6 +52,31 @@
 {% endblock %}
 
 {% block modals %}
+<!-- Massendruck in Gruppen (>{{ config.get('BULK_PRINT_MAX', 100) }} ausgewählte Mahnungen) -->
+<div class="modal fade" id="dnBatchModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">
+          <i class="fas fa-layer-group me-2"></i> <span id="dnBatchTitle">Mahnungen erstellen</span>
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted">
+          Sie haben <strong id="dnBatchTotal">0</strong> Mahnungen ausgewählt. Aus Performance-Gründen
+          werden maximal <strong id="dnBatchMax">100</strong> Dokumente pro Durchgang erstellt.
+          Bitte erzeugen Sie die Gruppen nacheinander – jede startet einen eigenen Download.
+        </p>
+        <div class="list-group" id="dnBatchList"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Schließen</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="modal fade" id="dunningBulkDownloadModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
   <div class="modal-dialog modal-sm">
     <div class="modal-content">
@@ -130,7 +155,22 @@
 // Sammel-Download per fetch statt nativem Submit: bei einem Attachment-Response
 // navigiert der Browser nicht, also schliesst kein Event das Warte-Modal. Wir
 // holen die Datei als Blob, schliessen das Modal bei Antwort und zeigen Fehler an.
+// Obergrenze pro Druck-/Export-Durchgang (serverseitig identisch gekappt).
+const BULK_PRINT_MAX = {{ config.get('BULK_PRINT_MAX', 100) }};
+
+// Server liefert einen festen Dateinamen (z.B. Mahnungen_gesamt.pdf); pro
+// Gruppe den Bereich einfügen, damit die Downloads unterscheidbar bleiben.
+function rangedName(name, from, to) {
+  const suffix = '_' + from + '-' + to;
+  const dot = name.lastIndexOf('.');
+  return dot < 0 ? name + suffix : name.slice(0, dot) + suffix + name.slice(dot);
+}
+
 async function dunningBulkDownload(url, title) {
+  const checked = document.querySelectorAll('.dn-cb:checked');
+  if (!checked.length) { alert('Keine Mahnungen ausgewählt.'); return; }
+  // Bei zu großer Auswahl Gruppen-Dialog statt eines Riesen-Renderings.
+  if (checked.length > BULK_PRINT_MAX) { openDunningBatchModal(url, title); return; }
   const modalEl = document.getElementById('dunningBulkDownloadModal');
   const spinner = document.getElementById('dunningBulkSpinner');
   const errBox  = document.getElementById('dunningBulkError');
@@ -169,6 +209,76 @@ async function dunningBulkDownload(url, title) {
     spinner.classList.add('d-none');
     errMsg.textContent = err.message || 'Fehler beim Erstellen des Dokuments.';
     errBox.classList.remove('d-none');
+  }
+}
+
+// Auswahl in 100er-Gruppen aufteilen und je Gruppe eine Erzeugen-Zeile bauen.
+// Nichts wird persistiert: bei erneutem Druck entsteht ein frischer Dialog.
+function openDunningBatchModal(url, title) {
+  const ids = Array.from(document.querySelectorAll('.dn-cb:checked')).map(cb => cb.value);
+  const list = document.getElementById('dnBatchList');
+  list.innerHTML = '';
+  document.getElementById('dnBatchTotal').textContent = ids.length;
+  document.getElementById('dnBatchMax').textContent = BULK_PRINT_MAX;
+  document.getElementById('dnBatchTitle').textContent = title;
+  for (let start = 0; start < ids.length; start += BULK_PRINT_MAX) {
+    const chunk = ids.slice(start, start + BULK_PRINT_MAX);
+    const from = start + 1;
+    const to = start + chunk.length;
+    const row = document.createElement('div');
+    row.className = 'list-group-item d-flex justify-content-between align-items-center';
+    const label = document.createElement('span');
+    label.innerHTML = 'Gewählte Dokumente <strong>' + from + '</strong> bis <strong>' + to + '</strong>'
+      + ' <span class="text-muted ms-1">(' + chunk.length + ' Stück)</span>';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-sm btn-primary';
+    btn.innerHTML = '<i class="fas fa-download me-1"></i> Erstellen';
+    btn.addEventListener('click', function () {
+      dunningBulkDownloadBatch(url, chunk, from, to, btn);
+    });
+    row.appendChild(label);
+    row.appendChild(btn);
+    list.appendChild(row);
+  }
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('dnBatchModal')).show();
+}
+
+// Genau eine Gruppe rendern + herunterladen, danach Button deaktivieren.
+// Bei Fehler bleibt der Button als „Erneut versuchen" aktiv.
+async function dunningBulkDownloadBatch(url, ids, from, to, btn) {
+  const form = document.getElementById('notices-form');
+  const csrf = form.querySelector('input[name="csrf_token"]').value;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status"></span> Wird erstellt…';
+  try {
+    const fd = new FormData();
+    fd.append('csrf_token', csrf);
+    ids.forEach(id => fd.append('notice_ids', id));
+    const resp = await fetch(url, { method: 'POST', body: fd, headers: { 'X-CSRFToken': csrf } });
+    const disposition = resp.headers.get('Content-Disposition') || '';
+    if (!resp.ok || !disposition.toLowerCase().includes('attachment')) {
+      throw new Error('Erstellung fehlgeschlagen.');
+    }
+    const blob = await resp.blob();
+    const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition);
+    const name = rangedName(m ? decodeURIComponent(m[1]) : 'download', from, to);
+    const objUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objUrl;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(objUrl); }, 10000);
+    btn.classList.remove('btn-primary', 'btn-danger');
+    btn.classList.add('btn-success');
+    btn.innerHTML = '<i class="fas fa-check me-1"></i> Erstellt';
+  } catch (err) {
+    btn.disabled = false;
+    btn.classList.remove('btn-primary');
+    btn.classList.add('btn-danger');
+    btn.innerHTML = '<i class="fas fa-rotate-right me-1"></i> Erneut versuchen';
   }
 }
 
