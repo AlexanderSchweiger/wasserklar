@@ -56,7 +56,12 @@
       <span class="text-muted">—</span>
     {% endif %}
   </td>
-  <td>{{ c.email or '—' }}</td>
+  <td>
+    {% if c.email %}{{ c.email }}{% else %}—{% endif %}
+    {% if suppressed_emails is defined and c.email and c.email|lower in suppressed_emails %}
+    <span class="badge bg-danger text-white ms-1" title="E-Mail als unzustellbar gesperrt"><i class="fas fa-ban"></i></span>
+    {% endif %}
+  </td>
   <td>{{ c.phone or '—' }}</td>
   <td class="text-end text-nowrap col-actions">
     <button type="button"

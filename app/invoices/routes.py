@@ -1540,6 +1540,15 @@ def send_email(invoice_id):
     else:
         recipient = invoice.customer.email
 
+    # Sperrliste: an eine als unzustellbar gesperrte Adresse gar nicht erst
+    # senden (der Testversand an die Admin-Adresse bleibt erlaubt).
+    if not test_mode:
+        from app.email_suppression import suppression_notice
+        notice = suppression_notice(recipient)
+        if notice:
+            flash(notice, "danger")
+            return redirect(url_for("invoices.detail", invoice_id=invoice.id))
+
     fmt = _get_document_format()
 
     subject = _render_email_subject(invoice)
@@ -1632,6 +1641,14 @@ def send_email_ajax(invoice_id):
             return jsonify({"ok": False, "error": "Kein Admin-E-Mail für Testmodus hinterlegt"}), 400
     else:
         recipient = invoice.customer.email
+
+    # Sperrliste: gesperrte Adressen im Massenversand pro Zeile als Fehler
+    # melden (das Bulk-JS zeigt die Meldung an), nicht senden.
+    if not test_mode:
+        from app.email_suppression import suppression_notice
+        notice = suppression_notice(recipient)
+        if notice:
+            return jsonify({"ok": False, "error": notice}), 400
 
     fmt = _get_document_format()
 

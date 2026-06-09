@@ -126,6 +126,11 @@ def index():
     for _f in _funcs:
         wg_functions_map.setdefault(_f.customer_id, []).append(_f.function)
 
+    # Gesperrte E-Mail-Adressen der sichtbaren Kontakte (1 Query, kein N+1) —
+    # treibt das "Unzustellbar"-Badge in der Liste.
+    from app.email_suppression import suppressed_email_set
+    suppressed_emails = suppressed_email_set([c.email for c in customers])
+
     # Back-URL fuer Edit-/Delete-Links: erhaelt alle aktuellen Filter, Such-
     # und Pagination-Parameter, damit der User nach dem Speichern wieder auf
     # derselben Liste landet.
@@ -148,6 +153,7 @@ def index():
         func_filter=func_filter,
         wg_profile_map=wg_profile_map,
         wg_functions_map=wg_functions_map,
+        suppressed_emails=suppressed_emails,
     )
     # HTMX: nur Tabellen-Fragment zurueckgeben
     if request.headers.get("HX-Request"):
@@ -221,7 +227,10 @@ def detail(customer_id):
     invoices = Invoice.query.filter_by(customer_id=customer_id).order_by(
         Invoice.date.desc()
     ).all()
-    return render_template("customers/detail.html", customer=customer, invoices=invoices)
+    from app.email_suppression import get_suppression
+    suppression = get_suppression(customer.email) if customer.email else None
+    return render_template("customers/detail.html", customer=customer,
+                           invoices=invoices, suppression=suppression)
 
 
 @bp.route("/<int:customer_id>/edit", methods=["GET", "POST"])
@@ -319,12 +328,16 @@ def row(customer_id):
     funcs = WgFunction.query.filter_by(customer_id=customer_id).all()
     wg_functions_map = {customer_id: [f.function for f in funcs]} if funcs else {}
 
+    from app.email_suppression import suppressed_email_set
+    suppressed_emails = suppressed_email_set([customer.email])
+
     return render_template(
         "customers/_row.html",
         c=customer,
         property_map=property_map,
         wg_profile_map=wg_profile_map,
         wg_functions_map=wg_functions_map,
+        suppressed_emails=suppressed_emails,
         type_filter=request.args.get("type", ""),
         q=request.args.get("q", ""),
         sort=request.args.get("sort", _DEFAULT_SORT),
@@ -333,6 +346,28 @@ def row(customer_id):
         status_filter=request.args.get("status", ""),
         func_filter=request.args.get("func", ""),
     )
+
+
+@bp.route("/<int:customer_id>/unsuppress-email", methods=["POST"])
+@login_required
+def unsuppress_email(customer_id):
+    """Hebt die E-Mail-Sperre der Kontaktadresse auf (manuelle Freigabe).
+
+    Steht unter dem ``stammdaten``-Recht (Blueprint-before_request). Die
+    Sperr-Zeile bleibt als Audit-Spur erhalten (``active=False``) und wird durch
+    einen neuen echten Bounce wieder aktiviert. Hinweis: Bei Versand ueber einen
+    Mail-Relay (Postmark) unterdrueckt der Anbieter die Adresse serverseitig
+    weiter — die Freigabe wirkt nur app-seitig.
+    """
+    customer = db.get_or_404(Customer, customer_id)
+    from app.email_suppression import unsuppress
+    if customer.email and unsuppress(customer.email):
+        db.session.commit()
+        flash(f"E-Mail-Sperre für {customer.email} aufgehoben. "
+              f"Versand ist wieder möglich.", "success")
+    else:
+        flash("Keine aktive E-Mail-Sperre gefunden.", "info")
+    return redirect(url_for("customers.detail", customer_id=customer.id))
 
 
 @bp.route("/<int:customer_id>/deactivate", methods=["POST"])

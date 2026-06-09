@@ -36,7 +36,20 @@
         </p>
         {% endif %}
         {% if customer.email %}
-        <p><i class="fas fa-envelope me-2 text-muted"></i>{{ customer.email }}</p>
+        <p>
+          <i class="fas fa-envelope me-2 text-muted"></i>{{ customer.email }}
+          {% if suppression and suppression.active %}
+          <span class="badge bg-danger text-white ms-1" title="{{ suppression.detail or '' }}"><i class="fas fa-ban me-1"></i>{{ suppression.reason_de }}</span>
+          <form method="post" action="{{ url_for('customers.unsuppress_email', customer_id=customer.id) }}"
+                class="d-inline ms-1" hx-boost="false"
+                onsubmit="return confirm('E-Mail-Sperre für {{ customer.email|e }} aufheben? Versand an diese Adresse wird wieder möglich.');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-sm btn-outline-secondary" title="Sperre aufheben">
+              <i class="fas fa-unlock me-1"></i>Freigeben
+            </button>
+          </form>
+          {% endif %}
+        </p>
         {% endif %}
         {% if customer.phone %}
         <p><i class="fas fa-phone me-2 text-muted"></i>{{ customer.phone }}</p>

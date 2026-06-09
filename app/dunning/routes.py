@@ -397,6 +397,13 @@ def notice_send_email(notice_id):
     else:
         recipient = customer.email
 
+    # Sperrliste: an gesperrte Adressen nicht versenden (Test an Admin bleibt ok).
+    if not test_mode:
+        from app.email_suppression import suppression_notice
+        notice = suppression_notice(recipient)
+        if notice:
+            return jsonify(ok=False, error=notice), 400
+
     wg = wg_settings()
     summary = dunning_summary(notice.invoice)
     fmt = AppSetting.get("invoice.document_format", "pdf")

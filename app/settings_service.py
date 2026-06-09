@@ -11,6 +11,7 @@ Keys = MultiFernet fuer Key-Rotation; erster Key = primary (encrypt), weitere
 import re
 from html import escape
 from html.parser import HTMLParser
+from smtplib import SMTPRecipientsRefused
 
 from flask import current_app
 
@@ -432,4 +433,57 @@ def send_mail(msg):
     msg.extra_headers = getattr(msg, 'extra_headers', {}) or {}
     msg.extra_headers['X-PM-Message-Stream'] = 'outbound'
 
-    mail.send(msg)
+    # Sperrliste als letztes Netz: gesperrte Empfaenger gar nicht erst
+    # anschreiben (schuetzt die Versand-Reputation, faengt JEDEN Pfad — auch
+    # Bulk und kuenftige Routen ohne eigenes Gate). Die Route-Gates liefern dem
+    # User vorher die freundliche Meldung; hier wird nur stumm gefiltert.
+    from app.email_suppression import is_suppressed
+    recipients = list(msg.recipients or [])
+    blocked = [r for r in recipients if is_suppressed(r)]
+    if blocked:
+        allowed = [r for r in recipients if r not in blocked]
+        if not allowed:
+            current_app.logger.info(
+                "send_mail: alle Empfaenger gesperrt (%s) — kein Versand", blocked)
+            return
+        current_app.logger.info(
+            "send_mail: gesperrte Empfaenger uebersprungen: %s", blocked)
+        msg.recipients = allowed
+
+    try:
+        mail.send(msg)
+    except SMTPRecipientsRefused as exc:
+        # OSS-Standalone (eigener SMTP, kein Bounce-Webhook): der Server lehnt
+        # eine Adresse synchron ab. Dauerhafte (5xx) Ablehnungen sperren, damit
+        # sie nicht erneut angeschrieben werden. Temporaere (4xx) NICHT sperren.
+        _record_smtp_permanent_failures(exc)
+        raise
+
+
+def _record_smtp_permanent_failures(exc):
+    """Legt fuer 5xx-abgelehnte Empfaenger eine Sperre an (Caller-Fehler bleibt).
+
+    Nur permanente Fehler (Code 5xx) fuehren zur Sperre. Committet die
+    Sperr-Zeile separat, weil der Aufrufer die ausloesende Exception
+    weiterreicht und seinerseits abbricht/rollbacked.
+    """
+    from app.extensions import db
+    from app.email_suppression import suppress
+    from app.models import EmailSuppression
+
+    refused = getattr(exc, 'recipients', None) or {}
+    changed = False
+    for addr, resp in refused.items():
+        try:
+            code = int(resp[0])
+            raw = resp[1]
+        except (TypeError, ValueError, IndexError):
+            continue
+        if not (500 <= code < 600):
+            continue
+        text = raw.decode('utf-8', 'replace') if isinstance(raw, bytes) else str(raw)
+        suppress(addr, EmailSuppression.REASON_SMTP_PERMANENT,
+                 detail=f"SMTP {code}: {text}")
+        changed = True
+    if changed:
+        db.session.commit()

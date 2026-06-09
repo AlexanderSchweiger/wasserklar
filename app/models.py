@@ -1169,6 +1169,73 @@ def resolve_email_subject(session, subject_type, subject_id):
     return session.get(model, subject_id)
 
 
+class EmailSuppression(db.Model):
+    """Pro-Tenant-Sperrliste fuer unzustellbare/abgelehnte E-Mail-Adressen.
+
+    Gekeyt auf die **Adresse** (lowercase-normalisiert, unique), nicht auf das
+    Subjekt: Sobald eine Adresse hart bouncet oder als Spam markiert wird,
+    landet sie hier, und jeder weitere Kunden-Mailversand an sie wird vorab
+    geblockt (sofortiges UX-Feedback + Schutz der Versand-Reputation). Eine
+    Korrektur auf eine *neue* Adresse umgeht die Sperre automatisch, weil die
+    neue Adresse nicht in der Tabelle steht.
+
+    Quellen (``reason``, nach Schwere geordnet): manueller Eintrag
+    (``manual``), permanenter SMTP-Fehler beim Direktversand
+    (``smtp_permanent``), Hard-Bounce-Webhook (``hard_bounce``),
+    Spam-Beschwerde (``spam_complaint``). Ein echter Bounce stuft eine manuelle
+    Sperre hoch, nie zurueck (Eskalation in ``app.email_suppression``).
+
+    ``active=False`` ist die "wieder freigegeben"-Markierung — die Zeile bleibt
+    als Audit-Spur erhalten und wird durch einen neuen echten Bounce
+    reaktiviert. Gespeist wird die Tabelle im SaaS vom Platform-Webhook (eigene
+    Session ins Tenant-Schema), im OSS-Standalone vom synchronen SMTP-Fehler.
+    Tenant-isoliert (lebt im Tenant-Schema).
+    """
+
+    __tablename__ = "email_suppressions"
+
+    REASON_MANUAL = "manual"
+    REASON_SMTP_PERMANENT = "smtp_permanent"
+    REASON_HARD_BOUNCE = "hard_bounce"
+    REASON_SPAM = "spam_complaint"
+
+    REASON_DE = {
+        REASON_MANUAL: "Manuell gesperrt",
+        REASON_SMTP_PERMANENT: "Dauerhaft unzustellbar",
+        REASON_HARD_BOUNCE: "Unzustellbar (Bounce)",
+        REASON_SPAM: "Als Spam markiert",
+    }
+
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(255), nullable=False, unique=True)
+    reason = db.Column(db.String(32), nullable=False)
+    detail = db.Column(db.String(512), nullable=True)
+    first_seen_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    last_seen_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    bounce_count = db.Column(db.Integer, nullable=False, default=1,
+                             server_default=db.text("1"))
+    # Polymorphe Quelle (analog EmailEvent): welches Subjekt den letzten Eintrag
+    # ausgeloest hat. Kein FK (Polymorphie + Subjekt darf danach geloescht werden).
+    source_subject_type = db.Column(db.String(32), nullable=True)
+    source_subject_id = db.Column(db.Integer, nullable=True)
+    active = db.Column(db.Boolean, nullable=False, default=True,
+                       server_default=sa.true())
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    __table_args__ = (
+        db.UniqueConstraint("email", name="uq_email_suppressions_email"),
+        db.Index("ix_email_suppressions_active", "active"),
+    )
+
+    @property
+    def reason_de(self):
+        return self.REASON_DE.get(self.reason, self.reason)
+
+    def __repr__(self):
+        return (f"<EmailSuppression {self.email} {self.reason} "
+                f"active={self.active}>")
+
+
 class InvoiceItem(db.Model):
     __tablename__ = "invoice_items"
 
