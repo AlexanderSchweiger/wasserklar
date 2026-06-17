@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<style>
+  @page {
+    size: A4;
+    margin: 16mm 16mm 18mm;
+    @bottom-center {
+      content: "Seite " counter(page) " / " counter(pages);
+      font-family: Arial, sans-serif; font-size: 8pt; color: #888;
+    }
+  }
+  body { font-family: Arial, sans-serif; font-size: 10pt; color: #2d3748; line-height: 1.4; }
+  .head { display: flex; justify-content: space-between; align-items: flex-start; }
+  h1 { font-size: 16pt; color: #102a44; margin: 0 0 1mm; }
+  .meta { color: #555; font-size: 9pt; }
+  .rule { height: 2px; background: #2f6a93; margin: 4mm 0 6mm; }
+  .kpis { display: flex; flex-wrap: wrap; gap: 4mm; margin-bottom: 6mm; }
+  .kpi { border: 1px solid #e2e8f0; border-radius: 3px; padding: 3mm 4mm; min-width: 38mm; }
+  .kpi .v { font-size: 14pt; font-weight: bold; color: #102a44; }
+  .kpi .l { font-size: 8pt; color: #666; }
+  .section-title { font-size: 12pt; color: #102a44; border-bottom: 1px solid #e2e8f0; padding-bottom: 1.5mm; margin: 6mm 0 3mm; }
+  .cols { display: flex; gap: 8mm; }
+  .cols > div { flex: 1; }
+  table { width: 100%; border-collapse: collapse; font-size: 8.5pt; }
+  th, td { border-bottom: 1px solid #e2e8f0; padding: 1.5mm 2mm; text-align: left; vertical-align: top; }
+  th { background: #f1f5f9; color: #334155; }
+  td.num, th.num { text-align: right; white-space: nowrap; }
+  .muted { color: #888; }
+</style>
+</head>
+<body>
+  <div class="head">
+    <div>
+      <h1>Störungs- und Rohrbruch-Bericht</h1>
+      <div class="meta">{{ wg.name }}{% if year %} · Berichtsjahr {{ year }}{% else %} · alle Jahre{% endif %}</div>
+    </div>
+    <div class="meta">Erstellt am {{ today_de }}</div>
+  </div>
+  <div class="rule"></div>
+
+  <div class="kpis">
+    <div class="kpi"><div class="v">{{ agg.total }}</div><div class="l">Störungen gesamt</div></div>
+    <div class="kpi"><div class="v">{{ agg.loss_sum | de_number }} m³</div><div class="l">Wasserverlust gesamt</div></div>
+    <div class="kpi"><div class="v">{{ agg.cost_sum | de_number }} €</div><div class="l">Reparaturkosten gesamt</div></div>
+    <div class="kpi"><div class="v">{{ agg.affected_sum }}</div><div class="l">Betroffene Anschlüsse (max. {{ agg.affected_max }})</div></div>
+    <div class="kpi"><div class="v">{% if agg.avg_duration_days is not none %}{{ agg.avg_duration_days | de_number(1) }}{% else %}—{% endif %}</div><div class="l">Ø Dauer Erkennung→Behebung (Tage)</div></div>
+  </div>
+
+  <div class="cols">
+    <div>
+      <div class="section-title">Nach Art</div>
+      <table>
+        <tbody>
+          {% for key, t in vocab.INCIDENT_TYPES.items() if agg.by_type.get(key) %}
+          <tr><td>{{ t.label }}</td><td class="num">{{ agg.by_type.get(key) }}</td></tr>
+          {% endfor %}
+          {% if not agg.total %}<tr><td class="muted" colspan="2">Keine Daten</td></tr>{% endif %}
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <div class="section-title">Nach Status</div>
+      <table>
+        <tbody>
+          {% for key, s in vocab.STATUSES.items() if agg.by_status.get(key) %}
+          <tr><td>{{ s.label }}</td><td class="num">{{ agg.by_status.get(key) }}</td></tr>
+          {% endfor %}
+          {% if not agg.total %}<tr><td class="muted" colspan="2">Keine Daten</td></tr>{% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="section-title">Einzelaufstellung</div>
+  <table>
+    <thead>
+      <tr>
+        <th>Erkannt</th><th>Titel</th><th>Art</th><th>Status</th><th>Ursache</th>
+        <th class="num">Dauer</th><th class="num">Verlust m³</th><th class="num">Kosten €</th><th>Firma</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for inc in agg.incidents %}
+      <tr>
+        <td>{{ inc.detected_at.strftime('%d.%m.%Y') if inc.detected_at else '' }}</td>
+        <td>{{ inc.title }}</td>
+        <td>{{ vocab.type_label(inc.incident_type) }}</td>
+        <td>{{ vocab.status_label(inc.status) }}</td>
+        <td>{{ vocab.cause_label(inc.cause) }}</td>
+        <td class="num">{% set d = inc.duration_days() %}{{ d if d is not none else '' }}</td>
+        <td class="num">{{ inc.water_loss_m3 | de_number if inc.water_loss_m3 is not none else '' }}</td>
+        <td class="num">{{ inc.cost | de_number if inc.cost is not none else '' }}</td>
+        <td>{{ inc.performed_by or '' }}</td>
+      </tr>
+      {% else %}
+      <tr><td class="muted" colspan="9">Keine Störungen im Berichtszeitraum.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</body>
+</html>

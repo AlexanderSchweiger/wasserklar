@@ -1,0 +1,63 @@
+{# Foto-Grid + Upload + Delete. Wird initial in die Fotos-Card eingebunden und
+   nach Upload/Delete per HTMX als innerHTML von #incident-photos-card getauscht.
+   Erwartet: inc (Incident).
+
+   WICHTIG: ``hx-boost="false"`` auf den Formularen — die Seite laeuft unter
+   ``<body hx-boost="true">``, und htmx-Boost kann ``multipart/form-data``
+   (Datei-Upload) NICHT verarbeiten und faellt sonst auf nativen Submit zurueck
+   (Vollnavigation statt In-Place-Swap). Kein natives ``action``/``method`` —
+   htmx-only wie das Netz-Modul. #}
+<div class="card-header d-flex align-items-center">
+  <h3 class="card-title mb-0"><i class="fas fa-camera me-1 text-secondary"></i> Fotos</h3>
+  <span class="badge bg-secondary-lt ms-2">{{ inc.photos | length }}</span>
+</div>
+<div class="card-body">
+  {% if inc.photos %}
+  <div class="row g-2 mb-3">
+    {% for photo in inc.photos %}
+    <div class="col-6 col-md-4">
+      <div class="position-relative">
+        <a href="{{ url_for('incidents.photo_serve', photo_id=photo.id) }}" target="_blank" rel="noopener" hx-boost="false">
+          <img src="{{ url_for('incidents.photo_serve', photo_id=photo.id) }}"
+               class="rounded border w-100" style="height:120px;object-fit:cover"
+               alt="{{ photo.caption or photo.original_name or 'Foto' }}">
+        </a>
+        <form hx-post="{{ url_for('incidents.photo_delete', photo_id=photo.id) }}"
+              hx-target="#incident-photos-card" hx-swap="innerHTML"
+              hx-confirm="Foto wirklich löschen?" hx-boost="false"
+              class="position-absolute top-0 end-0 m-1">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-sm btn-icon btn-danger" title="Foto löschen">
+            <i class="fas fa-trash"></i>
+          </button>
+        </form>
+      </div>
+      {% if photo.caption %}<small class="text-muted d-block mt-1">{{ photo.caption }}</small>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="text-muted">Noch keine Fotos hochgeladen.</p>
+  {% endif %}
+
+  <form hx-post="{{ url_for('incidents.photo_upload', incident_id=inc.id) }}"
+        hx-target="#incident-photos-card" hx-swap="innerHTML"
+        hx-encoding="multipart/form-data" hx-boost="false">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="row g-2 align-items-end">
+      <div class="col-sm-5">
+        <label class="form-label">Foto</label>
+        <input type="file" name="photo" accept="image/*" class="form-control" required>
+      </div>
+      <div class="col-sm-5">
+        <label class="form-label">Bildunterschrift (optional)</label>
+        <input type="text" name="caption" class="form-control" maxlength="255">
+      </div>
+      <div class="col-sm-2">
+        <button type="submit" class="btn btn-outline-primary w-100">
+          <i class="fas fa-upload me-1"></i> Hochladen
+        </button>
+      </div>
+    </div>
+  </form>
+</div>

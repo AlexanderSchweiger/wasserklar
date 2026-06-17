@@ -1,0 +1,28 @@
+{% from "_pagination.html" import render_pagination %}
+<div class="card-body p-0 table-scroll">
+<table class="table table-hover table-striped mb-0">
+  <thead>
+    <tr>
+      <th style="width:110px">Erkannt</th>
+      <th>Titel</th>
+      <th>Art</th>
+      <th>Schweregrad</th>
+      <th>Status</th>
+      <th class="text-end">Kosten</th>
+      <th class="text-end text-nowrap">Wasserverlust</th>
+      <th class="text-end">Dauer</th>
+      <th class="col-actions"></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for inc in pagination.items %}
+    {% include "incidents/_row.html" %}
+    {% else %}
+    <tr>
+      <td colspan="9" class="text-center text-muted py-3">Keine Störungen gefunden.</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{{ render_pagination(pagination) }}

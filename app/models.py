@@ -2039,6 +2039,154 @@ class FeaturePhoto(db.Model):
 
 
 # ---------------------------------------------------------------------------
+# Störungs-/Rohrbruch-Journal (incidents) — Ereignisjournal mit Kartenpin
+# ---------------------------------------------------------------------------
+
+class Incident(db.Model):
+    """Ereignisjournal-Eintrag fuer Stoerungen und Rohrbrueche.
+
+    Geo-Position wird — wie ``NetworkFeature`` — als GeoJSON-Point in
+    ``location_geojson`` (Text) gehalten und nach ``lat``/``lng`` denormalisiert
+    (schnelles Marker-Rendering ohne JSON-Parse). Bewusst kein PostGIS
+    (dialekt-portabel SQLite/MariaDB/Postgres), Punkt-only — der betroffene
+    Rohrabschnitt wird ueber den optionalen ``feature_id``-FK auf eine
+    ``NetworkFeature``-Linie abgebildet, nicht ueber eine zweite Geometrie.
+
+    Kosten = ein einzelnes ``cost``-Feld (Itemisierung erledigt bei Bedarf das
+    Buchhaltungs-Modul). ``water_loss_m3`` ist die zentrale operative Kennzahl
+    fuer den Jahresbericht (Non-Revenue-Water). ``created_by_id`` kann NULL
+    werden, wenn der User geloescht/deaktiviert wird.
+    """
+    __tablename__ = "incidents"
+
+    # --- Typ (Ereignisart) ---
+    TYPE_ROHRBRUCH = "rohrbruch"
+    TYPE_UNDICHTHEIT = "undichtheit"
+    TYPE_DRUCKVERLUST = "druckverlust"
+    TYPE_VERSCHMUTZUNG = "verschmutzung"
+    TYPE_AUSFALL = "ausfall"
+    TYPE_SONSTIGES = "sonstiges"
+
+    # --- Status ---
+    STATUS_OPEN = "offen"
+    STATUS_IN_PROGRESS = "in_bearbeitung"
+    STATUS_RESOLVED = "behoben"
+    STATUSES = (STATUS_OPEN, STATUS_IN_PROGRESS, STATUS_RESOLVED)
+
+    # --- Schweregrad ---
+    SEVERITY_LOW = "niedrig"
+    SEVERITY_MEDIUM = "mittel"
+    SEVERITY_HIGH = "hoch"
+    SEVERITY_CRITICAL = "kritisch"
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    title = db.Column(db.String(200), nullable=False)
+    incident_type = db.Column(
+        db.String(40), nullable=False,
+        default=TYPE_ROHRBRUCH, server_default=db.text("'rohrbruch'"),
+    )
+    severity = db.Column(
+        db.String(20), nullable=False,
+        default=SEVERITY_MEDIUM, server_default=db.text("'mittel'"),
+    )
+    status = db.Column(
+        db.String(20), nullable=False,
+        default=STATUS_OPEN, server_default=db.text("'offen'"),
+    )
+    cause = db.Column(db.String(40), nullable=True)   # Ursachenkategorie (vocab.CAUSES)
+
+    # Zeitachse: erkannt -> behoben. duration_days() = Erkennung -> Behebung.
+    detected_at = db.Column(db.Date, nullable=False)
+    resolved_at = db.Column(db.Date, nullable=True)   # auto-gesetzt bei status='behoben'
+
+    # Lage (GeoJSON-Point als Text; lat/lng denormalisiert).
+    location_geojson = db.Column(db.Text, nullable=True)
+    lat = db.Column(db.Float, nullable=True)
+    lng = db.Column(db.Float, nullable=True)
+    location_description = db.Column(db.String(255), nullable=True)  # Freitext „bei Hydrant 3"
+
+    # Operative Kennzahlen fuer den Jahresbericht.
+    water_loss_m3 = db.Column(db.Numeric(10, 2), nullable=True)   # geschaetzter Wasserverlust (m³)
+    affected_count = db.Column(db.Integer, nullable=True)         # Anzahl betroffener Anschluesse
+    cost = db.Column(db.Numeric(10, 2), nullable=True)            # Reparaturkosten (EUR)
+    performed_by = db.Column(db.String(120), nullable=True)       # ausfuehrende Firma / eigene Crew
+
+    description = db.Column(db.Text, nullable=True)   # Schadensbeschreibung
+    repair_notes = db.Column(db.Text, nullable=True)  # Wiederherstellungsmassnahme (Freitext)
+
+    # Optionale Verknuepfungen mit Stammdaten / Netz (alle nullable, SET NULL).
+    customer_id = db.Column(
+        db.Integer, db.ForeignKey("customers.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )
+    property_id = db.Column(
+        db.Integer, db.ForeignKey("properties.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )
+    feature_id = db.Column(
+        db.Integer, db.ForeignKey("network_features.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_by_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+    linked_customer = db.relationship("Customer", foreign_keys=[customer_id])
+    linked_property = db.relationship("Property", foreign_keys=[property_id])
+    linked_feature = db.relationship("NetworkFeature", foreign_keys=[feature_id])
+
+    photos = db.relationship(
+        "IncidentPhoto", backref="incident", lazy="selectin",
+        cascade="all, delete-orphan",
+        order_by="IncidentPhoto.uploaded_at.asc()",
+    )
+
+    def duration_days(self):
+        """Dauer Erkennung -> Behebung in Tagen, oder None solange offen."""
+        if self.detected_at and self.resolved_at:
+            return (self.resolved_at - self.detected_at).days
+        return None
+
+    def is_resolved(self):
+        return self.status == self.STATUS_RESOLVED
+
+    def __repr__(self):
+        return f"<Incident #{self.id} {self.incident_type} {self.status}>"
+
+
+class IncidentPhoto(db.Model):
+    """Foto-Dokumentation zu einer Stoerung. Datei liegt im tenant-spezifischen
+    Upload-Ordner (siehe ``app.incidents.services.incident_upload_dir``), die DB
+    haelt nur Metadaten — analog ``FeaturePhoto``. Bei Behoerden-/Rechts-Relevanz
+    der Foto-Evidenz: separates Dateisystem-Backup noetig (Fotos sind nicht im
+    data_transfer-ZIP).
+    """
+    __tablename__ = "incident_photos"
+
+    id = db.Column(db.Integer, primary_key=True)
+    incident_id = db.Column(
+        db.Integer, db.ForeignKey("incidents.id"),
+        nullable=False, index=True,
+    )
+    filename = db.Column(db.String(255), nullable=False)        # gespeicherter Dateiname (UUID)
+    original_name = db.Column(db.String(255), nullable=True)
+    content_type = db.Column(db.String(80), nullable=True)
+    caption = db.Column(db.String(255), nullable=True)
+    uploaded_at = db.Column(db.DateTime, default=datetime.utcnow)
+    uploaded_by_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+
+    def __repr__(self):
+        return f"<IncidentPhoto incident={self.incident_id} {self.filename}>"
+
+
+# ---------------------------------------------------------------------------
 # Schriftführung (Mandant-Typ Wassergenossenschaft — Sitzungen, Einladungen,
 # Protokolle, Beschlüsse, Schriftverkehr)
 # ---------------------------------------------------------------------------
@@ -2068,6 +2216,7 @@ class Meeting(db.Model):
     start_time = db.Column(db.Time, nullable=True)
     end_time = db.Column(db.Time, nullable=True)
     location = db.Column(db.String(200), nullable=True)
+    invitation_heading = db.Column(db.String(200), nullable=True)  # Überschrift der Einladung; leer = Default "Einladung zur <Typ>"
     intro_text = db.Column(db.Text, nullable=True)     # sanitisiertes Rich-Text-HTML
     closing_text = db.Column(db.Text, nullable=True)   # sanitisiertes Rich-Text-HTML
     status = db.Column(db.String(20), nullable=False, default=STATUS_PLANNING,

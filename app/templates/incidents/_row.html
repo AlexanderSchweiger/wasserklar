@@ -1,0 +1,46 @@
+{# Eine Störungs-Tabellenzeile. Genutzt vom Tabellen-Loop (incidents/_table.html)
+   UND einzeln vom incidents.row-Endpoint fuer den In-Place-Swap nach dem
+   Modal-Speichern — so bleiben Filter, Suche und Pagination unberuehrt.
+
+   Erwartet: inc (Incident), vocab sowie optional ``filters`` (Listen-Filter)
+   fuer das ``next`` des Loeschen-Formulars. #}
+<tr id="incident-row-{{ inc.id }}">
+  <td class="text-nowrap">{{ inc.detected_at.strftime('%d.%m.%Y') if inc.detected_at else '—' }}</td>
+  <td>
+    <a href="{{ url_for('incidents.detail', incident_id=inc.id) }}" hx-boost="false">
+      <strong>{{ inc.title or '(ohne Titel)' }}</strong>
+    </a>
+    {% if inc.lat is not none %}<i class="fas fa-map-marker-alt text-secondary ms-1" title="Position auf der Karte hinterlegt"></i>{% endif %}
+  </td>
+  <td>
+    <i class="fas {{ vocab.type_icon(inc.incident_type) }} me-1" style="color: {{ vocab.type_color(inc.incident_type) }}"></i>
+    {{ vocab.type_label(inc.incident_type) }}
+  </td>
+  <td><span class="badge {{ vocab.severity_badge(inc.severity) }}">{{ vocab.severity_label(inc.severity) }}</span></td>
+  <td><span class="badge {{ vocab.status_badge(inc.status) }}">{{ vocab.status_label(inc.status) }}</span></td>
+  <td class="text-end text-nowrap">{% if inc.cost is not none %}{{ inc.cost | de_number }} €{% else %}<span class="text-muted">—</span>{% endif %}</td>
+  <td class="text-end text-nowrap">{% if inc.water_loss_m3 is not none %}{{ inc.water_loss_m3 | de_number }} m³{% else %}<span class="text-muted">—</span>{% endif %}</td>
+  <td class="text-end text-nowrap">
+    {% set d = inc.duration_days() %}
+    {% if d is not none %}{{ d }} {{ 'Tag' if d == 1 else 'Tage' }}{% else %}<span class="text-muted">—</span>{% endif %}
+  </td>
+  <td class="text-end text-nowrap col-actions">
+    <button type="button"
+       data-url="{{ url_for('incidents.edit', incident_id=inc.id) }}"
+       onclick="openIncidentEditModal(this)"
+       class="btn btn-sm btn-outline-secondary me-1" title="Bearbeiten">
+      <i class="fas fa-edit"></i>
+    </button>
+    <form method="post"
+          action="{{ url_for('incidents.delete', incident_id=inc.id) }}"
+          class="d-inline"
+          hx-boost="false"
+          onsubmit="return confirm('Störung „{{ (inc.title or '')|e }}“ wirklich löschen? Zugehörige Fotos werden mitgelöscht.');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="next" value="{{ url_for('incidents.index', q=filters.q or none, status=filters.status or none, type=filters.type or none, severity=filters.severity or none, year=filters.year or none) if filters is defined else url_for('incidents.index') }}">
+      <button type="submit" class="btn btn-sm btn-outline-danger" title="Löschen">
+        <i class="fas fa-trash"></i>
+      </button>
+    </form>
+  </td>
+</tr>

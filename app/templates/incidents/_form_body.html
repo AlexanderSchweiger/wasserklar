@@ -1,0 +1,146 @@
+{# Geteilter Form-Body fuer Anlage UND Bearbeitung (kein eigenes <form> — das
+   Skelett _incident_edit_modal.html liefert <form> + CSRF + Submit). Werte
+   kommen bei Validierungsfehler aus ``form_data`` (Re-Render), sonst aus ``inc``.
+
+   Erwartet: inc (Incident, ggf. leer), vocab, form_data (MultiDict|None),
+   error (str|None), today_iso, customers, properties. #}
+{% macro val(name, model_value) %}{{ (form_data.get(name) if form_data is not none else (model_value if model_value is not none else '')) }}{% endmacro %}
+{% set cur_type     = (form_data.get('incident_type') if form_data is not none else inc.incident_type) or 'rohrbruch' %}
+{% set cur_severity = (form_data.get('severity')      if form_data is not none else inc.severity) or 'mittel' %}
+{% set cur_status   = (form_data.get('status')        if form_data is not none else inc.status) or 'offen' %}
+{% set cur_cause    = (form_data.get('cause')         if form_data is not none else inc.cause) or '' %}
+{% set cur_customer = (form_data.get('customer_id')   if form_data is not none else inc.customer_id) %}
+{% set cur_property = (form_data.get('property_id')   if form_data is not none else inc.property_id) %}
+
+{% if error %}
+<div class="alert alert-danger"><i class="fas fa-exclamation-circle me-1"></i> {{ error }}</div>
+{% endif %}
+
+{# feature_id wird (noch) nicht im Formular gesetzt, aber durchgereicht, damit
+   eine ueber die Karte/spaeter gesetzte Verknuepfung beim Edit nicht verloren geht. #}
+<input type="hidden" name="feature_id" value="{{ inc.feature_id or '' }}">
+
+<div class="mb-3">
+  <label class="form-label required">Titel</label>
+  <input type="text" name="title" class="form-control" required maxlength="200"
+         placeholder="z. B. Rohrbruch Hauptstraße"
+         value="{{ val('title', inc.title) }}">
+</div>
+
+<div class="row g-3">
+  <div class="col-md-4">
+    <label class="form-label">Art</label>
+    <select name="incident_type" class="form-select">
+      {% for key, t in vocab.INCIDENT_TYPES.items() %}
+      <option value="{{ key }}" {% if key == cur_type %}selected{% endif %}>{{ t.label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-4">
+    <label class="form-label">Schweregrad</label>
+    <select name="severity" class="form-select">
+      {% for key, s in vocab.SEVERITIES.items() %}
+      <option value="{{ key }}" {% if key == cur_severity %}selected{% endif %}>{{ s.label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-4">
+    <label class="form-label">Status</label>
+    <select name="status" class="form-select">
+      {% for key, s in vocab.STATUSES.items() %}
+      <option value="{{ key }}" {% if key == cur_status %}selected{% endif %}>{{ s.label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+</div>
+
+<div class="row g-3 mt-0">
+  <div class="col-md-4">
+    <label class="form-label">Ursache</label>
+    <select name="cause" class="form-select tom-select">
+      <option value="">— unbekannt / keine —</option>
+      {% for key, c in vocab.CAUSES.items() %}
+      <option value="{{ key }}" {% if key == cur_cause %}selected{% endif %}>{{ c.label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-4">
+    <label class="form-label">Erkannt am</label>
+    <input type="date" name="detected_at" class="form-control"
+           value="{{ val('detected_at', inc.detected_at.isoformat() if inc.detected_at else today_iso) }}">
+  </div>
+  <div class="col-md-4">
+    <label class="form-label">Behoben am</label>
+    <input type="date" name="resolved_at" class="form-control"
+           value="{{ val('resolved_at', inc.resolved_at.isoformat() if inc.resolved_at else '') }}">
+    <small class="form-hint">Wird bei Status „Behoben" automatisch gesetzt.</small>
+  </div>
+</div>
+
+<div class="mb-3 mt-3">
+  <label class="form-label">Lage (Beschreibung)</label>
+  <input type="text" name="location_description" class="form-control" maxlength="255"
+         placeholder="z. B. bei Hydrant 3, Kreuzung Bachweg"
+         value="{{ val('location_description', inc.location_description) }}">
+  <small class="form-hint">Die genaue Position kann auf der Detailseite in der Karte gesetzt werden.</small>
+</div>
+
+<div class="row g-3">
+  <div class="col-md-3">
+    <label class="form-label">Wasserverlust (m³)</label>
+    <input type="text" inputmode="decimal" name="water_loss_m3" class="form-control"
+           placeholder="z. B. 12,5" value="{{ val('water_loss_m3', inc.water_loss_m3) }}">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Reparaturkosten (€)</label>
+    <input type="text" inputmode="decimal" name="cost" class="form-control"
+           placeholder="z. B. 850,00" value="{{ val('cost', inc.cost) }}">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Betroffene Anschlüsse</label>
+    <input type="number" min="0" name="affected_count" class="form-control"
+           value="{{ val('affected_count', inc.affected_count) }}">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Ausführende Firma</label>
+    <input type="text" name="performed_by" class="form-control" maxlength="120"
+           placeholder="eigene Crew / Fremdfirma" value="{{ val('performed_by', inc.performed_by) }}">
+  </div>
+</div>
+
+<div class="row g-3 mt-0">
+  <div class="col-md-6">
+    <label class="form-label">Betroffenes Objekt (optional)</label>
+    <select name="property_id" class="form-select tom-select">
+      <option value="">— keines —</option>
+      {% for p in properties %}
+      <option value="{{ p.id }}" {% if cur_property and p.id == cur_property|int %}selected{% endif %}>
+        {{ p.object_number or '' }} {{ p.address_display() or p.label() }}
+      </option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-6">
+    <label class="form-label">Betroffener Kontakt (optional)</label>
+    <select name="customer_id" class="form-select tom-select">
+      <option value="">— keiner —</option>
+      {% for c in customers %}
+      <option value="{{ c.id }}" {% if cur_customer and c.id == cur_customer|int %}selected{% endif %}>
+        {{ c.customer_number or '' }} {{ c.name }}
+      </option>
+      {% endfor %}
+    </select>
+  </div>
+</div>
+
+<div class="mb-3 mt-3">
+  <label class="form-label">Schadensbeschreibung</label>
+  <textarea name="description" class="form-control" rows="2"
+            placeholder="Was ist passiert?">{{ val('description', inc.description) }}</textarea>
+</div>
+
+<div class="mb-1">
+  <label class="form-label">Wiederherstellungsmaßnahme</label>
+  <textarea name="repair_notes" class="form-control" rows="2"
+            placeholder="Wie wurde behoben? (z. B. Schelle gesetzt, Rohr getauscht)">{{ val('repair_notes', inc.repair_notes) }}</textarea>
+</div>

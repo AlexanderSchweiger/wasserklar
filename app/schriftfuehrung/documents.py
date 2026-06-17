@@ -111,10 +111,10 @@ def build_invitation_docx(meeting, customer, agenda_items, type_label):
     if customer.address_display():
         addr.add_run("\n" + customer.address_display())
 
-    # Betreff.
+    # Betreff / Überschrift (konfigurierbar; Default "Einladung zur <Typ>").
     doc.add_paragraph()
     subj = doc.add_paragraph()
-    subj.add_run(f"Einladung zur {type_label}").bold = True
+    subj.add_run(meeting.invitation_heading or f"Einladung zur {type_label}").bold = True
     when = _meeting_when(meeting)
     meta = []
     if when:

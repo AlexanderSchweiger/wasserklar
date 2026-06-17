@@ -77,6 +77,12 @@ ENDPOINT_TO_DOC = {
     "accounting.report":             "buchhaltung",
     "accounting.ust":                "buchhaltung",
 
+    # Störungsjournal
+    "incidents.index":             "stoerungsjournal",
+    "incidents.detail":            "stoerungsjournal#detail",
+    "incidents.map_view":          "stoerungsjournal#karte",
+    "incidents.print_view":        "stoerungsjournal#bericht",
+
     # Projekte
     "projects.index":              "projekte",
 

@@ -158,7 +158,7 @@
           früheren Export. <code>feature_type</code>, <code>accuracy</code>, <code>material</code>,
           <code>name</code> u.&nbsp;a. werden aus den Properties gelesen. Unbekannte Typen landen als „Sonstiges".
         </p>
-        <form method="post" enctype="multipart/form-data">
+        <form method="post" enctype="multipart/form-data" hx-boost="false">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <div class="mb-3">
             <label class="form-label">GeoJSON-Datei</label>

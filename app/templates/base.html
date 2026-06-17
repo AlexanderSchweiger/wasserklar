@@ -108,6 +108,11 @@
             {% set _nav_plan_import  = request.endpoint == 'network.import_view' %}
             {% set technik_active    = request.blueprint == 'network' %}
 
+            {# Störungsjournal (Untermenü unter Leitungsnetz) #}
+            {% set incidents_active = request.blueprint == 'incidents' %}
+            {% set _nav_incidents_map     = request.endpoint == 'incidents.map_view' %}
+            {% set _nav_incidents_journal = incidents_active and not _nav_incidents_map %}
+
             {# Schriftführung #}
             {% set _nav_sf_board       = request.endpoint == 'schriftfuehrung.board_meetings' %}
             {% set _nav_sf_assembly    = request.endpoint == 'schriftfuehrung.assemblies' %}
@@ -386,17 +391,18 @@
             </li>
             {% endif %}
 
-            {% if current_user.has_permission('network') %}
+            {% if current_user.has_permission('network') or current_user.has_permission('incidents') %}
             <li class="nav-item">
-              <a class="nav-link dropdown-toggle {% if technik_active %}active{% endif %}" href="#navbar-network"
+              <a class="nav-link dropdown-toggle {% if technik_active or incidents_active %}active{% endif %}" href="#navbar-network"
                 data-bs-toggle="collapse" role="button"
-                aria-expanded="{{ 'true' if technik_active else 'false' }}"
+                aria-expanded="{{ 'true' if technik_active or incidents_active else 'false' }}"
                 aria-controls="navbar-network">
                 <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-map-marked-alt"></i></span>
                 <span class="nav-link-title">Leitungsnetz</span>
               </a>
-              <div class="collapse {% if technik_active %}show{% endif %}" id="navbar-network">
+              <div class="collapse {% if technik_active or incidents_active %}show{% endif %}" id="navbar-network">
                 <ul class="nav nav-sm flex-column ps-3">
+                  {% if current_user.has_permission('network') %}
                   <li class="nav-item">
                     <a class="nav-link {% if _nav_plaene %}active{% endif %}"
                       href="{{ url_for('network.plans_index') }}">
@@ -421,6 +427,21 @@
                       <i class="fas fa-file-import me-2"></i>Plan importieren
                     </a>
                   </li>
+                  {% endif %}
+                  {% if current_user.has_permission('incidents') %}
+                  <li class="nav-item">
+                    <a class="nav-link {% if _nav_incidents_journal %}active{% endif %}"
+                      href="{{ url_for('incidents.index') }}">
+                      <i class="fas fa-exclamation-triangle me-2"></i>Störungsjournal
+                    </a>
+                  </li>
+                  <li class="nav-item">
+                    <a class="nav-link {% if _nav_incidents_map %}active{% endif %}"
+                      href="{{ url_for('incidents.map_view') }}" hx-boost="false">
+                      <i class="fas fa-map-marked-alt me-2"></i>Störungs-Karte
+                    </a>
+                  </li>
+                  {% endif %}
                 </ul>
               </div>
             </li>

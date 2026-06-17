@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Störungsbericht{% endblock %}
+{% block page_title %}<i class="fas fa-file-pdf me-2"></i> Störungsbericht{% if year %} {{ year }}{% endif %}{% endblock %}
+
+{% block content %}
+<div class="mb-3 d-flex gap-2 d-print-none">
+  <a href="{{ url_for('incidents.index') }}" class="btn btn-sm btn-outline-secondary">
+    <i class="fas fa-arrow-left me-1"></i> Zurück
+  </a>
+  <button type="button" class="btn btn-sm btn-primary" onclick="window.print()">
+    <i class="fas fa-print me-1"></i> Drucken / als PDF speichern
+  </button>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-start mb-2">
+      <div>
+        <h2 class="mb-0">Störungs- und Rohrbruch-Bericht</h2>
+        <div class="text-muted">{{ wg.name }}{% if year %} · Berichtsjahr {{ year }}{% else %} · alle Jahre{% endif %}</div>
+      </div>
+      <div class="text-muted">Erstellt am {{ today_de }}</div>
+    </div>
+
+    <div class="row g-2 my-2">
+      <div class="col"><div class="border rounded p-2"><div class="h3 mb-0">{{ agg.total }}</div><small class="text-muted">Störungen gesamt</small></div></div>
+      <div class="col"><div class="border rounded p-2"><div class="h3 mb-0">{{ agg.loss_sum | de_number }} m³</div><small class="text-muted">Wasserverlust</small></div></div>
+      <div class="col"><div class="border rounded p-2"><div class="h3 mb-0">{{ agg.cost_sum | de_number }} €</div><small class="text-muted">Reparaturkosten</small></div></div>
+      <div class="col"><div class="border rounded p-2"><div class="h3 mb-0">{{ agg.affected_sum }}</div><small class="text-muted">Betroffene Anschlüsse (max. {{ agg.affected_max }})</small></div></div>
+      <div class="col"><div class="border rounded p-2"><div class="h3 mb-0">{% if agg.avg_duration_days is not none %}{{ agg.avg_duration_days | de_number(1) }}{% else %}—{% endif %}</div><small class="text-muted">Ø Dauer (Tage)</small></div></div>
+    </div>
+
+    <table class="table table-sm mt-3">
+      <thead>
+        <tr>
+          <th>Erkannt</th><th>Titel</th><th>Art</th><th>Status</th><th>Ursache</th>
+          <th class="text-end">Dauer</th><th class="text-end">Verlust m³</th><th class="text-end">Kosten €</th><th>Firma</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for inc in agg.incidents %}
+        <tr>
+          <td class="text-nowrap">{{ inc.detected_at.strftime('%d.%m.%Y') if inc.detected_at else '' }}</td>
+          <td>{{ inc.title }}</td>
+          <td>{{ vocab.type_label(inc.incident_type) }}</td>
+          <td>{{ vocab.status_label(inc.status) }}</td>
+          <td>{{ vocab.cause_label(inc.cause) }}</td>
+          <td class="text-end">{% set d = inc.duration_days() %}{{ d if d is not none else '' }}</td>
+          <td class="text-end">{{ inc.water_loss_m3 | de_number if inc.water_loss_m3 is not none else '' }}</td>
+          <td class="text-end">{{ inc.cost | de_number if inc.cost is not none else '' }}</td>
+          <td>{{ inc.performed_by or '' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="9" class="text-center text-muted">Keine Störungen im Berichtszeitraum.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

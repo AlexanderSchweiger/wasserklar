@@ -201,6 +201,7 @@ def _apply_meeting_form(meeting, form):
     meeting.start_time = _parse_time(form.get("start_time"))
     meeting.end_time = _parse_time(form.get("end_time"))
     meeting.location = (form.get("location") or "").strip() or None
+    meeting.invitation_heading = (form.get("invitation_heading") or "").strip() or None
     meeting.intro_text = sanitize_rich_text(form.get("intro_text") or "")
     meeting.closing_text = sanitize_rich_text(form.get("closing_text") or "")
 
@@ -258,6 +259,7 @@ def meeting_copy(meeting_id):
         meeting_type=src.meeting_type,
         title=f"{src.title} (Kopie)",
         location=src.location,
+        invitation_heading=src.invitation_heading,
         intro_text=src.intro_text,
         closing_text=src.closing_text,
         status=Meeting.STATUS_PLANNING,

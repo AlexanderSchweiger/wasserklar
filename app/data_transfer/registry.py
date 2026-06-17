@@ -14,7 +14,7 @@ from app.models import (
     BookingGroup, Booking, Transfer, RealAccountYearBalance,
     DunningPolicy, DunningStage, DunningNotice,
     AppSetting, InvoiceCounter, CustomerCounter,
-    NetworkPlan, NetworkFeature, MaintenanceLog,
+    NetworkPlan, NetworkFeature, MaintenanceLog, Incident,
     CustomerWgProfile, PropertyWgProfile, WgFunction,
 )
 
@@ -35,6 +35,7 @@ NULL_ON_IMPORT_COLS = {
     NetworkPlan: ["created_by_id", "updated_by_id"],
     NetworkFeature: ["created_by_id"],
     MaintenanceLog: ["created_by_id"],
+    Incident: ["created_by_id"],
 }
 
 
@@ -45,7 +46,7 @@ CATEGORIES = {
         TaxRate, FiscalYear, Account, RealAccount, Project,
         Customer, Property, PropertyOwnership, WaterMeter,
         BillingPeriod, MeterReadingAccessCode, WaterTariff,
-        NetworkPlan, NetworkFeature, MaintenanceLog,
+        NetworkPlan, NetworkFeature, MaintenanceLog, Incident,
         CustomerWgProfile, PropertyWgProfile, WgFunction,
     ],
     "buchungen": [
@@ -79,7 +80,7 @@ INSERT_ORDER = [
     BookingGroup, Booking, Transfer, RealAccountYearBalance,
     DunningPolicy, DunningStage, DunningNotice,
     AppSetting, InvoiceCounter, CustomerCounter,
-    NetworkPlan, NetworkFeature, MaintenanceLog,
+    NetworkPlan, NetworkFeature, MaintenanceLog, Incident,
 ]
 
 
@@ -96,6 +97,7 @@ YEAR_FILTERS = {
     Transfer: ("date_year", "date"),
     RealAccountYearBalance: "year",
     InvoiceCounter: "year",
+    Incident: ("date_year", "detected_at"),
 }
 
 
@@ -138,6 +140,7 @@ NATURAL_KEYS = {
     NetworkPlan: None,                  # immer Insert (Voll-Replace ersetzt den Seed-Hauptplan)
     NetworkFeature: None,               # kein natuerlicher Schluessel — immer Insert
     MaintenanceLog: None,
+    Incident: None,                     # kein stabiler natuerlicher Schluessel — immer Insert
 }
 
 
@@ -176,6 +179,7 @@ FOREIGN_KEYS = {
                      "meter_id": WaterMeter,
                      "source_feature_id": NetworkFeature},  # source_feature_id: Self-FK, zweiter Pass
     MaintenanceLog: {"feature_id": NetworkFeature},
+    Incident: {"customer_id": Customer, "property_id": Property, "feature_id": NetworkFeature},
 }
 
 
@@ -198,6 +202,7 @@ EXCLUDED_TABLES = {
     "alembic_version",
     "fiscal_year_reopen_logs",  # Audit-Log mit User-FK; ohne User-Export sinnlos
     "feature_photos",           # Fotos liegen als Dateien im instance-Volume, nicht im JSON-Export
+    "incident_photos",          # Fotos liegen als Dateien im instance-Volume; separates FS-Backup noetig (Evidenz!)
 }
 
 

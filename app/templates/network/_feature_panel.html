@@ -74,8 +74,13 @@
       {% endfor %}
     </div>
     {% endif %}
+    {# hx-boost="false" ist Pflicht: die Seite laeuft unter <body hx-boost="true">,
+       und htmx-Boost kann multipart/form-data (Datei-Upload) NICHT verarbeiten und
+       faellt sonst auf nativen Submit zurueck (Vollreload, Datei geht verloren —
+       das Foto wird nicht gespeichert). Vgl. incidents/_photos.html. #}
     <form hx-post="{{ url_for('network.photo_upload', feature_id=f.id) }}"
-          hx-target="#technik-panel" hx-swap="innerHTML" hx-encoding="multipart/form-data">
+          hx-target="#technik-panel" hx-swap="innerHTML" hx-encoding="multipart/form-data"
+          hx-boost="false">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="input-group input-group-sm">
         <input type="file" name="photo" class="form-control" accept="image/*" required>

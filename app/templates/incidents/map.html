@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Störungs-Karte{% endblock %}
+{% block page_title %}<i class="fas fa-map-marked-alt me-2"></i> Störungs-Karte{% endblock %}
+
+{% block head_extra %}
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-header d-flex align-items-center flex-wrap" style="gap:.5rem">
+    <a href="{{ url_for('incidents.index') }}" class="btn btn-sm btn-outline-secondary" hx-boost="false">
+      <i class="fas fa-list me-1"></i> Zum Journal
+    </a>
+    {% if cfg.plans %}
+    <select id="incident-plan-select" class="form-select form-select-sm w-auto" aria-label="Leitungsplan einblenden" title="Leitungsplan als Kontext einblenden">
+      <option value="">Kein Plan</option>
+      {% for p in cfg.plans %}
+      <option value="{{ p.id }}" {% if p.id == cfg.defaultPlanId %}selected{% endif %}>{{ p.name }}</option>
+      {% endfor %}
+    </select>
+    {% endif %}
+    <div class="ms-auto d-flex flex-wrap align-items-center gap-3 small text-muted">
+      {% for key, s in vocab.STATUSES.items() %}
+      <span><span class="legend-dot" style="background: {{ '#c92a2a' if key=='offen' else ('#f59f00' if key=='in_bearbeitung' else '#2b8a3e') }}"></span> {{ s.label }}</span>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <div id="incidents-map" style="height: calc(100vh - 220px); min-height: 420px"></div>
+  </div>
+</div>
+<style>
+  .legend-dot { display:inline-block; width:.75rem; height:.75rem; border-radius:50%; vertical-align:middle; margin-right:.15rem; }
+  .incident-marker { display:flex; align-items:center; justify-content:center; width:26px; height:26px; border-radius:50%; color:#fff; border:3px solid #fff; box-shadow:0 0 0 1px rgba(0,0,0,.3); }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  window.INCIDENT = {{ cfg|tojson }};
+  window.INCIDENT.csrfToken = "{{ csrf_token() }}";
+</script>
+<script src="{{ url_for('static', filename='js/incidents-map.js', v=oss_version) }}"></script>
+{% endblock %}

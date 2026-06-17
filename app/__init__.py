@@ -74,6 +74,9 @@ def create_app(config_name=None):
     from app.network import bp as network_bp
     app.register_blueprint(network_bp)
 
+    from app.incidents import bp as incidents_bp
+    app.register_blueprint(incidents_bp)
+
     from app.schriftfuehrung import bp as schriftfuehrung_bp
     app.register_blueprint(schriftfuehrung_bp)
 

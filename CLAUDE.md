@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Wassergenossenschaft Verwaltung — a Flask web app for Austrian water cooperative management. All UI text, flash messages, and documentation are in **German**.
 
-Stack: Flask 3.1, SQLAlchemy 2.x, Flask-Login, Flask-Mail, Flask-Migrate (Alembic), WeasyPrint + pypdf (PDF), pandas/openpyxl (CSV/Excel-Import), mt-940 + lxml (Bankauszug-Import CAMT/MT940), pyshp + pyproj (Shapefile-/WLK-Import im Technik-Modul), python-docx (Brief-/Export), **Tabler 1.0.0 (Bootstrap 5)**, TomSelect 2.3.1, HTMX 2.0.4, Leaflet (Technik-Karte). DB ist dialekt-portabel (SQLite / MySQL-MariaDB / Postgres) — siehe "Datenbank" unten.
+Stack: Flask 3.1, SQLAlchemy 2.x, Flask-Login, Flask-Mail, Flask-Migrate (Alembic), WeasyPrint + pypdf (PDF), pandas/openpyxl (CSV/Excel-Import), mt-940 + lxml (Bankauszug-Import CAMT/MT940), pyshp + pyproj (Shapefile-/WLK-Import im Leitungsnetz-Modul), python-docx (Brief-/Export), **Tabler 1.0.0 (Bootstrap 5)**, TomSelect 2.3.1, HTMX 2.0.4, Leaflet (Leitungsnetz-Karte). DB ist dialekt-portabel (SQLite / MySQL-MariaDB / Postgres) — siehe "Datenbank" unten.
 
-Die App ist deutlich ueber die reine Verwaltung hinausgewachsen: granulares **Rollen-/Rechte-System** (8 Bereiche, nicht mehr nur admin/user), **Abrechnungsperioden** (`BillingPeriod`) statt Kalenderjahr-Verdrahtung, historisierte **Rechnungslaeufe** (`BillingRun`), **Mahnwesen** (`dunning`), **Bankauszug-Import** mit Zuordnungsvorschlaegen, **In-App-Benachrichtigungen**, **E-Mail-Event-Tracking** (Postmark) und ein **Technik-Modul** (Wasserleitungsplan auf Leaflet-Karte). Details in den jeweiligen Abschnitten unten.
+Die App ist deutlich ueber die reine Verwaltung hinausgewachsen: granulares **Rollen-/Rechte-System** (10 Bereiche, nicht mehr nur admin/user), **Mandant-Typ-Schalter** (Wassergenossenschaft/Versorger, `is_wg`-Gating), **Abrechnungsperioden** (`BillingPeriod`) statt Kalenderjahr-Verdrahtung, historisierte **Rechnungslaeufe** (`BillingRun`), **Mahnwesen** (`dunning`), **Bankauszug-Import** mit Zuordnungsvorschlaegen, **In-App-Benachrichtigungen**, **E-Mail-Event-Tracking** (Postmark) + **Sperrliste** (`EmailSuppression`), ein **Leitungsnetz-Modul** (Wasserleitungsplan auf Leaflet-Karte, frueher „Technik"), ein **Störungsjournal** (`incidents`) und eine **Schriftführung** (Sitzungen/Protokolle/Beschlüsse/Schriftverkehr, nur im WG-Modus). Details in den jeweiligen Abschnitten unten.
 
 ## Common Commands
 
@@ -107,7 +107,7 @@ Der alte `_SCHEMA_UPGRADE_COLUMNS`-Mechanismus in [cli.py](cli.py) ist deprecate
 
 **Extensions** (`app/extensions.py`): `db`, `login_manager`, `mail`, `migrate`, `csrf` — instantiated once, initialized in factory.
 
-### Blueprints (15 modules)
+### Blueprints (17 modules)
 
 | Blueprint | Prefix | Permission | Purpose |
 |-----------|--------|------------|---------|
@@ -121,17 +121,19 @@ Der alte `_SCHEMA_UPGRADE_COLUMNS`-Mechanismus in [cli.py](cli.py) ist deprecate
 | `accounting` | `/accounting` | `buchhaltung` | Konten, Buchungen, Umbuchungen, Bankkonten, Offene Posten, Buchungsjahre, EÜR/Jahresbericht, USt |
 | `projects` | `/projekte` | `buchhaltung` | Projekt-Kostenstellen mit zugeordneten Buchungen + Offenen Posten |
 | `bank_import` | `/bank-import` | `buchhaltung` | **Bankauszug-Import** (CAMT/MT940) mit Zuordnungsvorschlaegen |
-| `technik` | `/technik` | `technik` | **Wasserleitungsplan** (Leaflet-Karte), Anlagen, Wartung/Prüfung, WLK-Shapefile-Import |
+| `network` | `/network` | `network` | **Wasserleitungsplan** (Leaflet-Karte): mehrere benannte Pläne (`NetworkPlan`, Kopie→Merge), Anlagen/Features, Wartung/Prüfung, Elementliste, WLK-Shapefile-Import. (Blueprint/Permission `network`, UI-Label „Leitungsnetz", frueher `technik`.) |
+| `incidents` | `/incidents` | `incidents` | **Störungs-/Rohrbruch-Journal**: Ereignisjournal mit Kartenpin (Leaflet, Point-only, GeoJSON-in-Text), Ursachenkategorie/Status/Schweregrad, Reparaturkosten/Wasserverlust/betroffene Anschlüsse, Fotos, CSV-Export + PDF-Jahresbericht. Foto-Ablage als Geschwister von `PDF_DIR` (`instance/incidents/`), nicht im data_transfer-ZIP (separates FS-Backup noetig). |
+| `schriftfuehrung` | `/schriftfuehrung` | `schriftfuehrung` | **Schriftführung** (nur WG-Modus, `is_wassergenossenschaft`-Guard): Vorstandssitzungen + Hauptversammlungen (`Meeting`), Einladungsversand mit Anwesenheits-Tracking, Beschlüsse, Protokolle, Schriftverkehr-Archiv. Dokumente als Geschwister von `PDF_DIR`. |
 | `import_csv` | `/import` | `stammdaten` | Stammdaten-Import-Wizard (Kunden/Objekte/Zähler) |
 | `data_transfer` | `/data-transfer` | `verwaltung` | Voll-Export/-Import eines Mandanten (ZIP), registry-getrieben |
 | `settings` | `/einstellungen` | `verwaltung` | WG-Kontakt + Mail-Config (DB-KV-Store via `AppSetting`) |
 | `main` | `/` | (login) | Dashboard (offene Rechnungen, fehlende Ablesungen, Einnahmen/Ausgaben) |
 
-Each blueprint: `app/<name>/__init__.py` (registers blueprint) + `app/<name>/routes.py` (all routes). Blueprints, deren komplette Routen-Menge unter genau einem Recht steht, registrieren `bp.before_request(require_blueprint_permission(PERM_X))` (siehe `app/technik/__init__.py`); feiner granulierte Routen nutzen den `@permission_required(PERM_X)`-Decorator pro Route.
+Each blueprint: `app/<name>/__init__.py` (registers blueprint) + `app/<name>/routes.py` (all routes). Blueprints, deren komplette Routen-Menge unter genau einem Recht steht, registrieren `bp.before_request(require_blueprint_permission(PERM_X))` (siehe `app/network/__init__.py`); feiner granulierte Routen nutzen den `@permission_required(PERM_X)`-Decorator pro Route.
 
 ### Data Model (`app/models.py`)
 
-Das Modell ist deutlich gewachsen (~40 Tabellen). Die Kerngruppen:
+Das Modell ist deutlich gewachsen (~58 Tabellen). Die Kerngruppen:
 
 **Auth & Rechte:**
 - **Role** + **RolePermission** — Rollen mit zugeordneten Rechten. Die Rolle `Admin` hat **implizit alle Rechte** (auch spaeter neu hinzukommende). Rechte sind feste Code-Konstanten in [app/auth/permissions.py](app/auth/permissions.py), keine eigene Tabelle. Siehe "Rechte-System" unten.
@@ -143,7 +145,10 @@ Das Modell ist deutlich gewachsen (~40 Tabellen). Die Kerngruppen:
 - **Property** (Objekt/Liegenschaft) → has many **WaterMeter** and **PropertyOwnership**; also has fee overrides; `object_type` ist `NOT NULL` (Werte `'Haus'` / `'Garten'` / `'Sonstiges'`)
 - **PropertyOwnership** — time-bounded Customer↔Property link (`valid_from` / `valid_to`); `valid_to=None` = currently active. **Mehrere parallele aktive Ownerships pro Property sind erlaubt** (Ehepaare, Erbengemeinschaften) — Code, der "den" aktuellen Eigentuemer abfragt, muss `.all()` oder `.first()` nehmen, nicht `.scalar()` (sonst `MultipleResultsFound`)
 - **WaterMeter** → has many **MeterReading** (unique per meter+year); tracks `installed_from/to`, `initial_value`, `eichjahr`. **`meter_type`** (`'main'` / `'sub'`, default `'main'`, NOT NULL) klassifiziert Hauptz. vs. Subz.; **`parent_meter_id`** (FK self-ref, ondelete SET NULL) verlinkt Subz. auf Hauptz. (max. 1 Ebene, parent muss `meter_type='main'` sein — Validation in der Route, kein DB-Constraint, weil dialekt-portabel). Self-Reference und Nicht-Hauptz.-Parent werden in `meter_new`/`meter_edit` serverseitig gekappt + Flash-Warnung
+- **MeterReplacement** — explizites **Zählertausch-Event** (alt→neu-Paarung + Snapshot der Tausch-Metadaten); ersetzt die fruehere Datums-Heuristik (alter Zähler `active=False`, `installed_to == neuer.installed_from`), die bei zwei am selben Tag getauschten Zählern nicht aufloesbar war. `property_id` redundant gehalten → Per-Objekt-Abfragen ohne Join.
+- **MeterReadingAccessCode** (erbt `EmailTrackableMixin`) — Login-Code fuers SaaS-Selbstablesungs-Portal (`/zaehlerstand`); im OSS definiert, von der SaaS-`self_service`-Schicht genutzt.
 - **CustomerCounter** — per-year sequence counter for Kundennummern (analog `InvoiceCounter`).
+- **CustomerWgProfile** / **PropertyWgProfile** / **WgFunction** — WG-spezifische 1:1-Profiltabellen (Mitglieds-Status + `member_until`; Anteile + m²; mehrwertige Vorstands-/Prüf-Funktionen), nur im Mandant-Typ Wassergenossenschaft relevant. Der Schalter ist die `AppSetting` `org.type` (`cooperative`/`utility`); der Context-Processor injiziert `is_wg` in alle Templates. Domäne/Regeln in [app/wg.py](app/wg.py).
 
 **Abrechnung (Perioden statt Kalenderjahr):**
 - **BillingPeriod** — **zentraler Gruppierungsschluessel** fuer Ablesungen, Zählertausche und Rechnungslaeufe; ersetzt die fruehere Kalenderjahr-Verdrahtung. `start_date`/`end_date` (z.B. Juni–Juni), `name` (z.B. "2025/26"). **Genau eine ist immer aktiv** — applikationsseitig erzwungen (`activate()` setzt alle anderen inaktiv; `BillingPeriod.current()`), kein portabler Partial-Index ueber alle drei Dialekte.
@@ -177,17 +182,28 @@ Das Modell ist deutlich gewachsen (~40 Tabellen). Die Kerngruppen:
 **E-Mail-Tracking (`app/email_tracking.py`):**
 - **EmailEvent** — Delivery-/Bounce-/Open-Events zu versendeten Mails. `EmailTrackableMixin` (von `Invoice` geerbt) verknuepft ein Modell mit seinen Events; im SaaS schreibt der Postmark-Webhook ueber die Platform diese Events ins Tenant-Schema.
 - **InvoiceEmailOptInCode** + **CustomerEmailConsentLog** — Double-Opt-In fuer "Rechnung per E-Mail": Code-basierte Zustimmung + Consent-Audit-Log (DSGVO). Auto-Anlage des Codes passiert im SaaS (`invoice_optin`).
+- **EmailSuppression** — pro-Tenant-**Sperrliste** fuer unzustellbare/abgelehnte Adressen (Quellen nach Schwere: manuell, permanenter SMTP-Fehler, Hard-Bounce, Spam-Beschwerde). Jeder Kunden-Mailversand wird vorab gegen diese Liste geprueft; im SaaS speist sie der Platform-Webhook, im OSS-Standalone der synchrone SMTP-Fehler. Eskalations-/Block-Logik in [app/email_suppression.py](app/email_suppression.py).
 
-**Technik-Modul (`technik`, OSS v1.12.0):** Wasserleitungsplan als GeoJSON-Annotationen auf einer Leaflet-Karte (basemap.at), bewusst **kein PostGIS** (dialekt-portabel, Geometrie als Text).
+**Leitungsnetz-Modul (`network`, frueher `technik`, OSS v1.12.0):** Wasserleitungsplan als GeoJSON-Annotationen auf einer Leaflet-Karte (basemap.at), bewusst **kein PostGIS** (dialekt-portabel, Geometrie als Text).
+- **NetworkPlan** — benannter Plan-Container; erlaubt mehrere parallele Pläne (operativer Hauptplan + Planungs-Sandkasten). Eine Kopie merkt sich `source_plan_id`, sodass `plan_merge` Änderungen zurueckspiegelt; nur Pläne mit `maintenance_enabled` UND `status='aktiv'` treiben die Dashboard-Erinnerung „Fällige Prüfungen".
 - **NetworkFeature** — Punkt (Hydrant, Schieber, Quelle, Behaelter, Verteiler, Pumpe, Hausanschluss, Probenahmestelle) oder Linie (Versorgungs-/Haupt-/Ring-/Hausanschlussleitung); `geometry` haelt das GeoJSON-Geometry-Objekt als Text.
 - **MaintenanceLog** — Wartungs-/Pruef-Eintraege zu einem Feature (WLK-Import schreibt hier rein).
-- **FeaturePhoto** — Foto-Anhang zu einem Feature; Ablage als Geschwister von `PDF_DIR` (nicht in der DB). Shapefile-/WLK-Import in `app/technik/wlk_import.py` (`pyshp` + `pyproj`, GK→WGS84).
+- **FeaturePhoto** — Foto-Anhang zu einem Feature; Ablage als Geschwister von `PDF_DIR` (nicht in der DB). Shapefile-/WLK-Import in [app/network/wlk_import.py](app/network/wlk_import.py) (`pyshp` + `pyproj`, GK→WGS84).
+
+**Störungsjournal (`incidents`):**
+- **Incident** — Störungs-/Rohrbruch-Eintrag mit Kartenpin (GeoJSON-Point als Text), Ursachenkategorie/Status/Schweregrad, Reparaturkosten/Wasserverlust/betroffene Anschlüsse.
+- **IncidentPhoto** — Foto-Anhang; Ablage als Geschwister von `PDF_DIR` (`instance/incidents/`), **nicht** im data_transfer-ZIP (separates FS-Backup noetig).
+
+**Schriftführung (`schriftfuehrung`, nur WG-Modus):**
+- **Meeting** — Vorstandssitzung (`board`) oder Hauptversammlung (`assembly`), Lebenszyklus `planning → invited → held`; dazu **MeetingAgendaItem** (Tagesordnung), **MeetingResolution** (Beschlüsse), **MeetingProtocol** (Protokoll), **MeetingAttendance** (Anwesenheit).
+- **MeetingInvitation** (erbt `EmailTrackableMixin`) + **MeetingDeliveryLog** — Einladungsversand pro Empfänger + Zustell-Audit.
+- **SchriftverkehrDocument** — eigenständiges Korrespondenz-Dokument (eingehend/ausgehend) im Jahr-Archiv; DB hält nur Metadaten, Datei im Schriftverkehr-Ordner (Geschwister von `PDF_DIR`).
 
 Setting invoice status to "Bezahlt" auto-creates a Booking in the first active income account.
 
 ### Rechte-System (Rollen & Permissions)
 
-[app/auth/permissions.py](app/auth/permissions.py) definiert **8 Bereichs-Rechte** als Code-Konstanten (keine DB-Tabelle): `stammdaten`, `zaehler`, `buchhaltung`, `rechnungen_op`, `mahnwesen`, `auswertungen`, `technik`, `verwaltung`. Jeder Hauptmenuepunkt entspricht genau einem Recht.
+[app/auth/permissions.py](app/auth/permissions.py) definiert **10 Bereichs-Rechte** als Code-Konstanten (keine DB-Tabelle): `stammdaten`, `zaehler`, `buchhaltung`, `rechnungen_op`, `mahnwesen`, `auswertungen`, `network`, `incidents`, `schriftfuehrung`, `verwaltung`. Jeder Hauptmenuepunkt entspricht genau einem Recht.
 
 - Rechte werden Rollen ueber `role_permissions` zugeordnet; `init-db` seedet eine **Admin-Rolle** (alle Rechte) plus abgeleitete Rollen.
 - Die Rolle **`Admin`** hat **implizit jedes Recht** — auch spaeter neu hinzukommende (Check in `User.has_permission`).
@@ -208,7 +224,7 @@ Many routes check `request.headers.get("HX-Request")` and return partial HTML fr
 
 `base.html` setzt `<body hx-boost="true">` — jede Navigation laeuft als HTMX-Request. Damit geboostete **Voll**-Navigationen nicht faelschlich als Fragment-Request behandelt werden (Sidebar wuerde verschwinden), entfernt ein `before_request`-Hook in [app/__init__.py](app/__init__.py) (`_strip_hx_request_on_boost`) den `HX-Request`-Header, wenn `HX-Boosted` gesetzt ist — die Route sieht dann einen normalen GET und rendert das volle Template.
 
-**Seiten-spezifische JS-Libs (Leaflet im Technik-Modul, TomSelect):** hx-boost tauscht nur `<body>` aus und fuehrt `<head>`-`<script>`-Tags nicht erneut aus. Seiten, die eine eigene Lib im `head_extra`-Block laden, muessen `hx-boost="false"` auf dem Link/Container setzen (harter Reload), sonst fehlt die Lib nach dem Boost. Inline-Init-Skripte zusaetzlich gegen fehlendes `window.<lib>` absichern.
+**Seiten-spezifische JS-Libs (Leaflet im Leitungsnetz-Modul, TomSelect):** hx-boost tauscht nur `<body>` aus und fuehrt `<head>`-`<script>`-Tags nicht erneut aus. Seiten, die eine eigene Lib im `head_extra`-Block laden, muessen `hx-boost="false"` auf dem Link/Container setzen (harter Reload), sonst fehlt die Lib nach dem Boost. Inline-Init-Skripte zusaetzlich gegen fehlendes `window.<lib>` absichern.
 
 ### Forms
 

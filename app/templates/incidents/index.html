@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}Störungsjournal{% endblock %}
+{% block page_title %}<i class="fas fa-triangle-exclamation me-2"></i> Störungsjournal{% endblock %}
+{% block page_wrapper_class %}is-fill{% endblock %}
+{% block content %}
+<div class="card table-card">
+  <div class="card-header d-flex align-items-center flex-wrap" style="gap:.5rem">
+    <div class="input-group input-group-sm" style="width:260px">
+      <input type="search" name="q" value="{{ filters.q }}" class="form-control"
+        placeholder="Störungen suchen…"
+        hx-get="{{ url_for('incidents.index') }}"
+        hx-trigger="input changed delay:300ms, search"
+        hx-target="#incident-table"
+        hx-include="[name='q'], [name='status'], [name='type'], [name='severity'], [name='year']">
+      <span class="input-group-text"><i class="fas fa-search"></i></span>
+    </div>
+    <select name="status" class="form-select form-select-sm" style="width:160px"
+      hx-get="{{ url_for('incidents.index') }}" hx-trigger="change" hx-target="#incident-table"
+      hx-include="[name='q'], [name='status'], [name='type'], [name='severity'], [name='year']">
+      <option value="">Alle Status</option>
+      {% for key, s in vocab.STATUSES.items() %}
+      <option value="{{ key }}" {% if key == filters.status %}selected{% endif %}>{{ s.label }}</option>
+      {% endfor %}
+    </select>
+    <select name="type" class="form-select form-select-sm" style="width:180px"
+      hx-get="{{ url_for('incidents.index') }}" hx-trigger="change" hx-target="#incident-table"
+      hx-include="[name='q'], [name='status'], [name='type'], [name='severity'], [name='year']">
+      <option value="">Alle Arten</option>
+      {% for key, t in vocab.INCIDENT_TYPES.items() %}
+      <option value="{{ key }}" {% if key == filters.type %}selected{% endif %}>{{ t.label }}</option>
+      {% endfor %}
+    </select>
+    <select name="severity" class="form-select form-select-sm" style="width:150px"
+      hx-get="{{ url_for('incidents.index') }}" hx-trigger="change" hx-target="#incident-table"
+      hx-include="[name='q'], [name='status'], [name='type'], [name='severity'], [name='year']">
+      <option value="">Alle Schweregrade</option>
+      {% for key, s in vocab.SEVERITIES.items() %}
+      <option value="{{ key }}" {% if key == filters.severity %}selected{% endif %}>{{ s.label }}</option>
+      {% endfor %}
+    </select>
+    {% if years %}
+    <select name="year" class="form-select form-select-sm" style="width:120px"
+      hx-get="{{ url_for('incidents.index') }}" hx-trigger="change" hx-target="#incident-table"
+      hx-include="[name='q'], [name='status'], [name='type'], [name='severity'], [name='year']">
+      <option value="">Alle Jahre</option>
+      {% for y in years %}
+      <option value="{{ y }}" {% if y == filters.year %}selected{% endif %}>{{ y }}</option>
+      {% endfor %}
+    </select>
+    {% endif %}
+    <a href="{{ url_for('incidents.index') }}" class="btn btn-sm btn-outline-secondary">
+      <i class="fas fa-times me-1"></i> Zurücksetzen
+    </a>
+    <div class="ms-auto d-flex gap-2 align-items-center">
+      <a href="{{ url_for('incidents.map_view') }}" class="btn btn-outline-secondary" hx-boost="false">
+        <i class="fas fa-map-marked-alt me-1"></i> Karte
+      </a>
+      <div class="dropdown">
+        <button class="btn btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+          <i class="fas fa-file-export me-1"></i> Bericht
+        </button>
+        <ul class="dropdown-menu dropdown-menu-end">
+          <li>
+            <a class="dropdown-item" hx-boost="false"
+               href="{{ url_for('incidents.export_csv', q=filters.q or none, status=filters.status or none, type=filters.type or none, severity=filters.severity or none, year=filters.year or none) }}">
+              <i class="fas fa-file-csv me-2"></i> CSV-Export
+            </a>
+          </li>
+          <li>
+            <a class="dropdown-item" hx-boost="false" target="_blank" rel="noopener"
+               href="{{ url_for('incidents.report_pdf', year=filters.year or none) }}">
+              <i class="fas fa-file-pdf me-2"></i> Jahresbericht (PDF)
+            </a>
+          </li>
+        </ul>
+      </div>
+      <button type="button" class="btn btn-primary"
+              data-url="{{ url_for('incidents.new') }}" onclick="openIncidentEditModal(this)">
+        <i class="fas fa-plus me-1"></i> Neue Störung
+      </button>
+    </div>
+  </div>
+  <div id="incident-table" class="table-fill">
+    {% include "incidents/_table.html" %}
+  </div>
+</div>
+{% endblock %}
+
+{% block modals %}
+{% include "incidents/_incident_edit_modal.html" %}
+{% endblock %}
+
+{% block scripts %}
+{% include "_modal_edit_helpers.html" %}
+<script>
+// Nach dem Modal-Speichern nur die betroffene Zeile neu laden und in-place
+// tauschen — Filter, Suche und Pagination bleiben erhalten. Bei Neuanlage
+// existiert die Zeile noch nicht → defensiver Fallback auf Reload.
+window.onIncidentEdited = function (e) {
+  var id = e.detail && e.detail.id;
+  var rowEl = id ? document.getElementById('incident-row-' + id) : null;
+  if (!rowEl || !window.htmx) { window.location.reload(); return; }
+  var values = {};
+  ['q', 'status', 'type', 'severity', 'year'].forEach(function (n) {
+    var el = document.querySelector('[name="' + n + '"]');
+    if (el && el.value) { values[n] = el.value; }
+  });
+  htmx.ajax('GET', '/incidents/' + id + '/row', {
+    target: '#incident-row-' + id, swap: 'outerHTML', values: values,
+  });
+};
+
+setupEditModal({
+  formId: 'incidentEditForm',
+  bodyId: 'incidentEditModalBody',
+  modalId: 'incidentEditModal',
+  openFn: 'openIncidentEditModal',
+  closeEvent: 'closeIncidentEditModal',
+  savedEvent: 'incidentEdited',
+  savedHandler: 'onIncidentEdited',
+});
+</script>
+{% endblock %}
