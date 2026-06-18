@@ -13,6 +13,8 @@
     {% endif %}
   </a>
 {% endmacro %}
+{# Zeilen-Notiz-Pins: alle Notizen der sichtbaren Liegenschaften in EINER Query. #}
+{% set notes_by_entity = notes_by_entity_for('property', properties | map(attribute='id') | list) %}
 <div class="card-body p-0 table-scroll">
 <table class="table table-hover table-striped mb-0">
   <thead>

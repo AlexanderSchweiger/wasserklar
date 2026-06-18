@@ -1,0 +1,50 @@
+{# Globales Notiz-Modal + JS. In base.html einmal eingebunden (vor </body>), damit
+   jede Seite mit Zeilen-Pins es nutzen kann. ``openNoteModal(type, id)`` laedt das
+   gemeinsame Panel-Fragment in den Modal-Body; alle Panel-Aktionen (Anlegen/
+   Bearbeiten/Loeschen) laufen darin via HTMX wie auf einer Detailseite.
+   Nach jeder Mutation feuert der Server ``notes:changed`` → der betroffene
+   Zeilen-Pin aktualisiert seinen Zaehler (ein gezielter Refresh, kein Massen-Reload). #}
+<div class="modal modal-blur fade" id="noteModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="fas fa-thumbtack me-2 text-yellow"></i>Notizen</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <div class="modal-body" id="noteModalBody">
+        <div class="text-center text-muted py-3">
+          <div class="spinner-border spinner-border-sm" role="status"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  // Bei jedem hx-boost-Swap neu definiert — htmx/bootstrap sind beim Klick da.
+  window.openNoteModal = function (entityType, entityId) {
+    if (!window.bootstrap || !window.htmx) { return; }
+    var body = document.getElementById('noteModalBody');
+    if (body) {
+      body.innerHTML = '<div class="text-center text-muted py-3">' +
+        '<div class="spinner-border spinner-border-sm" role="status"></div></div>';
+    }
+    var url = '{{ url_for("notes.panel") }}?entity_type=' + encodeURIComponent(entityType) +
+      (entityId !== null && entityId !== undefined ? '&entity_id=' + encodeURIComponent(entityId) : '');
+    window.htmx.ajax('GET', url, { target: '#noteModalBody', swap: 'innerHTML' });
+    window.bootstrap.Modal.getOrCreateInstance(document.getElementById('noteModal')).show();
+  };
+
+  // Dokument-Listener nur einmal binden (hx-boost fuehrt das Skript je Swap erneut aus).
+  if (!window.__notesPinRefreshBound) {
+    window.__notesPinRefreshBound = true;
+    document.body.addEventListener('notes:changed', function (e) {
+      var d = e.detail || {};
+      if (!d.entity_type) { return; }
+      var el = document.getElementById(
+        'note-pin-' + d.entity_type + '-' + (d.entity_id !== null && d.entity_id !== undefined ? d.entity_id : ''));
+      if (el && window.htmx) { window.htmx.trigger(el, 'refresh'); }
+    });
+  }
+})();
+</script>

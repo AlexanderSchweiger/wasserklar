@@ -1,0 +1,36 @@
+{# Wiederverwendbare Notiz-Makros. Bewusst frei von ``current_user``/``request``/
+   ``is_wg`` (Kontext-Locals) — so sind sie ohne ``with context`` importierbar.
+   ``url_for`` und ``notes_for`` sind Jinja-Globals und hier verfuegbar. #}
+
+{# Notiz-Panel einer Ebene als LAZY-Stub: laedt sich nach dem Seitenaufbau per
+   HTMX (``load``) selbst nach. Vermeidet DB-Query im Makro und haelt das Panel-
+   Markup an genau EINER Stelle (notes/_panel.html, gerendert von der Route). #}
+{% macro note_panel(entity_type, entity_id=None) %}
+<div id="note-panel-{{ entity_type }}-{{ entity_id or 0 }}"
+     hx-get="{{ url_for('notes.panel', entity_type=entity_type, entity_id=entity_id) }}"
+     hx-trigger="load"
+     hx-swap="outerHTML">
+  <div class="text-center text-muted py-3">
+    <div class="spinner-border spinner-border-sm" role="status"></div>
+  </div>
+</div>
+{% endmacro %}
+
+{# Zeilen-Pin: kleiner Notizzettel-Knopf in einer Listenzeile. ``notes`` ist die
+   vorgeladene Liste (Listen-Tabelle reicht die Map durch → kein N+1); fehlt sie
+   (Einzel-Row-Swap), fragt das Makro per ``notes_for`` einmal nach. Klick oeffnet
+   das gemeinsame Notiz-Modal (siehe notes/_modal.html). #}
+{% macro note_pin(entity_type, entity_id, notes=none) %}
+{% set _ns = notes if notes is not none else notes_for(entity_type, entity_id) %}
+{% set _n = _ns | length %}
+<span class="note-pin-wrap d-inline-block" id="note-pin-{{ entity_type }}-{{ entity_id }}"
+      hx-get="{{ url_for('notes.pin', entity_type=entity_type, entity_id=entity_id) }}"
+      hx-trigger="refresh" hx-swap="outerHTML">
+  <button type="button"
+          class="btn btn-sm {{ 'btn-ghost-warning' if _n else 'btn-ghost-secondary' }}"
+          onclick="openNoteModal('{{ entity_type }}', {{ entity_id }})"
+          title="{{ _ns[0].body | truncate(120) if _n else 'Notiz hinzufügen' }}">
+    <i class="fas fa-thumbtack {{ '' if _n else 'opacity-50' }}"></i>{% if _n > 1 %}<span class="badge bg-yellow text-dark ms-1">{{ _n }}</span>{% endif %}
+  </button>
+</span>
+{% endmacro %}

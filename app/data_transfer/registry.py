@@ -16,6 +16,7 @@ from app.models import (
     AppSetting, InvoiceCounter, CustomerCounter,
     NetworkPlan, NetworkFeature, MaintenanceLog, Incident,
     CustomerWgProfile, PropertyWgProfile, WgFunction,
+    Note,
 )
 
 # Spalten die auf users.id verweisen — werden beim Import auf NULL gesetzt,
@@ -36,6 +37,7 @@ NULL_ON_IMPORT_COLS = {
     NetworkFeature: ["created_by_id"],
     MaintenanceLog: ["created_by_id"],
     Incident: ["created_by_id"],
+    Note: ["created_by_id"],
 }
 
 
@@ -48,6 +50,7 @@ CATEGORIES = {
         BillingPeriod, MeterReadingAccessCode, WaterTariff,
         NetworkPlan, NetworkFeature, MaintenanceLog, Incident,
         CustomerWgProfile, PropertyWgProfile, WgFunction,
+        Note,
     ],
     "buchungen": [
         MeterReading, MeterReplacement, BillingRun, Invoice, InvoiceItem, OpenItem,
@@ -81,6 +84,13 @@ INSERT_ORDER = [
     DunningPolicy, DunningStage, DunningNotice,
     AppSetting, InvoiceCounter, CustomerCounter,
     NetworkPlan, NetworkFeature, MaintenanceLog, Incident,
+    # Note ans Ende: sein polymorphes entity_id zeigt potenziell auf JEDE der
+    # obigen Tabellen (Customer/Property/Invoice/Booking). Beim Voll-Ersatz
+    # bleiben IDs erhalten → korrekt. Im Merge-Modus wird entity_id NICHT
+    # remappt (kein FK-Eintrag unten, da kein einzelnes Zielmodell) — bekannte
+    # Einschraenkung: nach einem Merge in eine vorbefuellte DB kann eine Notiz
+    # auf die falsche Entitaet zeigen. Voll-Backup/Restore ist der Regelpfad.
+    Note,
 ]
 
 
@@ -141,6 +151,7 @@ NATURAL_KEYS = {
     NetworkFeature: None,               # kein natuerlicher Schluessel — immer Insert
     MaintenanceLog: None,
     Incident: None,                     # kein stabiler natuerlicher Schluessel — immer Insert
+    Note: None,                         # Freitext — kein natuerlicher Schluessel, immer Insert
 }
 
 

@@ -1,0 +1,66 @@
+{# Übersichts-Tabelle (Fragment). Wird in #notes-overview-table geswappt — bei
+   Filterwechsel (notes.index mit HX-Request) und nach Löschen/Pin (ctx=overview).
+   Zeigt ALLE Notizen inkl. gelöster (unpinned). #}
+<div class="table-scroll card-body p-0">
+  <table class="table table-vcenter card-table">
+    <thead>
+      <tr>
+        <th style="width:1%"></th>
+        <th>Ebene</th>
+        <th>Bezug</th>
+        <th>Notiz</th>
+        <th>Status</th>
+        <th>Erstellt</th>
+        <th class="col-actions"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for n in notes %}
+      {% set d = displays[n.id] %}
+      <tr>
+        <td><span class="badge bg-{{ n.color }}-lt">&nbsp;</span></td>
+        <td>{{ 'Mitglied' if (n.entity_type == 'customer' and is_wg) else scope_labels.get(n.entity_type, n.entity_type) }}</td>
+        <td>
+          {% if d.endpoint and d.entity_id %}
+            <a href="{{ url_for(d.endpoint, **{d.id_arg: d.entity_id}) }}">{{ d.name or ('#' ~ d.entity_id) }}</a>
+          {% elif n.is_tenant %}
+            <span class="text-muted">— (Mandant)</span>
+          {% else %}
+            {{ d.name or '—' }}
+          {% endif %}
+        </td>
+        <td style="white-space:pre-wrap;max-width:32rem">{{ n.body | truncate(140) }}</td>
+        <td>
+          {% if n.pinned %}<span class="badge bg-yellow text-dark">angepinnt</span>
+          {% else %}<span class="badge bg-secondary-lt">gelöst</span>{% endif %}
+        </td>
+        <td class="text-nowrap small text-secondary">
+          {% if n.created_by %}{{ n.created_by.username }}<br>{% endif %}{{ n.created_at.strftime('%d.%m.%Y') if n.created_at }}
+        </td>
+        <td class="text-end text-nowrap col-actions">
+          <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" title="Bearbeiten"
+                  onclick="openNoteModal('{{ n.entity_type }}', {{ n.entity_id if n.entity_id is not none else 'null' }})">
+            <i class="fas fa-edit"></i>
+          </button>
+          <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary"
+                  title="{{ 'Lösen (nur noch hier sichtbar)' if n.pinned else 'Wieder anpinnen' }}"
+                  hx-post="{{ url_for('notes.toggle_pin', note_id=n.id) }}"
+                  hx-vals='{"ctx":"overview"{% if scope %},"scope":"{{ scope }}"{% endif %}}'
+                  hx-target="#notes-overview-table" hx-swap="innerHTML">
+            <i class="fas fa-thumbtack {{ '' if n.pinned else 'text-muted' }}"></i>
+          </button>
+          <button type="button" class="btn btn-sm btn-icon btn-ghost-danger" title="Löschen"
+                  hx-post="{{ url_for('notes.delete', note_id=n.id) }}"
+                  hx-vals='{"ctx":"overview"{% if scope %},"scope":"{{ scope }}"{% endif %}}'
+                  hx-target="#notes-overview-table" hx-swap="innerHTML"
+                  hx-confirm="Diese Notiz wirklich löschen?">
+            <i class="fas fa-trash"></i>
+          </button>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="text-center text-muted py-4">Keine Notizen vorhanden.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

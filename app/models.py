@@ -2539,3 +2539,52 @@ class SchriftverkehrDocument(db.Model):
 
     def __repr__(self):
         return f"<SchriftverkehrDocument #{self.id} {self.year} {self.title!r}>"
+
+
+class Note(db.Model):
+    """Freie Notiz / „Notizzettel", die rein visuell an drei Ebenen pinnbar ist:
+    tenant-weit (Dashboard), an einer Entität (Detailseite + Listenzeile) oder —
+    technisch identisch zur Entitäts-Notiz — als Zeilen-Pin in einer Liste.
+
+    Polymorph über ``entity_type`` (String-Diskriminator) + nullable ``entity_id``
+    — **bewusst kein DB-FK** auf ``entity_id``, damit das Model dialekt-portabel und
+    von den Zieltabellen entkoppelt bleibt (referenzielle Integrität nur per
+    App-Logik). ``entity_type='tenant'`` ⇒ ``entity_id`` ist NULL.
+
+    Die Notiz hat fachlich nichts mit den Zieldaten zu tun — sie hängt rein
+    visuell dran und soll beim Öffnen der Seite/Zeile sofort auffallen.
+    """
+    __tablename__ = "notes"
+
+    SCOPE_TENANT = "tenant"
+
+    id = db.Column(db.Integer, primary_key=True)
+    # 'tenant' | 'customer' | 'property' | 'invoice' | 'booking' (Diskriminator).
+    entity_type = db.Column(db.String(32), nullable=False)
+    entity_id = db.Column(db.Integer, nullable=True)   # NULL bei Tenant-Scope
+    body = db.Column(db.Text, nullable=False)
+    # Tabler-Farbname (Allowlist in app/notes/services.py). Default = Notizzettel-Gelb.
+    color = db.Column(db.String(16), nullable=False, default="yellow",
+                      server_default=db.text("'yellow'"))
+    # pinned=True ⇒ wird prominent angezeigt (Dashboard/Detail/Zeile); unpinned
+    # bleibt nur in der Notizen-Übersicht sichtbar (und re-pinnbar).
+    pinned = db.Column(db.Boolean, nullable=False, default=True,
+                       server_default=sa.true())
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"),
+                              nullable=True)
+
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+
+    # Polymorpher Index für die N+1-freie Zeilen-Abfrage (entity_type, entity_id IN (...)).
+    __table_args__ = (
+        db.Index("ix_notes_entity", "entity_type", "entity_id"),
+    )
+
+    @property
+    def is_tenant(self):
+        return self.entity_type == self.SCOPE_TENANT
+
+    def __repr__(self):
+        return f"<Note #{self.id} {self.entity_type}:{self.entity_id} pinned={self.pinned}>"

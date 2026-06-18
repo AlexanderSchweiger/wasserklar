@@ -1,3 +1,4 @@
+{% from "notes/_macros.html" import note_pin %}
 {# Eine Kontakt-Tabellenzeile. Genutzt vom Tabellen-Loop (customers/_table.html)
    UND einzeln vom customers.row-Endpoint fuer den In-Place-Swap nach dem
    Modal-Speichern — so bleibt beim Bearbeiten der Rest der Seite (Filter,
@@ -64,6 +65,7 @@
   </td>
   <td>{{ c.phone or '—' }}</td>
   <td class="text-end text-nowrap col-actions">
+    {{ note_pin('customer', c.id, notes_by_entity.get(c.id, []) if notes_by_entity is defined else none) }}
     <button type="button"
        data-url="{{ url_for('customers.edit', customer_id=c.id) }}"
        onclick="openCustomerEditModal(this)"

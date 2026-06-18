@@ -1,4 +1,14 @@
 {% from "_pagination.html" import render_pagination %}
+{% from "notes/_macros.html" import note_pin %}
+{# Zeilen-Notiz-Pins der sichtbaren Einzelbuchungen in EINER Query (kein N+1).
+   Sammelbuchungen/Umbuchungen tragen keinen Pin (Notiz hängt an einer Buchung). #}
+{% set _bk_ids = [] %}
+{% for _r in rows %}
+  {% if _r.type not in ('booking_group', 'transfer') and _r.obj and not _r.obj.storno_of_id %}
+    {% set _ = _bk_ids.append(_r.obj.id) %}
+  {% endif %}
+{% endfor %}
+{% set notes_by_entity = notes_by_entity_for('booking', _bk_ids) %}
 <div class="px-3 py-2 bg-light border-bottom d-flex justify-content-end">
   <div class="text-end">
     <div class="fw-bold">Summe:
@@ -353,6 +363,7 @@
         {{ b.amount|de_number }}&nbsp;€
       </td>
       <td class="text-end col-actions" style="white-space:nowrap">
+        {{ note_pin('booking', b.id, notes_by_entity.get(b.id, []) if notes_by_entity is defined else none) }}
         {% set fy_locked = b.id in locked_booking_ids %}
         {% if fy_locked %}
         <span class="text-muted" title="Buchungsjahr abgeschlossen"><i class="fas fa-lock"></i></span>

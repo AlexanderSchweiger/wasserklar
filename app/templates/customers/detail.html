@@ -5,6 +5,8 @@
   {% if customer.is_supplier %}<span class="badge bg-info text-white ms-1"><i class="fas fa-truck me-1"></i>Lieferant</span>{% endif %}
 {% endblock %}
 {% block content %}
+{% from "notes/_macros.html" import note_panel %}
+{{ note_panel('customer', customer.id) }}
 <div class="row">
   <!-- Kontaktdaten -->
   <div class="col-md-4">

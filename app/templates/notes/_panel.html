@@ -1,0 +1,67 @@
+{# Notizzettel-Block einer Ebene (Tenant/Detailseite/Zeilen-Modal). Die Container-
+   ID ist je Ebene stabil; jede Mutation und jeder Formular-Zustand swappt genau
+   diesen Container (outerHTML). CSRF fuer die hx-post-Aktionen kommt per
+   ``hx-headers`` (Flask-WTF akzeptiert ``X-CSRFToken``); die Formulare tragen
+   zusaetzlich ein Hidden-Feld.
+
+   Es werden nur ``pinned``-Notizen gezeigt (notes_for filtert) — Loesen/Re-Pinnen
+   passiert in der Notizen-Uebersicht (/notes/). #}
+{% set _panel_id = 'note-panel-' ~ entity_type ~ '-' ~ (entity_id or 0) %}
+{% set _cancel_url = url_for('notes.panel', entity_type=entity_type, entity_id=entity_id) %}
+<div id="{{ _panel_id }}" class="note-panel mb-3"
+     hx-headers='{"X-CSRFToken": "{{ csrf_token() }}"}'>
+  <div class="d-flex align-items-center mb-2">
+    <span class="fw-bold"><i class="fas fa-thumbtack me-2 text-yellow"></i>Notizen</span>
+    {% if not adding and edit_id is none %}
+    <button type="button" class="btn btn-sm btn-outline-secondary ms-auto"
+            hx-get="{{ url_for('notes.panel', entity_type=entity_type, entity_id=entity_id, adding=1) }}"
+            hx-target="#{{ _panel_id }}" hx-swap="outerHTML">
+      <i class="fas fa-plus me-1"></i>Notiz
+    </button>
+    {% endif %}
+  </div>
+
+  {% if adding %}
+    {% set _action = url_for('notes.create') %}
+    {% set is_create = true %}
+    {% set _form_body = draft.body if (draft and 'body' in draft) else '' %}
+    {% set _form_color = draft.color if (draft and 'color' in draft) else default_color %}
+    {% include "notes/_form.html" %}
+  {% endif %}
+
+  {% for n in notes %}
+    {% if edit_id == n.id %}
+      {% set _action = url_for('notes.update', note_id=n.id) %}
+      {% set is_create = false %}
+      {% set _form_body = draft.body if (draft and 'body' in draft) else n.body %}
+      {% set _form_color = draft.color if (draft and 'color' in draft) else n.color %}
+      {% include "notes/_form.html" %}
+    {% else %}
+      <div class="card card-sm mb-2 border-0 bg-{{ n.color }}-lt">
+        <div class="card-body p-2">
+          <div class="d-flex">
+            <div class="flex-fill text-dark" style="white-space:pre-wrap">{{ n.body }}</div>
+            <div class="btn-list flex-nowrap ms-2">
+              <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" title="Bearbeiten"
+                      hx-get="{{ url_for('notes.panel', entity_type=entity_type, entity_id=entity_id, edit_id=n.id) }}"
+                      hx-target="#{{ _panel_id }}" hx-swap="outerHTML">
+                <i class="fas fa-edit"></i>
+              </button>
+              <button type="button" class="btn btn-sm btn-icon btn-ghost-danger" title="Löschen"
+                      hx-post="{{ url_for('notes.delete', note_id=n.id) }}"
+                      hx-target="#{{ _panel_id }}" hx-swap="outerHTML"
+                      hx-confirm="Diese Notiz wirklich löschen?">
+                <i class="fas fa-trash"></i>
+              </button>
+            </div>
+          </div>
+          <div class="text-secondary mt-1" style="font-size:.7rem">
+            {% if n.created_by %}{{ n.created_by.username }} · {% endif %}{{ n.created_at.strftime('%d.%m.%Y') if n.created_at }}
+          </div>
+        </div>
+      </div>
+    {% endif %}
+  {% else %}
+    {% if not adding %}<div class="text-muted small">Keine Notizen.</div>{% endif %}
+  {% endfor %}
+</div>

@@ -2,6 +2,10 @@
 {% block title %}Dashboard{% endblock %}
 {% block page_title %}<i class="fas fa-tachometer-alt me-2"></i> Dashboard {{ current_year }}{% endblock %}
 {% block content %}
+{% from "notes/_macros.html" import note_panel %}
+
+{# ── Mandant-weite Notizzettel ──────────────────────────────────────────── #}
+{{ note_panel('tenant', none) }}
 
 {# ── Stat-Kacheln ───────────────────────────────────────────────────────── #}
 <div class="row row-cards mb-3">

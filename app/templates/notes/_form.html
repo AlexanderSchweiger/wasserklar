@@ -1,0 +1,41 @@
+{# Gemeinsamer Anlage-/Bearbeiten-Form-Body (Neu + Edit teilen ihn). Inline im
+   Panel, kein eigenes Modal — so funktioniert er sowohl auf der Detailseite als
+   auch im Zeilen-Notiz-Modal (kein Modal-im-Modal). Submit/Cancel swappen das
+   Panel (outerHTML). CSRF kommt per ``hx-headers`` am Panel-Container; das
+   Hidden-Feld hier ist die zusaetzliche Absicherung.
+
+   Erwartet: _action, _panel_id, _cancel_url, _form_body, _form_color, is_create,
+   entity_type, entity_id, error, colors, default_color. #}
+<form hx-post="{{ _action }}" hx-target="#{{ _panel_id }}" hx-swap="outerHTML"
+      class="card card-sm mb-2">
+  <div class="card-body p-2">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% if is_create %}
+    <input type="hidden" name="entity_type" value="{{ entity_type }}">
+    {% if entity_id is not none %}<input type="hidden" name="entity_id" value="{{ entity_id }}">{% endif %}
+    {% endif %}
+    {% if error %}<div class="text-danger small mb-2">{{ error }}</div>{% endif %}
+    <textarea name="body" class="form-control mb-2" rows="3"
+              placeholder="Notiztext…">{{ _form_body or '' }}</textarea>
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+      <div class="btn-group btn-group-sm" role="group" aria-label="Farbe">
+        {% for ckey, clabel in colors.items() %}
+        <input type="radio" class="btn-check" name="color"
+               id="nc-{{ _panel_id }}-{{ ckey }}" value="{{ ckey }}"
+               {{ 'checked' if (_form_color or default_color) == ckey }}>
+        <label class="btn bg-{{ ckey }}-lt px-3" for="nc-{{ _panel_id }}-{{ ckey }}"
+               title="{{ clabel }}">&nbsp;</label>
+        {% endfor %}
+      </div>
+      <div class="ms-auto">
+        <button type="button" class="btn btn-sm btn-link link-secondary"
+                hx-get="{{ _cancel_url }}" hx-target="#{{ _panel_id }}" hx-swap="outerHTML">
+          Abbrechen
+        </button>
+        <button type="submit" class="btn btn-sm btn-primary">
+          <i class="fas fa-save me-1"></i>Speichern
+        </button>
+      </div>
+    </div>
+  </div>
+</form>

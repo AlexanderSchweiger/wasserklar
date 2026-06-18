@@ -80,6 +80,9 @@ def create_app(config_name=None):
     from app.schriftfuehrung import bp as schriftfuehrung_bp
     app.register_blueprint(schriftfuehrung_bp)
 
+    from app.notes import bp as notes_bp
+    app.register_blueprint(notes_bp)
+
     # hx-boost-Navigationen (base.html: <body hx-boost="true">) senden
     # sowohl "HX-Request: true" als auch "HX-Boosted: true". Unsere Routen
     # verwenden "HX-Request" als Signal fuer Partial-Fragment-Antworten
@@ -147,6 +150,15 @@ def create_app(config_name=None):
     app.jinja_env.globals["wg_function_labels"] = _wg_function_labels
     app.jinja_env.globals["wg_function_label"] = _wg_function_label
     app.jinja_env.globals["wg_function_keys_ordered"] = _wg_function_keys_ordered
+
+    # Notiz-Helfer als Jinja-Globals: Detailseiten/Dashboard rendern ihr Panel
+    # via ``hx-trigger=load`` (kein Direkt-Query noetig), aber die Zeilen-Pins in
+    # Listen ziehen ihre Notizen ueber ``notes_by_entity_for`` in EINER Query je
+    # Tabelle (kein N+1). ``notes_for`` ist der Single-Entity-Fallback fuer den
+    # Row-Swap (eine Zeile, keine Map vorhanden). Beide sind reine Lese-Helfer.
+    from app.notes import services as _notes_svc
+    app.jinja_env.globals["notes_by_entity_for"] = _notes_svc.notes_by_entity_for
+    app.jinja_env.globals["notes_for"] = _notes_svc.notes_for
 
     # Context Processor: WG-Einstellungen in alle Templates injizieren
     @app.context_processor

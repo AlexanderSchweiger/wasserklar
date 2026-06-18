@@ -1,4 +1,5 @@
 {% from "_pagination.html" import render_pagination %}
+{% from "notes/_macros.html" import note_pin %}
 {% macro sort_header(key, label, extra_class='') %}
   {% set active = sort == key %}
   {% set new_dir = 'desc' if (active and dir == 'asc') else 'asc' %}
@@ -12,6 +13,8 @@
     {% endif %}
   </a>
 {% endmacro %}
+{# Zeilen-Notiz-Pins: alle Notizen der sichtbaren Rechnungen in EINER Query. #}
+{% set notes_by_entity = notes_by_entity_for('invoice', invoices | map(attribute='id') | list) %}
 <div class="card-body p-0 table-scroll">
 <table class="table table-hover table-striped mb-0">
   <thead>
@@ -108,6 +111,7 @@
         {% endif %}
       </td>
       <td class="text-end text-nowrap col-actions">
+        {{ note_pin('invoice', inv.id, notes_by_entity.get(inv.id, []) if notes_by_entity is defined else none) }}
         {% if doc_format in ('pdf', 'both') %}
         <a href="{{ url_for('invoices.pdf', invoice_id=inv.id) }}?fmt=pdf"
            class="btn btn-sm btn-outline-danger" target="_blank" title="PDF">

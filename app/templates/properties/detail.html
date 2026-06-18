@@ -9,6 +9,8 @@
 {% endblock %}
 
 {% block content %}
+{% from "notes/_macros.html" import note_panel %}
+{{ note_panel('property', property.id) }}
 <div class="row">
   <!-- Liegenschaftsdaten -->
   <div class="col-md-4">

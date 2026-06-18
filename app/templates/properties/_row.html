@@ -1,3 +1,4 @@
+{% from "notes/_macros.html" import note_pin %}
 {# Eine Liegenschafts-Tabellenzeile. Genutzt vom Tabellen-Loop
    (properties/_table.html) UND einzeln vom properties.row-Endpoint fuer den
    In-Place-Swap nach dem Modal-Speichern — so bleibt beim Bearbeiten der Rest
@@ -34,6 +35,7 @@
   <td class="text-end">{% if _wgp and _wgp.area_m2 is not none %}{{ _wgp.area_m2 }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
   {% endif %}
   <td class="text-end col-actions">
+    {{ note_pin('property', prop.id, notes_by_entity.get(prop.id, []) if notes_by_entity is defined else none) }}
     <a href="{{ url_for('properties.detail', property_id=prop.id) }}"
        class="btn btn-sm btn-outline-primary" title="Liegenschaftsdetails">
       <i class="fas fa-home"></i>

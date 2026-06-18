@@ -1,0 +1,5 @@
+{# Duenner Wrapper: rendert den Zeilen-Pin ueber das gemeinsame Makro. Wird von
+   der ``notes.pin``-Route fuer den Live-Refresh eines einzelnen Pins nach einer
+   Mutation im Notiz-Modal zurueckgegeben. #}
+{% from "notes/_macros.html" import note_pin %}
+{{ note_pin(entity_type, entity_id, notes) }}

@@ -65,6 +65,15 @@
               </a>
             </li>
 
+            {# Notizen: kein Bereichsrecht — jeder eingeloggte User darf Notizen sehen/anlegen. #}
+            <li class="nav-item">
+              <a class="nav-link {% if request.blueprint == 'notes' %}active{% endif %}"
+                href="{{ url_for('notes.index') }}">
+                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-thumbtack"></i></span>
+                <span class="nav-link-title">Notizen</span>
+              </a>
+            </li>
+
             {# ── Aktiv-Flags je Menüeintrag ──────────────────────────────────────
                Jeder Eintrag hat genau eine Variable. Die Elterngruppe ist aktiv,
                wenn mindestens ein Kind aktiv ist. Beim Verschieben eines Eintrags
@@ -684,6 +693,11 @@
       </div>
     </div>
   </div>
+  {% endif %}
+  {# Globales Notiz-Modal (Zeilen-Pins öffnen es). Einmal pro Seite, für alle
+     eingeloggten User. #}
+  {% if current_user.is_authenticated %}
+  {% include "notes/_modal.html" %}
   {% endif %}
   {% block modals %}{% endblock %}
 

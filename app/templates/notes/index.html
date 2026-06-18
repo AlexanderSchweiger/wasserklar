@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Notizen{% endblock %}
+{% block page_title %}<i class="fas fa-thumbtack me-2"></i> Notizen{% endblock %}
+{% block page_wrapper_class %}is-fill{% endblock %}
+{% block content %}
+{% set _scopes = [('', 'Alle'), ('tenant', 'Mandant'),
+                  ('customer', 'Mitglied' if is_wg else 'Kontakt'),
+                  ('property', 'Liegenschaft'), ('invoice', 'Rechnung'), ('booking', 'Buchung')] %}
+<div class="card table-card">
+  <div class="card-header d-flex align-items-center flex-wrap" style="gap:.5rem">
+    <ul class="nav nav-pills" role="tablist">
+      {% for skey, slabel in _scopes %}
+      <li class="nav-item">
+        <a class="nav-link {{ 'active' if (scope or '') == skey }}"
+           href="{{ url_for('notes.index', scope=skey or none) }}"
+           hx-get="{{ url_for('notes.index', scope=skey or none) }}"
+           hx-target="#notes-overview-table" hx-swap="innerHTML"
+           hx-push-url="true">{{ slabel }}</a>
+      </li>
+      {% endfor %}
+    </ul>
+    <div class="ms-auto">
+      <button type="button" class="btn btn-primary" onclick="openNoteModal('tenant', null)">
+        <i class="fas fa-plus me-1"></i>Mandant-Notiz
+      </button>
+    </div>
+  </div>
+  <div id="notes-overview-table" class="table-fill"
+       hx-headers='{"X-CSRFToken": "{{ csrf_token() }}"}'>
+    {% include "notes/_overview_table.html" %}
+  </div>
+</div>
+<p class="text-muted small mt-2">
+  Notizen an Kontakten, Liegenschaften, Rechnungen und Buchungen werden direkt auf
+  der jeweiligen Detailseite bzw. über das Pin-Symbol in der Liste angelegt.
+  „Gelöste" Notizen sind nur noch hier sichtbar — von hier aus wieder anpinnbar.
+</p>
+{% endblock %}

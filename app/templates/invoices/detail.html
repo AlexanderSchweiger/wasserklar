@@ -4,6 +4,8 @@
   <i class="fas fa-file-invoice me-2"></i> {{ invoice.invoice_number }}
 {% endblock %}
 {% block content %}
+{% from "notes/_macros.html" import note_panel %}
+{{ note_panel('invoice', invoice.id) }}
 <div class="row">
   <div class="col-md-4">
     <!-- Rechnungsinfo -->
