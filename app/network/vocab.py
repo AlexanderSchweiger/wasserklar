@@ -17,13 +17,13 @@ POINT_TYPES = {
     "verteiler":       {"label": "Verteiler / Schacht",          "icon": "fa-project-diagram",   "color": "#7048e8", "desc": "Verteilerschacht/Knoten, an dem mehrere Leitungen zusammentreffen."},
     "pumpe":           {"label": "Pumpe / Druckerhöhung",        "icon": "fa-cog",               "color": "#e8590c", "desc": "Pumpe oder Druckerhöhungsanlage zur Förderung/Druckanhebung."},
     "hausanschluss":   {"label": "Hausanschluss",                "icon": "fa-home",              "color": "#2f9e44", "desc": "Anschlusspunkt einer Liegenschaft ans Netz (oft mit Wasserzähler)."},
-    "anbohrschelle":   {"label": "Anbohrschelle",               "icon": "fa-code-branch",       "color": "#66a80f", "desc": "Anbohrschelle / Abzweigung auf einer bestehenden Leitung (Sattelbohrsystem)."},
+    "anbohrschelle":   {"label": "Anbohrschelle",               "icon": "fa-code-branch",       "color": "#868e96", "desc": "Anbohrschelle / Abzweigung auf einer bestehenden Leitung (Sattelbohrsystem)."},
     "entlueftung":     {"label": "Entlüftung",                 "icon": "fa-wind",              "color": "#3bc9db", "desc": "Entlüftungsventil — lässt eingeschlossene Luft aus der Leitung entweichen."},
     "auslauf":         {"label": "Auslauf / Entleerung",       "icon": "fa-arrow-alt-circle-down", "color": "#ff8787", "desc": "Auslauf- oder Entleerungspunkt — kontrollierte Wasserabgabe oder Netzentleerung."},
     "probenahme":      {"label": "Probenahmestelle",             "icon": "fa-vial",              "color": "#c2255c", "desc": "Entnahmestelle für die Trinkwasser-Beprobung (Wasserqualität)."},
     "leitungsende":    {"label": "Leitungsende",                 "icon": "fa-stop",              "color": "#343a40", "desc": "Blindes Leitungsende/Endkappe — Spülpunkt, Stagnationsgefahr."},
     "materialwechsel": {"label": "Material-/Dimensionswechsel",  "icon": "fa-exchange-alt",      "color": "#0c8599", "desc": "Punkt, an dem Material oder Dimension (DN) der Leitung wechselt."},
-    "sonstiges":       {"label": "Sonstiges",                    "icon": "fa-map-marker-alt",    "color": "#868e96", "desc": "Sonstige Anlage ohne eigene Kategorie."},
+    "sonstiges":       {"label": "Sonstiges",                    "icon": "fa-map-marker-alt",    "color": "#66a80f", "desc": "Sonstige Anlage ohne eigene Kategorie."},
 }
 
 # Linien-Typen: key -> {label, color (Hex), desc (Tooltip)}

@@ -1,35 +1,129 @@
-﻿{% extends "base.html" %}
+{% extends "base.html" %}
 {% block title %}Wasserleitungsplan – Druck{% endblock %}
 
 {% block head_extra %}
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
+    .technik-print-controls .technik-legend-swatch { width: .9rem; height: .9rem; }
+    .technik-print-types { max-height: 9rem; overflow-y: auto; }
+
     @media print {
       .page-header, .footer, aside.navbar, header.navbar { display: none !important; }
       .page-wrapper { margin: 0 !important; }
-      #technik-print-map { height: 13cm !important; }
+      /* Kompakter Titel, damit die Karte auf Seite 1 maximalen Platz bekommt. */
+      .technik-print-title { margin-bottom: .25rem !important; }
+      .technik-print-title h2 { font-size: 1.05rem !important; }
+      /* Bedien-Overlays der Karte raus — Maszstab + Quellenangabe bleiben. */
+      .leaflet-control-zoom, .leaflet-control-layers { display: none !important; }
+      /* Legende immer auf Seite 2 (Karte fuellt Seite 1); Spalten nicht zerreissen. */
+      .technik-print-legend { break-before: page; }
+      .technik-print-legend [class^="col"] { break-inside: avoid; }
+      /* Elementliste auf eigene(n) Seite(n); optional ganz weglassen. */
+      #technik-print-list { break-before: page; }
+      .technik-print-list-off { display: none !important; }
+      .technik-print-list table { font-size: 10px; }
       a[href]::after { content: "" !important; }
     }
-    .technik-legend-swatch { display:inline-block; width:1.1rem; height:1.1rem; border-radius:3px; vertical-align:middle; margin-right:.4rem; }
-    .technik-legend-line { display:inline-block; width:1.6rem; height:0; border-top:3px solid; vertical-align:middle; margin-right:.4rem; }
+  </style>
+  {# Orientierung (Quer-/Hochformat) -> @page-Groesse + Kartenmasse. Die Karte
+     bekommt EXAKT das A4-Seitenverhaeltnis (Breite = Hoehe x Verhaeltnis),
+     zentriert, statt auf volle Breite zu skalieren. Per JS umgeschrieben
+     (technik-map.js: applyOrientation). Default: Querformat. #}
+  <style id="technik-page-style">
+    @media print { @page { size: A4 landscape; margin: 10mm; } #technik-print-map { width: 24.75cm !important; height: 17.5cm !important; margin-left: auto !important; margin-right: auto !important; } }
   </style>
 {% endblock %}
 
 {% block content %}
-<div class="d-print-none mb-3 btn-list">
-  <button type="button" onclick="window.print()" class="btn btn-primary"><i class="fas fa-print me-1"></i>Drucken</button>
-  <a href="{{ url_for('network.index') }}" class="btn" hx-boost="false"><i class="fas fa-arrow-left me-1"></i>Zurück zum Plan</a>
+{# --- Steuerleiste (nur am Bildschirm) ------------------------------------ #}
+<div class="card mb-3 d-print-none technik-print-controls">
+  <div class="card-body">
+    <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+      <button type="button" id="technik-print-btn" class="btn btn-primary">
+        <i class="fas fa-print me-1"></i>Drucken
+      </button>
+      <a href="{{ url_for('network.index') }}" class="btn" hx-boost="false">
+        <i class="fas fa-arrow-left me-1"></i>Zurück zum Plan
+      </a>
+      <label class="form-check form-switch ms-auto mb-0">
+        <input class="form-check-input" type="checkbox" id="technik-print-show-list" checked>
+        <span class="form-check-label">Elementliste mitdrucken ({{ features | length }})</span>
+      </label>
+    </div>
+
+    <div class="row g-3 mb-2">
+      <div class="col-sm-6 col-lg-4">
+        <label class="form-label">Symbolgröße <span class="text-secondary" id="technik-print-ms-val">17 px</span></label>
+        <input type="range" class="form-range" id="technik-print-marker-scale"
+               min="0.3" max="1.2" step="0.05" value="0.65"
+               oninput="document.getElementById('technik-print-ms-val').textContent = Math.round(26 * this.value) + ' px';">
+      </div>
+      <div class="col-sm-6 col-lg-4">
+        <label class="form-label">Linienstärke <span class="text-secondary" id="technik-print-lw-val">3 px</span></label>
+        <input type="range" class="form-range" id="technik-print-line-weight"
+               min="1" max="8" step="0.5" value="3"
+               oninput="document.getElementById('technik-print-lw-val').textContent = this.value + ' px';">
+      </div>
+      <div class="col-sm-6 col-lg-4">
+        <label class="form-label">Format</label>
+        <select class="form-select" id="technik-print-orientation">
+          <option value="landscape" selected>Querformat</option>
+          <option value="portrait">Hochformat</option>
+        </select>
+      </div>
+      <div class="col-sm-6 col-lg-4">
+        <label class="form-label">Strichelung</label>
+        <select class="form-select" id="technik-print-dash">
+          <option value="auto" selected>Automatisch (Genauigkeit)</option>
+          <option value="solid">Durchgezogen</option>
+          <option value="dotted">Gepunktet</option>
+          <option value="dash-sm">Fein gestrichelt</option>
+          <option value="dash-md">Mittel gestrichelt</option>
+          <option value="dash-lg">Grob gestrichelt</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="d-flex align-items-center flex-wrap gap-2 mb-1">
+      <strong class="small">Sichtbare Elemente</strong>
+      <div class="btn-list">
+        <button type="button" id="technik-print-types-all" class="btn btn-sm btn-outline-secondary">Alle</button>
+        <button type="button" id="technik-print-types-none" class="btn btn-sm btn-outline-secondary">Keine</button>
+      </div>
+      <span class="text-secondary small">Tipp: Hausanschlüsse ausblenden, um die Hauptleitungen freizustellen.</span>
+    </div>
+    <div class="technik-print-types border rounded p-2">
+      <div class="row">
+        {% for key, t in vocab.POINT_TYPES.items() %}
+        <div class="col-md-6 col-lg-4">
+          <label class="form-check">
+            <input class="form-check-input technik-print-type" type="checkbox" checked data-type="{{ key }}">
+            <span class="form-check-label"><span class="technik-legend-swatch" style="background: {{ t.color }}"></span>{{ t.label }}</span>
+          </label>
+        </div>
+        {% endfor %}
+        {% for key, t in vocab.LINE_TYPES.items() %}
+        <div class="col-md-6 col-lg-4">
+          <label class="form-check">
+            <input class="form-check-input technik-print-type" type="checkbox" checked data-type="{{ key }}">
+            <span class="form-check-label"><span class="technik-legend-line" style="border-color: {{ t.color }}"></span>{{ t.label }}</span>
+          </label>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
 </div>
 
-<div class="d-flex align-items-baseline mb-2">
+<div class="d-flex align-items-baseline mb-2 technik-print-title">
   <h2 class="me-auto mb-0">{{ wg.name }} — Wasserleitungsplan{% if plan %}: {{ plan.name }}{% endif %}</h2>
   <span class="text-secondary small">Stand: {{ today_iso }}</span>
 </div>
 
 <div id="technik-print-map" class="mb-3 border rounded" style="height: 60vh; min-height: 420px;"></div>
 
-<div class="row mb-3">
+<div class="row mb-3 technik-print-legend">
   <div class="col-md-6">
     <h4>Legende — Anlagen</h4>
     <div class="row">
@@ -46,34 +140,36 @@
   </div>
 </div>
 
-<h4>Elementliste ({{ features | length }})</h4>
-<table class="table table-sm table-bordered">
-  <thead>
-    <tr>
-      <th>Typ</th><th>Bezeichnung</th><th>Genauigkeit</th><th>Material</th>
-      <th>DN</th><th>Baujahr</th><th>Länge (m)</th>
-      <th>Fabrikat</th><th>Druckstufe</th><th>Tiefe (m)</th><th>GOK (m)</th><th>Notiz</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for f in features %}
-    <tr>
-      <td>{{ vocab.feature_type_label(f.feature_type) }}</td>
-      <td>{{ f.name or '' }}</td>
-      <td>{{ vocab.accuracy_label(f.accuracy) }}</td>
-      <td>{{ f.material or '' }}</td>
-      <td>{{ f.dimension_dn if f.dimension_dn is not none else '' }}</td>
-      <td>{{ f.year_built if f.year_built is not none else '' }}</td>
-      <td>{{ f.length_m | de_number(1) if f.length_m is not none else '' }}</td>
-      <td>{{ f.manufacturer or '' }}</td>
-      <td>{{ f.pressure_rating or '' }}</td>
-      <td>{{ f.installation_depth_m | de_number(2) if f.installation_depth_m is not none else '' }}</td>
-      <td>{{ f.ground_level_m | de_number(2) if f.ground_level_m is not none else '' }}</td>
-      <td>{{ f.notes or '' }}</td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
+<div id="technik-print-list">
+  <h4>Elementliste ({{ features | length }})</h4>
+  <table class="table table-sm table-bordered">
+    <thead>
+      <tr>
+        <th>Typ</th><th>Bezeichnung</th><th>Genauigkeit</th><th>Material</th>
+        <th>DN</th><th>Baujahr</th><th>Länge (m)</th>
+        <th>Fabrikat</th><th>Druckstufe</th><th>Tiefe (m)</th><th>GOK (m)</th><th>Notiz</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for f in features %}
+      <tr>
+        <td>{{ vocab.feature_type_label(f.feature_type) }}</td>
+        <td>{{ f.name or '' }}</td>
+        <td>{{ vocab.accuracy_label(f.accuracy) }}</td>
+        <td>{{ f.material or '' }}</td>
+        <td>{{ f.dimension_dn if f.dimension_dn is not none else '' }}</td>
+        <td>{{ f.year_built if f.year_built is not none else '' }}</td>
+        <td>{{ f.length_m | de_number(1) if f.length_m is not none else '' }}</td>
+        <td>{{ f.manufacturer or '' }}</td>
+        <td>{{ f.pressure_rating or '' }}</td>
+        <td>{{ f.installation_depth_m | de_number(2) if f.installation_depth_m is not none else '' }}</td>
+        <td>{{ f.ground_level_m | de_number(2) if f.ground_level_m is not none else '' }}</td>
+        <td>{{ f.notes or '' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -83,7 +179,7 @@
 <script src="{{ url_for('static', filename='js/technik-map.js') }}"></script>
 <script>
   document.addEventListener('DOMContentLoaded', function () {
-    if (window.TECHNIK_MAP) window.TECHNIK_MAP.renderStatic('technik-print-map');
+    if (window.TECHNIK_MAP) window.TECHNIK_MAP.renderPrint('technik-print-map');
   });
 </script>
 {% endblock %}

@@ -24,6 +24,12 @@
       "https://mapsneu.wien.gv.at/basemap/geolandbasemap/normal/google3857/{z}/{y}/{x}.png",
       { maxZoom: 20, maxNativeZoom: 19, attribution: bmAttr }
     );
+    // Graue basemap.at-Ebene — gedaempfter Hintergrund, auf dem sich die farbigen
+    // Marker/Leitungen klar abheben. Default fuer die Druckkarte (renderPrint).
+    var grau = L.tileLayer(
+      "https://mapsneu.wien.gv.at/basemap/bmapgrau/normal/google3857/{z}/{y}/{x}.png",
+      { maxZoom: 20, maxNativeZoom: 19, attribution: bmAttr }
+    );
     var ortho = L.tileLayer(
       "https://mapsneu.wien.gv.at/basemap/bmaporthofoto30cm/normal/google3857/{z}/{y}/{x}.jpeg",
       { maxZoom: 20, maxNativeZoom: 19, attribution: bmAttr }
@@ -32,16 +38,26 @@
       maxZoom: 19,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>-Mitwirkende',
     });
-    return { "Karte (basemap.at)": standard, "Orthofoto (basemap.at)": ortho, "OpenStreetMap": osm, _default: standard };
+    return {
+      "Karte (basemap.at)": standard,
+      "Karte grau (basemap.at)": grau,
+      "Orthofoto (basemap.at)": ortho,
+      "OpenStreetMap": osm,
+      _default: standard,
+      _grau: grau,
+    };
   }
 
-  function createMap(elId) {
+  // opts.startLayer: interner Layer-Handle aus baseLayers() (z. B. "_grau"),
+  // mit dem die Karte startet; ungesetzt -> Standardkarte.
+  function createMap(elId, opts) {
+    opts = opts || {};
     var layers = baseLayers();
-    var map = L.map(elId, { center: [47.59, 14.14], zoom: 7, layers: [layers._default] });
-    var overlays = {};
+    var start = (opts.startLayer && layers[opts.startLayer]) || layers._default;
+    var map = L.map(elId, { center: [47.59, 14.14], zoom: 7, layers: [start] });
     var bases = {};
-    Object.keys(layers).forEach(function (k) { if (k !== "_default") bases[k] = layers[k]; });
-    L.control.layers(bases, overlays, { position: "topright" }).addTo(map);
+    Object.keys(layers).forEach(function (k) { if (k.charAt(0) !== "_") bases[k] = layers[k]; });
+    L.control.layers(bases, {}, { position: "topright" }).addTo(map);
     L.control.scale({ imperial: false }).addTo(map);
     return map;
   }
@@ -55,22 +71,48 @@
     return t ? t.color : "#868e96";
   }
 
-  function pointIcon(props) {
+  // scale = 1 -> 26 px (Editor-Default). Kleinere Werte (Druck) schrumpfen den
+  // Marker proportional; unter ~0.6 entfaellt der unleserliche Glyph (nur noch
+  // farbiger Punkt) und der weisse Ring wird duenner (technik-marker-tight).
+  function pointIcon(props, scale) {
+    scale = scale || 1;
+    var size = Math.max(7, Math.round(26 * scale));
+    var anchor = size / 2;
     var color = typeColor(props);
     var pt = V.pointTypes && V.pointTypes[props.feature_type];
     var fa = pt ? pt.icon : "fa-map-marker-alt";
+    var tight = scale < 0.85 ? " technik-marker-tight" : "";
+    var glyph = scale >= 0.6
+      ? '<i class="fas ' + fa + '" style="font-size:' + Math.round(13 * scale) + 'px"></i>'
+      : "";
     return L.divIcon({
       className: "technik-marker-wrap",
-      html: '<span class="technik-marker" style="background:' + color + '"><i class="fas ' + fa + '"></i></span>',
-      iconSize: [26, 26],
-      iconAnchor: [13, 13],
-      popupAnchor: [0, -14],
+      html: '<span class="technik-marker' + tight + '" style="background:' + color +
+        ';width:' + size + 'px;height:' + size + 'px">' + glyph + "</span>",
+      iconSize: [size, size],
+      iconAnchor: [anchor, anchor],
+      popupAnchor: [0, -anchor + 1],
     });
   }
 
   function lineDash(accuracy) {
     var a = V.accuracies && V.accuracies[accuracy];
     return a && a.dash ? a.dash : null;
+  }
+
+  // Globale Strichelung (Darstellungs-Regler). "auto" -> pro Linie nach
+  // Lagegenauigkeit (Default, bisheriges Verhalten); sonst fuer ALLE Linien das
+  // gewaehlte Muster (durchgezogen .. grob). SVG-dashArray "Strich Luecke".
+  var DASH_PATTERNS = {
+    solid: null,
+    dotted: "1 6",
+    "dash-sm": "5 6",
+    "dash-md": "10 8",
+    "dash-lg": "18 10",
+  };
+  function resolveDash(accuracy, dashMode) {
+    if (dashMode && dashMode !== "auto") return DASH_PATTERNS[dashMode] || null;
+    return lineDash(accuracy);
   }
 
   function popupHtml(props) {
@@ -89,15 +131,19 @@
     });
   }
 
-  function buildLayer(feature) {
+  // opts (optional): {markerScale, lineWeight} — steuert die Symbolgroesse fuer
+  // den Druck. Ungesetzt -> Editor-Defaults (26 px Marker, Linie weight 4).
+  function buildLayer(feature, opts) {
+    opts = opts || {};
     var props = feature.properties || {};
     var layer;
     if (feature.geometry.type === "Point") {
-      layer = L.marker(toLatLng(feature.geometry.coordinates), { icon: pointIcon(props) });
+      layer = L.marker(toLatLng(feature.geometry.coordinates), { icon: pointIcon(props, opts.markerScale) });
     } else {
       var latlngs = feature.geometry.coordinates.map(toLatLng);
       layer = L.polyline(latlngs, {
-        color: typeColor(props), weight: 4, opacity: 0.9, dashArray: lineDash(props.accuracy),
+        color: typeColor(props), weight: opts.lineWeight || 4, opacity: 0.9,
+        dashArray: resolveDash(props.accuracy, opts.dashMode),
       });
     }
     layer._technikId = feature.id;
@@ -149,9 +195,10 @@
     this.byId = {};
     this.featById = {};   // rohes GeoJSON-Feature je id — fuer Liste/Suche
     this.hiddenTypes = {};
+    this.renderOpts = {}; // {markerScale, lineWeight} — Symbolgroesse (Druck)
   }
   FeatureStore.prototype.add = function (feature, opts) {
-    var layer = buildLayer(feature);
+    var layer = buildLayer(feature, this.renderOpts);
     this.byId[feature.id] = layer;
     this.featById[feature.id] = feature;
     if (!this.hiddenTypes[layer._technikType]) this.group.addLayer(layer);
@@ -176,6 +223,25 @@
       var layer = self.byId[id];
       if (layer._technikType !== type) return;
       if (visible) self.group.addLayer(layer); else self.group.removeLayer(layer);
+    });
+  };
+  // Symbolgroesse live aendern (Druck-Regler), ohne die Features neu zu laden:
+  // Marker bekommen ein neu skaliertes Icon, Linien eine neue Staerke.
+  FeatureStore.prototype.restyle = function (renderOpts) {
+    this.renderOpts = renderOpts || {};
+    var self = this;
+    Object.keys(this.byId).forEach(function (id) {
+      var layer = self.byId[id];
+      var feat = self.featById[id];
+      if (layer.setIcon && feat && feat.geometry.type === "Point") {
+        layer.setIcon(pointIcon(feat.properties || {}, self.renderOpts.markerScale));
+      } else if (layer.setStyle) {
+        var acc = feat && feat.properties ? feat.properties.accuracy : null;
+        layer.setStyle({
+          weight: self.renderOpts.lineWeight || 4,
+          dashArray: resolveDash(acc, self.renderOpts.dashMode),
+        });
+      }
     });
   };
 
@@ -207,6 +273,92 @@
     return window.matchMedia && window.matchMedia("(max-width: 768px)").matches;
   }
 
+  // --- Darstellung (Symbolgroesse + Linienstaerke) -------------------------
+  // Auf der Editor-Karte einstellbar (in der Legende) und in localStorage
+  // gemerkt, damit der Plan beim naechsten Aufruf gleich aussieht. Die
+  // Druckseite hat eigene, druckoptimierte Defaults (renderPrint).
+  var DISPLAY_PREF = { markerScale: "technik.markerScale", lineWeight: "technik.lineWeight", dashMode: "technik.dashMode" };
+  function readDisplayPref(key, fallback) {
+    try {
+      var raw = window.localStorage.getItem(DISPLAY_PREF[key]);
+      if (raw !== null) { var n = parseFloat(raw); if (!isNaN(n)) return n; }
+    } catch (e) { /* localStorage gesperrt -> Fallback */ }
+    return fallback;
+  }
+  // String-Variante (z. B. dashMode = "auto"/"solid"/...).
+  function readDisplayPrefStr(key, fallback) {
+    try {
+      var raw = window.localStorage.getItem(DISPLAY_PREF[key]);
+      if (raw !== null) return raw;
+    } catch (e) { /* localStorage gesperrt -> Fallback */ }
+    return fallback;
+  }
+  function writeDisplayPref(key, value) {
+    try { window.localStorage.setItem(DISPLAY_PREF[key], String(value)); } catch (e) { /* ignore */ }
+  }
+  function markerSizeLabel(scale) { return Math.round(26 * scale) + " px"; }
+
+  // Auswahl fuer die globale Strichelung (Editor-Legende + Druck halten dieselbe
+  // Reihenfolge: Auto -> durchgezogen -> immer groebere Striche).
+  var DASH_CHOICES = [
+    ["auto", "Automatisch (Genauigkeit)"],
+    ["solid", "Durchgezogen"],
+    ["dotted", "Gepunktet"],
+    ["dash-sm", "Fein gestrichelt"],
+    ["dash-md", "Mittel gestrichelt"],
+    ["dash-lg", "Grob gestrichelt"],
+  ];
+  function dashOptionsHtml(current) {
+    return DASH_CHOICES.map(function (o) {
+      return '<option value="' + o[0] + '"' + (o[0] === current ? " selected" : "") + ">" + escapeHtml(o[1]) + "</option>";
+    }).join("");
+  }
+
+  // HTML der beiden Regler (Initialwerte aus store.renderOpts).
+  function displayControlsHtml(store) {
+    var ms = store.renderOpts.markerScale != null ? store.renderOpts.markerScale : 1;
+    var lw = store.renderOpts.lineWeight != null ? store.renderOpts.lineWeight : 4;
+    var dm = store.renderOpts.dashMode || "auto";
+    return '<div class="technik-legend-sub">Darstellung</div>' +
+      '<div class="technik-legend-display">' +
+        '<label class="technik-legend-disp-row"><span>Symbolgröße</span>' +
+          '<output data-disp="marker">' + markerSizeLabel(ms) + '</output></label>' +
+        '<input type="range" class="technik-legend-range" data-pref="markerScale" min="0.3" max="1.5" step="0.05" value="' + ms + '">' +
+        '<label class="technik-legend-disp-row"><span>Linienstärke</span>' +
+          '<output data-disp="line">' + lw + ' px</output></label>' +
+        '<input type="range" class="technik-legend-range" data-pref="lineWeight" min="1" max="8" step="0.5" value="' + lw + '">' +
+        '<div class="technik-legend-disp-row"><span>Strichelung</span></div>' +
+        '<select class="technik-legend-dash form-select form-select-sm" data-pref="dashMode">' + dashOptionsHtml(dm) + '</select>' +
+      '</div>';
+  }
+
+  // Regler verdrahten: live restylen (rAF-gebuendelt), Wert merken, Label updaten.
+  function wireDisplayControls(div, store) {
+    var raf = false;
+    div.addEventListener("input", function (e) {
+      var rng = e.target.closest(".technik-legend-range");
+      if (!rng) return;
+      var pref = rng.getAttribute("data-pref");
+      var val = parseFloat(rng.value);
+      if (isNaN(val)) return;
+      store.renderOpts[pref] = val;
+      writeDisplayPref(pref, val);
+      var out = div.querySelector('output[data-disp="' + (pref === "markerScale" ? "marker" : "line") + '"]');
+      if (out) out.textContent = pref === "markerScale" ? markerSizeLabel(val) : val + " px";
+      if (!raf) {
+        raf = true;
+        window.requestAnimationFrame(function () { raf = false; store.restyle(store.renderOpts); });
+      }
+    });
+    div.addEventListener("change", function (e) {
+      var sel = e.target.closest(".technik-legend-dash");
+      if (!sel) return;
+      store.renderOpts.dashMode = sel.value;
+      writeDisplayPref("dashMode", sel.value);
+      store.restyle(store.renderOpts);
+    });
+  }
+
   function legendControl(store) {
     var ctrl = L.control({ position: "bottomleft" });
     ctrl.onAdd = function () {
@@ -216,7 +368,8 @@
         (collapsed ? "false" : "true") + '" title="Legende ein-/ausblenden">' +
         '<i class="fas fa-layer-group me-1 text-secondary"></i><strong>Legende</strong>' +
         '<i class="fas fa-chevron-down technik-legend-caret ms-auto"></i></button>' +
-        '<div class="technik-legend-body">';
+        '<div class="technik-legend-body">' + displayControlsHtml(store) +
+        '<div class="technik-legend-sub">Sichtbarkeit</div>';
       function row(type, label, color, isLine) {
         var swatch = isLine
           ? '<span class="technik-legend-line" style="border-color:' + color + '"></span>'
@@ -241,6 +394,7 @@
         var cb = e.target.closest("input[type=checkbox]");
         if (cb) store.toggleType(cb.getAttribute("data-type"), cb.checked);
       });
+      wireDisplayControls(div, store);
       return div;
     };
     return ctrl;
@@ -281,6 +435,13 @@
 
     var map = createMap("technik-map");
     var store = new FeatureStore(map);
+    // Gemerkte Symbolgroesse/Linienstaerke (Default = bisheriges Aussehen) —
+    // gilt fuer alle danach hinzugefuegten Features (add liest store.renderOpts).
+    store.renderOpts = {
+      markerScale: readDisplayPref("markerScale", 1),
+      lineWeight: readDisplayPref("lineWeight", 4),
+      dashMode: readDisplayPrefStr("dashMode", "auto"),
+    };
     legendControl(store).addTo(map);
     resetPanel();
 
@@ -436,7 +597,8 @@
       var layer = store.byId[id];
       if (!layer) return;
       if (layer.setStyle) {                  // Linie
-        layer.setStyle(on ? { weight: 7, opacity: 1 } : { weight: 4, opacity: 0.9 });
+        var baseW = store.renderOpts.lineWeight || 4;   // eingestellte Staerke respektieren
+        layer.setStyle(on ? { weight: baseW + 3, opacity: 1 } : { weight: baseW, opacity: 0.9 });
         if (on && layer.bringToFront) layer.bringToFront();
       } else if (layer.getElement) {         // Punkt-Marker (divIcon)
         var el = layer.getElement();
@@ -649,19 +811,146 @@
     });
   }
 
-  // --- Statische Karte (Druckseite) ----------------------------------------
+  // --- Druckkarte (Druckseite) ---------------------------------------------
+  // Statische Karte mit grauem Hintergrund + Steuerleiste (d-print-none):
+  // Symbolgroesse, Linienstaerke, Typ-Filter und Elementlisten-Toggle. Beim
+  // Drucken wird die Karte neu vermessen (invalidateSize) und auf die sichtbaren
+  // Features eingepasst, damit der Ausdruck die ganze Seite fuellt.
 
-  function renderStatic(elId) {
+  function num(el, fallback) {
+    var v = el ? parseFloat(el.value) : NaN;
+    return isNaN(v) ? fallback : v;
+  }
+
+  function wirePrintControls(map, store) {
+    var scaleEl = document.getElementById("technik-print-marker-scale");
+    var weightEl = document.getElementById("technik-print-line-weight");
+    var dashEl = document.getElementById("technik-print-dash");
+    function currentRenderOpts() {
+      return {
+        markerScale: num(scaleEl, 0.65),
+        lineWeight: num(weightEl, 3),
+        dashMode: dashEl ? dashEl.value : "auto",
+      };
+    }
+
+    // Regler-Aenderungen rAF-gebuendelt anwenden (1194 Features nicht je
+    // Pixel-Schritt neu bauen — sonst ruckelt das Ziehen).
+    var pending = false;
+    function scheduleRestyle() {
+      if (pending) return;
+      pending = true;
+      window.requestAnimationFrame(function () {
+        pending = false;
+        store.restyle(currentRenderOpts());
+      });
+    }
+    if (scaleEl) scaleEl.addEventListener("input", scheduleRestyle);
+    if (weightEl) weightEl.addEventListener("input", scheduleRestyle);
+    if (dashEl) dashEl.addEventListener("change", function () { store.restyle(currentRenderOpts()); });
+
+    // Typ-Filter (Checkboxen aus dem Vokabular): Feature-Typ ein-/ausblenden und
+    // auf die verbleibenden Features einpassen (z. B. Hausanschluesse weg ->
+    // Trunk-Netz wird sichtbar).
+    document.querySelectorAll(".technik-print-type").forEach(function (cb) {
+      cb.addEventListener("change", function () {
+        store.toggleType(cb.getAttribute("data-type"), cb.checked);
+        store.fit();
+      });
+    });
+    var allBtn = document.getElementById("technik-print-types-all");
+    var noneBtn = document.getElementById("technik-print-types-none");
+    function setAllTypes(on) {
+      document.querySelectorAll(".technik-print-type").forEach(function (cb) {
+        cb.checked = on;
+        store.toggleType(cb.getAttribute("data-type"), on);
+      });
+      store.fit();
+    }
+    if (allBtn) allBtn.addEventListener("click", function () { setAllTypes(true); });
+    if (noneBtn) noneBtn.addEventListener("click", function () { setAllTypes(false); });
+
+    // Elementliste nur am Bildschirm zeigen, im Ausdruck optional (Default: an).
+    var listCb = document.getElementById("technik-print-show-list");
+    var listEl = document.getElementById("technik-print-list");
+    if (listCb && listEl) {
+      listCb.addEventListener("change", function () {
+        listEl.classList.toggle("technik-print-list-off", !listCb.checked);
+      });
+    }
+
+    // Seitenformat (Quer-/Hochformat): die @page-Regel + passende Kartenhoehe in
+    // <style id="technik-page-style"> umschreiben. Hochformat bekommt eine hoehere
+    // Karte (mehr vertikaler Platz auf A4 portrait).
+    var pageStyle = document.getElementById("technik-page-style");
+    var orientEl = document.getElementById("technik-print-orientation");
+    function applyOrientation() {
+      if (!pageStyle) return;
+      var portrait = orientEl && orientEl.value === "portrait";
+      // Karte EXAKT im A4-Seitenverhaeltnis (Breite = Hoehe x Verhaeltnis),
+      // zentriert: Hochformat 18.38 x 26 cm (210:297), Querformat 24.75 x 17.5 cm
+      // (297:210). Hoehe bewusst < druckbare Seitenhoehe, damit der kompakte Titel
+      // drueber passt und die Karte trotzdem Seite 1 fuellt (Legende -> Seite 2).
+      var dims = portrait
+        ? "width:18.38cm!important;height:26cm!important"
+        : "width:24.75cm!important;height:17.5cm!important";
+      pageStyle.textContent =
+        "@media print{@page{size:A4 " + (portrait ? "portrait" : "landscape") + ";margin:10mm}" +
+        "#technik-print-map{" + dims + ";margin-left:auto!important;margin-right:auto!important}}";
+    }
+    if (orientEl) orientEl.addEventListener("change", applyOrientation);
+    applyOrientation();
+
+    // Beim Drucken NUR neu vermessen (Print-CSS aendert die Karten-Hoehe), aber
+    // den vom Nutzer gewaehlten Ausschnitt behalten: Mittelpunkt + Zoom vorher
+    // sichern, nach invalidateSize per setView exakt wiederherstellen. KEIN
+    // store.fit() hier — das wuerde auf das ganze Netz zurueckzoomen und genau
+    // die Position verwerfen, die gedruckt werden soll.
+    function resizeForPrint() {
+      var center = map.getCenter(), zoom = map.getZoom();
+      map.invalidateSize({ animate: false, pan: false });
+      map.setView(center, zoom, { animate: false });
+    }
+    window.addEventListener("beforeprint", resizeForPrint);
+    window.addEventListener("afterprint", resizeForPrint);
+    if (window.matchMedia) {
+      try {
+        window.matchMedia("print").addEventListener("change", function () { resizeForPrint(); });
+      } catch (e) { /* aeltere Browser ohne addEventListener auf MediaQueryList */ }
+    }
+
+    // Drucken-Button: kurz warten, damit die Kacheln des AKTUELLEN Ausschnitts
+    // fertig laden, dann den Dialog oeffnen (Mittelpunkt/Zoom bleiben).
+    var printBtn = document.getElementById("technik-print-btn");
+    if (printBtn) {
+      printBtn.addEventListener("click", function () {
+        window.setTimeout(function () { window.print(); }, 300);
+      });
+    }
+  }
+
+  function renderPrint(elId) {
     if (typeof L === "undefined" || !document.getElementById(elId)) return;
-    var map = createMap(elId);
+    var map = createMap(elId, { startLayer: "_grau" });
     var store = new FeatureStore(map);
+    store.renderOpts = {
+      markerScale: num(document.getElementById("technik-print-marker-scale"), 0.65),
+      lineWeight: num(document.getElementById("technik-print-line-weight"), 3),
+      dashMode: (document.getElementById("technik-print-dash") || {}).value || "auto",
+    };
     fetchFeatures(T.featuresUrl).then(function (fc) {
       (fc.features || []).forEach(function (f) { store.add(f, {}); });
       store.fit();
     });
+    wirePrintControls(map, store);
   }
 
-  window.TECHNIK_MAP = { initEditor: initEditor, renderStatic: renderStatic, createMap: createMap };
+  window.TECHNIK_MAP = {
+    initEditor: initEditor,
+    renderPrint: renderPrint,
+    renderStatic: renderPrint, // Rueckwaerts-Kompat (alter Aufrufname)
+    createMap: createMap,
+  };
 
   // Editor automatisch starten, sobald das DOM steht (Vollseiten-Load).
   if (document.getElementById("technik-map")) {

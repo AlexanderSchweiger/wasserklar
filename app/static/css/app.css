@@ -415,6 +415,11 @@ tr.overdue { background-color: #fff3cd !important; }
   color: #fff; font-size: 13px;
   box-shadow: 0 0 0 2px #fff, 0 1px 4px rgba(0, 0, 0, .4);
 }
+/* Kleiner skalierte Marker (Druck): duennerer weisser Ring, damit er bei ~16 px
+   nicht proportional zu fett wirkt. Breite/Hoehe kommen inline aus pointIcon(). */
+.technik-marker-tight {
+  box-shadow: 0 0 0 1px #fff, 0 1px 2px rgba(0, 0, 0, .35);
+}
 
 /* Palette-Linien-Swatch (Toolbar) */
 .technik-swatch {
@@ -486,6 +491,19 @@ tr.overdue { background-color: #fff3cd !important; }
   display: inline-block; width: 1.4rem; height: 0; border-top: 3px solid;
   vertical-align: middle; margin-right: .35rem;
 }
+/* Darstellung-Regler (Symbolgroesse / Linienstaerke) in der Legende */
+.technik-legend-sub {
+  font-weight: 600; font-size: .72rem; color: var(--tblr-secondary, #6c757d);
+  margin: .25rem 0 .1rem;
+}
+.technik-legend-display { margin-bottom: .25rem; }
+.technik-legend-disp-row {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: .75rem;
+}
+.technik-legend-disp-row output { color: var(--tblr-secondary, #6c757d); }
+.technik-legend-range { width: 100%; margin: 0 0 .25rem; cursor: pointer; }
+.technik-legend-dash { margin-top: .1rem; }
 
 /* Live-Vermessung beim Zeichnen (Laenge + Richtungswinkel) — Overlay oben mittig.
    pointer-events:none, damit Klicks zum Setzen der Stuetzpunkte durchgehen. */
