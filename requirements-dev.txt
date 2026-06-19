@@ -14,6 +14,9 @@ psycopg2-binary>=2.9
 PyMySQL>=1.1
 cryptography>=42.0
 python-docx>=1.1.0
+# Zwei-Faktor-Authentifizierung (TOTP) + QR-Code (pure-Python, kein Pillow)
+pyotp>=2.9
+segno>=1.6
 # Bankauszug-Import
 lxml>=5.0
 mt-940>=4.26

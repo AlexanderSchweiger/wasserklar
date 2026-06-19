@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Zwei-Faktor-Authentifizierung{% endblock %}
+{% block page_title %}<i class="fas fa-shield-alt me-2"></i> Zwei-Faktor-Authentifizierung{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-7 col-lg-6">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Status</h3>
+        <div class="card-actions">
+          {% if current_user.totp_enabled %}
+            <span class="badge bg-success text-white">Aktiv</span>
+          {% else %}
+            <span class="badge bg-secondary-lt">Inaktiv</span>
+          {% endif %}
+        </div>
+      </div>
+      <div class="card-body">
+        <p class="text-secondary">
+          Die Zwei-Faktor-Authentifizierung (2FA) sichert deinen Zugang mit einem
+          zusätzlichen Einmal-Code aus einer Authenticator-App (z. B. Google
+          Authenticator, Microsoft Authenticator, Authy, 2FAS).
+        </p>
+        {% if not current_user.totp_enabled %}
+          <a href="{{ url_for('auth.security_2fa_enable') }}" class="btn btn-primary">
+            <i class="fas fa-shield-alt me-1"></i> 2FA aktivieren
+          </a>
+        {% else %}
+          <div class="alert alert-success mb-0">
+            <i class="fas fa-check-circle me-1"></i>
+            2FA ist für dein Konto aktiv. Bei der Anmeldung wirst du nach einem Code gefragt.
+          </div>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if current_user.totp_enabled %}
+    <div class="card mt-3">
+      <div class="card-header"><h3 class="card-title">Recovery-Codes</h3></div>
+      <div class="card-body">
+        <p class="text-secondary mb-3">
+          Recovery-Codes ersetzen den App-Code, falls du keinen Zugriff auf dein
+          Gerät hast. Erzeugst du neue Codes, werden alle bisherigen ungültig.
+        </p>
+        <form method="post" action="{{ url_for('auth.security_2fa_recovery_codes') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-outline-primary">
+            <i class="fas fa-sync-alt me-1"></i> Neue Recovery-Codes erzeugen
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card mt-3">
+      <div class="card-header"><h3 class="card-title">2FA deaktivieren</h3></div>
+      <form method="post" action="{{ url_for('auth.security_2fa_disable') }}" autocomplete="off">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="card-body">
+          <p class="text-secondary">
+            Zur Bestätigung bitte dein Passwort eingeben (alternativ ein aktueller
+            2FA- oder Recovery-Code).
+          </p>
+          <div class="mb-2">
+            <label class="form-label">Passwort</label>
+            <input type="password" name="current_password" class="form-control"
+                   autocomplete="current-password">
+          </div>
+        </div>
+        <div class="card-footer">
+          <button type="submit" class="btn btn-danger">
+            <i class="fas fa-shield-alt me-1"></i> 2FA deaktivieren
+          </button>
+        </div>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

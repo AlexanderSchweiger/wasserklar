@@ -984,6 +984,24 @@ def register_commands(app):
         db.session.commit()
         print(f"Admin '{username}' angelegt.")
 
+    @app.cli.command("reset-2fa")
+    @click.option("--username", required=True,
+                  help="Benutzername, dessen 2FA zurueckgesetzt wird.")
+    @click.option("--schema", default=None,
+                  help="Optionales Tenant-Schema (SaaS), z.B. tenant_alm. "
+                       "Setzt den search_path vor dem Update.")
+    def reset_2fa(username, schema):
+        """2FA eines Benutzers zuruecksetzen (Break-Glass: Geraet UND Recovery-Codes verloren)."""
+        if schema:
+            db.session.execute(sa.text(f'SET search_path TO "{schema}", public'))
+        user = User.query.filter_by(username=username).first()
+        if user is None:
+            print(f"Benutzer '{username}' nicht gefunden.")
+            return
+        user.reset_totp()
+        db.session.commit()
+        print(f"2FA für '{username}' zurückgesetzt.")
+
     # -----------------------------------------------------------------------
     # Daten-Export/Import (kompatibel zum UI-Feature unter /data-transfer)
     # -----------------------------------------------------------------------

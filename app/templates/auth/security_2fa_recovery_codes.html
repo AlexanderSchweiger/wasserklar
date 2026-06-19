@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Recovery-Codes{% endblock %}
+{% block page_title %}<i class="fas fa-key me-2"></i> Recovery-Codes{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-7 col-lg-6">
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">Deine Recovery-Codes</h3></div>
+      <div class="card-body">
+        <div class="alert alert-warning">
+          <i class="fas fa-exclamation-triangle me-1"></i>
+          Diese Codes werden <strong>nur dieses eine Mal</strong> angezeigt. Bewahre
+          sie sicher auf — jeder Code funktioniert genau einmal und ersetzt im Notfall
+          den App-Code.
+        </div>
+        <div class="row g-2 font-monospace fs-4 text-center">
+          {% for code in codes %}
+            <div class="col-6"><div class="border rounded py-2">{{ code }}</div></div>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="card-footer text-end">
+        <a href="{{ url_for('auth.security') }}" class="btn btn-primary">
+          <i class="fas fa-check me-1"></i> Habe ich gespeichert
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

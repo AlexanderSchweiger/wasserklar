@@ -1,4 +1,4 @@
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import sqlalchemy as sa
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_login import UserMixin
@@ -118,6 +118,17 @@ class User(UserMixin, db.Model):
     invited_at = db.Column(db.DateTime, nullable=True)
     invitation_accepted_at = db.Column(db.DateTime, nullable=True)
 
+    # --- 2FA / TOTP (OSS v1.31.0), optional pro User ---
+    totp_secret_enc = db.Column(db.String(255), nullable=True)  # Fernet-verschluesselt (WASSERKLAR_MAIL_KEY)
+    totp_enabled = db.Column(
+        db.Boolean, nullable=False, default=False, server_default=sa.false()
+    )
+    totp_recovery_codes = db.Column(db.Text, nullable=True)  # JSON-Liste werkzeug-Hashes
+    totp_failed_attempts = db.Column(
+        db.Integer, nullable=False, default=0, server_default="0"
+    )
+    totp_locked_until = db.Column(db.DateTime, nullable=True)
+
     role = db.relationship("Role", lazy="joined")
 
     def set_password(self, password):
@@ -125,6 +136,72 @@ class User(UserMixin, db.Model):
 
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
+
+    # --- 2FA / TOTP-Helfer (commit-frei: die Route besitzt die Transaktion) ---
+    def set_totp_secret(self, b32):
+        """Verschluesselt das Base32-Secret und legt es ab (aktiviert es nicht)."""
+        from app.settings_service import encrypt_password
+
+        self.totp_secret_enc = encrypt_password(b32)
+
+    def get_totp_secret(self):
+        """Entschluesseltes Secret oder '' (z.B. bei wegrotiertem Fernet-Key)."""
+        from app.settings_service import decrypt_password
+
+        if not self.totp_secret_enc:
+            return ""
+        return decrypt_password(self.totp_secret_enc)
+
+    def totp_uri(self, issuer):
+        """otpauth://-URI fuer QR-Code / manuelle Eingabe."""
+        from app.auth import totp_service
+
+        return totp_service.provisioning_uri(self.get_totp_secret(), self.email, issuer)
+
+    def verify_totp(self, code):
+        """True, wenn der TOTP-Code stimmt (toleriert +-30 s Uhren-Drift).
+
+        Bei leerem/undecryptbarem Secret False -> faellt im Login auf die
+        Recovery-Codes zurueck."""
+        from app.auth import totp_service
+
+        return totp_service.verify_code(self.get_totp_secret(), code)
+
+    def generate_recovery_codes(self, n=10):
+        """Neue Recovery-Codes erzeugen, Hashes speichern, Klartext einmalig zurueck."""
+        from app.auth import totp_service
+
+        plaintexts, hashes_json = totp_service.generate_recovery_codes(n)
+        self.totp_recovery_codes = hashes_json
+        return plaintexts
+
+    def consume_recovery_code(self, code):
+        """True + entfernt den Code, wenn er gueltig ist (Einmal-Verbrauch)."""
+        from app.auth import totp_service
+
+        matched, new_json = totp_service.match_and_remove(self.totp_recovery_codes, code)
+        if matched:
+            self.totp_recovery_codes = new_json
+        return matched
+
+    def is_totp_locked(self):
+        """True, solange die 2FA-Eingabe wegen zu vieler Fehlversuche gesperrt ist."""
+        return self.totp_locked_until is not None and self.totp_locked_until > datetime.utcnow()
+
+    def register_totp_failure(self, threshold=5, lock_minutes=15):
+        """Fehlversuch zaehlen; ab ``threshold`` fuer ``lock_minutes`` sperren."""
+        self.totp_failed_attempts = (self.totp_failed_attempts or 0) + 1
+        if self.totp_failed_attempts >= threshold:
+            self.totp_locked_until = datetime.utcnow() + timedelta(minutes=lock_minutes)
+            self.totp_failed_attempts = 0
+
+    def reset_totp(self):
+        """Alle 2FA-Felder zuruecksetzen (Deaktivieren / Admin-Reset / Break-Glass)."""
+        self.totp_secret_enc = None
+        self.totp_enabled = False
+        self.totp_recovery_codes = None
+        self.totp_failed_attempts = 0
+        self.totp_locked_until = None
 
     @property
     def is_admin(self):

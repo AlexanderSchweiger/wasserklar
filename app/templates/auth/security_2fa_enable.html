@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}2FA einrichten{% endblock %}
+{% block page_title %}<i class="fas fa-shield-alt me-2"></i> Zwei-Faktor-Authentifizierung einrichten{% endblock %}
+{% block content %}
+{# Bewusst eine dedizierte Seite statt eines Modals (MEMORY feedback_modal_first):
+   der Ablauf QR scannen -> Code bestaetigen -> Recovery-Codes einmalig anzeigen
+   braucht ein Post/Redirect/Get ueber mehrere Seiten, das ein Modal nicht sauber traegt. #}
+<div class="row justify-content-center">
+  <div class="col-md-8 col-lg-7">
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">Schritt 1 — App verknüpfen</h3></div>
+      <div class="card-body">
+        <p class="text-secondary">
+          Scanne den QR-Code mit deiner Authenticator-App (z. B. Google
+          Authenticator, Microsoft Authenticator, Authy, 2FAS).
+        </p>
+        <div class="row align-items-center">
+          <div class="col-auto text-center mb-2">
+            {% if qr_svg %}
+              <div class="border rounded p-2 d-inline-block bg-white">{{ qr_svg|safe }}</div>
+            {% else %}
+              <div class="text-secondary small">(QR-Code nicht verfügbar — bitte den Schlüssel manuell eintragen)</div>
+            {% endif %}
+          </div>
+          <div class="col">
+            <label class="form-label">Schlüssel manuell eingeben</label>
+            <input type="text" class="form-control font-monospace" value="{{ secret }}" readonly>
+            <small class="form-hint">
+              Falls der QR-Code nicht funktioniert, gib diesen Schlüssel in der App ein.
+            </small>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card mt-3">
+      <div class="card-header"><h3 class="card-title">Schritt 2 — Code bestätigen</h3></div>
+      <form method="post" autocomplete="off">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="card-body">
+          <p class="text-secondary">
+            Gib den aktuell in der App angezeigten 6-stelligen Code ein, um die
+            Einrichtung abzuschließen.
+          </p>
+          <div class="mb-2">
+            <label class="form-label">Code aus der App</label>
+            <input type="text" name="code" class="form-control" inputmode="numeric"
+                   autocomplete="one-time-code" placeholder="123456" required autofocus>
+          </div>
+        </div>
+        <div class="card-footer d-flex">
+          <a href="{{ url_for('auth.security') }}" class="btn btn-link">Abbrechen</a>
+          <button type="submit" class="btn btn-primary ms-auto">
+            <i class="fas fa-check me-1"></i> Aktivieren
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

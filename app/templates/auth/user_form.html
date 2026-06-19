@@ -35,6 +35,21 @@
           {% else %}
           {{ password_field('password', 'Passwort', required=true) }}
           {% endif %}
+          {% if user and user.totp_enabled %}
+          <div class="mb-3">
+            <label class="form-label">Zwei-Faktor-Authentifizierung</label>
+            <div>
+              <span class="badge bg-success text-white me-2">Aktiv</span>
+              <button type="button" class="btn btn-outline-danger btn-sm"
+                data-bs-toggle="modal" data-bs-target="#modal-reset-2fa">
+                <i class="fas fa-shield-alt me-1"></i> 2FA zurücksetzen
+              </button>
+            </div>
+            <small class="form-hint">
+              Setzt die 2FA dieses Benutzers zurück — z. B. bei verlorenem Gerät ohne Recovery-Codes.
+            </small>
+          </div>
+          {% endif %}
           <div class="mb-3">
             <label class="form-label">Rolle</label>
             <select name="role_id" class="form-select tom-select" required>
@@ -95,5 +110,35 @@
     </div>
   </div>
 </div>
+{% if user.totp_enabled %}
+<div class="modal modal-blur fade" id="modal-reset-2fa" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered" role="document">
+    <div class="modal-content">
+      <form method="post" action="{{ url_for('auth.user_reset_2fa', user_id=user.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-header">
+          <h5 class="modal-title">2FA zurücksetzen: {{ user.username }}</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"
+            aria-label="Schließen"></button>
+        </div>
+        <div class="modal-body">
+          <p class="mb-0">
+            Die Zwei-Faktor-Authentifizierung für <strong>{{ user.username }}</strong>
+            wird deaktiviert und alle Recovery-Codes verworfen. Der Benutzer meldet sich
+            danach nur mit Passwort an und kann 2FA bei Bedarf neu einrichten.
+          </p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-link link-secondary"
+            data-bs-dismiss="modal">Abbrechen</button>
+          <button type="submit" class="btn btn-danger">
+            <i class="fas fa-shield-alt me-1"></i> 2FA zurücksetzen
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
 {% endif %}
 {% endblock %}

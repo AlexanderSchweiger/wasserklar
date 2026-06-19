@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Bestätigung – WG Verwaltung</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/core@1.0.0/dist/css/tabler.min.css">
+</head>
+<body class="antialiased d-flex flex-column">
+<div class="page page-center">
+  <div class="container container-tight py-4">
+    <div class="text-center mb-4">
+      <h1 class="navbar-brand navbar-brand-autodark d-inline-block">
+        <i class="fas fa-tint text-primary me-2"></i><strong>WG</strong> Verwaltung
+      </h1>
+    </div>
+
+    <div class="card card-md">
+      <div class="card-body">
+        <h2 class="h2 text-center mb-1">Zwei-Faktor-Authentifizierung</h2>
+        <p class="text-secondary text-center mb-4">
+          Gib den 6-stelligen Code aus deiner Authenticator-App ein.
+        </p>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% for category, message in messages %}
+            <div class="alert alert-{{ 'danger' if category == 'danger' else 'warning' }}">{{ message }}</div>
+          {% endfor %}
+        {% endwith %}
+
+        <form method="post" autocomplete="off">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="mb-3">
+            <label class="form-label">Code</label>
+            <input type="text" name="code" class="form-control text-center"
+                   inputmode="numeric" autocomplete="one-time-code" autofocus
+                   placeholder="123456" required>
+            <small class="form-hint">
+              Kein Zugriff auf die App? Gib stattdessen einen deiner Recovery-Codes ein.
+            </small>
+          </div>
+          <div class="form-footer">
+            <button type="submit" class="btn btn-primary w-100">
+              <i class="fas fa-shield-alt me-2"></i>Bestätigen
+            </button>
+          </div>
+        </form>
+      </div>
+      <div class="card-footer text-center">
+        <a href="{{ url_for('auth.login') }}" class="text-secondary small">
+          <i class="fas fa-arrow-left me-1"></i>Zurück zur Anmeldung
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/@tabler/core@1.0.0/dist/js/tabler.min.js"></script>
+<script>
+  document.querySelector('form').addEventListener('submit', function () {
+    var btn = this.querySelector('button[type="submit"]');
+    if (btn) { btn.classList.add('btn-loading'); btn.disabled = true; }
+  });
+</script>
+</body>
+</html>

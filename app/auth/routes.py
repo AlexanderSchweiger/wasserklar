@@ -1,8 +1,11 @@
-from flask import render_template, redirect, url_for, flash, request, current_app
+import time
+from urllib.parse import urlparse, urljoin
+
+from flask import render_template, redirect, url_for, flash, request, current_app, session
 from flask_login import login_user, logout_user, login_required, current_user
 from flask_mail import Message
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
-from app.auth import bp
+from app.auth import bp, totp_service
 from app.auth.password_policy import validate_password
 from app.auth.permissions import (
     ALL_PERMISSIONS,
@@ -12,7 +15,25 @@ from app.auth.permissions import (
 )
 from app.extensions import db
 from app.models import Role, RolePermission, User
-from app.settings_service import send_mail
+from app.settings_service import send_mail, wg_settings
+
+
+def _is_safe_next(target):
+    """True, wenn ``target`` eine On-Site-URL ist (schuetzt vor Open-Redirect)."""
+    if not target:
+        return False
+    ref = urlparse(request.host_url)
+    test = urlparse(urljoin(request.host_url, target))
+    return test.scheme in ("http", "https") and ref.netloc == test.netloc
+
+
+# Wie lange ein nach Faktor 1 geparkter Login auf den 2FA-Code warten darf.
+_PENDING_2FA_MAX_AGE = 300  # Sekunden
+
+
+def _clear_pending_2fa():
+    for key in ("pending_2fa_uid", "pending_2fa_next", "pending_2fa_ts"):
+        session.pop(key, None)
 
 
 @bp.route("/login", methods=["GET", "POST"])
@@ -24,11 +45,59 @@ def login():
         password = request.form.get("password", "")
         user = User.query.filter_by(username=username).first()
         if user and user.active and user.check_password(password):
+            raw_next = request.args.get("next")
+            safe_next = raw_next if (raw_next and _is_safe_next(raw_next)) else None
+            if user.totp_enabled:
+                # Faktor 2 ausstehend: User parken, noch NICHT einloggen.
+                session["pending_2fa_uid"] = user.id
+                session["pending_2fa_next"] = safe_next
+                session["pending_2fa_ts"] = int(time.time())
+                return redirect(url_for("auth.verify_2fa"))
             login_user(user)
-            next_page = request.args.get("next")
-            return redirect(next_page or url_for("main.dashboard"))
+            return redirect(safe_next or url_for("main.dashboard"))
         flash("Benutzername oder Passwort falsch.", "danger")
     return render_template("auth/login.html")
+
+
+@bp.route("/verify-2fa", methods=["GET", "POST"])
+def verify_2fa():
+    """Zweiter Login-Schritt: TOTP-Code oder Recovery-Code. Pre-auth — der User
+    ist erst nach erfolgreicher Pruefung via ``login_user`` angemeldet."""
+    if current_user.is_authenticated:
+        return redirect(url_for("main.dashboard"))
+    uid = session.get("pending_2fa_uid")
+    ts = session.get("pending_2fa_ts", 0)
+    if not uid or (int(time.time()) - int(ts)) > _PENDING_2FA_MAX_AGE:
+        _clear_pending_2fa()
+        flash("Die Anmeldung ist abgelaufen. Bitte erneut anmelden.", "warning")
+        return redirect(url_for("auth.login"))
+    user = db.session.get(User, uid)
+    if user is None or not user.active or not user.totp_enabled:
+        _clear_pending_2fa()
+        flash("Bitte erneut anmelden.", "warning")
+        return redirect(url_for("auth.login"))
+    if request.method == "POST":
+        if user.is_totp_locked():
+            flash(
+                "Zu viele Fehlversuche. Bitte versuche es in einigen Minuten erneut.",
+                "danger",
+            )
+            return render_template("auth/verify_2fa.html")
+        code = request.form.get("code", "")
+        if user.verify_totp(code) or user.consume_recovery_code(code):
+            user.totp_failed_attempts = 0
+            user.totp_locked_until = None
+            db.session.commit()
+            safe_next = session.get("pending_2fa_next")
+            if safe_next and not _is_safe_next(safe_next):
+                safe_next = None
+            _clear_pending_2fa()
+            login_user(user)
+            return redirect(safe_next or url_for("main.dashboard"))
+        user.register_totp_failure()
+        db.session.commit()
+        flash("Der Code ist ungültig.", "danger")
+    return render_template("auth/verify_2fa.html")
 
 
 @bp.route("/logout")
@@ -170,6 +239,121 @@ def change_password():
 
 
 # ---------------------------------------------------------------------------
+# Zwei-Faktor-Authentifizierung (TOTP) — Selbstverwaltung
+# ---------------------------------------------------------------------------
+
+# Session-Key fuers provisorische Secret waehrend des Enrollments (noch nicht in DB).
+_ENROLL_SECRET_KEY = "enroll_2fa_secret"
+# Session-Key fuer die einmalige Anzeige frisch erzeugter Recovery-Codes (PRG).
+_RECOVERY_ONCE_KEY = "recovery_codes_once"
+
+
+def _enroll_issuer():
+    """Anzeigename der Authenticator-App (Mandantenname, Fallback statisch)."""
+    return wg_settings().get("name") or "Wasserklar"
+
+
+def _render_enable(secret, issuer):
+    uri = totp_service.provisioning_uri(secret, current_user.email, issuer)
+    try:
+        qr = totp_service.qr_svg(uri)
+    except Exception:  # segno nicht installiert -> manuelles Eintippen bleibt moeglich
+        qr = None
+    return render_template(
+        "auth/security_2fa_enable.html", secret=secret, qr_svg=qr, otpauth_uri=uri
+    )
+
+
+@bp.route("/security")
+@login_required
+def security():
+    return render_template("auth/security.html")
+
+
+@bp.route("/security/2fa/enable", methods=["GET", "POST"])
+@login_required
+def security_2fa_enable():
+    if current_user.totp_enabled:
+        flash("Die Zwei-Faktor-Authentifizierung ist bereits aktiv.", "info")
+        return redirect(url_for("auth.security"))
+    issuer = _enroll_issuer()
+    if request.method == "POST":
+        secret = session.get(_ENROLL_SECRET_KEY)
+        if not secret:
+            flash("Die Einrichtung ist abgelaufen. Bitte erneut starten.", "warning")
+            return redirect(url_for("auth.security_2fa_enable"))
+        code = request.form.get("code", "")
+        if not totp_service.verify_code(secret, code):
+            flash("Der Code ist ungültig. Bitte erneut versuchen.", "danger")
+            return _render_enable(secret, issuer)
+        try:
+            current_user.set_totp_secret(secret)
+        except RuntimeError:
+            current_app.logger.error("2FA-Aktivierung ohne WASSERKLAR_MAIL_KEY versucht")
+            flash(
+                "Der Server ist für Zwei-Faktor-Authentifizierung nicht konfiguriert. "
+                "Bitte den Betreiber kontaktieren.",
+                "danger",
+            )
+            return redirect(url_for("auth.security"))
+        current_user.totp_enabled = True
+        plaintext_codes = current_user.generate_recovery_codes()
+        db.session.commit()
+        session.pop(_ENROLL_SECRET_KEY, None)
+        session[_RECOVERY_ONCE_KEY] = plaintext_codes
+        flash("Zwei-Faktor-Authentifizierung aktiviert.", "success")
+        return redirect(url_for("auth.security_2fa_recovery_codes"))
+    # GET: neues provisorisches Secret erzeugen (erst beim Bestaetigen persistiert)
+    secret = totp_service.new_secret()
+    session[_ENROLL_SECRET_KEY] = secret
+    return _render_enable(secret, issuer)
+
+
+@bp.route("/security/2fa/disable", methods=["POST"])
+@login_required
+def security_2fa_disable():
+    if not current_user.totp_enabled:
+        return redirect(url_for("auth.security"))
+    password = request.form.get("current_password", "")
+    code = request.form.get("code", "")
+    ok = bool(password) and current_user.check_password(password)
+    if not ok and code:
+        ok = current_user.verify_totp(code) or current_user.consume_recovery_code(code)
+    if not ok:
+        flash(
+            "Zum Deaktivieren bitte das Passwort oder einen gültigen 2FA-Code eingeben.",
+            "danger",
+        )
+        return redirect(url_for("auth.security"))
+    current_user.reset_totp()
+    db.session.commit()
+    flash("Zwei-Faktor-Authentifizierung deaktiviert.", "success")
+    return redirect(url_for("auth.security"))
+
+
+@bp.route("/security/2fa/recovery-codes", methods=["GET", "POST"])
+@login_required
+def security_2fa_recovery_codes():
+    if not current_user.totp_enabled:
+        return redirect(url_for("auth.security"))
+    if request.method == "POST":
+        plaintext_codes = current_user.generate_recovery_codes()
+        db.session.commit()
+        session[_RECOVERY_ONCE_KEY] = plaintext_codes
+        return redirect(url_for("auth.security_2fa_recovery_codes"))
+    codes = session.pop(_RECOVERY_ONCE_KEY, None)
+    if not codes:
+        # Direktaufruf/Reload ohne frische Codes: aus Sicherheitsgruenden nichts zeigen.
+        flash(
+            "Recovery-Codes werden aus Sicherheitsgründen nur einmal angezeigt. "
+            "Erzeuge bei Bedarf neue.",
+            "info",
+        )
+        return redirect(url_for("auth.security"))
+    return render_template("auth/security_2fa_recovery_codes.html", codes=codes)
+
+
+# ---------------------------------------------------------------------------
 # Benutzerverwaltung (nur Admin)
 # ---------------------------------------------------------------------------
 
@@ -266,6 +450,21 @@ def user_set_password(user_id):
         user.set_password(password)
         db.session.commit()
         flash(f"Passwort für '{user.username}' geändert.", "success")
+    return redirect(url_for("auth.user_edit", user_id=user.id))
+
+
+@bp.route("/users/<int:user_id>/reset-2fa", methods=["POST"])
+@permission_required(PERM_VERWALTUNG)
+def user_reset_2fa(user_id):
+    """Setzt die 2FA eines Users zurueck — fuer den Fall eines verlorenen Geraets
+    ohne verfuegbare Recovery-Codes (Tenant-Admin-Selbsthilfe)."""
+    user = db.get_or_404(User, user_id)
+    user.reset_totp()
+    db.session.commit()
+    flash(
+        f"Zwei-Faktor-Authentifizierung für '{user.username}' zurückgesetzt.",
+        "success",
+    )
     return redirect(url_for("auth.user_edit", user_id=user.id))
 
 

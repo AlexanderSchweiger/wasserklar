@@ -622,6 +622,9 @@
                   data-bs-toggle="modal" data-bs-target="#modal-change-password">
                   <i class="fas fa-key me-2"></i> Passwort ändern
                 </button>
+                <a href="{{ url_for('auth.security') }}" class="dropdown-item">
+                  <i class="fas fa-shield-alt me-2"></i> Zwei-Faktor-Authentifizierung
+                </a>
                 <a href="{{ url_for('auth.logout') }}" class="dropdown-item">
                   <i class="fas fa-sign-out-alt me-2"></i> Abmelden
                 </a>
