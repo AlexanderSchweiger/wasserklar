@@ -77,6 +77,14 @@ ENDPOINT_TO_DOC = {
     "accounting.report":             "buchhaltung",
     "accounting.ust":                "buchhaltung",
 
+    # Leitungsnetz (Wasserleitungsplan)
+    "network.index":               "leitungsnetz#karte",
+    "network.print_view":          "leitungsnetz#drucken",
+    "network.elements":            "leitungsnetz#elementliste",
+    "network.feature_edit":        "leitungsnetz#elemente",
+    "network.plans_index":         "leitungsnetz#plaene",
+    "network.import_view":         "leitungsnetz#import",
+
     # Störungsjournal
     "incidents.index":             "stoerungsjournal",
     "incidents.detail":            "stoerungsjournal#detail",
