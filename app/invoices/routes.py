@@ -13,7 +13,8 @@ from app.invoices import bp
 from app.invoices.send_email_hooks import run_before_send, read_message_id
 from app.invoices.render_hooks import build_pdf_context
 from app.extensions import db
-from app.models import Invoice, InvoiceItem, EmailEvent, Customer, WaterMeter, MeterReading, WaterTariff, Booking, Account, Property, OpenItem, Project, RealAccount, InvoiceCounter, AppSetting, BillingRun, BillingPeriod
+from app.models import Invoice, InvoiceItem, EmailEvent, Customer, WaterMeter, MeterReading, WaterTariff, Booking, Account, Property, OpenItem, Project, RealAccount, InvoiceCounter, AppSetting, BillingRun, BillingPeriod, ReadingCorrection
+from app.meters.estimation import apply_corrections_to_invoice, cap_invoice_at_zero, reverse_corrections_for_invoice
 from app.email_tracking import record_email_sent
 from app.utils import next_invoice_number as _next_invoice_number
 from app.settings_service import get_wg, send_mail, wg_settings, get_contact_info, get_contact_info_font_size, get_invoice_sender_address
@@ -340,6 +341,52 @@ def index():
     )
 
 
+@bp.route("/corrections")
+@login_required
+def corrections():
+    """Übersicht der Schätz-Korrekturposten (Gutschrift/Nachforderung).
+
+    Offene Posten warten auf den naechsten Rechnungslauf des Kunden; verrechnete
+    sind in einer Folgerechnung eingezogen. Reine Transparenz-Ansicht — der
+    Einzug passiert automatisch im Rechnungslauf."""
+    status = request.args.get("status", "open")
+    customer_id = request.args.get("customer_id", type=int)
+    query = (
+        ReadingCorrection.query
+        .join(Customer, ReadingCorrection.customer_id == Customer.id)
+    )
+    if customer_id:
+        query = query.filter(ReadingCorrection.customer_id == customer_id)
+    if status == "open":
+        query = query.filter(ReadingCorrection.status.in_([
+            ReadingCorrection.STATUS_OPEN, ReadingCorrection.STATUS_PARTIAL,
+        ]))
+    elif status == "applied":
+        query = query.filter(
+            ReadingCorrection.status == ReadingCorrection.STATUS_APPLIED)
+    query = query.order_by(
+        ReadingCorrection.created_at.desc(), ReadingCorrection.id.desc())
+    pagination = paginate_query(query, page_key="corrections")
+
+    open_q = ReadingCorrection.query.filter(
+        ReadingCorrection.status.in_([
+            ReadingCorrection.STATUS_OPEN, ReadingCorrection.STATUS_PARTIAL,
+        ])
+    )
+    if customer_id:
+        open_q = open_q.filter(ReadingCorrection.customer_id == customer_id)
+    open_total = sum(
+        (Decimal(str(c.remaining_amount or 0)) for c in open_q.all()), Decimal("0"))
+
+    filter_customer = db.session.get(Customer, customer_id) if customer_id else None
+
+    return render_template(
+        "invoices/corrections.html",
+        corrections=pagination.items, pagination=pagination,
+        status=status, open_total=open_total, filter_customer=filter_customer,
+    )
+
+
 def _apply_invoice_sort(query, sort: str, direction: str):
     desc = direction == "desc"
 
@@ -472,6 +519,9 @@ def generate():
 
         created = 0
         skipped = 0
+        # Pro Kunde nur EINE Rechnung im Lauf mit offenen Schaetz-Korrekturen
+        # belasten/gutschreiben (ein Kunde kann mehrere Objekte haben).
+        customers_corrected = set()
         for property_id, prop_readings in sorted_items:
             prop = prop_readings[0].meter.property
             ownership = prop.current_owner()
@@ -524,6 +574,11 @@ def generate():
             total_consumption = sum(
                 (r.consumption or Decimal("0")) for r in prop_readings
             )
+            # Schaetzung-Marker: beruht der Verbrauch (ganz/teils) auf einer
+            # geschaetzten Ablesung? -> Position bekommt den "geschätzt"-Badge.
+            is_any_estimated = any(
+                getattr(r, "is_estimated", False) for r in prop_readings
+            )
 
             if is_replacement and print_meter_swap:
                 # Separate Zeile je Zähler
@@ -550,6 +605,7 @@ def generate():
                         unit_price=tariff.price_per_m3,
                         amount=amount,
                         tax_rate=water_tax,
+                        is_estimated=bool(getattr(reading, "is_estimated", False)),
                     ))
             else:
                 # Eine Zeile mit Gesamtverbrauch (Standard)
@@ -568,6 +624,7 @@ def generate():
                     unit_price=tariff.price_per_m3,
                     amount=amount,
                     tax_rate=water_tax,
+                    is_estimated=is_any_estimated,
                 ))
 
             # Grundgebühr (nur wenn explizit hinterlegt, auch 0 erzeugt eine Position)
@@ -597,6 +654,23 @@ def generate():
             # Damit USt (sofern vorhanden) im Gesamtbetrag berücksichtigt wird:
             db.session.flush()
             inv.recalculate_total()
+
+            # Offene Schaetz-Korrekturen des Kunden in seine (erste) Rechnung
+            # dieses Laufs einziehen — Nachforderung voll, Gutschrift nur bis
+            # Betrag 0, Rest wandert auf die naechste Rechnung.
+            if ownership.customer_id not in customers_corrected:
+                apply_corrections_to_invoice(inv, ownership.customer_id)
+                customers_corrected.add(ownership.customer_id)
+
+            # Rechnung nie negativ (z.B. negativer Verbrauch nach zu hoher
+            # Vorperioden-Schaetzung): auf 0 kappen, Rest als Gutschrift
+            # auf die naechste Rechnung uebertragen.
+            cap_invoice_at_zero(
+                inv, customer_id=ownership.customer_id,
+                meter_id=prop_readings[0].meter_id, period_id=period.id,
+                tax_rate=water_tax, created_by_id=current_user.id,
+            )
+
             created += 1
 
         billing_run.invoices_created = created
@@ -1322,6 +1396,9 @@ def delete(invoice_id):
         year = None
 
     try:
+        # Schätz-Korrekturen rückabwickeln (verrechnete zurückgeben, aus der
+        # Kappung erzeugte entfernen) BEVOR die Rechnung verschwindet.
+        reverse_corrections_for_invoice(invoice)
         # Verknüpften Offenen Posten entfernen (bei Entwürfen normalerweise keiner).
         if invoice.open_item is not None:
             db.session.delete(invoice.open_item)
@@ -1900,11 +1977,20 @@ def billing_run_delete(run_id):
             except (ValueError, IndexError):
                 pass
 
-    # Alle löschbar
-    for inv in deletable:
-        db.session.delete(inv)
-    db.session.delete(run)
-    db.session.commit()
+    # Alle löschbar — vorher Schätz-Korrekturen rückabwickeln (verrechnete
+    # zurückgeben, aus Kappung erzeugte entfernen). Schlägt fehl, wenn eine
+    # erzeugte Gutschrift schon in einer späteren Rechnung verrechnet wurde.
+    try:
+        for inv in deletable:
+            reverse_corrections_for_invoice(inv)
+        for inv in deletable:
+            db.session.delete(inv)
+        db.session.delete(run)
+        db.session.commit()
+    except ValueError as e:
+        db.session.rollback()
+        flash(str(e), "warning")
+        return redirect(url_for("invoices.billing_run_detail", run_id=run_id))
 
     if years_to_reset:
         reset_parts = []

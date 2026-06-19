@@ -44,6 +44,17 @@
               <i class="fas fa-map-marker-alt me-2"></i> Hausnummern korrigieren
             </button>
           </li>
+          <li>
+            <button type="button" class="dropdown-item" data-bs-toggle="modal" data-bs-target="#geocodeBevModal">
+              <i class="fas fa-location-crosshairs me-2"></i> BEV-Adressen abgleichen
+            </button>
+          </li>
+          <li><hr class="dropdown-divider"></li>
+          <li>
+            <button type="button" class="dropdown-item" data-bs-toggle="modal" data-bs-target="#setAddressModal">
+              <i class="fas fa-city me-2"></i> PLZ/Ort/Land setzen
+            </button>
+          </li>
         </ul>
       </div>
     </div>
@@ -92,6 +103,125 @@
     </div>
   </div>
 </div>
+
+<div class="modal fade" id="geocodeBevModal" tabindex="-1" aria-labelledby="geocodeBevModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="geocodeBevModalLabel">
+          <i class="fas fa-location-crosshairs me-2"></i> BEV-Adressen abgleichen
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <div class="modal-body">
+        <p>
+          Die Adressen der Liegenschaften werden gegen das amtliche
+          <strong>österreichische Adressregister (BEV)</strong> abgeglichen und mit
+          einer Koordinate versehen. Diese Koordinate ist die Voraussetzung dafür,
+          dass das Leitungsnetz jeden Hausanschluss automatisch der nächstgelegenen
+          Liegenschaft zuordnen kann.
+        </p>
+        {% if bev_index_info %}
+        <div class="alert alert-info py-2 mb-3">
+          <i class="fas fa-database me-1"></i>
+          Adressindex vorhanden: <strong>{{ bev_index_info.addresses }}</strong> Adressen
+          {% if bev_index_info.built_at %}(Stand {{ bev_index_info.built_at[:10] }}){% endif %}.
+        </div>
+        {% else %}
+        <div class="alert alert-warning py-2 mb-3">
+          <i class="fas fa-triangle-exclamation me-1"></i>
+          Es ist noch <strong>kein BEV-Adressindex</strong> vorhanden. Bitte zuerst
+          <code>flask&nbsp;bev-refresh</code> ausführen (im SaaS-Betrieb wird der Index
+          automatisch bereitgestellt).
+        </div>
+        {% endif %}
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="mode" id="bevModeMissing" value="missing" checked>
+          <label class="form-check-label" for="bevModeMissing">
+            Nur fehlende abgleichen <span class="text-muted">(empfohlen — schnell, lässt bereits gesetzte Koordinaten unberührt)</span>
+          </label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="mode" id="bevModeAll" value="all">
+          <label class="form-check-label" for="bevModeAll">
+            Alle neu abgleichen <span class="text-muted">(nach einer Aktualisierung des Adressindex)</span>
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+        <form method="post" action="{{ url_for('properties.geocode_bev') }}" id="geocodeBevForm">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="mode" id="geocodeBevMode" value="missing">
+          <button type="submit" class="btn btn-primary" {% if not bev_index_info %}disabled{% endif %}>
+            <i class="fas fa-location-crosshairs me-1"></i> Abgleichen
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="setAddressModal" tabindex="-1" aria-labelledby="setAddressModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="post" action="{{ url_for('properties.bulk_set_address') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-header">
+          <h5 class="modal-title" id="setAddressModalLabel">
+            <i class="fas fa-city me-2"></i> PLZ/Ort/Land setzen
+          </h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+        </div>
+        <div class="modal-body">
+          <p>
+            Setzt PLZ, Ort und Land bei
+            <strong>{% if property_count is not none %}allen {{ property_count }}{% else %}allen{% endif %}
+            aktiven Liegenschaften</strong> auf einen gemeinsamen Wert. Praktisch, wenn diese
+            Angaben beim Import gefehlt haben oder falsch waren.
+          </p>
+          <div class="mb-3">
+            <label class="form-label" for="setAddressPlz">PLZ</label>
+            <input type="text" class="form-control" id="setAddressPlz" name="plz" maxlength="10"
+              autocomplete="off" placeholder="z. B. 5310">
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="setAddressOrt">Ort / Stadt</label>
+            <input type="text" class="form-control" id="setAddressOrt" name="ort" maxlength="100"
+              autocomplete="off" placeholder="z. B. Mondsee">
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="setAddressLand">Land</label>
+            <input type="text" class="form-control" id="setAddressLand" name="land" maxlength="100"
+              autocomplete="off" placeholder="z. B. Österreich">
+          </div>
+          <p class="text-muted small mb-3">
+            Nur ausgefüllte Felder werden übernommen — ein leeres Feld lässt die jeweilige
+            Spalte unverändert.
+          </p>
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="mode" id="setAddressModeAll" value="all" checked>
+            <label class="form-check-label" for="setAddressModeAll">
+              Alle überschreiben <span class="text-muted">(empfohlen für die Import-Korrektur)</span>
+            </label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="mode" id="setAddressModeEmpty" value="empty">
+            <label class="form-check-label" for="setAddressModeEmpty">
+              Nur leere Felder ausfüllen <span class="text-muted">(bereits gesetzte Werte unberührt lassen)</span>
+            </label>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+          <button type="submit" class="btn btn-primary">
+            <i class="fas fa-check me-1"></i> Setzen
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -108,6 +238,20 @@ window.onPropertyEdited = function (e) {
     target: '#property-row-' + id, swap: 'outerHTML',
   });
 };
+
+// BEV-Abgleich: gewaehlten Modus (Radio im Modal-Body) auf das Hidden-Feld im
+// Submit-Form spiegeln. Die Radios liegen ausserhalb des <form> und wuerden
+// sonst nicht mitgesendet.
+(function () {
+  var radios = document.querySelectorAll('input[name="mode"][type="radio"]');
+  var hidden = document.getElementById('geocodeBevMode');
+  if (!hidden) return;
+  radios.forEach(function (r) {
+    r.addEventListener('change', function () {
+      if (r.checked) hidden.value = r.value;
+    });
+  });
+})();
 </script>
 {% include "properties/_property_modal_scripts.html" %}
 {% endblock %}

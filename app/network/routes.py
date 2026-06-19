@@ -188,8 +188,52 @@ def index():
         plan=plan,
         plans=plans,
         feature_count=feature_count,
+        unassigned_count=svc.count_unassigned_hausanschluss(plan.id if plan else None),
         vocab=vocab,
     )
+
+
+@bp.route("/assign-hausanschluss", methods=["POST"])
+@login_required
+def assign_hausanschluss():
+    """Ordnet die Hausanschluss-Punkte des aktuellen Plans automatisch der
+    jeweils naechstgelegenen (geocodeten) Liegenschaft zu. Drei-Punkte-Menue
+    der Karte. Danach Redirect auf die Karte — unzugeordnete Hausanschluesse
+    erscheinen grell."""
+    plan = current_plan()
+    if plan is None:
+        flash("Kein Plan gewählt — bitte zuerst einen Plan anlegen.", "warning")
+        return redirect(url_for("network.index"))
+
+    raw = (request.form.get("max_distance_m") or "").strip().replace(",", ".")
+    try:
+        max_dist = float(raw) if raw else svc.DEFAULT_ASSIGN_DISTANCE_M
+    except ValueError:
+        max_dist = svc.DEFAULT_ASSIGN_DISTANCE_M
+    if max_dist <= 0:
+        max_dist = svc.DEFAULT_ASSIGN_DISTANCE_M
+    only_missing = request.form.get("mode") != "all"
+
+    res = svc.assign_hausanschluss_to_properties(
+        plan.id, max_distance_m=max_dist, only_missing=only_missing,
+    )
+
+    if res["geocoded_total"] == 0:
+        flash("Keine geocodeten Liegenschaften vorhanden — bitte zuerst unter "
+              "Liegenschaften „BEV-Adressen abgleichen“ ausführen.", "warning")
+    elif res["considered"] == 0:
+        flash("Keine passenden Hausanschlüsse gefunden (alle bereits zugeordnet "
+              "oder keiner mit Koordinate). Für eine Neu-Zuordnung „Alle neu“ wählen.",
+              "info")
+    else:
+        category = "success" if res["assigned"] else "warning"
+        msg = (f"Hausanschluss-Zuordnung: {res['assigned']} von {res['considered']} "
+               f"zugeordnet (Radius {max_dist:g} m, je Liegenschaft höchstens ein Anschluss).")
+        if res["unmatched"]:
+            msg += (f" {res['unmatched']} ohne freie Liegenschaft im Radius — "
+                    f"grell markiert.")
+        flash(msg, category)
+    return redirect(url_for("network.index", plan=plan.id))
 
 
 @bp.route("/features.geojson")

@@ -22,6 +22,11 @@
         {% endfor %}
       </select>
       {% if plan %}<span class="badge {{ vocab.plan_status_badge(plan.status) }}">{{ vocab.plan_status_label(plan.status) }}</span>{% endif %}
+      {% if unassigned_count %}
+      <span class="badge bg-pink text-white" title="Hausanschlüsse ohne zugeordnete Liegenschaft – auf der Karte grell markiert">
+        <i class="fas fa-triangle-exclamation me-1"></i>{{ unassigned_count }} ohne Liegenschaft
+      </span>
+      {% endif %}
       {% if plan %}
       {# Element-Filter: tippen blendet rechts die Elementliste ein (technik-map.js),
          "Zurücksetzen" schliesst sie wieder und zeigt das leere Default-Panel. #}
@@ -63,6 +68,12 @@
           <a href="{{ url_for('network.print_view') }}" class="dropdown-item" hx-boost="false" target="_blank" rel="noopener">
             <i class="fas fa-print me-2"></i>Drucken
           </a>
+          {% if plan %}
+          <div class="dropdown-divider"></div>
+          <button type="button" class="dropdown-item" data-bs-toggle="modal" data-bs-target="#assignHausanschlussModal">
+            <i class="fas fa-link me-2"></i>Hausanschlüsse zuordnen
+          </button>
+          {% endif %}
         </div>
       </div>
     </div>
@@ -110,7 +121,11 @@
     <div class="row g-0">
       <div class="col-lg-8 col-12">
         <div class="technik-map-wrap">
-          <div id="technik-map"></div>
+          {# hx-boost="false": die Seite laeuft unter <body hx-boost="true">, und
+             htmx' MutationObserver wuerde sonst die von Leaflet dynamisch erzeugten
+             Anker (Popup-Schliessen-"x", Controls) als <a href="#"> boosten – der
+             Klick triggert dann eine geboostete Navigation statt das Popup zu schliessen. #}
+          <div id="technik-map" hx-boost="false"></div>
           {# Floating-Button: auf Mobile draussen am Hydranten die Kernfunktion.
              technik-map.js verdrahtet #technik-locate unveraendert. #}
           <button type="button" class="btn btn-icon technik-locate-fab" id="technik-locate"
@@ -162,10 +177,84 @@
 </template>
 {% endblock %}
 
+{% block modals %}
+{% if plan %}
+<div class="modal fade" id="assignHausanschlussModal" tabindex="-1" aria-labelledby="assignHausanschlussModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="assignHausanschlussModalLabel">
+          <i class="fas fa-link me-2"></i>Hausanschlüsse zuordnen
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <div class="modal-body">
+        <p>
+          Jeder <strong>Hausanschluss</strong> im Plan <em>{{ plan.name }}</em> wird automatisch der
+          <strong>nächstgelegenen Liegenschaft</strong> zugeordnet (Luftlinie). Voraussetzung: die
+          Liegenschaften wurden geocodet (unter <em>Liegenschaften → BEV-Adressen abgleichen</em>).
+        </p>
+        <p class="text-secondary small mb-3">
+          Jede Liegenschaft wird dabei <strong>höchstens einem</strong> Hausanschluss zugeordnet — greifen
+          zwei nach derselben, gewinnt der nähere. Hausanschlüsse ohne freie Liegenschaft im Suchradius
+          bleiben unzugeordnet und werden auf der Karte <span class="text-pink fw-bold">grell markiert</span>.
+        </p>
+        <label class="form-label" for="assignMaxDistance">Maximaler Suchradius</label>
+        <div class="input-group mb-3" style="max-width: 12rem">
+          <input type="number" class="form-control" id="assignMaxDistance" value="60" min="1" step="5">
+          <span class="input-group-text">m</span>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="assignMode" id="assignModeMissing" value="missing" checked>
+          <label class="form-check-label" for="assignModeMissing">
+            Nur nicht zugeordnete <span class="text-muted">(empfohlen — manuelle Zuordnungen bleiben unberührt)</span>
+          </label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="assignMode" id="assignModeAll" value="all">
+          <label class="form-check-label" for="assignModeAll">
+            Alle neu zuordnen <span class="text-muted">(überschreibt bestehende Zuordnungen)</span>
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+        <form method="post" action="{{ url_for('network.assign_hausanschluss', plan=plan.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="max_distance_m" id="assignMaxDistanceHidden" value="60">
+          <input type="hidden" name="mode" id="assignModeHidden" value="missing">
+          <button type="submit" class="btn btn-primary">
+            <i class="fas fa-link me-1"></i>Zuordnen
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
 {% block scripts %}
 <script>
   window.TECHNIK = {{ cfg|tojson }};
   window.TECHNIK.csrfToken = "{{ csrf_token() }}";
 </script>
 <script src="{{ url_for('static', filename='js/technik-map.js') }}"></script>
+<script>
+  // Zuordnungs-Modal: Suchradius + Modus (liegen ausserhalb des <form>) auf die
+  // Hidden-Felder im Submit-Form spiegeln.
+  (function () {
+    var dist = document.getElementById('assignMaxDistance');
+    var distHidden = document.getElementById('assignMaxDistanceHidden');
+    if (dist && distHidden) {
+      dist.addEventListener('input', function () { distHidden.value = dist.value; });
+    }
+    var modeHidden = document.getElementById('assignModeHidden');
+    document.querySelectorAll('input[name="assignMode"]').forEach(function (r) {
+      r.addEventListener('change', function () {
+        if (r.checked && modeHidden) modeHidden.value = r.value;
+      });
+    });
+  })();
+</script>
 {% endblock %}

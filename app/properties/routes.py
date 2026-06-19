@@ -2,7 +2,7 @@ import json
 import re
 from datetime import date, timedelta
 
-from flask import render_template, redirect, url_for, flash, request, make_response, session
+from flask import render_template, redirect, url_for, flash, request, make_response, session, current_app
 from flask_login import login_required
 from sqlalchemy import case as sa_case, exists, func as sa_func
 
@@ -88,6 +88,11 @@ def index():
     )
     if request.headers.get("HX-Request"):
         return render_template("properties/_table.html", **ctx)
+
+    # BEV-Geocoding: Index-Info (built_at/Anzahl) fuer den Abgleich-Dialog.
+    from app.properties import bev_geocode
+    ctx["bev_index_info"] = bev_geocode.index_info(current_app.config["BEV_INDEX_PATH"])
+    ctx["property_count"] = Property.query.filter_by(active=True).count()
     return render_template("properties/index.html", **ctx)
 
 
@@ -135,6 +140,98 @@ def fix_housenumbers():
     if not changed and not skipped:
         flash("Keine Objekte gefunden, bei denen eine Hausnummer in der Straße stand.", "info")
 
+    return redirect(url_for("properties.index"))
+
+
+@bp.route("/geocode-bev", methods=["POST"])
+@login_required
+def geocode_bev():
+    """Gleicht die Adressen der Liegenschaften gegen den BEV-Index ab und setzt
+    ihre Koordinaten (Voraussetzung fuer die Hausanschluss-Zuordnung im
+    Leitungsnetz).
+
+    Standardlauf ist idempotent (nur Liegenschaften ohne Koordinate). Mit
+    ``mode=all`` werden alle neu abgeglichen — sinnvoll nach einem
+    Index-Refresh (``flask bev-refresh``).
+    """
+    from app.properties import bev_geocode
+
+    only_missing = request.form.get("mode") != "all"
+    try:
+        result = bev_geocode.geocode_properties(only_missing=only_missing)
+    except bev_geocode.BevImportError as exc:
+        flash(str(exc), "warning")
+        return redirect(url_for("properties.index"))
+
+    if result["total"] == 0:
+        flash("Keine Liegenschaften zum Abgleichen gefunden "
+              "(alle bereits geocodet — für einen Neu-Abgleich „Alle neu“ wählen).", "info")
+    else:
+        nf = len(result["not_found"])
+        category = "success" if result["geocoded"] else "warning"
+        msg = (f"BEV-Abgleich: {result['geocoded']} von {result['total']} "
+               f"Liegenschaften geocodet.")
+        if nf:
+            sample = ", ".join(result["not_found"][:8])
+            if nf > 8:
+                sample += " …"
+            msg += (f" {nf} ohne Treffer: {sample} — diese Adressen bitte prüfen "
+                    f"(Schreibweise/Hausnummer) oder den Index aktualisieren.")
+        flash(msg, category)
+    return redirect(url_for("properties.index"))
+
+
+@bp.route("/bulk-set-address", methods=["POST"])
+@login_required
+def bulk_set_address():
+    """Setzt PLZ, Ort und/oder Land für alle aktiven Liegenschaften auf einen
+    gemeinsamen Wert. Gedacht für die Import-Nachbesserung, wenn diese Felder
+    beim Import nicht (richtig) befüllt wurden.
+
+    Nur ausgefüllte Eingabefelder werden angewendet — ein leer gelassenes Feld
+    lässt die Spalte unberührt (kein versehentliches Leeren). Mit ``mode=empty``
+    werden nur Liegenschaften ohne Wert in der jeweiligen Spalte gesetzt, mit
+    ``mode=all`` (Default) alle.
+    """
+    plz = request.form.get("plz", "").strip()
+    ort = request.form.get("ort", "").strip()
+    land = request.form.get("land", "").strip()
+    only_empty = request.form.get("mode") == "empty"
+
+    labels = {"plz": "PLZ", "ort": "Ort", "land": "Land"}
+    fields = {k: v for k, v in (("plz", plz), ("ort", ort), ("land", land)) if v}
+    if not fields:
+        flash("Es wurde kein Wert eingegeben — bitte mindestens PLZ, Ort oder Land ausfüllen.", "warning")
+        return redirect(url_for("properties.index"))
+
+    properties = Property.query.filter_by(active=True).all()
+    changed = 0
+    for prop in properties:
+        touched = False
+        for attr, value in fields.items():
+            current = getattr(prop, attr)
+            if only_empty and current not in (None, ""):
+                continue
+            if current != value:
+                setattr(prop, attr, value)
+                touched = True
+        if touched:
+            changed += 1
+
+    if changed:
+        db.session.commit()
+
+    feldtext = ", ".join(labels[k] for k in fields)
+    if changed:
+        flash(
+            f"{feldtext} bei {changed} Liegenschaft{'en' if changed != 1 else ''} gesetzt.",
+            "success",
+        )
+    else:
+        flash(
+            "Keine Liegenschaft geändert (Werte waren bereits gesetzt oder es gibt keine passenden Objekte).",
+            "info",
+        )
     return redirect(url_for("properties.index"))
 
 

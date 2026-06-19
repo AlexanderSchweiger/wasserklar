@@ -95,26 +95,38 @@ def save_reading(
     entered_via_self_service: bool = False,
     self_service_code_id: int = None,
     reading_date: date = None,
+    is_estimated: bool = False,
 ) -> MeterReading:
     """Legt einen Zaehlerstand an oder aktualisiert den existierenden
     Eintrag fuer ``(meter, billing_period)``. Berechnet den Verbrauch der
     gesamten Zaehlerkette neu (gegen die vorige Ablesung nach Datum bzw.
     ``initial_value``).
 
+    ``is_estimated`` markiert den Stand als Schaetzung. Ersetzt ein echter
+    Stand (``is_estimated=False``) eine zuvor *abgerechnete* Schaetzung, wird
+    automatisch ein ``ReadingCorrection`` (Gutschrift/Nachforderung) angelegt
+    — zentral hier, damit alle Eingabewege (OSS-Einzel/-Bulk, SaaS-Self-
+    Service) den Abgleich ohne Mehraufwand bekommen.
+
     Caller muss ``db.session.commit()`` aufrufen.
     """
     if reading_date is None:
         reading_date = date.today()
 
+    # Vorzustand merken, um den Schaetzungs-Abgleich zu erkennen.
     existing = MeterReading.query.filter_by(
         meter_id=meter.id, billing_period_id=billing_period.id
     ).first()
+    was_estimated = bool(existing.is_estimated) if existing else False
+    est_consumption = existing.consumption if existing else None
+
     if existing:
         existing.value = value
         existing.reading_date = reading_date
         existing.created_by_id = created_by_id
         existing.entered_via_self_service = entered_via_self_service
         existing.self_service_code_id = self_service_code_id
+        existing.is_estimated = is_estimated
         reading = existing
     else:
         reading = MeterReading(
@@ -125,9 +137,16 @@ def save_reading(
             created_by_id=created_by_id,
             entered_via_self_service=entered_via_self_service,
             self_service_code_id=self_service_code_id,
+            is_estimated=is_estimated,
         )
         db.session.add(reading)
 
     db.session.flush()
     recompute_meter_chain(meter)
+
+    # Echter Stand ersetzt abgerechnete Schaetzung -> Korrekturposten anlegen.
+    if existing is not None and was_estimated and not is_estimated:
+        from app.meters.estimation import build_correction
+        build_correction(reading, est_consumption, created_by_id=created_by_id)
+
     return reading

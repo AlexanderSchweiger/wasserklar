@@ -16,7 +16,7 @@ import pandas as pd
 import pytest
 
 from app.extensions import db
-from app.import_csv.routes import _run_import, _detect_stand_columns
+from app.import_csv.routes import _run_import
 from app.models import (
     BillingPeriod, Customer, MeterReading, Property, PropertyOwnership,
     WaterMeter,
@@ -47,6 +47,8 @@ COLS = {
     "property_type": "Typ",
     "meter_number": "Zählernummer",
     "meter_eichjahr": "Eichjahr",
+    # Genau EIN Stand je Zähler wird importiert; in den Tests die '2024'-Spalte.
+    "meter_reading": "Stand 2024",
     "strasse": "Straße",
     "plz": "PLZ",
     "ort": "Ort",
@@ -60,8 +62,7 @@ COLS = {
 def _run(rows, mode="skip", dry_run=False):
     """Baut ein DataFrame aus Zeilen-Dicts und ruft _run_import."""
     df = pd.DataFrame(rows).fillna("")
-    stand_columns = _detect_stand_columns(df.columns.tolist())
-    return _run_import(df, COLS, stand_columns, mode, dry_run=dry_run)
+    return _run_import(df, COLS, mode, dry_run=dry_run)
 
 
 def _customer(cnum):
@@ -96,17 +97,34 @@ class TestBasicImport:
         assert _object_numbers(c) == ["Haus A"]
         assert res["plan"][0]["category"] == "import"
 
-    def test_imports_readings_with_consumption(self, app):
+    def test_imports_only_selected_reading_as_baseline(self, app):
+        """Nur der gewählte (jüngste) Stand wird importiert – Vorjahre nicht.
+        Der Stand ist ein reiner Anfangsstand ohne fiktiven Verbrauch."""
         _run([
             {"Kunden-Nr.": "100", "Name": "Huber", "Objekt": "Haus A",
              "Zählernummer": "Z1", "Stand 2023": "100", "Stand 2024": "175"},
         ])
         meter = WaterMeter.query.filter_by(meter_number="Z1").first()
         readings = {r.billing_period.name: r for r in meter.readings.all()}
-        assert readings["2023"].value == Decimal("100")
-        assert readings["2023"].consumption is None
+        # Die 'Stand 2023'-Spalte (Vorjahr) wird ignoriert.
+        assert set(readings.keys()) == {"2024"}
         assert readings["2024"].value == Decimal("175")
-        assert readings["2024"].consumption == Decimal("75")
+        # Anfangsstand → kein über einen evtl. Tausch hinweg berechneter Verbrauch.
+        assert readings["2024"].consumption is None
+
+    def test_custom_reading_column_lands_in_active_period(self, app):
+        """Eine Nicht-'Stand YYYY'-Spalte landet in der aktiven Periode (2025)."""
+        cols = dict(COLS, meter_reading="Letzter Stand")
+        df = pd.DataFrame([
+            {"Kunden-Nr.": "100", "Name": "Huber", "Objekt": "Haus A",
+             "Zählernummer": "Z1", "Letzter Stand": "250"},
+        ]).fillna("")
+        _run_import(df, cols, "skip", dry_run=False)
+        meter = WaterMeter.query.filter_by(meter_number="Z1").first()
+        reading = meter.readings.first()
+        assert reading.value == Decimal("250")
+        assert reading.billing_period.name == "2025"   # aktive Periode (Fixture)
+        assert reading.consumption is None
 
 
 # ---------------------------------------------------------------------------
@@ -445,8 +463,7 @@ COLS_NAME = dict(
 
 def _run_named(rows, mode="skip"):
     df = pd.DataFrame(rows).fillna("")
-    stand_columns = _detect_stand_columns(df.columns.tolist())
-    return _run_import(df, COLS_NAME, stand_columns, mode, dry_run=False)
+    return _run_import(df, COLS_NAME, mode, dry_run=False)
 
 
 class TestNameSplitAndCompany:
@@ -471,7 +488,7 @@ class TestNameSplitAndCompany:
             {"Kunden-Nr.": "101", "Name": "Nur Kombiniert", "Objekt": "Haus B",
              "Zählernummer": "Z2"},
         ]).fillna("")
-        _run_import(df, cols, [], "skip", dry_run=False)
+        _run_import(df, cols, "skip", dry_run=False)
         c = _customer(101)
         assert c.name == "Nur Kombiniert"
         assert c.last_name == "Nur Kombiniert"
@@ -518,7 +535,7 @@ class TestAddressSplit:
             {"Kunden-Nr.": "200", "Name": "Huber", "Straße": "Hauptstraße 7b",
              "Objekt": "Haus A", "Zählernummer": "Z1"},
         ]).fillna("")
-        _run_import(df, cols, [], "skip", dry_run=False)
+        _run_import(df, cols, "skip", dry_run=False)
         c = _customer(200)
         assert c.strasse == "Hauptstraße"
         assert c.hausnummer == "7b"
@@ -529,7 +546,7 @@ class TestAddressSplit:
             {"Kunden-Nr.": "201", "Name": "Maier", "Straße": "Hauptstraße",
              "Hausnummer": "5", "Objekt": "Haus B", "Zählernummer": "Z2"},
         ]).fillna("")
-        _run_import(df, cols, [], "skip", dry_run=False)
+        _run_import(df, cols, "skip", dry_run=False)
         c = _customer(201)
         assert c.strasse == "Hauptstraße"
         assert c.hausnummer == "5"

@@ -64,6 +64,9 @@
                  oninput="calcConsumption(this)"
                  step="1" min="0"
                  placeholder="Stand eingeben">
+          {% if reading and reading.is_estimated %}
+          <div class="mt-1"><span class="badge bg-yellow text-dark" title="Geschätzter Stand – beim Speichern eines echten Werts entsteht eine Korrektur">geschätzt</span></div>
+          {% endif %}
         </td>
         <td class="text-end consumption-display" id="cons-{{ meter.id }}">
           {% if reading and reading.consumption is not none %}

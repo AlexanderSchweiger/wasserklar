@@ -27,6 +27,7 @@
 <div class="alert alert-info">
   <h6 class="alert-title">Letzter Stand</h6>
   <p class="mb-0"><strong>{{ prev_value }} m³</strong>
+    {% if prev_estimated %}<span class="badge bg-yellow text-dark ms-1" title="Geschätzter Stand">geschätzt</span>{% endif %}
     <small class="text-muted ms-2">vom {{ prev_date_display }}</small></p>
 </div>
 {% elif meter.initial_value is not none %}
@@ -69,6 +70,30 @@
     <input type="number" name="value" id="valueInput" step="1" class="form-control form-control-lg"
       value="{{ existing.value|int if existing else '' }}" required autofocus>
     <span class="input-group-text">m³</span>
+  </div>
+</div>
+
+{# Schaetzung: Wert schaetzen lassen (letzter Stand + Ø-Verbrauch) und/oder als
+   Schaetzung markieren. Wird die Schaetzung spaeter durch einen echten Stand
+   ersetzt, entsteht automatisch eine Gutschrift/Nachforderung. #}
+<div class="mb-3">
+  {% if estimate %}
+  <button type="button" class="btn btn-sm btn-outline-secondary mb-2" id="applyEstimateBtn">
+    <i class="fas fa-magic me-1"></i>
+    Schätzwert übernehmen: {{ estimate.value|int }} m³
+  </button>
+  <small class="text-muted d-block mb-2">
+    Letzter Stand {{ estimate.base_value|int }} m³ + Ø-Verbrauch {{ estimate.avg_consumption }} m³
+    (aus {{ estimate.n_basis }} Ablesung{{ 'en' if estimate.n_basis != 1 }})
+  </small>
+  {% endif %}
+  <div class="form-check">
+    <input class="form-check-input" type="checkbox" name="is_estimated" id="isEstimatedInput" value="1"
+      {{ 'checked' if existing and existing.is_estimated else '' }}>
+    <label class="form-check-label" for="isEstimatedInput">
+      <span class="badge bg-yellow text-dark me-1">geschätzt</span>
+      Dieser Stand ist eine Schätzung (kein abgelesener Wert)
+    </label>
   </div>
 </div>
 
@@ -187,5 +212,19 @@
   input.addEventListener('input', update);
   if (dateInput) dateInput.addEventListener('change', update);
   if (input.value) update();
+
+  // "Schätzwert übernehmen": Schätzwert in das Feld schreiben und als
+  // Schätzung markieren. Der User kann den Wert danach noch anpassen.
+  var estimateValue = {{ estimate.value|int if estimate else 'null' }};
+  var applyBtn = document.getElementById('applyEstimateBtn');
+  var estChk = document.getElementById('isEstimatedInput');
+  if (applyBtn && estimateValue !== null) {
+    applyBtn.addEventListener('click', function () {
+      input.value = estimateValue;
+      if (estChk) estChk.checked = true;
+      update();
+      input.focus();
+    });
+  }
 })();
 </script>

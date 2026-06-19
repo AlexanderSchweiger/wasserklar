@@ -17,6 +17,7 @@ from app.meters import swap_import_service
 from app.meters import meter_import_service
 from app.imports import common as import_common
 from app.meters.services import save_reading, recompute_meter_chain
+from app.meters.estimation import estimate_meter_value
 from app.extensions import db
 from app.models import (
     WaterMeter, MeterReading, MeterReplacement, Property, PropertyOwnership,
@@ -294,13 +295,19 @@ def _reading_form_context(meter, period):
         )
     ]
 
+    # Schaetzwert (letzter Stand + Ø-Verbrauch) fuer den „Schätzen"-Button im
+    # Formular — None, wenn keine Basis vorhanden ist (dann manuell eingeben).
+    estimate = estimate_meter_value(meter, period) if period else None
+
     return dict(
         meter=meter, period=period, periods=_all_periods(), existing=existing,
         prev_value=prev_value, prev_date=prev_date,
         prev_date_display=prev_date_display,
+        prev_estimated=bool(prev.is_estimated) if prev else False,
         avg_consumption=avg_consumption, avg_years=avg_years,
         old_consumption=old_consumption, today=date.today(),
         owner_display=", ".join(owner_names) if owner_names else None,
+        estimate=estimate,
     )
 
 
@@ -541,6 +548,78 @@ def bulk_read():
     return redirect(url_for("meters.readings", period_id=period.id))
 
 
+@bp.route("/readings/estimate-missing", methods=["POST"])
+@login_required
+def estimate_missing():
+    """Schaetzt mit einem Klick alle fehlenden Staende einer Periode.
+
+    Fuer jeden aktiven Zaehler OHNE Stand in der gewaehlten Periode wird der
+    Stand aus letztem bekannten Stand + Ø-Verbrauch der letzten Jahre
+    geschaetzt und als Schaetzung (``is_estimated=True``) gespeichert. Zaehler
+    ohne Basis (kein Vorstand/Anfangsstand ODER keine Verbrauchshistorie)
+    werden uebersprungen und muessen manuell erfasst werden."""
+    period = db.session.get(
+        BillingPeriod, request.form.get("billing_period_id", type=int)
+    )
+    if period is None:
+        flash("Keine Abrechnungsperiode gewählt.", "danger")
+        return redirect(url_for("meters.readings"))
+
+    reading_date_str = request.form.get("reading_date", "")
+    try:
+        reading_date = (
+            datetime.strptime(reading_date_str, "%Y-%m-%d").date()
+            if reading_date_str else (period.end_date or date.today())
+        )
+    except ValueError:
+        reading_date = period.end_date or date.today()
+
+    already_read = db.session.query(MeterReading.meter_id).filter(
+        MeterReading.billing_period_id == period.id
+    ).subquery()
+    meters = (
+        WaterMeter.query
+        .join(Property)
+        .filter(
+            WaterMeter.active == True, Property.active == True,
+            ~WaterMeter.id.in_(already_read),
+        )
+        .all()
+    )
+
+    estimated = 0
+    skipped = 0
+    for meter in meters:
+        est = estimate_meter_value(meter, period)
+        if est is None:
+            skipped += 1
+            continue
+        save_reading(
+            meter, period, est["value"], reading_date=reading_date,
+            created_by_id=current_user.id, is_estimated=True,
+        )
+        estimated += 1
+    db.session.commit()
+
+    if estimated:
+        msg = f"{estimated} fehlende Stände geschätzt."
+        if skipped:
+            msg += (
+                f" {skipped} ohne Verbrauchshistorie übersprungen "
+                f"(bitte manuell erfassen)."
+            )
+        flash(msg, "success")
+    elif skipped:
+        flash(
+            f"Keine Schätzung möglich: {skipped} Zähler ohne Verbrauchs"
+            f"historie. Bitte manuell erfassen.",
+            "warning",
+        )
+    else:
+        flash("Keine fehlenden Stände in dieser Periode.", "info")
+    return redirect(url_for("meters.readings", period_id=period.id))
+
+
 @bp.route("/<int:meter_id>/read", methods=["GET", "POST"])
 @login_required
 def add_reading(meter_id):
@@ -555,6 +634,7 @@ def add_reading(meter_id):
             flash("Bitte eine Abrechnungsperiode wählen.", "danger")
             return redirect(url_for("meters.add_reading", meter_id=meter_id))
         value = Decimal(request.form.get("value", "0").replace(",", "."))
+        is_estimated = request.form.get("is_estimated") == "1"
         reading_date_str = request.form.get("reading_date", "")
         try:
             reading_date = (
@@ -566,7 +646,7 @@ def add_reading(meter_id):
 
         reading = save_reading(
             meter, period, value, reading_date=reading_date,
-            created_by_id=current_user.id,
+            created_by_id=current_user.id, is_estimated=is_estimated,
         )
         db.session.commit()
         flash(

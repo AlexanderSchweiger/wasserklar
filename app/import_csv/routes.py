@@ -43,6 +43,7 @@ _COLUMN_HINTS = {
     "property_type": ["typ"],
     "meter_number": ["zählernummer", "zahlernummer", "zähler-nr", "zaehlernummer", "zähler nr"],
     "meter_eichjahr": ["eichjahr"],
+    "meter_reading": ["zählerstand", "zaehlerstand", "aktueller stand", "letzter stand", "zählerstand aktuell"],
     "strasse": ["strasse", "straße"],
     "hausnummer": ["hausnummer", "hausnr", "haus-nr", "haus nr", "nr."],
     "plz": ["plz"],
@@ -83,6 +84,60 @@ def _detect_stand_columns(columns: list) -> list:
         if m:
             result.append((col, int(m.group(1))))
     return sorted(result, key=lambda x: x[1])
+
+
+def _resolve_reading_target(col_reading: str, results: dict):
+    """Periode + Ablesedatum für die gewählte Zählerstand-Spalte bestimmen.
+
+    Eine ``Stand YYYY``-Spalte landet in der Periode, die das Jahr enthält
+    (fehlt sie, wird eine Kalenderperiode 01.01.–31.12. angelegt und – falls
+    noch keine Periode aktiv war – aktiviert). Jede andere Spalte landet in der
+    aktuell aktiven Periode. Gibt ``(period_id, reading_date)`` zurück, oder
+    ``(None, None)`` wenn keine Spalte gewählt ist bzw. keine Zielperiode
+    bestimmt werden kann.
+
+    Schreibt (Period-Anlage) in die laufende Transaktion — der Aufrufer hat die
+    äußere ``begin_nested``-Klammer bereits geöffnet, damit dry_run zurückrollt.
+    """
+    if not col_reading:
+        return None, None
+
+    m = re.match(r"^Stand\s+(\d{4})$", col_reading.strip(), re.IGNORECASE)
+    if m:
+        year = int(m.group(1))
+        eoy = date(year, 12, 31)
+        p = (
+            BillingPeriod.query
+            .filter(BillingPeriod.start_date <= eoy, BillingPeriod.end_date >= eoy)
+            .order_by(BillingPeriod.start_date.desc())
+            .first()
+        )
+        if p is None:
+            had_active = BillingPeriod.query.filter_by(active=True).first() is not None
+            p = BillingPeriod(
+                name=str(year),
+                start_date=date(year, 1, 1),
+                end_date=date(year, 12, 31),
+            )
+            db.session.add(p)
+            db.session.flush()
+            results["periods_created"] += 1
+            results["warnings"].append(
+                f"Keine Abrechnungsperiode für Jahr {year} gefunden – "
+                f"Periode '{year}' (01.01.{year}–31.12.{year}) automatisch angelegt."
+            )
+            if not had_active:
+                p.activate()
+        return p.id, date(year, 12, 31)
+
+    # Keine 'Stand YYYY'-Spalte → aktuell aktive Periode
+    p = BillingPeriod.query.filter_by(active=True).first()
+    if p is None:
+        results["warnings"].append(
+            "Keine aktive Abrechnungsperiode – Zählerstände wurden nicht importiert."
+        )
+        return None, None
+    return p.id, (p.end_date or date.today())
 
 
 def _parse_austrian_number(raw: str):
@@ -188,7 +243,7 @@ def _apply_wg_property(prop, row, cols, actions):
     actions.append(_act("WG-Liegenschaft: " + ", ".join(bits), "update"))
 
 
-def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str,
+def _run_import(df, col_map: dict, duplicate_mode: str,
                 dry_run: bool = False, is_wg: bool = False) -> dict:
     """
     Analysiert/importiert die CSV.
@@ -196,12 +251,21 @@ def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str,
     **Additives Verhalten:** Jede Zeile ergänzt Daten, statt sie zu verwerfen.
 
     - Ein Kunde, der mehrfach in der CSV vorkommt oder bereits in der Datenbank
-      liegt, wird wiederverwendet – seine zusätzlichen Objekte/Zähler/Ablesungen
-      werden ergänzt.
+      liegt, wird wiederverwendet – seine zusätzlichen Objekte/Zähler werden
+      ergänzt.
+    - **Zählerstand:** Es wird genau **ein** Stand je Zähler importiert – die in
+      ``col_map["meter_reading"]`` gewählte Spalte (in der Maske mit dem jüngsten
+      erkannten ``Stand YYYY`` vorbelegt). Vorjahresstände werden bewusst NICHT
+      importiert: ohne Zählertausch-Information (``MeterReplacement``) ergibt eine
+      Jahr-für-Jahr-Differenz über einen getauschten Zähler hinweg falsche
+      Verbräuche. Der importierte Stand dient als Anfangsstand; die erste echte
+      Folgeablesung ergibt daraus den ersten Verbrauch. Eine ``Stand YYYY``-Spalte
+      landet in der Periode des Jahres (fehlt sie, wird sie angelegt), jede andere
+      Spalte in der aktuell aktiven Periode.
     - ``duplicate_mode`` steuert nur, was mit bereits vorhandenen Daten geschieht:
       ``"overwrite"`` aktualisiert die Stammdaten eines bestehenden Kunden und
-      vorhandene Ablesungen; ``"skip"`` lässt Bestehendes unverändert. Neue
-      Objekte/Zähler/Ablesungen werden in **beiden** Modi ergänzt.
+      einen vorhandenen Stand; ``"skip"`` lässt Bestehendes unverändert. Neue
+      Objekte/Zähler/Stände werden in **beiden** Modi ergänzt.
 
     Bei ``dry_run=True`` läuft der komplette Import durch, wird am Ende aber
     vollständig zurückgerollt – es bleibt nichts in der DB. So entspricht die
@@ -209,6 +273,7 @@ def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str,
 
     Gibt dict mit Statistiken und – unter ``plan`` – einem Eintrag je Zeile zurück.
     """
+    from app.meters.services import recompute_meter_chain
     results = {
         "customers_created": 0,
         "customers_updated": 0,
@@ -260,47 +325,13 @@ def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str,
     )
 
     # Äußere Transaktionsklammer vor alle DB-Schreibzugriffe ziehen — auch
-    # vor die Period-Erstellung, damit dry_run alles sauber zurückrollt.
+    # vor eine etwaige Period-Erstellung, damit dry_run alles sauber zurückrollt.
     outer = db.session.begin_nested()
 
-    # Jede "Stand YYYY"-Spalte einer Abrechnungsperiode zuordnen.
-    # Existiert keine passende Periode, wird automatisch eine Kalender-Periode
-    # (01.01.YYYY – 31.12.YYYY) angelegt.  Falls vor dem Import noch keine
-    # aktive Periode existierte, wird die neueste auto-erstellte aktiviert.
-    had_active = BillingPeriod.query.filter_by(active=True).first() is not None
-    auto_created: list[tuple[int, BillingPeriod]] = []
-
-    period_by_year: dict[int, int] = {}
-    for _col, _year in stand_columns:
-        if _year in period_by_year:
-            continue
-        _eoy = date(_year, 12, 31)
-        _p = (
-            BillingPeriod.query
-            .filter(BillingPeriod.start_date <= _eoy,
-                    BillingPeriod.end_date >= _eoy)
-            .order_by(BillingPeriod.start_date.desc())
-            .first()
-        )
-        if _p is None:
-            _p = BillingPeriod(
-                name=str(_year),
-                start_date=date(_year, 1, 1),
-                end_date=date(_year, 12, 31),
-            )
-            db.session.add(_p)
-            db.session.flush()
-            auto_created.append((_year, _p))
-            results["periods_created"] += 1
-            results["warnings"].append(
-                f"Keine Abrechnungsperiode für Jahr {_year} gefunden – "
-                f"Periode '{_year}' (01.01.{_year}–31.12.{_year}) automatisch angelegt."
-            )
-        period_by_year[_year] = _p.id
-
-    if not had_active and auto_created:
-        newest = max(auto_created, key=lambda x: x[0])
-        newest[1].activate()
+    # Genau einen Zählerstand je Zähler importieren: die gewählte Spalte.
+    # Periode + Ablesedatum einmalig auflösen (legt ggf. eine Kalenderperiode an).
+    col_reading = col_map.get("meter_reading", "")
+    reading_period_id, reading_date = _resolve_reading_target(col_reading, results)
 
     rows = df.to_dict(orient="records")
 
@@ -566,66 +597,56 @@ def _run_import(df, col_map: dict, stand_columns: list, duplicate_mode: str,
                     new_count += 1
                     actions.append(_act(f"Zähler »{raw_meter}« – neu angelegt", "new"))
 
-                # --- MeterReadings für alle Stand-Spalten ---
-                previous_value = None
+                # --- Zählerstand (genau EIN Stand je Zähler — der gewählte,
+                #     i.d.R. der jüngste). Vorjahre werden bewusst ignoriert,
+                #     weil ohne Zählertausch-Info Jahr-zu-Jahr-Differenzen über
+                #     einen getauschten Zähler hinweg falsche Verbräuche ergeben.
+                #     Der Stand wird als Anfangsstand übernommen (Verbrauch via
+                #     recompute_meter_chain gegen initial_value/Vorablesung). ---
                 readings_new = 0
                 readings_upd = 0
-                for col_stand, year in stand_columns:
-                    raw_val = _get_cell(row, col_stand)
-                    if not raw_val:
-                        continue
-
-                    bp_id = period_by_year[year]
-
-                    parsed = _parse_austrian_number(raw_val)
-                    if parsed is None:
+                if col_reading and reading_period_id is not None:
+                    raw_val = _get_cell(row, col_reading)
+                    parsed = _parse_austrian_number(raw_val) if raw_val else None
+                    if raw_val and parsed is None:
                         results["warnings"].append(
                             f"Zeile {idx}: Ungültiger Ablesewert '{raw_val}' "
-                            f"für {col_stand} – übersprungen."
+                            f"für {col_reading} – übersprungen."
                         )
-                        continue
-
-                    # Null-Wert ohne Vorjahr → neue Anschlüsse ohne Ablesung überspringen
-                    if parsed == 0 and previous_value is None:
-                        continue
-
-                    # Verbrauch berechnen
-                    consumption = None
-                    if previous_value is not None:
-                        consumption = parsed - previous_value
-
-                    existing_reading = MeterReading.query.filter_by(
-                        meter_id=meter.id, billing_period_id=bp_id
-                    ).first()
-                    if existing_reading is not None:
-                        if duplicate_mode == "overwrite":
-                            existing_reading.value = parsed
-                            existing_reading.consumption = consumption
-                            results["readings_updated"] += 1
-                            readings_upd += 1
-                            updated = True
-                        # skip-Modus: vorhandene Ablesung unverändert lassen
-                    else:
-                        db.session.add(MeterReading(
-                            meter_id=meter.id,
-                            billing_period_id=bp_id,
-                            value=parsed,
-                            consumption=consumption,
-                            reading_date=date(year, 12, 31),
-                        ))
-                        results["readings_created"] += 1
-                        readings_new += 1
-                        new_count += 1
-
-                    previous_value = parsed
+                    # 0 als (einziger) Stand: neuer Anschluss ohne echte Ablesung
+                    # → überspringen, statt einen Phantom-Nullstand anzulegen.
+                    elif parsed is not None and parsed != 0:
+                        existing_reading = MeterReading.query.filter_by(
+                            meter_id=meter.id, billing_period_id=reading_period_id
+                        ).first()
+                        if existing_reading is not None:
+                            if duplicate_mode == "overwrite":
+                                existing_reading.value = parsed
+                                db.session.flush()
+                                recompute_meter_chain(meter)
+                                results["readings_updated"] += 1
+                                readings_upd += 1
+                                updated = True
+                            # skip-Modus: vorhandenen Stand unverändert lassen
+                        else:
+                            db.session.add(MeterReading(
+                                meter_id=meter.id,
+                                billing_period_id=reading_period_id,
+                                value=parsed,
+                                reading_date=reading_date,
+                            ))
+                            db.session.flush()
+                            recompute_meter_chain(meter)
+                            results["readings_created"] += 1
+                            readings_new += 1
+                            new_count += 1
 
                 if readings_new:
                     actions.append(_act(
-                        f"{readings_new} Ablesung(en) werden angelegt", "new"))
+                        "Jüngster Zählerstand wird als Anfangsstand übernommen", "new"))
                 if readings_upd:
                     actions.append(_act(
-                        f"{readings_upd} vorhandene Ablesung(en) werden aktualisiert",
-                        "update"))
+                        "Vorhandener Zählerstand wird aktualisiert", "update"))
 
             # --- Zeile klassifizieren ---
             if new_count > 0 or updated:
@@ -740,6 +761,10 @@ def mapping():
         # Zuordnung beibehalten, sonst automatisch vorschlagen.
         stored = session.get("import_col_map")
         suggestions = stored if stored else _build_suggestions(columns)
+        if not stored and stand_columns:
+            # Zählerstand mit der jüngsten erkannten 'Stand YYYY'-Spalte vorbelegen.
+            suggestions = dict(suggestions)
+            suggestions["meter_reading"] = stand_columns[-1][0]
         preview = df.head(5).to_dict(orient="records")
         return render_template(
             "import_csv/mapping.html",
@@ -783,14 +808,13 @@ def preview():
         flash(f"Fehler beim Laden der Datei: {exc}", "danger")
         return redirect(url_for("import_csv.upload"))
 
-    stand_columns = _detect_stand_columns(df.columns.tolist())
     duplicate_mode = session.get("import_duplicate_mode", "skip")
     from app.settings_service import is_wassergenossenschaft
     is_wg = is_wassergenossenschaft()
 
     if request.method == "GET":
         # Probelauf: zeigt exakt, was der echte Import tun würde, ohne zu schreiben.
-        plan = _run_import(df, col_map, stand_columns, duplicate_mode,
+        plan = _run_import(df, col_map, duplicate_mode,
                            dry_run=True, is_wg=is_wg)
         return render_template(
             "import_csv/preview.html",
@@ -799,7 +823,7 @@ def preview():
         )
 
     # POST: "Jetzt importieren" – echter Import
-    results = _run_import(df, col_map, stand_columns, duplicate_mode,
+    results = _run_import(df, col_map, duplicate_mode,
                           dry_run=False, is_wg=is_wg)
 
     # Aufräumen

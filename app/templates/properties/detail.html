@@ -14,7 +14,7 @@
 <div class="row">
   <!-- Liegenschaftsdaten -->
   <div class="col-md-4">
-    <div class="card">
+    <div class="card mb-3">
       <div class="card-header">
         <h3 class="card-title">Liegenschaftsdaten</h3>
         <div class="card-options">
@@ -70,7 +70,7 @@
     </div>
 
     <!-- Wasserzähler -->
-    <div class="card">
+    <div class="card mb-3">
       <div class="card-header">
         <h3 class="card-title">Wasserzähler</h3>
         <div class="card-options">
@@ -129,7 +129,10 @@
                     <tr>
                       <td class="py-0"><small>{{ r.reading_date.strftime('%d.%m.%Y') }}</small></td>
                       <td class="py-0"><small class="text-muted">{{ r.billing_period.name if r.billing_period else '—' }}</small></td>
-                      <td class="py-0 text-end"><small>{{ r.value|int }} m³</small></td>
+                      <td class="py-0 text-end">
+                        <small>{{ r.value|int }} m³</small>
+                        {% if r.is_estimated %}<span class="badge bg-yellow text-dark ms-1" title="Geschätzter Stand">geschätzt</span>{% endif %}
+                      </td>
                       <td class="py-0 text-end">
                         <button type="button"
                           data-url="{{ url_for('meters.add_reading', meter_id=meter.id, period_id=r.billing_period_id) }}"
@@ -212,7 +215,7 @@
     {% if network_features_display %}
     <!-- Leitungsplan-Elemente: eine Mini-Karte pro verknuepftem Netz-Element.
          Klick auf die Karte oeffnet den Leitungsplan und fokusiert das Element. -->
-    <div class="card">
+    <div class="card mb-3">
       <div class="card-header">
         <h3 class="card-title"><i class="fas fa-map-marked-alt me-2"></i>Leitungsplan</h3>
       </div>
@@ -248,7 +251,7 @@
 
   <div class="col-md-8">
     <!-- Besitzer-Historie -->
-    <div class="card">
+    <div class="card mb-3">
       <div class="card-header">
         <h3 class="card-title">Besitzer</h3>
         <div class="card-options">
@@ -362,7 +365,7 @@
 
     {% if has_active_owner %}
     <!-- Offene Posten des aktiven Eigentuemers -->
-    <div class="card">
+    <div class="card mb-3">
       <div class="card-header">
         <h3 class="card-title"><i class="fas fa-exclamation-circle me-2"></i>Offene Posten des aktiven Eigentümers</h3>
       </div>
@@ -424,7 +427,7 @@
     </div>
 
     <!-- Letzte Buchungen des aktiven Eigentuemers -->
-    <div class="card">
+    <div class="card mb-3">
       <div class="card-header">
         <h3 class="card-title"><i class="fas fa-book me-2"></i>Letzte Buchungen des aktiven Eigentümers</h3>
       </div>
@@ -474,7 +477,7 @@
     {% endif %}
 
     <!-- Rechnungen -->
-    <div class="card">
+    <div class="card mb-3">
       <div class="card-header">
         <h3 class="card-title">Rechnungen</h3>
       </div>

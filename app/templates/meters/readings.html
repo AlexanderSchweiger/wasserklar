@@ -71,6 +71,20 @@
           <i class="fas fa-bolt me-1"></i> Schnelleingabe
         {% endif %}
       </button>
+      {% if period %}
+      {# Schaetzt mit einem Klick alle fehlenden Staende der Periode (letzter
+         Stand + Ø-Verbrauch). hx-boost=false -> echter POST mit Redirect/Flash. #}
+      <form method="post" action="{{ url_for('meters.estimate_missing') }}"
+            class="d-inline" hx-boost="false"
+            onsubmit="return confirm('Für alle Zähler ohne Stand in dieser Periode einen Schätzwert (letzter Stand + Ø-Verbrauch der letzten Jahre) anlegen?');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="billing_period_id" value="{{ period.id }}">
+        <button type="submit" class="btn btn-outline-warning ms-1"
+                title="Schätzt alle fehlenden Stände dieser Periode">
+          <i class="fas fa-magic me-1"></i> Fehlende schätzen
+        </button>
+      </form>
+      {% endif %}
       <a href="{{ url_for('meters.import_upload') }}" class="btn btn-outline-secondary ms-1">
         <i class="fas fa-file-import me-1"></i> Import
       </a>

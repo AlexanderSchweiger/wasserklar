@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% from "_pagination.html" import render_pagination %}
+{% block title %}Schätz-Korrekturen{% endblock %}
+{% block page_title %}<i class="fas fa-balance-scale me-2"></i> Schätz-Korrekturen{% endblock %}
+{% block content %}
+
+<div class="alert alert-info">
+  <div class="d-flex align-items-start gap-2">
+    <i class="fas fa-info-circle mt-1 flex-shrink-0"></i>
+    <div>
+      Korrekturposten entstehen automatisch, wenn ein echter Zählerstand eine bereits
+      abgerechnete <strong>Schätzung</strong> ersetzt. <strong>Offene</strong> Posten werden beim
+      nächsten Rechnungslauf des Kunden eingezogen — eine Gutschrift jeweils nur soweit,
+      dass der Rechnungsbetrag nicht unter 0 fällt; der Rest wandert auf die nächste Rechnung.
+    </div>
+  </div>
+</div>
+
+{% set cid = filter_customer.id if filter_customer else none %}
+{% if filter_customer %}
+<div class="alert alert-info d-flex justify-content-between align-items-center">
+  <span><i class="fas fa-user me-1"></i> Gefiltert auf Kunde: <strong>{{ filter_customer.name }}</strong></span>
+  <a href="{{ url_for('invoices.corrections', status=status) }}" class="btn btn-sm btn-outline-secondary">
+    <i class="fas fa-times me-1"></i> Filter entfernen
+  </a>
+</div>
+{% endif %}
+<div class="card">
+  <div class="card-header">
+    <ul class="nav nav-pills card-header-pills">
+      <li class="nav-item">
+        <a class="nav-link {{ 'active' if status == 'open' }}"
+           href="{{ url_for('invoices.corrections', status='open', customer_id=cid) }}">Offen</a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link {{ 'active' if status == 'applied' }}"
+           href="{{ url_for('invoices.corrections', status='applied', customer_id=cid) }}">Verrechnet</a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link {{ 'active' if status == 'all' }}"
+           href="{{ url_for('invoices.corrections', status='all', customer_id=cid) }}">Alle</a>
+      </li>
+    </ul>
+    <div class="card-options text-muted">
+      {{ 'Offenes Guthaben' if open_total < 0 else 'Offene Nachforderung' }}{{ ' (Saldo)' if filter_customer }}:
+      <strong class="{{ 'text-success' if open_total < 0 else ('text-danger' if open_total > 0) }} ms-1">{{ open_total|de_number(decimals=2, signed=True) }} €</strong>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <table class="table table-hover table-striped mb-0">
+      <thead>
+        <tr>
+          <th>Datum</th>
+          <th>Kunde</th>
+          <th>Zähler</th>
+          <th>Periode</th>
+          <th class="text-end">Schätzung → Echt (m³)</th>
+          <th class="text-end">Δ (m³)</th>
+          <th class="text-end">Betrag</th>
+          <th class="text-end">Offen</th>
+          <th>Status</th>
+          <th>Rechnungen</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in corrections %}
+        <tr>
+          <td class="text-nowrap">{{ c.created_at.strftime('%d.%m.%Y') if c.created_at else '—' }}</td>
+          <td>{{ c.customer.name if c.customer else '—' }}</td>
+          <td><code>{{ c.meter.meter_number if c.meter else '—' }}</code></td>
+          <td>{{ c.billing_period.name if c.billing_period else '—' }}</td>
+          <td class="text-end text-muted">
+            {{ c.estimated_consumption|de_number(decimals=0) if c.estimated_consumption is not none else '?' }}
+            →
+            {{ c.real_consumption|de_number(decimals=0) if c.real_consumption is not none else '?' }}
+          </td>
+          <td class="text-end">{{ c.delta_m3|de_number(decimals=0, signed=True) if c.delta_m3 is not none else '—' }}</td>
+          <td class="text-end {{ 'text-success' if c.is_credit }}">
+            {{ c.amount|de_number(decimals=2, signed=True) }} €
+            <span class="badge {{ 'bg-success-lt' if c.is_credit else 'bg-danger-lt' }} ms-1">
+              {{ 'Gutschrift' if c.is_credit else 'Nachforderung' }}
+            </span>
+          </td>
+          <td class="text-end"><strong>{{ c.remaining_amount|de_number(decimals=2, signed=True) }} €</strong></td>
+          <td>
+            {% if c.status == 'Offen' %}<span class="badge bg-warning text-dark">Offen</span>
+            {% elif c.status == 'Teilverrechnet' %}<span class="badge bg-info text-white">Teilverrechnet</span>
+            {% elif c.status == 'Verrechnet' %}<span class="badge bg-success text-white">Verrechnet</span>
+            {% endif %}
+          </td>
+          <td class="text-nowrap small">
+            {% if c.source_invoice %}
+            <a href="{{ url_for('invoices.detail', invoice_id=c.source_invoice_id) }}" title="Schätz-Rechnung">
+              {{ c.source_invoice.invoice_number }}</a>
+            {% endif %}
+            {% if c.applied_invoice %}
+            <i class="fas fa-arrow-right mx-1 text-muted"></i>
+            <a href="{{ url_for('invoices.detail', invoice_id=c.applied_invoice_id) }}" title="Verrechnet in">
+              {{ c.applied_invoice.invoice_number }}</a>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="10" class="text-center text-muted py-3">Keine Korrekturposten.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{{ render_pagination(pagination) }}
+{% endblock %}

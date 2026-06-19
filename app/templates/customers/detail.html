@@ -114,8 +114,32 @@
   </div>
 
   {% if customer.is_customer %}
-  <!-- Rechnungen -->
   <div class="col-md-8">
+    <!-- Offene Schätz-Korrektur (Guthaben / Nachforderung) -->
+    {% if correction_balance and correction_balance != 0 %}
+    <div class="card mb-3">
+      <div class="card-body py-2">
+        {% if correction_balance < 0 %}
+        <div class="d-flex align-items-center justify-content-between">
+          <span><i class="fas fa-piggy-bank me-2 text-success"></i><strong>Offenes Guthaben</strong> <span class="text-muted">(aus Schätz-Korrektur)</span></span>
+          <span class="h3 mb-0 text-success">{{ (-correction_balance)|de_number }} €</span>
+        </div>
+        <small class="text-muted">Wird bei der nächsten Wasserrechnung verrechnet — höchstens bis Betrag 0, ein Rest bleibt bestehen.</small>
+        {% else %}
+        <div class="d-flex align-items-center justify-content-between">
+          <span><i class="fas fa-file-invoice-dollar me-2 text-danger"></i><strong>Offene Nachforderung</strong> <span class="text-muted">(aus Schätz-Korrektur)</span></span>
+          <span class="h3 mb-0 text-danger">{{ correction_balance|de_number }} €</span>
+        </div>
+        <small class="text-muted">Wird bei der nächsten Wasserrechnung hinzugefügt.</small>
+        {% endif %}
+        <a href="{{ url_for('invoices.corrections', customer_id=customer.id, status='all') }}" class="small d-block mt-1">
+          <i class="fas fa-list me-1"></i> Korrektur-Posten ansehen
+        </a>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Rechnungen -->
     <div class="card">
       <div class="card-header">
         <h3 class="card-title">Rechnungen</h3>

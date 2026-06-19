@@ -1115,3 +1115,48 @@ def register_commands(app):
         rec.value = None
         db.session.commit()
         print("mail.password geloescht. Bitte in /settings neu eintragen.")
+
+    @app.cli.command("bev-refresh")
+    @click.option("--file", "local_file", default=None,
+                  help="Lokales BEV-ZIP (Adressregister-Stichtagsdaten) statt Download.")
+    @click.option("--url", "url", default=None,
+                  help="Download-URL (override fuer BEV_DOWNLOAD_URL).")
+    @click.option("--geocode", is_flag=True, default=False,
+                  help="Nach dem Index-Bau direkt alle Liegenschaften neu abgleichen.")
+    def bev_refresh(local_file, url, geocode):
+        """BEV-Adressregister laden/lesen und den Geocoding-Index neu bauen.
+
+        Der Index ist eine eigenstaendige SQLite-Datei (BEV_INDEX_PATH), die der
+        "BEV-Adressen abgleichen"-Button bei den Liegenschaften nutzt. Schwerer
+        Schritt (100-MB-ZIP, CRS-Reprojektion) -> bewusst hier im CLI, nicht im
+        Request. OSS: gelegentlich/Cron; SaaS: platform-scheduler 2x/Jahr.
+
+        Quelle: --file <zip> (manuell geladen), --url <url> oder die Env-Var
+        BEV_DOWNLOAD_URL.
+        """
+        from app.properties import bev_geocode
+
+        index_path = app.config["BEV_INDEX_PATH"]
+        src = local_file or url or app.config.get("BEV_DOWNLOAD_URL")
+        if not src:
+            raise click.ClickException(
+                "Keine BEV-Quelle: --file <zip>, --url <url> oder BEV_DOWNLOAD_URL setzen."
+            )
+        is_url = not local_file
+        try:
+            stats = bev_geocode.build_index(
+                src, index_path, is_url=is_url, progress=click.echo,
+            )
+        except bev_geocode.BevImportError as exc:
+            raise click.ClickException(str(exc))
+        click.echo(
+            f"BEV-Index gebaut: {stats['addresses']} Adressen "
+            f"({stats['skipped']} übersprungen) -> {index_path}"
+        )
+
+        if geocode:
+            result = bev_geocode.geocode_properties(only_missing=False, index_path=index_path)
+            click.echo(
+                f"Liegenschaften abgeglichen: {result['geocoded']}/{result['total']} "
+                f"geocodet, {len(result['not_found'])} ohne Treffer."
+            )

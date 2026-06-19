@@ -143,7 +143,7 @@
   <tbody>
     {% for item in invoice.items %}
     <tr>
-      <td>{{ item.description }}</td>
+      <td>{{ item.description }}{% if item.is_estimated %} <strong>(geschätzt)</strong>{% endif %}</td>
       <td class="text-right">{{ item.quantity|de_number(2) }}</td>
       <td class="text-right">{{ item.unit }}</td>
       <td class="text-right">{{ item.unit_price|de_number(4 if item.unit == 'm³' else 2) }} €</td>

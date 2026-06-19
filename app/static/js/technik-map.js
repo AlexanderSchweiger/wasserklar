@@ -82,12 +82,14 @@
     var pt = V.pointTypes && V.pointTypes[props.feature_type];
     var fa = pt ? pt.icon : "fa-map-marker-alt";
     var tight = scale < 0.85 ? " technik-marker-tight" : "";
+    // Hausanschluss ohne zugeordnete Liegenschaft -> grell (siehe app.css).
+    var unassigned = props.unassigned ? " technik-marker-unassigned" : "";
     var glyph = scale >= 0.6
       ? '<i class="fas ' + fa + '" style="font-size:' + Math.round(13 * scale) + 'px"></i>'
       : "";
     return L.divIcon({
       className: "technik-marker-wrap",
-      html: '<span class="technik-marker' + tight + '" style="background:' + color +
+      html: '<span class="technik-marker' + tight + unassigned + '" style="background:' + color +
         ';width:' + size + 'px;height:' + size + 'px">' + glyph + "</span>",
       iconSize: [size, size],
       iconAnchor: [anchor, anchor],
@@ -122,6 +124,17 @@
     if (props.dimension_dn != null) html += ' · DN ' + props.dimension_dn;
     if (props.pressure_rating) html += '<br>' + escapeHtml(props.pressure_rating);
     if (props.manufacturer) html += '<br>Fabrikat: ' + escapeHtml(props.manufacturer);
+    // Verknuepfte Liegenschaft: aktueller Besitzer + Adresse (Strasse + HNR).
+    var owners = props.owner_names || [];
+    if (props.property_address || owners.length) {
+      html += '<hr class="my-1">';
+      if (props.property_address) {
+        html += '<div><i class="fas fa-map-marker-alt text-secondary"></i> ' + escapeHtml(props.property_address) + '</div>';
+      }
+      if (owners.length) {
+        html += '<div><i class="fas fa-user text-secondary"></i> ' + escapeHtml(owners.join(", ")) + '</div>';
+      }
+    }
     return html;
   }
 

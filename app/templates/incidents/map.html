@@ -28,7 +28,9 @@
     </div>
   </div>
   <div class="card-body p-0">
-    <div id="incidents-map" style="height: calc(100vh - 220px); min-height: 420px"></div>
+    {# hx-boost="false": sonst boostet htmx den dynamisch erzeugten Leaflet-Popup-
+       Schliessen-Anker (<a href="#">) und der "x"-Klick navigiert statt zu schliessen. #}
+    <div id="incidents-map" hx-boost="false" style="height: calc(100vh - 220px); min-height: 420px"></div>
   </div>
 </div>
 <style>

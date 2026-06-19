@@ -95,6 +95,7 @@
             {% set _nav_offene_posten   = request.endpoint in ('accounting.open_items','accounting.open_item_invoice') %}
             {% set _nav_rechnungslauf   = request.endpoint == 'invoices.generate' %}
             {% set _nav_rechnungslaeufe = request.endpoint in ('invoices.billing_runs','invoices.billing_run_detail','invoices.billing_run_delete') %}
+            {% set _nav_korrekturen     = request.endpoint == 'invoices.corrections' %}
             {% set _nav_perioden        = request.blueprint == 'periods' %}
             {% set _nav_email_settings  = request.endpoint == 'invoices.email_settings' %}
 
@@ -154,7 +155,7 @@
 
             {# Eltern-Aktiv aus Kinder-OR ableiten #}
             {% set accounting_active   = _nav_buchungen or _nav_umbuchungen or _nav_bankkonten or _nav_kontenplan or _nav_projekte or _nav_bankimport %}
-            {% set invoices_active     = _nav_neue_rechnung or _nav_alle_rechnungen or _nav_offene_posten or _nav_rechnungslauf or _nav_rechnungslaeufe or _nav_email_settings or _nav_tarife %}
+            {% set invoices_active     = _nav_neue_rechnung or _nav_alle_rechnungen or _nav_offene_posten or _nav_rechnungslauf or _nav_rechnungslaeufe or _nav_korrekturen or _nav_email_settings or _nav_tarife %}
             {% set auswertungen_active = _nav_jahresbericht or _nav_ust or _nav_kundenauswertung %}
             {% set zaehler_active      = _nav_zaehler or _nav_ablesungen or _nav_ablesungen_import or _nav_zaehlertausch or _nav_zaehlertausch_hist or _nav_selbsterfassung %}
             {% set stammdaten_active   = _nav_kunden or _nav_objekte or _nav_import or _nav_buchungsjahre or _nav_perioden %}
@@ -339,6 +340,12 @@
                     <a class="nav-link {% if _nav_rechnungslaeufe or _nav_rechnungslauf %}active{% endif %}"
                       href="{{ url_for('invoices.billing_runs') }}">
                       <i class="fas fa-history me-2"></i>Rechnungsläufe
+                    </a>
+                  </li>
+                  <li class="nav-item">
+                    <a class="nav-link {% if _nav_korrekturen %}active{% endif %}"
+                      href="{{ url_for('invoices.corrections') }}">
+                      <i class="fas fa-balance-scale me-2"></i>Korrekturen
                     </a>
                   </li>
                     <li class="nav-item">

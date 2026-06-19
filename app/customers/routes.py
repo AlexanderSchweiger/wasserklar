@@ -229,8 +229,16 @@ def detail(customer_id):
     ).all()
     from app.email_suppression import get_suppression
     suppression = get_suppression(customer.email) if customer.email else None
+    # Offene Schätz-Korrekturen: signierter Saldo (< 0 = Guthaben, > 0 = Nachforderung)
+    from app.meters.estimation import (
+        open_corrections_for_customer, customer_correction_balance,
+    )
+    open_corrections = open_corrections_for_customer(customer_id)
+    correction_balance = customer_correction_balance(customer_id)
     return render_template("customers/detail.html", customer=customer,
-                           invoices=invoices, suppression=suppression)
+                           invoices=invoices, suppression=suppression,
+                           open_corrections=open_corrections,
+                           correction_balance=correction_balance)
 
 
 @bp.route("/<int:customer_id>/edit", methods=["GET", "POST"])

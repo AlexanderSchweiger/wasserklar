@@ -90,6 +90,7 @@
               </tr>
               {{ col_select("meter_number", "Zählernummer", required=True) }}
               {{ col_select("meter_eichjahr", "Eichjahr") }}
+              {{ col_select("meter_reading", "Zählerstand (jüngster Stand)") }}
 
             </tbody>
           </table>
@@ -97,24 +98,30 @@
       </div><!-- /card -->
 
       {# ------------------------------------------------------------------ #}
-      {# Auto-erkannte Stand-Spalten                                         #}
+      {# Zählerstand-Hinweis                                                  #}
       {# ------------------------------------------------------------------ #}
-      {% if stand_columns %}
-      <div class="alert alert-success">
-        <h6 class="alert-title"><i class="fas fa-check-circle me-1"></i> Automatisch erkannte Ablesungen</h6>
-        <p class="mb-1">Folgende Spalten werden automatisch als Zählerstände importiert:</p>
-        <ul class="mb-0">
-          {% for col, year in stand_columns %}
-          <li><code>{{ col }}</code> → Jahr {{ year }}</li>
-          {% endfor %}
-        </ul>
+      <div class="alert alert-info">
+        <h6 class="alert-title"><i class="fas fa-info-circle me-1"></i> Zählerstand</h6>
+        <p class="mb-1">
+          Es wird <strong>genau ein Stand je Zähler</strong> importiert – die oben
+          unter <em>Zählerstand</em> gewählte Spalte.
+          {% if stand_columns %}Sie ist mit der jüngsten erkannten
+          <code>Stand YYYY</code>-Spalte vorbelegt.{% endif %}
+          Der Wert dient als <strong>Anfangsstand</strong>; die erste echte
+          Folgeablesung ergibt daraus den ersten Verbrauch.
+        </p>
+        <p class="mb-0 text-muted">
+          Vorjahresstände werden <strong>nicht</strong> importiert – ohne
+          Zählertausch-Information führen Jahr-für-Jahr-Differenzen über einen
+          getauschten Zähler hinweg zu falschen Verbräuchen. Wer historische
+          Ablesungen mit korrektem Tausch braucht, nutzt den Ablese- bzw.
+          Zählertausch-Import.
+          {% if stand_columns %}
+          <br>Erkannte Stand-Spalten:
+          {% for col, year in stand_columns %}<code>{{ col }}</code>{% if not loop.last %}, {% endif %}{% endfor %}.
+          {% endif %}
+        </p>
       </div>
-      {% else %}
-      <div class="alert alert-warning">
-        <i class="fas fa-exclamation-triangle me-1"></i>
-        Keine <code>Stand YYYY</code>-Spalten gefunden. Zählerstände werden nicht importiert.
-      </div>
-      {% endif %}
 
       {# ------------------------------------------------------------------ #}
       {# Duplikate-Behandlung                                                #}

@@ -34,6 +34,23 @@ class Config:
     # PDF-Ausgabeverzeichnis
     PDF_DIR = os.path.join(BASE_DIR, "instance", "pdfs")
 
+    # BEV-Adressregister-Geocoding (Liegenschaften -> WGS84-Koordinate).
+    # Der aufbereitete Adress-Index liegt als eigenstaendige SQLite-Datei auf
+    # der Platte — bewusst NICHT in der App-/Tenant-DB (3,3 Mio Adressen sind
+    # geteilte Referenzdaten, nicht Mandanten-Daten; im SaaS zeigt der Pfad auf
+    # ein geteiltes Read-only-Volume, das fuer alle Tenants gilt). Der Index
+    # wird per `flask bev-refresh` gebaut (OSS-Standalone: gelegentlich/Cron;
+    # SaaS: platform-scheduler 2x/Jahr, passend zu den Gratis-Stichtagsdaten).
+    BEV_INDEX_PATH = os.environ.get(
+        "BEV_INDEX_PATH",
+        os.path.join(BASE_DIR, "instance", "bev_addresses.sqlite"),
+    )
+    # Download-URL der Gratis-Adressregister-Stichtagsdaten (CC BY 4.0). Traegt
+    # ein Stichtagsdatum und wechselt 2x/Jahr -> daher per Env konfigurierbar
+    # statt hartcodiert. `bev-refresh --file <lokal.zip>` umgeht den Download
+    # ganz (manuell geladenes ZIP).
+    BEV_DOWNLOAD_URL = os.environ.get("BEV_DOWNLOAD_URL", "")
+
     # Obergrenze fuer Massendruck/-export von Dokumenten pro Durchgang.
     # Schuetzt vor Speicher-/CPU-Last und Timeouts: WeasyPrint rendert jedes
     # Dokument einzeln in den RAM. Wird die Auswahl groesser, bietet die UI

@@ -14,7 +14,12 @@
     <tr>
       <td>{{ reading.billing_period.name }}</td>
       <td>{{ reading.reading_date.strftime('%d.%m.%Y') }}</td>
-      <td class="text-end"><strong>{{ "%d"|format(reading.value) }}</strong></td>
+      <td class="text-end">
+        <strong>{{ "%d"|format(reading.value) }}</strong>
+        {% if reading.is_estimated %}
+        <span class="badge bg-yellow text-dark ms-1" title="Geschätzter Stand">geschätzt</span>
+        {% endif %}
+      </td>
       <td class="text-end">
         {% if reading.consumption is not none %}
           {{ "%d"|format(reading.consumption) }}

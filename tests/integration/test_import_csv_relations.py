@@ -11,7 +11,7 @@ import pandas as pd
 import pytest
 
 from app.extensions import db
-from app.import_csv.routes import _run_import, _detect_stand_columns
+from app.import_csv.routes import _run_import
 from app.models import (
     BillingPeriod, Customer, Property, PropertyOwnership, WaterMeter,
 )
@@ -51,8 +51,7 @@ COLS = {
 def _run(rows, mode="skip", dry_run=False):
     """Baut ein DataFrame aus Zeilen-Dicts und ruft _run_import."""
     df = pd.DataFrame(rows).fillna("")
-    stand_columns = _detect_stand_columns(df.columns.tolist())
-    return _run_import(df, COLS, stand_columns, mode, dry_run=dry_run)
+    return _run_import(df, COLS, mode, dry_run=dry_run)
 
 
 def _warn_actions(plan_entry):
@@ -133,8 +132,7 @@ class TestMeterObjectConflict:
             {"Kunden-Nr.": "100", "Name": "Huber", "Objekt": "Haus A",
              "Zählernummer": "Z1"},
         ])
-        # Es gibt eine Warnung wegen fehlender Zählernummer-Periode, aber keine
-        # Zähler-Objekt-Konflikt-Warnung
+        # Keine Zähler-Objekt-Konflikt-Warnung (gleicher Zähler, gleiches Objekt).
         meter_warnings = [w for w in res["warnings"] if "Z1" in w]
         assert meter_warnings == []
 

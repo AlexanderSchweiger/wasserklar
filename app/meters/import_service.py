@@ -588,6 +588,9 @@ def commit_import(rows: list[ResolvedRow], user_id: int,
     """Persistiert die resolved + edited Zeilen in die gewaehlte Abrechnungsperiode."""
     stats = ImportStats()
     affected_meters: dict[int, WaterMeter] = {}
+    # (reading, abgerechneter Schaetzverbrauch) fuer Schaetzungs-Abgleich nach
+    # der Verbrauchs-Neuberechnung — Import liefert echte Staende.
+    to_reconcile: list = []
     for row in rows:
         if row.skip:
             stats.skipped += 1
@@ -617,9 +620,14 @@ def commit_import(rows: list[ResolvedRow], user_id: int,
                     sp.rollback()
                     stats.skipped_dup += 1
                     continue
+                was_estimated = bool(existing.is_estimated)
+                est_consumption = existing.consumption
                 existing.value = row.value
                 existing.reading_date = rdate
                 existing.created_by_id = user_id
+                existing.is_estimated = False  # Import = echter Stand
+                if was_estimated:
+                    to_reconcile.append((existing, est_consumption))
                 stats.updated += 1
             else:
                 db.session.add(MeterReading(
@@ -639,6 +647,13 @@ def commit_import(rows: list[ResolvedRow], user_id: int,
     db.session.flush()
     for meter in affected_meters.values():
         recompute_meter_chain(meter)
+
+    # Schaetzungs-Abgleich: echte Importwerte, die abgerechnete Schaetzungen
+    # ersetzt haben, erzeugen ggf. Gutschrift/Nachforderung.
+    if to_reconcile:
+        from app.meters.estimation import build_correction
+        for reading, est_consumption in to_reconcile:
+            build_correction(reading, est_consumption, created_by_id=user_id)
 
     db.session.commit()
     return stats

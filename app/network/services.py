@@ -21,6 +21,17 @@ from app.models import (
 )
 from app.network import vocab
 
+# Feature-Typ-Key des Hausanschlusses (Quelle: vocab.POINT_TYPES). Treibt die
+# automatische Liegenschafts-Zuordnung und die grelle Markierung unzugeordneter
+# Hausanschluesse auf der Karte.
+HAUSANSCHLUSS_TYPE = "hausanschluss"
+
+# Default-Suchradius (m) fuer die Hausanschluss->Liegenschaft-Zuordnung. Ein
+# Hausanschluss liegt typischerweise wenige bis einige zehn Meter vom Gebaeude;
+# darueber hinaus ist „naechste Liegenschaft" zu unsicher -> bleibt unzugeordnet
+# (= grell). Im Zuordnungs-Dialog uebersteuerbar.
+DEFAULT_ASSIGN_DISTANCE_M = 60.0
+
 
 # ---------------------------------------------------------------------------
 # Datei-Ablage
@@ -303,6 +314,9 @@ def feature_to_geojson(f, property_map=None, owner_map=None):
             "pressure_rating": f.pressure_rating,
             "notes": f.notes,
             "property_id": f.property_id,
+            # Hausanschluss ohne zugeordnete Liegenschaft -> auf der Karte grell
+            # markiert (technik-map.js / app.css). Nur fuer Hausanschluesse relevant.
+            "unassigned": bool(f.feature_type == HAUSANSCHLUSS_TYPE and not f.property_id),
             # Verknuepftes Objekt: fuer Volltextsuche (Objekt/Adresse/Besitzer)
             "property_label": prop.label() if prop else None,
             "property_address": prop.address_display() if prop else None,
@@ -551,6 +565,104 @@ def merge_plan_into_source(copy, uid=None):
     src.updated_by_id = uid
     db.session.commit()
     return {"added": added, "updated": updated, "deleted": deleted, "source": src}
+
+
+# ---------------------------------------------------------------------------
+# Hausanschluss -> Liegenschaft (Nearest-Neighbour-Zuordnung)
+# ---------------------------------------------------------------------------
+
+def count_unassigned_hausanschluss(plan_id):
+    """Anzahl Hausanschluss-Punkte im Plan ohne zugeordnete Liegenschaft
+    (= grell markiert). 0, wenn kein Plan/keine Hausanschluesse."""
+    if not plan_id:
+        return 0
+    return NetworkFeature.query.filter(
+        NetworkFeature.plan_id == plan_id,
+        NetworkFeature.feature_type == HAUSANSCHLUSS_TYPE,
+        NetworkFeature.property_id.is_(None),
+    ).count()
+
+
+def assign_hausanschluss_to_properties(plan_id, *, max_distance_m=DEFAULT_ASSIGN_DISTANCE_M,
+                                       only_missing=True):
+    """Ordnet Hausanschluss-Punkte des Plans der naechstgelegenen Liegenschaft zu
+    (Haversine, innerhalb ``max_distance_m``) — als **1:1-Matching**: jede
+    Liegenschaft wird hoechstens EINEM Hausanschluss zugeordnet. Greifen zwei
+    Hausanschluesse nach derselben Liegenschaft, gewinnt der naehere; der andere
+    bekommt seine naechste noch FREIE Liegenschaft im Radius, sonst bleibt er
+    unzugeordnet (grell). Umsetzung als globales Greedy: alle (Hausanschluss,
+    Liegenschaft)-Paare im Radius werden nach Distanz aufsteigend abgearbeitet;
+    ein Paar matcht nur, wenn weder Hausanschluss noch Liegenschaft schon
+    vergeben sind.
+
+    ``only_missing=True`` (Default) ruehrt bereits zugeordnete Hausanschluesse
+    des Plans nicht an (manuelle Zuordnungen bleiben) und deren Liegenschaften
+    sind fuer das Matching gesperrt (1:1 bleibt planweit gewahrt). ``False``
+    loest zuerst alle Zuordnungen des Plans und matcht komplett neu.
+
+    Liefert ``{considered, candidates, geocoded_total, assigned, unmatched,
+    total_unassigned}``. Voraussetzung: Liegenschaften wurden geocodet
+    (BEV-Abgleich) — sonst gibt es keine Kandidaten.
+    """
+    all_ha = NetworkFeature.query.filter(
+        NetworkFeature.plan_id == plan_id,
+        NetworkFeature.feature_type == HAUSANSCHLUSS_TYPE,
+        NetworkFeature.geometry_kind == NetworkFeature.GEOMETRY_POINT,
+        NetworkFeature.lat.isnot(None),
+        NetworkFeature.lng.isnot(None),
+    ).all()
+
+    if only_missing:
+        # Liegenschaften, die ein bestehender (bleibender) Hausanschluss dieses
+        # Plans schon belegt -> fuer das Matching tabu (1:1-Invariante planweit).
+        claimed = {f.property_id for f in all_ha if f.property_id is not None}
+        feats = [f for f in all_ha if f.property_id is None]
+    else:
+        # „Alle neu": bestehende Zuordnungen des Plans loesen, frisch matchen.
+        for f in all_ha:
+            f.property_id = None
+        claimed = set()
+        feats = all_ha
+
+    # Geocodete Liegenschaften (id, lat, lng) — schon belegte ausgenommen.
+    geocoded = (
+        db.session.query(Property.id, Property.lat, Property.lng)
+        .filter(Property.active.is_(True),
+                Property.lat.isnot(None), Property.lng.isnot(None))
+        .all()
+    )
+    candidates = [(pid, plat, plng) for pid, plat, plng in geocoded if pid not in claimed]
+
+    # Alle Paare innerhalb des Radius, aufsteigend nach Distanz (Sekundaer-Keys
+    # feat-Index/Liegenschafts-id -> deterministisch bei Gleichstand).
+    pairs = []
+    for i, f in enumerate(feats):
+        for pid, plat, plng in candidates:
+            d = haversine_m(f.lat, f.lng, plat, plng)
+            if d <= max_distance_m:
+                pairs.append((d, i, pid))
+    pairs.sort()
+
+    used_feat, used_prop = set(), set()
+    assigned = 0
+    for _d, i, pid in pairs:
+        if i in used_feat or pid in used_prop:
+            continue
+        feats[i].property_id = pid
+        used_feat.add(i)
+        used_prop.add(pid)
+        assigned += 1
+
+    db.session.commit()
+
+    return {
+        "considered": len(feats),
+        "candidates": len(candidates),
+        "geocoded_total": len(geocoded),
+        "assigned": assigned,
+        "unmatched": len(feats) - assigned,
+        "total_unassigned": count_unassigned_hausanschluss(plan_id),
+    }
 
 
 # ---------------------------------------------------------------------------

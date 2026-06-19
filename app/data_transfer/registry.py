@@ -16,7 +16,7 @@ from app.models import (
     AppSetting, InvoiceCounter, CustomerCounter,
     NetworkPlan, NetworkFeature, MaintenanceLog, Incident,
     CustomerWgProfile, PropertyWgProfile, WgFunction,
-    Note,
+    Note, ReadingCorrection,
 )
 
 # Spalten die auf users.id verweisen — werden beim Import auf NULL gesetzt,
@@ -25,6 +25,7 @@ NULL_ON_IMPORT_COLS = {
     MeterReading: ["created_by_id"],
     MeterReplacement: ["created_by_id"],
     MeterReadingAccessCode: ["created_by_id"],
+    ReadingCorrection: ["created_by_id"],
     BillingRun: ["created_by_id"],
     Invoice: ["created_by_id"],
     Transfer: ["created_by_id"],
@@ -54,6 +55,7 @@ CATEGORIES = {
     ],
     "buchungen": [
         MeterReading, MeterReplacement, BillingRun, Invoice, InvoiceItem, OpenItem,
+        ReadingCorrection,
         BookingGroup, Booking, Transfer, RealAccountYearBalance,
         InvoiceCounter, CustomerCounter,
     ],
@@ -79,7 +81,7 @@ INSERT_ORDER = [
     CustomerWgProfile, PropertyWgProfile, WgFunction,
     BillingPeriod, MeterReadingAccessCode, WaterTariff, MeterReading,
     MeterReplacement,
-    BillingRun, Invoice, InvoiceItem, OpenItem,
+    BillingRun, Invoice, InvoiceItem, OpenItem, ReadingCorrection,
     BookingGroup, Booking, Transfer, RealAccountYearBalance,
     DunningPolicy, DunningStage, DunningNotice,
     AppSetting, InvoiceCounter, CustomerCounter,
@@ -103,6 +105,7 @@ YEAR_FILTERS = {
     BillingRun: ("date_year", "created_at"),
     Invoice: ("date_year", "date"),
     OpenItem: "period_year",
+    ReadingCorrection: ("date_year", "created_at"),
     Booking: ("date_year", "date"),
     Transfer: ("date_year", "date"),
     RealAccountYearBalance: "year",
@@ -137,6 +140,7 @@ NATURAL_KEYS = {
     Invoice: ("invoice_number",),
     InvoiceItem: None,
     OpenItem: None,
+    ReadingCorrection: None,
     BookingGroup: None,
     Booking: None,
     Transfer: None,
@@ -173,8 +177,13 @@ FOREIGN_KEYS = {
     Invoice: {"customer_id": Customer, "property_id": Property, "billing_run_id": BillingRun,
               "billing_period_id": BillingPeriod},
     InvoiceItem: {"invoice_id": Invoice, "project_id": Project,
-                  "dunning_notice_id": DunningNotice},  # zweiter Pass
+                  "dunning_notice_id": DunningNotice,        # zweiter Pass
+                  "reading_correction_id": ReadingCorrection},  # zweiter Pass
     OpenItem: {"customer_id": Customer, "invoice_id": Invoice, "account_id": Account},
+    ReadingCorrection: {"customer_id": Customer, "meter_id": WaterMeter,
+                        "billing_period_id": BillingPeriod,
+                        "source_reading_id": MeterReading,
+                        "source_invoice_id": Invoice, "applied_invoice_id": Invoice},
     BookingGroup: {"invoice_id": Invoice, "customer_id": Customer},
     Booking: {"account_id": Account, "invoice_id": Invoice, "open_item_id": OpenItem,
               "project_id": Project, "real_account_id": RealAccount,
@@ -199,7 +208,7 @@ FOREIGN_KEYS = {
 # erst spaeter inserted wird (zirkulaere oder Self-FKs).
 DEFERRED_FK_UPDATES = {
     Booking: ["storno_of_id"],
-    InvoiceItem: ["dunning_notice_id"],
+    InvoiceItem: ["dunning_notice_id", "reading_correction_id"],
     NetworkPlan: ["source_plan_id"],         # Self-FK
     NetworkFeature: ["source_feature_id"],   # Self-FK
 }

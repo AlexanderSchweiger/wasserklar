@@ -323,6 +323,15 @@ class Property(db.Model):
     base_fee_override = db.Column(db.Numeric(10, 2), nullable=True)       # überschreibt Kunden-/Tarif-Grundgebühr
     additional_fee_override = db.Column(db.Numeric(10, 2), nullable=True)  # überschreibt Kunden-/Tarif-Zusatzgebühr
 
+    # Geocoding (BEV-Adressregister): WGS84-Koordinate der Liegenschaft, per
+    # `flask bev-refresh`-Index + "BEV-Adressen abgleichen"-Button befuellt.
+    # Treibt die Hausanschluss-Zuordnung im Leitungsnetz (Nearest-Neighbour).
+    # ``geocoded_at`` None = "noch nicht / nicht gefunden" (Re-Abgleich versucht
+    # es erneut), sonst Zeitpunkt des letzten erfolgreichen Treffers.
+    lat = db.Column(db.Float, nullable=True)
+    lng = db.Column(db.Float, nullable=True)
+    geocoded_at = db.Column(db.DateTime, nullable=True)
+
     meters = db.relationship("WaterMeter", backref="property", lazy="dynamic",
                              cascade="all, delete-orphan")
     ownerships = db.relationship("PropertyOwnership", backref="property", lazy="dynamic",
@@ -517,6 +526,14 @@ class MeterReading(db.Model):
     reading_date = db.Column(db.Date, nullable=False, default=date.today)
     value = db.Column(db.Numeric(12, 3), nullable=False)  # m³
     consumption = db.Column(db.Numeric(12, 3))             # m³ Verbrauch (berechnet)
+    # Schaetzung-Marker: True = der Stand wurde geschaetzt (kein echter
+    # Ablesewert). Wird ein echter Stand nachgereicht, kippt das Flag auf False
+    # und es entsteht ggf. ein ``ReadingCorrection`` (Gutschrift/Nachforderung),
+    # sofern die Schaetzung bereits abgerechnet war.
+    is_estimated = db.Column(
+        db.Boolean, default=False, nullable=False,
+        server_default=db.text("false"),
+    )
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
@@ -587,6 +604,86 @@ class MeterReplacement(db.Model):
     def __repr__(self):
         return (f"<MeterReplacement old={self.old_meter_id} "
                 f"new={self.new_meter_id} {self.replacement_date}>")
+
+
+class ReadingCorrection(db.Model):
+    """Korrekturposten aus einer nachgereichten echten Ablesung, die eine
+    zuvor *abgerechnete* Schaetzung ersetzt.
+
+    Entsteht in ``app/meters/estimation.py:build_correction``, sobald ein
+    echter Zaehlerstand eine bereits in einer ausgestellten Rechnung
+    abgerechnete Schaetzung ersetzt (``MeterReading.is_estimated`` True->False).
+
+    ``amount`` ist VORZEICHENBEHAFTET (netto):
+      amount > 0  -> Nachforderung (es wurde zu wenig abgerechnet)
+      amount < 0  -> Gutschrift    (es wurde zu viel abgerechnet)
+
+    ``remaining_amount`` traegt dasselbe Vorzeichen und wird beim Einziehen in
+    eine Folgerechnung dekrementiert. Eine Gutschrift wird nur soweit
+    eingezogen, dass der Rechnungsbetrag nie unter 0 faellt; der Rest bleibt
+    offen und wandert auf die naechste Rechnung
+    (``apply_corrections_to_invoice``). ``unit_price``/``tax_rate`` sind
+    Snapshots aus der urspruenglichen Schaetz-Rechnung, damit die Korrektur
+    USt-konsistent verrechnet wird.
+
+    Dialekt-portabel: nur Numeric/Integer/String/DateTime, keine dialekt-
+    spezifischen Typen; ``server_default`` als String-Literal.
+    """
+    __tablename__ = "reading_corrections"
+
+    STATUS_OPEN = "Offen"
+    STATUS_PARTIAL = "Teilverrechnet"
+    STATUS_APPLIED = "Verrechnet"
+    ALL_STATUSES = [STATUS_OPEN, STATUS_PARTIAL, STATUS_APPLIED]
+
+    id = db.Column(db.Integer, primary_key=True)
+    customer_id = db.Column(
+        db.Integer, db.ForeignKey("customers.id"), nullable=False, index=True)
+    meter_id = db.Column(db.Integer, db.ForeignKey("water_meters.id"), nullable=False)
+    billing_period_id = db.Column(
+        db.Integer, db.ForeignKey("billing_periods.id"), nullable=False)
+    # Quelle (Schaetz-Ablesung + Schaetz-Rechnung) und Ziel (Folgerechnung, in
+    # die die Korrektur eingezogen wurde). ondelete SET NULL: ein geloeschter
+    # Stand / eine stornierte Rechnung verwaist den Korrekturposten nicht.
+    source_reading_id = db.Column(
+        db.Integer, db.ForeignKey("meter_readings.id", ondelete="SET NULL"),
+        nullable=True)
+    source_invoice_id = db.Column(
+        db.Integer, db.ForeignKey("invoices.id", ondelete="SET NULL"),
+        nullable=True)
+    applied_invoice_id = db.Column(
+        db.Integer, db.ForeignKey("invoices.id", ondelete="SET NULL"),
+        nullable=True)
+
+    estimated_consumption = db.Column(db.Numeric(12, 3), nullable=True)  # m³ geschaetzt (abgerechnet)
+    real_consumption = db.Column(db.Numeric(12, 3), nullable=True)       # m³ echt
+    delta_m3 = db.Column(db.Numeric(12, 3), nullable=True)               # real - geschaetzt
+    unit_price = db.Column(db.Numeric(10, 4), nullable=False)            # €/m³ Snapshot
+    tax_rate = db.Column(db.Numeric(5, 2), nullable=True)                # USt% Snapshot (None = keine)
+    amount = db.Column(db.Numeric(10, 2), nullable=False)                # signed netto
+    remaining_amount = db.Column(db.Numeric(10, 2), nullable=False)      # signed netto, noch offen
+    status = db.Column(
+        db.String(20), nullable=False, default=STATUS_OPEN,
+        server_default=db.text("'Offen'"))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+
+    customer = db.relationship(
+        "Customer", backref=db.backref("reading_corrections", lazy="dynamic"))
+    meter = db.relationship("WaterMeter")
+    billing_period = db.relationship("BillingPeriod")
+    source_reading = db.relationship("MeterReading", foreign_keys=[source_reading_id])
+    source_invoice = db.relationship("Invoice", foreign_keys=[source_invoice_id])
+    applied_invoice = db.relationship("Invoice", foreign_keys=[applied_invoice_id])
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+
+    @property
+    def is_credit(self):
+        from decimal import Decimal
+        return Decimal(str(self.amount or 0)) < 0
+
+    def __repr__(self):
+        return f"<ReadingCorrection {self.amount} {self.status}>"
 
 
 class MeterReadingAccessCode(EmailTrackableMixin, db.Model):
@@ -1248,6 +1345,23 @@ class InvoiceItem(db.Model):
     amount = db.Column(db.Numeric(10, 2), nullable=False)
     tax_rate = db.Column(db.Numeric(5, 2), nullable=True)  # MwSt in %; None = keine MwSt
     project_id = db.Column(db.Integer, db.ForeignKey("projects.id"), nullable=True)
+
+    # Schaetzung-Marker: True = die Verbrauchsposition beruht (ganz oder teils)
+    # auf einer geschaetzten Ablesung -> Template zeigt einen "geschätzt"-Badge.
+    is_estimated = db.Column(
+        db.Boolean, default=False, nullable=False,
+        server_default=db.text("false"),
+    )
+
+    # Verweis auf den Schaetz-Korrekturposten, falls diese Position eine
+    # eingezogene Gutschrift/Nachforderung ist (ondelete SET NULL). Macht das
+    # exakte Rueckabwickeln beim Loeschen eines Entwurfs/Rechnungslaufs moeglich
+    # (genau der hier verrechnete Betrag wird der Korrektur zurueckgegeben).
+    reading_correction_id = db.Column(
+        db.Integer,
+        db.ForeignKey("reading_corrections.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     # Mahnwesen (ADR-003): Mahngebühr-Items
     is_dunning_fee = db.Column(db.Integer, default=0, nullable=False)

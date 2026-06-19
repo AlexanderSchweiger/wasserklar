@@ -124,7 +124,9 @@
         </div>
       </div>
       <div class="card-body p-0">
-        <div id="incident-detail-map" style="height:420px"></div>
+        {# hx-boost="false": sonst boostet htmx den dynamisch erzeugten Leaflet-Popup-
+           Schliessen-Anker (<a href="#">) und der "x"-Klick navigiert statt zu schliessen. #}
+        <div id="incident-detail-map" hx-boost="false" style="height:420px"></div>
       </div>
       <div class="card-footer text-muted small" id="incident-map-hint">
         {% if inc.lat is none %}Noch keine Position hinterlegt. „Position setzen" klicken und auf die Karte tippen.{% else %}Auf „Position setzen" klicken, um den Pin zu verschieben.{% endif %}

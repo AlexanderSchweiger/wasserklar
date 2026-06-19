@@ -421,6 +421,19 @@ tr.overdue { background-color: #fff3cd !important; }
   box-shadow: 0 0 0 1px #fff, 0 1px 2px rgba(0, 0, 0, .35);
 }
 
+/* Hausanschluss ohne zugeordnete Liegenschaft: grell markiert. Ersetzt den
+   weissen Ring durch einen grellen pinken Ring + pulsierenden Glow, damit
+   unzugeordnete Anschluesse sofort auffallen (Zuordnung via Network-Karte
+   „Hausanschluesse zuordnen"). */
+.technik-marker-unassigned {
+  box-shadow: 0 0 0 3px #ff1f6b, 0 0 10px 3px rgba(255, 31, 107, .85) !important;
+  animation: technik-unassigned-pulse 1.3s ease-in-out infinite;
+}
+@keyframes technik-unassigned-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px #ff1f6b, 0 0 6px 2px rgba(255, 31, 107, .65); }
+  50%      { box-shadow: 0 0 0 4px #ff1f6b, 0 0 16px 6px rgba(255, 31, 107, 1); }
+}
+
 /* Palette-Linien-Swatch (Toolbar) */
 .technik-swatch {
   display: inline-block; width: 1.4rem; height: 0;
