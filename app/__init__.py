@@ -16,6 +16,21 @@ def create_app(config_name=None):
     app = Flask(__name__, instance_relative_config=True, instance_path=instance_path)
     app.config.from_object(config[config_name])
 
+    # SECRET_KEY-Haertung: in produktiven Configs (Staging/Production, d.h. nicht
+    # DEBUG und nicht TESTING) darf NICHT der oeffentlich bekannte Dev-Default
+    # (oder ein leerer Wert aus fehlgeschlagener Env-Interpolation) greifen.
+    # SECRET_KEY signiert Session-Cookies UND alle itsdangerous-Tokens
+    # (Passwort-Reset; im SaaS zusaetzlich Invite-/Self-Service-/Opt-In-Tokens).
+    # Lokales OSS-Standalone-Dev (DEBUG) und die Tests bleiben unberuehrt.
+    _secret = app.config.get("SECRET_KEY")
+    if not app.config.get("DEBUG") and not app.config.get("TESTING"):
+        if not _secret or _secret == "dev-secret-change-in-production":
+            raise RuntimeError(
+                "SECRET_KEY ist in Produktion nicht (sicher) gesetzt. Einen "
+                "starken Zufallswert via Umgebungsvariable setzen, z.B.:\n"
+                "  python -c \"import secrets; print(secrets.token_hex(32))\""
+            )
+
     # Verzeichnisse sicherstellen
     os.makedirs(app.instance_path, exist_ok=True)
     os.makedirs(app.config["PDF_DIR"], exist_ok=True)

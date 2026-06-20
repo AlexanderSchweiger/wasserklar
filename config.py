@@ -51,6 +51,20 @@ class Config:
     # ganz (manuell geladenes ZIP).
     BEV_DOWNLOAD_URL = os.environ.get("BEV_DOWNLOAD_URL", "")
 
+    # Automatische Hausanschluss->Liegenschaft-Zuordnung im Leitungsnetz
+    # (Nearest-Neighbour gegen die geocodeten Liegenschaften, siehe
+    # app/network/services.assign_hausanschluss_to_properties). Bewusst ein
+    # SaaS-only-Komfortfeature: im OSS-Standalone defaultet es AUS — Selbst-
+    # Hoster kennen ihre Anschluesse und ordnen sie im Feature-Formular manuell
+    # zu (die grelle Karten-Markierung unzugeordneter Hausanschluesse und der
+    # "ohne Liegenschaft"-Zaehler bleiben aktiv und unterstuetzen das). Der
+    # SaaS-Layer schaltet das Flag in register_saas_extensions fuer alle Tenants
+    # (Basis + Pro) an. Steuert die Route /network/assign-hausanschluss (404,
+    # wenn aus) und das Zuordnen-UI auf der Karte.
+    FEATURE_HAUSANSCHLUSS_AUTOASSIGN = (
+        os.environ.get("FEATURE_HAUSANSCHLUSS_AUTOASSIGN", "false").lower() == "true"
+    )
+
     # Obergrenze fuer Massendruck/-export von Dokumenten pro Durchgang.
     # Schuetzt vor Speicher-/CPU-Last und Timeouts: WeasyPrint rendert jedes
     # Dokument einzeln in den RAM. Wird die Auswahl groesser, bietet die UI

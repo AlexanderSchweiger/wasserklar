@@ -68,7 +68,10 @@
           <a href="{{ url_for('network.print_view') }}" class="dropdown-item" hx-boost="false" target="_blank" rel="noopener">
             <i class="fas fa-print me-2"></i>Drucken
           </a>
-          {% if plan %}
+          {# Automatische Hausanschluss-Zuordnung: SaaS-only-Komfortfeature
+             (FEATURE_HAUSANSCHLUSS_AUTOASSIGN). Im OSS-Standalone aus — dort
+             ordnet man Liegenschaften im Feature-Formular manuell zu. #}
+          {% if plan and config.FEATURE_HAUSANSCHLUSS_AUTOASSIGN %}
           <div class="dropdown-divider"></div>
           <button type="button" class="dropdown-item" data-bs-toggle="modal" data-bs-target="#assignHausanschlussModal">
             <i class="fas fa-link me-2"></i>Hausanschlüsse zuordnen
@@ -178,7 +181,8 @@
 {% endblock %}
 
 {% block modals %}
-{% if plan %}
+{# Zuordnen-Modal nur, wenn die Automatik aktiv ist (SaaS-only, siehe Dropdown). #}
+{% if plan and config.FEATURE_HAUSANSCHLUSS_AUTOASSIGN %}
 <div class="modal fade" id="assignHausanschlussModal" tabindex="-1" aria-labelledby="assignHausanschlussModalLabel" aria-hidden="true">
   <div class="modal-dialog">
     <div class="modal-content">
@@ -240,6 +244,7 @@
   window.TECHNIK.csrfToken = "{{ csrf_token() }}";
 </script>
 <script src="{{ url_for('static', filename='js/technik-map.js') }}"></script>
+{% if config.FEATURE_HAUSANSCHLUSS_AUTOASSIGN %}
 <script>
   // Zuordnungs-Modal: Suchradius + Modus (liegen ausserhalb des <form>) auf die
   // Hidden-Felder im Submit-Form spiegeln.
@@ -257,4 +262,5 @@
     });
   })();
 </script>
+{% endif %}
 {% endblock %}

@@ -20,7 +20,7 @@ from datetime import date
 
 from flask import (
     render_template, request, jsonify, redirect, url_for, flash,
-    make_response, send_from_directory, session, current_app,
+    make_response, send_from_directory, session, current_app, abort,
 )
 from flask_login import login_required, current_user
 from werkzeug.utils import secure_filename
@@ -199,7 +199,14 @@ def assign_hausanschluss():
     """Ordnet die Hausanschluss-Punkte des aktuellen Plans automatisch der
     jeweils naechstgelegenen (geocodeten) Liegenschaft zu. Drei-Punkte-Menue
     der Karte. Danach Redirect auf die Karte — unzugeordnete Hausanschluesse
-    erscheinen grell."""
+    erscheinen grell.
+
+    SaaS-only-Komfortfeature: im OSS-Standalone ist FEATURE_HAUSANSCHLUSS_AUTOASSIGN
+    aus -> 404. Die manuelle Zuordnung (Liegenschaft im Feature-Formular) bleibt
+    fuer alle verfuegbar."""
+    if not current_app.config.get("FEATURE_HAUSANSCHLUSS_AUTOASSIGN"):
+        abort(404)
+
     plan = current_plan()
     if plan is None:
         flash("Kein Plan gewählt — bitte zuerst einen Plan anlegen.", "warning")
