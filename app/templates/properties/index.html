@@ -5,28 +5,30 @@
 {% block content %}
 <div class="card table-card">
   <div class="card-header">
-    <div class="input-group input-group-sm" style="width:280px">
-      <input type="search" name="q" value="{{ q }}" class="form-control"
-        placeholder="Nummer, Straße, Ort, Besitzer…"
+    <div class="filter-bar">
+      <div class="input-group input-group-sm" style="width:280px">
+        <input type="search" name="q" value="{{ q }}" class="form-control"
+          placeholder="Nummer, Straße, Ort, Besitzer…"
+          hx-get="{{ url_for('properties.index') }}"
+          hx-trigger="input changed delay:300ms, search"
+          hx-target="#property-table"
+          hx-include="[name='q'], [name='sort'], [name='dir'], [name='shares']">
+        <span class="input-group-text"><i class="fas fa-search"></i></span>
+      </div>
+      {% if is_wg %}
+      <select name="shares" class="form-select form-select-sm" style="width:175px"
         hx-get="{{ url_for('properties.index') }}"
-        hx-trigger="input changed delay:300ms, search"
+        hx-trigger="change"
         hx-target="#property-table"
         hx-include="[name='q'], [name='sort'], [name='dir'], [name='shares']">
-      <span class="input-group-text"><i class="fas fa-search"></i></span>
+        <option value="all" {% if shares_filter == 'all' %}selected{% endif %}>Alle Liegenschaften</option>
+        <option value="with" {% if shares_filter == 'with' %}selected{% endif %}>Mit Anteilen</option>
+        <option value="without" {% if shares_filter == 'without' %}selected{% endif %}>Ohne Anteile</option>
+      </select>
+      {% endif %}
+      <input type="hidden" name="sort" value="{{ sort }}">
+      <input type="hidden" name="dir" value="{{ dir }}">
     </div>
-    {% if is_wg %}
-    <select name="shares" class="form-select form-select-sm" style="width:175px"
-      hx-get="{{ url_for('properties.index') }}"
-      hx-trigger="change"
-      hx-target="#property-table"
-      hx-include="[name='q'], [name='sort'], [name='dir'], [name='shares']">
-      <option value="all" {% if shares_filter == 'all' %}selected{% endif %}>Alle Liegenschaften</option>
-      <option value="with" {% if shares_filter == 'with' %}selected{% endif %}>Mit Anteilen</option>
-      <option value="without" {% if shares_filter == 'without' %}selected{% endif %}>Ohne Anteile</option>
-    </select>
-    {% endif %}
-    <input type="hidden" name="sort" value="{{ sort }}">
-    <input type="hidden" name="dir" value="{{ dir }}">
     <div class="card-options d-flex gap-2 align-items-center">
       <a href="{{ url_for('properties.import_upload') }}" class="btn btn-outline-secondary">
         <i class="fas fa-file-import me-1"></i> Importieren
