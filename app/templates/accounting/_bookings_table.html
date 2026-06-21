@@ -9,8 +9,37 @@
   {% endif %}
 {% endfor %}
 {% set notes_by_entity = notes_by_entity_for('booking', _bk_ids) %}
-<div class="px-3 py-2 bg-light border-bottom d-flex justify-content-end">
-  <div class="text-end">
+{# Bestaetigung nach Massen-Bearbeitung — wird per Out-of-Band-Swap in die
+   #bookings-bulk-flash-Zone (in bookings.html) gehoben. Nur im Bulk-Refresh
+   gesetzt (bulk_done_count), beim normalen Filter-/Voll-Render = None. #}
+{% if bulk_done_count is not none %}
+<div id="bookings-bulk-flash" hx-swap-oob="true">
+  {% if bulk_done_count > 0 %}
+  <div class="alert alert-success alert-dismissible" role="alert">
+    {{ bulk_done_count }} Buchung(en) aktualisiert.
+    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Schließen"></button>
+  </div>
+  {% else %}
+  <div class="alert alert-info alert-dismissible" role="alert">
+    Keine Buchungen geändert.
+    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Schließen"></button>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+<div class="px-3 py-2 bg-light border-bottom d-flex justify-content-between align-items-center gap-2">
+  {# Massen-Auswahl-Leiste — JS blendet sie ein, sobald ≥1 Buchung markiert ist. #}
+  <div class="bookings-bulk-bar align-items-center gap-2 d-none">
+    <span class="badge bg-primary text-white"><span class="bookings-bulk-count">0</span>&nbsp;ausgewählt</span>
+    <button type="button" class="btn btn-sm btn-primary"
+            data-bs-toggle="modal" data-bs-target="#bookingsBulkEditModal">
+      <i class="fas fa-edit me-1"></i> Konto / Projekt / Kontakt ändern
+    </button>
+    <button type="button" class="btn btn-sm btn-link link-secondary p-0 bookings-bulk-clear">
+      Auswahl aufheben
+    </button>
+  </div>
+  <div class="text-end ms-auto">
     <div class="fw-bold">Summe:
       <span class="{{ 'text-success' if total_amount >= 0 else 'text-danger' }}">{{ total_amount|de_number }}&nbsp;€</span>
     </div>
@@ -26,6 +55,10 @@
 <table class="table table-hover mb-0">
   <thead>
     <tr>
+      <th class="text-center" style="width:1%">
+        <input type="checkbox" class="form-check-input booking-select-all"
+               aria-label="Alle auswählen" title="Alle auf dieser Seite auswählen">
+      </th>
       <th style="white-space:nowrap">Datum</th>
       <th class="text-center" style="width:1%"><i class="fas fa-university"></i></th>
       <th>Konto</th>
@@ -63,6 +96,7 @@
         {%- elif all_children_offen %} table-info
         {%- endif %}"
         {% if is_stornogruppe %}style="opacity:0.55"{% endif %}>
+      <td></td>
       <td style="white-space:nowrap">{{ g.date.strftime('%d.%m.%Y') }}</td>
       <td class="text-center">
         <i class="fas fa-layer-group" title="Sammelbuchung" style="color:#b5651d"></i>
@@ -149,6 +183,7 @@
         {%- endif %}"
         {% if b.status == 'Storniert' %}style="opacity:0.5"{% endif %}>
       <td></td>
+      <td></td>
       <td class="text-center">
         {% if b.real_account %}
         <i class="fas {{ b.real_account.icon or 'fa-university' }} text-muted" title="{{ b.real_account.name }}"></i>
@@ -220,6 +255,7 @@
     {% set t = row.obj %}
     {% set t_amount = row.amount %}
     <tr class="table-light">
+      <td></td>
       <td style="white-space:nowrap">{{ t.date.strftime('%d.%m.%Y') }}</td>
       <td class="text-center">
         {% if row.side == 'out' %}
@@ -265,6 +301,12 @@
       {%- elif b.status == 'Offen' %} table-info
       {%- endif %}"
       {%- if b.status == 'Storniert' %} style="opacity:0.5"{% endif %}>
+      <td class="text-center" style="width:1%">
+        {% if b.status != 'Storniert' and not b.group_id and b.id not in locked_booking_ids %}
+        <input type="checkbox" class="form-check-input booking-select"
+               name="booking_ids" value="{{ b.id }}" aria-label="Buchung auswählen">
+        {% endif %}
+      </td>
       <td style="white-space:nowrap">{{ b.date.strftime('%d.%m.%Y') }}</td>
       <td class="text-center">
         {% if b.real_account %}
@@ -400,7 +442,7 @@
 
     {% else %}
     <tr>
-      <td colspan="10" class="text-center text-muted py-3">Keine Buchungen.</td>
+      <td colspan="11" class="text-center text-muted py-3">Keine Buchungen.</td>
     </tr>
     {% endfor %}
   </tbody>

@@ -1953,6 +1953,7 @@ class BankStatementLine(db.Model):
     MATCH_INVOICE_NUMBER = "invoice_number"
     MATCH_NAME = "name"
     MATCH_MANUAL = "manual"
+    MATCH_SPLIT = "split"
 
     STATUS_PENDING = "pending"
     STATUS_COMMITTED = "committed"
@@ -1988,9 +1989,49 @@ class BankStatementLine(db.Model):
     override_account = db.relationship("Account", foreign_keys=[override_account_id])
     booking = db.relationship("Booking", foreign_keys=[booking_id])
     booking_group = db.relationship("BookingGroup", foreign_keys=[booking_group_id])
+    allocations = db.relationship(
+        "BankStatementLineAllocation",
+        backref="line",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+        order_by="BankStatementLineAllocation.id",
+    )
+
+    @property
+    def is_split(self):
+        """True, wenn die Zeile auf mehrere offene Posten aufgeteilt wurde."""
+        return len(self.allocations) > 0
 
     def __repr__(self):
         return f"<BankStatementLine {self.id} {self.booking_date} {self.amount}>"
+
+
+class BankStatementLineAllocation(db.Model):
+    """Teil-Zuordnung einer Bankzeile auf einen offenen Posten (oder ein Konto).
+
+    Ermoeglicht, EINE Bankbuchung auf MEHRERE Ziele aufzuteilen (z.B. eine
+    Sammelzahlung, die zwei Rechnungen begleicht). Existiert mindestens eine
+    Allocation, ist die Zeile im „Aufgeteilt"-Modus und die einfachen Felder
+    ``matched_open_item_id`` / ``override_account_id`` werden beim Verbuchen
+    ignoriert.
+    """
+    __tablename__ = "bank_statement_line_allocations"
+
+    id = db.Column(db.Integer, primary_key=True)
+    line_id = db.Column(
+        db.Integer,
+        db.ForeignKey("bank_statement_lines.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    open_item_id = db.Column(db.Integer, db.ForeignKey("open_items.id"), nullable=True)
+    account_id = db.Column(db.Integer, db.ForeignKey("accounts.id"), nullable=True)
+    amount = db.Column(db.Numeric(12, 2), nullable=False)
+
+    open_item = db.relationship("OpenItem", foreign_keys=[open_item_id])
+    account = db.relationship("Account", foreign_keys=[account_id])
+
+    def __repr__(self):
+        return f"<BankStatementLineAllocation line={self.line_id} op={self.open_item_id} {self.amount}>"
 
 
 # ---------------------------------------------------------------------------

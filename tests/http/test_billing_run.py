@@ -133,7 +133,10 @@ class TestBillingRunDetail:
         # Neue Bausteine sind da (faengt Template-Runtime-Fehler ab).
         assert "Zusammenfassung" in html
         assert "Versenden" in html
-        assert "Per Post n" in html       # "Per Post nötig"
+        assert "per Post" in html          # Versand-Aufschlüsselung (Entwurf vorhanden)
+        # Neue Finanz-Zusammenfassung: Gesamt / Bezahlt / Offen.
+        assert "Gesamtsumme" in html
+        assert "Zahlungseingang" in html
         assert "Brutto" in html
         # Kunde ohne Mail-Einwilligung -> Post-Versand vorausgewaehlt.
         assert 'data-versandart="post"' in html

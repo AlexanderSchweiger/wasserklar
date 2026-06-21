@@ -113,26 +113,40 @@ _ust_period = acc_svc.ust_period
 _ust_berechnen = acc_svc.ust_compute
 
 
-@bp.route("/bookings")
-@login_required
-def bookings():
-    year = request.args.get("year", date.today().year, type=int)
-    account_id = request.args.get("account_id", "", type=str)
-    project_id = request.args.get("project_id", "", type=str)
-    real_account_id = request.args.get("real_account_id", "", type=str)
+# Selektoren der Filter-Leiste — fuer hx-include in den Filter-Controls UND im
+# Massen-Bearbeiten-Modal (damit der Tabellen-Refresh die aktiven Filter behaelt).
+_BOOKINGS_FILTER_INCLUDE = (
+    "[name='year'],[name='month'],[name='quarter'],[name='real_account_id'],"
+    "[name='kind'],[name='tax'],[name='account_id'],[name='project_id']"
+)
+
+
+def _bookings_table_ctx(params, bulk_done_count=None):
+    """Baut den Render-Kontext der Buchungstabelle aus den Filter-Parametern.
+
+    ``params`` ist eine MultiDict — ``request.args`` beim Filter-GET,
+    ``request.form`` beim Massen-Bearbeiten-Refresh; beide unterstuetzen
+    ``.get(key, default, type=...)``. Liefert ``(table_ctx, filters)``:
+    ``table_ctx`` geht direkt in ``_bookings_table.html``, ``filters`` haelt die
+    geparsten Filter-Echo-Werte fuer das Voll-Seiten-Template.
+    """
+    year = params.get("year", date.today().year, type=int)
+    account_id = params.get("account_id", "", type=str)
+    project_id = params.get("project_id", "", type=str)
+    real_account_id = params.get("real_account_id", "", type=str)
     # kind: "" / "income" / "expense" — schränkt auf Einnahmen oder Ausgaben ein
-    kind = request.args.get("kind", "", type=str)
+    kind = params.get("kind", "", type=str)
     if kind not in ("income", "expense"):
         kind = ""
     # month (1–12) / quarter (1–4): zusätzliche Datumsfilter innerhalb des Jahres
-    month = request.args.get("month", 0, type=int)
+    month = params.get("month", 0, type=int)
     if month not in range(1, 13):
         month = 0
-    quarter = request.args.get("quarter", 0, type=int)
+    quarter = params.get("quarter", 0, type=int)
     if quarter not in range(1, 5):
         quarter = 0
     # tax: "" (alle) / "any" (alle mit Steuer ≠ 0%) / Satz-Wert ("10", "20", …)
-    tax = request.args.get("tax", "", type=str)
+    tax = params.get("tax", "", type=str)
     _tax_values = {str(int(r)) for r in tax_service.tax_rate_values()}
     if tax not in ({"any"} | _tax_values):
         tax = ""
@@ -170,9 +184,6 @@ def bookings():
         query = query.filter(Booking.tax_rate == Decimal(tax))
 
     bkgs = query.all()
-    accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
-    projects = Project.query.order_by(Project.name).all()
-    real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
 
     # Umbuchungen laden (gleicher Jahres- und Bankkontofilter)
     transfer_query = (
@@ -278,20 +289,101 @@ def bookings():
         total_ust=total_ust,
         locked_booking_ids=locked_booking_ids,
         pagination=pagination,
+        bulk_done_count=bulk_done_count,
     )
+    filters = dict(
+        account_id=account_id, project_id=project_id,
+        real_account_id=real_account_id,
+        kind=kind, month=month, quarter=quarter, tax=tax,
+    )
+    return table_ctx, filters
+
+
+@bp.route("/bookings")
+@login_required
+def bookings():
+    table_ctx, filters = _bookings_table_ctx(request.args)
 
     if request.headers.get("HX-Request"):
         return render_template("accounting/_bookings_table.html", **table_ctx)
 
+    accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
+    projects = Project.query.order_by(Project.name).all()
+    real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
+    # Fuer das Massen-Bearbeiten-Modal: aktive Kontakte + nicht abgeschlossene
+    # Projekte als Ziel-Auswahl (analog booking_form).
+    customers = Customer.query.filter_by(active=True).order_by(Customer.name).all()
+    assignable_projects = Project.query.filter_by(closed=False).order_by(Project.name).all()
+
     return render_template(
         "accounting/bookings.html",
         accounts=accounts, projects=projects,
-        account_id=account_id, project_id=project_id,
-        real_accounts=real_accounts, real_account_id=real_account_id,
-        kind=kind, month=month, quarter=quarter, tax=tax,
+        real_accounts=real_accounts,
+        customers=customers, assignable_projects=assignable_projects,
         tax_rates=tax_service.tax_rates(),
+        filter_include=_BOOKINGS_FILTER_INCLUDE,
+        **filters,
         **table_ctx,
     )
+
+
+@bp.route("/bookings/bulk-edit", methods=["POST"])
+@login_required
+def bookings_bulk_edit():
+    """Setzt Konto/Projekt/Kontakt auf mehreren ausgewaehlten Buchungen.
+
+    Nur ausgefuellte Felder werden uebernommen (leeres Feld = unveraendert).
+    Nicht editierbare Buchungen werden uebersprungen — dieselben Guards wie in
+    ``booking_edit``: Sammelbuchungs-Zeilen (``group_id``), stornierte bzw.
+    Storno-Buchungen und Buchungen in abgeschlossenen Buchungsjahren. Die
+    Antwort ist das neu gerenderte Tabellen-Fragment; die aktiven Filter kommen
+    via hx-include mit und bleiben dadurch erhalten.
+    """
+    raw_ids = request.form.getlist("booking_ids")
+    ids = []
+    for r in raw_ids:
+        try:
+            ids.append(int(r))
+        except (TypeError, ValueError):
+            continue
+
+    def _resolve(field, model):
+        """(neue_id, soll_gesetzt_werden) — leeres/ungueltiges Feld ⇒ unveraendert."""
+        raw = (request.form.get(field) or "").strip()
+        if not raw:
+            return None, False
+        try:
+            obj = db.session.get(model, int(raw))
+        except (TypeError, ValueError):
+            return None, False
+        if obj is None:
+            return None, False
+        return obj.id, True
+
+    new_account_id, set_account = _resolve("bulk_account_id", Account)
+    new_project_id, set_project = _resolve("bulk_project_id", Project)
+    new_customer_id, set_customer = _resolve("bulk_customer_id", Customer)
+
+    updated = 0
+    if ids and (set_account or set_project or set_customer):
+        for b in Booking.query.filter(Booking.id.in_(ids)).all():
+            if b.group_id is not None:
+                continue
+            if b.status == Booking.STATUS_STORNIERT or b.storno_of_id is not None:
+                continue
+            if _locked_fiscal_year(b.date):
+                continue
+            if set_account:
+                b.account_id = new_account_id
+            if set_project:
+                b.project_id = new_project_id
+            if set_customer:
+                b.customer_id = new_customer_id
+            updated += 1
+        db.session.commit()
+
+    table_ctx, _ = _bookings_table_ctx(request.form, bulk_done_count=updated)
+    return render_template("accounting/_bookings_table.html", **table_ctx)
 
 
 @bp.route("/bookings/new", methods=["GET", "POST"])
@@ -1010,7 +1102,11 @@ def booking_group_stornieren(group_id):
 @bp.route("/open-items")
 @login_required
 def open_items():
-    show_closed = request.args.get("show_closed", "0") == "1"
+    # Status-Auswahl: "open" (offen+teilbezahlt) | "closed" (bezahlt+gutschrift) | "all".
+    status_filter = request.args.get("status", "").strip().lower()
+    if status_filter not in ("open", "closed", "all"):
+        # Rückwärtskompatibel: alte Links/Bookmarks mit ?show_closed=1 zeigten alle Posten.
+        status_filter = "all" if request.args.get("show_closed") == "1" else "open"
     amount_min_raw = request.args.get("amount_min", "").strip()
     amount_max_raw = request.args.get("amount_max", "").strip()
     customer_q = request.args.get("customer", "").strip()
@@ -1019,8 +1115,13 @@ def open_items():
 
     item_q = OpenItem.query.join(Customer, OpenItem.customer_id == Customer.id)
 
-    if not show_closed:
-        item_q = item_q.filter(OpenItem.status.in_([OpenItem.STATUS_OPEN, OpenItem.STATUS_PARTIAL]))
+    status_groups = {
+        "open": [OpenItem.STATUS_OPEN, OpenItem.STATUS_PARTIAL],
+        "closed": [OpenItem.STATUS_PAID, OpenItem.STATUS_CREDIT],
+    }
+    if status_filter in status_groups:
+        item_q = item_q.filter(OpenItem.status.in_(status_groups[status_filter]))
+    # "all" → kein Status-Filter
 
     if customer_q:
         item_q = item_q.filter(Customer.name.ilike(f"%{customer_q}%"))
@@ -1061,7 +1162,7 @@ def open_items():
         items=pagination.items,
         total_open=total_open,
         today=date.today(),
-        show_closed=show_closed,
+        status_filter=status_filter,
         f_customer=customer_q,
         f_ref=ref_q,
         f_period=period_q,

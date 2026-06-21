@@ -21,16 +21,17 @@ def _as_decimal(value) -> Decimal:
     return Decimal(str(value))
 
 
-def _commit_with_op(line: BankStatementLine, stmt: BankStatement, user_id: int) -> None:
-    op = OpenItem.query.get(line.matched_open_item_id)
-    if op is None:
-        raise ValueError(f"Offener Posten #{line.matched_open_item_id} nicht gefunden")
+def _book_against_op(op, amount, line, stmt, user_id, account_override=None):
+    """Verbucht ``amount`` gegen den offenen Posten ``op`` und aktualisiert dessen
+    Status. Gemeinsamer Kern fuer die 1:1-Zuordnung und die Aufteilung.
 
-    amount = _as_decimal(line.amount)
+    Gibt ``(booking_group_id, booking_id)`` der ersten erzeugten Buchung zurueck.
+    """
+    amount = _as_decimal(amount)
     invoice = op.invoice
 
-    # override_account_id aus der Vorschau hat Vorrang vor op.account_id
-    effective_account_id = line.override_account_id or op.account_id
+    # override_account hat Vorrang vor op.account_id
+    effective_account_id = account_override or op.account_id
 
     if invoice is not None:
         group, children = booking_group_from_invoice_payment(
@@ -43,8 +44,8 @@ def _commit_with_op(line: BankStatementLine, stmt: BankStatement, user_id: int) 
             reference=invoice.invoice_number or line.end_to_end_id,
             fallback_account_id=effective_account_id,
         )
-        line.booking_group_id = group.id if group else None
-        line.booking_id = children[0].id if (not group and children) else None
+        group_id = group.id if group else None
+        booking_id = children[0].id if (not group and children) else None
     else:
         # Manueller OP ohne Rechnung: einfache Einzelbuchung
         if effective_account_id is None:
@@ -66,7 +67,7 @@ def _commit_with_op(line: BankStatementLine, stmt: BankStatement, user_id: int) 
         )
         db.session.add(booking)
         db.session.flush()
-        line.booking_id = booking.id
+        group_id, booking_id = None, booking.id
 
     db.session.flush()
 
@@ -82,6 +83,65 @@ def _commit_with_op(line: BankStatementLine, stmt: BankStatement, user_id: int) 
     else:
         op.status = OpenItem.STATUS_PARTIAL
         # Invoice-Status nicht ueberschreiben (Versendet/Entwurf bleibt)
+
+    return group_id, booking_id
+
+
+def _commit_with_op(line: BankStatementLine, stmt: BankStatement, user_id: int) -> None:
+    op = OpenItem.query.get(line.matched_open_item_id)
+    if op is None:
+        raise ValueError(f"Offener Posten #{line.matched_open_item_id} nicht gefunden")
+    group_id, booking_id = _book_against_op(
+        op, line.amount, line, stmt, user_id, account_override=line.override_account_id
+    )
+    line.booking_group_id = group_id
+    line.booking_id = booking_id
+
+
+def _commit_split(line: BankStatementLine, stmt: BankStatement, user_id: int) -> None:
+    """Verbucht eine auf mehrere offene Posten (und/oder Konten) aufgeteilte Zeile.
+
+    Pro Allocation entsteht eine eigene Buchung; die Summe muss exakt dem
+    Buchungsbetrag der Zeile entsprechen (sonst stimmt die Bankkonto-Bewegung
+    nicht). ``line.booking_id`` bleibt leer — die Verknuepfung laeuft pro
+    Buchung ueber ``Booking.open_item_id``.
+    """
+    allocs = list(line.allocations)
+    if not allocs:
+        raise ValueError("Keine Aufteilung vorhanden.")
+
+    total = sum((_as_decimal(a.amount) for a in allocs), Decimal("0"))
+    if total != _as_decimal(line.amount):
+        raise ValueError(
+            f"Summe der Aufteilung ({total} €) entspricht nicht dem "
+            f"Buchungsbetrag ({_as_decimal(line.amount)} €)."
+        )
+
+    for a in allocs:
+        amt = _as_decimal(a.amount)
+        if amt <= 0:
+            raise ValueError("Teilbeträge müssen größer als 0 sein.")
+        if a.open_item_id:
+            op = OpenItem.query.get(a.open_item_id)
+            if op is None:
+                raise ValueError(f"Offener Posten #{a.open_item_id} nicht gefunden")
+            _book_against_op(op, amt, line, stmt, user_id)
+        elif a.account_id:
+            description = (line.purpose or line.counterparty_name or "Bankauszug-Import").strip()[:500]
+            booking = Booking(
+                date=line.booking_date,
+                account_id=a.account_id,
+                amount=amt,
+                description=description,
+                reference=line.end_to_end_id or None,
+                real_account_id=stmt.real_account_id,
+                customer_id=line.matched_customer_id,
+                created_by_id=user_id,
+            )
+            db.session.add(booking)
+            db.session.flush()
+        else:
+            raise ValueError("Aufteilungs-Position ohne Ziel (weder Posten noch Konto).")
 
 
 def _commit_without_op(line: BankStatementLine, stmt: BankStatement, user_id: int) -> None:
@@ -138,7 +198,9 @@ def commit_statement(statement_id: int, user_id: int) -> dict:
 
         sp = db.session.begin_nested()
         try:
-            if line.matched_open_item_id:
+            if line.is_split:
+                _commit_split(line, stmt, user_id)
+            elif line.matched_open_item_id:
                 _commit_with_op(line, stmt, user_id)
             else:
                 _commit_without_op(line, stmt, user_id)

@@ -1904,9 +1904,11 @@ def billing_run_detail(run_id):
 
     rows = []
     count_draft = count_sent = count_mail = count_post = 0
+    count_paid = count_open = 0
     other_status_counts = {}
-    sum_gross_sent = Decimal("0")
-    sum_gross_draft = Decimal("0")
+    sum_total = Decimal("0")   # Σ aller gültigen (nicht stornierten) Rechnungen
+    sum_paid = Decimal("0")    # davon bereits bezahlt
+    sum_open = Decimal("0")    # davon noch offen (inkl. noch nicht versandte)
     run_has_vat = False
     mailable = []   # versandbereite Entwürfe per Mail (für den Versenden-Dialog)
     post_ids = []   # versandbereite Entwürfe per Post
@@ -1918,9 +1920,16 @@ def billing_run_detail(run_id):
         wants_email = inv.customer.wants_email
         rows.append({"inv": inv, "amt": amt, "wants_email": wants_email})
 
-        if inv.status == Invoice.STATUS_DRAFT:
+        gross = amt["gross"]
+        status = inv.status
+
+        # --- Versand-Fortschritt --------------------------------------------
+        # „Schon versendet" zählt dauerhaft jede Rechnung, die den Entwurfs-
+        # status verlassen hat (Versendet/Bezahlt/Guthaben) — sinkt also NICHT,
+        # wenn eine versendete Rechnung später bezahlt wird. Stornierte zählen
+        # weder als Entwurf noch als versendet.
+        if status == Invoice.STATUS_DRAFT:
             count_draft += 1
-            sum_gross_draft += amt["gross"]
             if wants_email:
                 count_mail += 1
                 mailable.append({
@@ -1932,19 +1941,40 @@ def billing_run_detail(run_id):
             else:
                 count_post += 1
                 post_ids.append(inv.id)
-        elif inv.status == Invoice.STATUS_SENT:
+        elif status != Invoice.STATUS_CANCELLED:
             count_sent += 1
-            sum_gross_sent += amt["gross"]
-        else:
-            other_status_counts[inv.status] = other_status_counts.get(inv.status, 0) + 1
+
+        # --- Finanzen -------------------------------------------------------
+        # Stornierte Rechnungen sind gegenstandslos und fließen nicht in die
+        # Summen ein. Es gilt: Gesamtsumme = Bezahlt + Offen.
+        if status != Invoice.STATUS_CANCELLED:
+            sum_total += gross
+            if status == Invoice.STATUS_PAID:
+                count_paid += 1
+                sum_paid += gross
+            else:
+                count_open += 1
+                sum_open += gross
+
+        # --- Weitere Status (Storniert/Guthaben) gesondert ausweisen --------
+        if status in (Invoice.STATUS_CANCELLED, Invoice.STATUS_CREDIT):
+            other_status_counts[status] = other_status_counts.get(status, 0) + 1
+
+    count_total = len(invoices)
+    count_live = count_draft + count_sent            # Nenner für Versand-Balken
+    pct_sent = round(count_sent / count_live * 100) if count_live else 0
+    pct_paid = round(float(sum_paid) / float(sum_total) * 100) if sum_total else 0
 
     return render_template(
         "invoices/billing_run_detail.html",
         run=run, rows=rows, invoices=invoices, doc_format=doc_format,
         count_draft=count_draft, count_sent=count_sent,
         count_mail=count_mail, count_post=count_post,
+        count_paid=count_paid, count_open=count_open,
+        count_total=count_total, count_live=count_live,
         other_status_counts=other_status_counts,
-        sum_gross_sent=sum_gross_sent, sum_gross_draft=sum_gross_draft,
+        sum_total=sum_total, sum_paid=sum_paid, sum_open=sum_open,
+        pct_sent=pct_sent, pct_paid=pct_paid,
         run_has_vat=run_has_vat, mailable=mailable, post_ids=post_ids,
     )
 

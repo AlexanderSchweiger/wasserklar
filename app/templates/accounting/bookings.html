@@ -4,9 +4,11 @@
 {% block page_wrapper_class %}is-fill{% endblock %}
 {% block content %}
 
+{# Out-of-Band-Ziel fuer die Massen-Bearbeiten-Bestaetigung (siehe _bookings_table.html). #}
+<div id="bookings-bulk-flash"></div>
+
 <div class="card table-card">
   <div class="card-header">
-    {% set filter_include = "[name='year'],[name='month'],[name='quarter'],[name='real_account_id'],[name='kind'],[name='tax'],[name='account_id'],[name='project_id']" %}
     {% set months = [(1,'Jänner'),(2,'Februar'),(3,'März'),(4,'April'),(5,'Mai'),(6,'Juni'),(7,'Juli'),(8,'August'),(9,'September'),(10,'Oktober'),(11,'November'),(12,'Dezember')] %}
     <div class="filter-bar">
       <div class="mb-3">
@@ -205,5 +207,138 @@
   sync();
 })();
 </script>
+
+<script>
+{# Massen-Auswahl der Buchungen. Delegation auf .table-card (bleibt ueber
+   HTMX-Fragment-Swaps des #bookings-table bestehen; bei hx-boost-Navigation
+   wird das Element frisch erzeugt → kein doppeltes Einhaengen). #}
+(function () {
+  var card = document.querySelector('.table-card');
+  if (!card) return;
+
+  function updateBar() {
+    var boxes   = card.querySelectorAll('.booking-select');
+    var checked = card.querySelectorAll('.booking-select:checked');
+    var bar     = card.querySelector('.bookings-bulk-bar');
+    var countEl = card.querySelector('.bookings-bulk-count');
+    var master  = card.querySelector('.booking-select-all');
+    if (countEl) countEl.textContent = checked.length;
+    if (bar) {
+      bar.classList.toggle('d-none', checked.length === 0);
+      bar.classList.toggle('d-flex', checked.length > 0);
+    }
+    if (master) {
+      master.checked = boxes.length > 0 && checked.length === boxes.length;
+      master.indeterminate = checked.length > 0 && checked.length < boxes.length;
+    }
+  }
+
+  card.addEventListener('change', function (e) {
+    if (e.target.classList.contains('booking-select-all')) {
+      var on = e.target.checked;
+      card.querySelectorAll('.booking-select').forEach(function (cb) { cb.checked = on; });
+      updateBar();
+    } else if (e.target.classList.contains('booking-select')) {
+      updateBar();
+    }
+  });
+
+  card.addEventListener('click', function (e) {
+    if (e.target.closest('.bookings-bulk-clear')) {
+      e.preventDefault();
+      card.querySelectorAll('.booking-select, .booking-select-all').forEach(function (cb) {
+        cb.checked = false; cb.indeterminate = false;
+      });
+      updateBar();
+    }
+  });
+
+  {# Nach jedem Tabellen-Fragment-Swap (Filter ODER Bulk-Refresh) sind die
+     Checkboxen frisch/unchecked — Balken zuruecksetzen. #}
+  card.addEventListener('htmx:afterSwap', updateBar);
+
+  updateBar();
+
+  {# Modal-Felder nach dem Schliessen leeren, damit ein erneutes Oeffnen nicht
+     die letzte Auswahl vorbelegt. #}
+  var modalEl = document.getElementById('bookingsBulkEditModal');
+  if (modalEl) {
+    modalEl.addEventListener('hidden.bs.modal', function () {
+      ['bulk_account_id', 'bulk_project_id', 'bulk_customer_id'].forEach(function (name) {
+        var sel = modalEl.querySelector('[name="' + name + '"]');
+        if (!sel) return;
+        if (sel.tomselect) sel.tomselect.clear(true); else sel.value = '';
+      });
+    });
+  }
+})();
+</script>
+{% endblock %}
+
+{% block modals %}
+{{ super() }}
+<div class="modal fade" id="bookingsBulkEditModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="fas fa-edit me-2"></i>Mehrere Buchungen ändern</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      {# Auswahl (booking_ids:checked) + aktive Filter werden via hx-include
+         mitgesendet; Antwort tauscht das Tabellen-Fragment, das Modal wird per
+         hx-on::after-request bei Erfolg geschlossen. #}
+      <form id="bookingsBulkEditForm" method="post"
+            hx-post="{{ url_for('accounting.bookings_bulk_edit') }}"
+            hx-target="#bookings-table"
+            hx-swap="innerHTML"
+            hx-include="{{ filter_include }}, [name='booking_ids']:checked"
+            hx-on::after-request="if (event.detail.successful &amp;&amp; window.bootstrap) { bootstrap.Modal.getOrCreateInstance(document.getElementById('bookingsBulkEditModal')).hide(); }">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-body">
+          <p class="text-muted small mb-3">
+            Nur ausgefüllte Felder werden übernommen — leere Felder bleiben unverändert.
+            Stornierte Buchungen, Sammelbuchungs-Zeilen und Buchungen aus abgeschlossenen
+            Jahren werden übersprungen.
+          </p>
+          <div class="mb-3">
+            <label class="form-label">Konto</label>
+            <select name="bulk_account_id" class="form-select tom-select">
+              <option value="">– nicht ändern –</option>
+              {% for a in accounts %}
+              <option value="{{ a.id }}">{% if a.code %}{{ a.code }} – {% endif %}{{ a.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Projekt</label>
+            <select name="bulk_project_id" class="form-select tom-select">
+              <option value="">– nicht ändern –</option>
+              {% for p in assignable_projects %}
+              <option value="{{ p.id }}">{% if p.code %}{{ p.code }} – {% endif %}{{ p.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Kontakt (Kunde/Lieferant)</label>
+            <select name="bulk_customer_id" class="form-select tom-select">
+              <option value="">– nicht ändern –</option>
+              {% for c in customers %}
+              <option value="{{ c.id }}">{{ c.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+            <i class="fas fa-times me-1"></i> Abbrechen
+          </button>
+          <button type="submit" class="btn btn-primary">
+            <i class="fas fa-save me-1"></i> Übernehmen
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
 {% endblock %}
 

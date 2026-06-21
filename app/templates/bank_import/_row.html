@@ -1,0 +1,239 @@
+{# Eine Buchungs-Zeile des Bankauszugs. Wird sowohl in der Vollseite
+   (preview.html, Schleife) als auch beim HTMX-Row-Swap (update_line bei
+   HX-Request) gerendert — jede Aktion tauscht via hx-target="closest tr"
+   nur diese Zeile, kein Full-Reload. #}
+{% set is_pending = line.line_status == 'pending' %}
+{% set is_income = line.amount > 0 %}
+{% set _act = url_for('bank_import.update_line', statement_id=stmt.id, line_id=line.id) %}
+<tr id="bank-line-{{ line.id }}"
+    class="{% if line.line_status == 'committed' %}table-success{% elif line.line_status == 'skipped' %}text-muted{% endif %}">
+  {# --- Auswahl --- #}
+  <td>
+    {% if is_pending %}
+    <form method="post" action="{{ _act }}"
+          hx-post="{{ _act }}" hx-target="closest tr" hx-swap="outerHTML" class="m-0">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="action" value="toggle_selected">
+      <input type="hidden" name="selected" value="{{ '0' if line.selected else '1' }}">
+      <button type="submit" class="btn btn-link p-0 border-0" title="{{ 'Abwählen' if line.selected else 'Auswählen' }}">
+        {% if line.selected %}
+          <i class="fas fa-check-square text-primary"></i>
+        {% else %}
+          <i class="far fa-square text-muted"></i>
+        {% endif %}
+      </button>
+    </form>
+    {% elif line.line_status == 'committed' %}
+      <i class="fas fa-check text-success" title="Verbucht"></i>
+    {% else %}
+      <i class="fas fa-ban text-muted" title="Übersprungen"></i>
+    {% endif %}
+  </td>
+
+  {# --- Datum --- #}
+  <td class="text-nowrap">{{ line.booking_date.strftime('%d.%m.%Y') }}</td>
+
+  {# --- Gegenpartei --- #}
+  <td>
+    <div class="fw-bold">{{ line.counterparty_name or '—' }}</div>
+    {% if line.counterparty_iban %}
+      <div class="text-muted small">{{ line.counterparty_iban }}</div>
+    {% endif %}
+  </td>
+
+  {# --- Verwendungszweck (eigene Spalte) --- #}
+  <td>
+    {% if line.purpose %}
+      <div style="white-space: pre-wrap;">{{ line.purpose }}</div>
+    {% else %}
+      <span class="text-muted">– kein Verwendungszweck –</span>
+    {% endif %}
+    {% if line.end_to_end_id %}
+      <div class="text-muted small mt-1">
+        <i class="fas fa-hashtag me-1"></i>{{ line.end_to_end_id }}
+      </div>
+    {% endif %}
+  </td>
+
+  {# --- Betrag --- #}
+  <td class="text-end text-nowrap">
+    <span class="fw-bold {% if is_income %}text-success{% else %}text-danger{% endif %}">
+      {{ line.amount | de_number(decimals=2, signed=True) }} €
+    </span>
+  </td>
+
+  {# --- Zuordnung --- #}
+  <td>
+    {% if line.is_split %}
+      <div class="mb-1">
+        <span class="badge bg-purple-lt"><i class="fas fa-code-branch me-1"></i>Aufgeteilt auf {{ line.allocations | length }} Posten</span>
+      </div>
+      {% for a in line.allocations %}
+        <div class="small">
+          {% if a.open_item %}
+            {% if a.open_item.invoice %}
+              <a href="{{ url_for('invoices.edit', invoice_id=a.open_item.invoice.id) }}">Rechnung {{ a.open_item.invoice.invoice_number }}</a>
+            {% else %}OP #{{ a.open_item.id }}{% endif %}
+            <span class="text-muted">· {{ a.open_item.customer.name }}</span>
+          {% elif a.account %}{{ a.account.name }}{% endif %}
+          <span class="fw-bold ms-1">{{ a.amount | de_number(decimals=2) }} €</span>
+        </div>
+      {% endfor %}
+      {% if is_pending %}
+      <div class="d-flex align-items-center gap-3 mt-1">
+        <button type="button" class="btn btn-sm btn-link p-0" onclick="openSplitModal({{ line.id }})">
+          <i class="fas fa-pen me-1"></i>Bearbeiten
+        </button>
+        <form method="post" action="{{ _act }}"
+              hx-post="{{ _act }}" hx-target="closest tr" hx-swap="outerHTML" class="m-0">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="action" value="clear_split">
+          <button type="submit" class="btn btn-sm btn-link text-danger p-0">Aufteilung entfernen</button>
+        </form>
+      </div>
+      {% endif %}
+
+    {% elif line.matched_open_item_id %}
+      {% set op = line.matched_open_item %}
+      <div class="d-flex flex-wrap align-items-center gap-1 mb-1">
+        <span class="badge bg-green-lt"><i class="fas fa-link me-1"></i>Zugeordnet</span>
+        {% if line.match_type == 'invoice_number' %}
+          <span class="badge bg-azure-lt" title="Automatisch über die Rechnungsnummer erkannt">Rechnungsnr.</span>
+        {% elif line.match_type == 'name' %}
+          <span class="badge bg-azure-lt" title="Automatisch über Name + Betrag erkannt">Name</span>
+        {% endif %}
+      </div>
+      <div>
+        {% if line.matched_invoice_id %}
+          <a href="{{ url_for('invoices.edit', invoice_id=line.matched_invoice_id) }}">
+            Rechnung {{ line.matched_invoice.invoice_number if line.matched_invoice else '' }}
+          </a>
+        {% else %}
+          OP #{{ op.id }}
+        {% endif %}
+        {% if line.matched_customer %}
+          <span class="text-muted">· {{ line.matched_customer.name }}</span>
+        {% endif %}
+      </div>
+      {% set pstat = payment_status.get(line.id) %}
+      {% set op_balance = pstat[2] if pstat else op.open_balance %}
+      <div class="text-muted small">
+        OP {{ op.amount | de_number(decimals=2) }} € · offen {{ op_balance | de_number(decimals=2) }} €
+      </div>
+      {% if pstat and pstat[0] == 'over' %}
+        <div class="text-warning small mt-1">
+          <i class="fas fa-exclamation-triangle me-1"></i>
+          Überzahlung um {{ pstat[1] | de_number(decimals=2) }} €
+        </div>
+      {% elif pstat and pstat[0] == 'under' %}
+        <div class="text-warning small mt-1">
+          <i class="fas fa-exclamation-triangle me-1"></i>
+          Teilzahlung: {{ pstat[1] | de_number(decimals=2) }} € bleiben offen
+        </div>
+      {% endif %}
+      {% if is_pending %}
+      {% set _sel_acc = line.override_account_id or op.account_id %}
+      <div class="d-flex align-items-center gap-2 mt-2">
+        <form method="post" action="{{ _act }}"
+              hx-post="{{ _act }}" hx-target="closest tr" hx-swap="outerHTML" class="m-0">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="action" value="set_account">
+          <select name="account_id" class="form-select form-select-sm" style="max-width: 200px;"
+                  title="Buchungskonto" onchange="this.form.requestSubmit()">
+            <option value="">– Buchungskonto –</option>
+            {% for acc in accounts %}
+            <option value="{{ acc.id }}" {% if acc.id == _sel_acc %}selected{% endif %}>
+              {% if acc.code %}{{ acc.code }} · {% endif %}{{ acc.name }}
+            </option>
+            {% endfor %}
+          </select>
+        </form>
+        <form method="post" action="{{ _act }}"
+              hx-post="{{ _act }}" hx-target="closest tr" hx-swap="outerHTML" class="m-0">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="action" value="clear_match">
+          <button type="submit" class="btn btn-sm btn-link text-danger p-0 text-nowrap">OP entfernen</button>
+        </form>
+        {% if is_income %}
+        <button type="button" class="btn btn-sm btn-link p-0 text-nowrap" onclick="openSplitModal({{ line.id }})">
+          <i class="fas fa-code-branch me-1"></i>Aufteilen
+        </button>
+        {% endif %}
+      </div>
+      {% endif %}
+
+    {% elif is_income and line.matched_customer_id and open_items_by_customer.get(line.matched_customer_id) %}
+      <div class="mb-1">
+        <span class="badge bg-blue-lt"><i class="fas fa-user me-1"></i>Kunde erkannt</span>
+      </div>
+      <div class="mb-1"><strong>{{ line.matched_customer.name }}</strong></div>
+      {% if is_pending %}
+      <form method="post" action="{{ _act }}"
+            hx-post="{{ _act }}" hx-target="closest tr" hx-swap="outerHTML" class="m-0">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="set_open_item">
+        <select name="open_item_id" class="form-select form-select-sm tom-select"
+                onchange="this.form.requestSubmit()">
+          <option value="">– offenen Posten wählen –</option>
+          {% for op in open_items_by_customer[line.matched_customer_id] %}
+            <option value="{{ op.id }}">
+              {{ op.description }} · {{ op.amount | de_number(decimals=2) }} €
+              (offen: {{ op.open_balance | de_number(decimals=2) }} €)
+            </option>
+          {% endfor %}
+        </select>
+      </form>
+      <form method="post" action="{{ _act }}"
+            hx-post="{{ _act }}" hx-target="closest tr" hx-swap="outerHTML" class="m-0 mt-1">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="clear_customer">
+        <button type="submit" class="btn btn-sm btn-link text-danger p-0">Kunde entfernen</button>
+      </form>
+      <button type="button" class="btn btn-sm btn-link p-0 mt-1" onclick="openSplitModal({{ line.id }})">
+        <i class="fas fa-code-branch me-1"></i>Auf mehrere Posten aufteilen
+      </button>
+      {% endif %}
+
+    {% else %}
+      <div class="mb-1">
+        <span class="badge bg-orange-lt"><i class="fas fa-exclamation-triangle me-1"></i>Keine Zuordnung</span>
+      </div>
+      {% if is_pending %}
+      <form method="post" action="{{ _act }}"
+            hx-post="{{ _act }}" hx-target="closest tr" hx-swap="outerHTML" class="m-0 mb-1">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="set_open_item">
+        <select name="open_item_id" class="form-select form-select-sm tom-select"
+                onchange="this.form.requestSubmit()">
+          <option value="">– offenen Posten suchen –</option>
+          {% for op in all_open_items %}
+            <option value="{{ op.id }}">
+              {{ op.customer.name }} · {{ op.description }} · {{ op.amount | de_number(decimals=2) }} €
+              (offen: {{ op.open_balance | de_number(decimals=2) }} €)
+            </option>
+          {% endfor %}
+        </select>
+      </form>
+      <form method="post" action="{{ _act }}"
+            hx-post="{{ _act }}" hx-target="closest tr" hx-swap="outerHTML" class="m-0">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="set_account">
+        <select name="account_id" class="form-select form-select-sm"
+                onchange="this.form.requestSubmit()">
+          <option value="">– oder direkt auf Konto buchen –</option>
+          {% for acc in accounts %}
+            <option value="{{ acc.id }}" {% if line.override_account_id == acc.id %}selected{% endif %}>
+              {% if acc.code %}{{ acc.code }} · {% endif %}{{ acc.name }}
+            </option>
+          {% endfor %}
+        </select>
+      </form>
+      {% if is_income %}
+      <button type="button" class="btn btn-sm btn-link p-0 mt-1" onclick="openSplitModal({{ line.id }})">
+        <i class="fas fa-code-branch me-1"></i>Auf mehrere Posten aufteilen
+      </button>
+      {% endif %}
+      {% endif %}
+    {% endif %}
+  </td>
+</tr>

@@ -4,6 +4,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from flask import (
     abort,
     flash,
+    make_response,
     redirect,
     render_template,
     request,
@@ -16,6 +17,7 @@ from app.models import (
     Account,
     BankStatement,
     BankStatementLine,
+    BankStatementLineAllocation,
     OpenItem,
     RealAccount,
 )
@@ -32,6 +34,67 @@ def _round2(value) -> Decimal:
 
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+def _line_render_context(lines):
+    """Gemeinsamer Render-Kontext fuer die Buchungs-Zeilen (preview + Row-Swap).
+
+    Liefert die Dropdowns/Statusdaten, die ``bank_import/_row.html`` braucht —
+    einmal fuer alle Zeilen (Vollseite) und fuer genau eine Zeile (HTMX-Swap
+    nach einer Aktion), damit beide Pfade dieselbe Logik teilen.
+    """
+    accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
+
+    customer_ids = {l.matched_customer_id for l in lines if l.matched_customer_id}
+    open_items_by_customer = {}
+    if customer_ids:
+        ops = OpenItem.query.filter(
+            OpenItem.customer_id.in_(customer_ids),
+            OpenItem.status.in_([OpenItem.STATUS_OPEN, OpenItem.STATUS_PARTIAL]),
+        ).all()
+        for op in ops:
+            open_items_by_customer.setdefault(op.customer_id, []).append(op)
+
+    # Komplette Liste aller offenen Posten (fuer das Tom-Select-Dropdown in
+    # Zeilen, bei denen kein Kunde automatisch erkannt wurde — der Nutzer
+    # kann dann manuell durchsuchen statt einen Workaround zu basteln).
+    all_open_items = (
+        OpenItem.query.filter(
+            OpenItem.status.in_([OpenItem.STATUS_OPEN, OpenItem.STATUS_PARTIAL]),
+        )
+        .join(OpenItem.customer)
+        .order_by(OpenItem.date.desc())
+        .all()
+    )
+
+    # Pro Zeile: Beziehung Bankbetrag <-> offener Posten (auf Cent gerundet,
+    # sonst loest ein Decimal('100.00') vs. Decimal('100.000') faelschlich
+    # eine Ueberzahlungs-Warnung aus). Wert ist eine Tuple
+    # (kind, diff, op_open_balance) mit kind in {'match','over','under'}.
+    payment_status = {}
+    for l in lines:
+        if l.line_status != BankStatementLine.STATUS_PENDING:
+            # Nach dem Verbuchen ist der OP auf 0 — eine Diff-Warnung waere
+            # irrefuehrend ("Ueberzahlung um den vollen Eingangsbetrag").
+            continue
+        if l.matched_open_item_id and l.matched_open_item is not None:
+            amt = _round2(l.amount)
+            bal = _round2(l.matched_open_item.open_balance)
+            diff = amt - bal
+            if diff == 0:
+                kind = "match"
+            elif diff > 0:
+                kind = "over"
+            else:
+                kind = "under"
+            payment_status[l.id] = (kind, abs(diff), bal)
+
+    return {
+        "accounts": accounts,
+        "open_items_by_customer": open_items_by_customer,
+        "all_open_items": all_open_items,
+        "payment_status": payment_status,
+    }
 
 
 @bp.route("/")
@@ -168,65 +231,16 @@ def upload():
 def preview(statement_id):
     stmt = BankStatement.query.get_or_404(statement_id)
     lines = stmt.lines.all()
-    accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
     total_in = sum((l.amount for l in lines if l.amount > 0), start=0)
     total_out = sum((l.amount for l in lines if l.amount < 0), start=0)
-
-    # Fuer Zeilen mit Customer aber ohne OP: weitere OPs des Kunden als Alternativen
-    customer_ids = {l.matched_customer_id for l in lines if l.matched_customer_id}
-    open_items_by_customer = {}
-    if customer_ids:
-        ops = OpenItem.query.filter(
-            OpenItem.customer_id.in_(customer_ids),
-            OpenItem.status.in_([OpenItem.STATUS_OPEN, OpenItem.STATUS_PARTIAL]),
-        ).all()
-        for op in ops:
-            open_items_by_customer.setdefault(op.customer_id, []).append(op)
-
-    # Komplette Liste aller offenen Posten (fuer das Tom-Select-Dropdown in
-    # Zeilen, bei denen kein Kunde automatisch erkannt wurde — der Nutzer
-    # kann dann manuell durchsuchen statt einen Workaround zu basteln).
-    all_open_items = (
-        OpenItem.query.filter(
-            OpenItem.status.in_([OpenItem.STATUS_OPEN, OpenItem.STATUS_PARTIAL]),
-        )
-        .join(OpenItem.customer)
-        .order_by(OpenItem.date.desc())
-        .all()
-    )
-
-    # Pro Zeile: Beziehung Bankbetrag <-> offener Posten (auf Cent gerundet,
-    # sonst loest ein Decimal('100.00') vs. Decimal('100.000') faelschlich
-    # eine Ueberzahlungs-Warnung aus). Wert ist eine Tuple
-    # (kind, diff, op_open_balance) mit kind in {'match','over','under'}.
-    payment_status = {}
-    for l in lines:
-        if l.line_status != BankStatementLine.STATUS_PENDING:
-            # Nach dem Verbuchen ist der OP auf 0 — eine Diff-Warnung waere
-            # irrefuehrend ("Ueberzahlung um den vollen Eingangsbetrag").
-            continue
-        if l.matched_open_item_id and l.matched_open_item is not None:
-            amt = _round2(l.amount)
-            bal = _round2(l.matched_open_item.open_balance)
-            diff = amt - bal
-            if diff == 0:
-                kind = "match"
-            elif diff > 0:
-                kind = "over"
-            else:
-                kind = "under"
-            payment_status[l.id] = (kind, abs(diff), bal)
 
     return render_template(
         "bank_import/preview.html",
         stmt=stmt,
         lines=lines,
-        accounts=accounts,
-        open_items_by_customer=open_items_by_customer,
-        all_open_items=all_open_items,
         total_in=total_in,
         total_out=total_out,
-        payment_status=payment_status,
+        **_line_render_context(lines),
     )
 
 
@@ -280,11 +294,134 @@ def update_line(statement_id, line_id):
         acc_id = request.form.get("account_id", type=int)
         line.override_account_id = acc_id or None
 
+    elif action == "set_split":
+        _apply_split(line)
+
+    elif action == "clear_split":
+        line.allocations.clear()
+        line.match_type = None
+
     else:
         abort(400, "Unbekannte Aktion.")
 
     db.session.commit()
+
+    # HTMX: nur die betroffene Zeile zuruecktauschen (kein Full-Reload), sonst
+    # klassischer Redirect als No-JS-Fallback.
+    if request.headers.get("HX-Request"):
+        stmt = BankStatement.query.get_or_404(statement_id)
+        resp = make_response(render_template(
+            "bank_import/_row.html",
+            stmt=stmt,
+            line=line,
+            **_line_render_context([line]),
+        ))
+        if action == "set_split":
+            # Modal nach erfolgreichem Speichern schliessen.
+            resp.headers["HX-Trigger"] = "bankSplitSaved"
+        return resp
     return redirect(url_for("bank_import.preview", statement_id=statement_id))
+
+
+def _apply_split(line):
+    """Allocations aus dem Split-Formular uebernehmen (ersetzt bestehende).
+
+    Form-Felder: wiederholte ``alloc_op_id`` + ``alloc_amount`` (paarweise).
+    Validiert Summe == Buchungsbetrag und setzt die Zeile in den Split-Modus
+    (einfache 1:1-Felder werden geleert).
+    """
+    op_ids = request.form.getlist("alloc_op_id")
+    amounts = request.form.getlist("alloc_amount")
+
+    rows = []
+    total = Decimal("0")
+    for raw_op, raw_amt in zip(op_ids, amounts):
+        raw_op = (raw_op or "").strip()
+        raw_amt = (raw_amt or "").strip().replace(",", ".")
+        if not raw_op or not raw_amt:
+            continue
+        try:
+            op_id = int(raw_op)
+            amt = Decimal(raw_amt).quantize(_CENT, rounding=ROUND_HALF_UP)
+        except (ValueError, ArithmeticError):
+            abort(400, "Ungültige Aufteilungs-Position.")
+        if amt <= 0:
+            abort(400, "Teilbeträge müssen größer als 0 sein.")
+        op = OpenItem.query.get(op_id)
+        if op is None:
+            abort(400, f"Offener Posten #{op_id} nicht gefunden.")
+        rows.append((op, amt))
+        total += amt
+
+    if len(rows) < 2:
+        abort(400, "Eine Aufteilung braucht mindestens zwei Positionen.")
+    if total != _round2(line.amount):
+        abort(400, "Die Summe der Teilbeträge muss dem Buchungsbetrag entsprechen.")
+
+    line.allocations.clear()
+    db.session.flush()
+    for op, amt in rows:
+        line.allocations.append(
+            BankStatementLineAllocation(
+                open_item_id=op.id, amount=amt,
+            )
+        )
+    # In Split-Modus wechseln: 1:1-Zuordnung aufloesen, Kunde als Info behalten.
+    line.matched_open_item_id = None
+    line.matched_invoice_id = None
+    line.override_account_id = None
+    line.match_type = BankStatementLine.MATCH_SPLIT
+    line.selected = True
+
+
+@bp.route("/statements/<int:statement_id>/lines/<int:line_id>/split")
+@login_required
+def split_form(statement_id, line_id):
+    """Liefert das Aufteilen-Modal (Formular-Body) fuer eine Zeile per HTMX."""
+    line = BankStatementLine.query.get_or_404(line_id)
+    if line.statement_id != statement_id:
+        abort(404)
+
+    # Vorbelegung: bestehende Aufteilung, sonst die offenen Posten des erkannten
+    # Kunden mit auto-verteiltem Betrag (Rest schrumpft je Zeile auf 0).
+    prefill = []
+    if line.allocations:
+        for a in line.allocations:
+            prefill.append((a.open_item, _round2(a.amount)))
+    elif line.matched_customer_id:
+        remaining = _round2(line.amount)
+        cust_ops = (
+            OpenItem.query.filter(
+                OpenItem.customer_id == line.matched_customer_id,
+                OpenItem.status.in_([OpenItem.STATUS_OPEN, OpenItem.STATUS_PARTIAL]),
+            )
+            .order_by(OpenItem.date.asc())
+            .all()
+        )
+        for op in cust_ops:
+            if remaining <= 0:
+                break
+            take = min(_round2(op.open_balance), remaining)
+            if take > 0:
+                prefill.append((op, take))
+                remaining -= take
+
+    all_open_items = (
+        OpenItem.query.filter(
+            OpenItem.status.in_([OpenItem.STATUS_OPEN, OpenItem.STATUS_PARTIAL]),
+        )
+        .join(OpenItem.customer)
+        .order_by(OpenItem.date.desc())
+        .all()
+    )
+
+    return render_template(
+        "bank_import/_split_modal.html",
+        line=line,
+        statement_id=statement_id,
+        prefill=prefill,
+        all_open_items=all_open_items,
+    )
 
 
 @bp.route("/statements/<int:statement_id>/commit", methods=["POST"])

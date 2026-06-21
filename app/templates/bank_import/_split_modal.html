@@ -1,0 +1,128 @@
+{# Modal-Body fuer „Buchung aufteilen". Wird per HTMX in #bankSplitModalBody
+   geladen. Das Formular postet die Allocations an update_line (action=set_split),
+   tauscht danach die Zeile in der Tabelle (hx-target=#bank-line-..) und schliesst
+   das Modal ueber den HX-Trigger „bankSplitSaved". #}
+{% set _act = url_for('bank_import.update_line', statement_id=statement_id, line_id=line.id) %}
+<div class="modal-header">
+  <h5 class="modal-title">Buchung aufteilen</h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+</div>
+
+<form id="splitForm" method="post" action="{{ _act }}"
+      hx-post="{{ _act }}" hx-target="#bank-line-{{ line.id }}" hx-swap="outerHTML"
+      data-amount="{{ line.amount }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="action" value="set_split">
+
+  <div class="modal-body">
+    <div class="row g-2 mb-3">
+      <div class="col">
+        <div class="text-muted small">Gegenpartei</div>
+        <div class="fw-bold">{{ line.counterparty_name or '—' }}</div>
+      </div>
+      <div class="col">
+        <div class="text-muted small">Verwendungszweck</div>
+        <div>{{ line.purpose or '—' }}</div>
+      </div>
+      <div class="col-auto text-end">
+        <div class="text-muted small">Buchungsbetrag</div>
+        <div class="fw-bold text-success">{{ line.amount | de_number(decimals=2) }} €</div>
+      </div>
+    </div>
+
+    <div class="text-muted small mb-1">
+      Verteilen Sie den Betrag auf die offenen Posten, die mit dieser Zahlung
+      beglichen werden. Die Summe muss dem Buchungsbetrag entsprechen.
+    </div>
+
+    <div id="allocRows" class="vstack gap-2">
+      {% for op, amt in prefill %}
+        {% include "bank_import/_split_row.html" with context %}
+      {% endfor %}
+    </div>
+
+    <button type="button" class="btn btn-sm btn-outline-primary mt-2" id="addAllocRow">
+      <i class="fas fa-plus me-1"></i>Position hinzufügen
+    </button>
+
+    <div class="d-flex justify-content-end gap-4 mt-3 pt-2 border-top">
+      <div class="text-end">
+        <div class="text-muted small">Aufgeteilt</div>
+        <div class="fw-bold" id="splitSum">0,00 €</div>
+      </div>
+      <div class="text-end">
+        <div class="text-muted small">Rest</div>
+        <div class="fw-bold" id="splitRemaining">0,00 €</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-footer">
+    <button type="button" class="btn btn-link" data-bs-dismiss="modal">Abbrechen</button>
+    <button type="submit" class="btn btn-primary" id="splitSaveBtn" disabled>
+      <i class="fas fa-check me-1"></i>Aufteilung speichern
+    </button>
+  </div>
+</form>
+
+{# Vorlage fuer eine neue Zeile (ohne Vorauswahl). #}
+<template id="allocRowTemplate">
+  {% set op = None %}{% set amt = None %}
+  {% include "bank_import/_split_row.html" with context %}
+</template>
+
+<script>
+(function () {
+  var form = document.getElementById('splitForm');
+  if (!form) return;
+  var total = parseFloat(form.dataset.amount || '0');
+  var rowsEl = document.getElementById('allocRows');
+  var tpl = document.getElementById('allocRowTemplate');
+  var sumEl = document.getElementById('splitSum');
+  var remEl = document.getElementById('splitRemaining');
+  var saveBtn = document.getElementById('splitSaveBtn');
+
+  function fmt(n) {
+    return (n || 0).toLocaleString('de-DE', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' €';
+  }
+  function recalc() {
+    var sum = 0, filledRows = 0;
+    rowsEl.querySelectorAll('.alloc-row').forEach(function (row) {
+      var op = row.querySelector('.alloc-op').value;
+      var amt = parseFloat((row.querySelector('.alloc-amount').value || '').replace(',', '.')) || 0;
+      sum += amt;
+      if (op && amt > 0) filledRows++;
+    });
+    var rest = Math.round((total - sum) * 100) / 100;
+    sumEl.textContent = fmt(sum);
+    remEl.textContent = fmt(rest);
+    remEl.className = 'fw-bold ' + (Math.abs(rest) < 0.005 ? 'text-success' : 'text-danger');
+    saveBtn.disabled = !(Math.abs(rest) < 0.005 && filledRows >= 2);
+  }
+  function onOpChange(e) {
+    // Beim Waehlen eines Postens den offenen Betrag vorschlagen, falls leer.
+    if (!e.target.classList.contains('alloc-op')) return;
+    var row = e.target.closest('.alloc-row');
+    var amtInput = row.querySelector('.alloc-amount');
+    var opt = e.target.selectedOptions[0];
+    if (opt && opt.dataset.balance && !amtInput.value) {
+      amtInput.value = parseFloat(opt.dataset.balance).toFixed(2);
+    }
+    recalc();
+  }
+  rowsEl.addEventListener('input', recalc);
+  rowsEl.addEventListener('change', onOpChange);
+  rowsEl.addEventListener('click', function (e) {
+    var btn = e.target.closest('.alloc-remove');
+    if (!btn) return;
+    var rows = rowsEl.querySelectorAll('.alloc-row');
+    if (rows.length > 1) btn.closest('.alloc-row').remove();
+    recalc();
+  });
+  document.getElementById('addAllocRow').addEventListener('click', function () {
+    rowsEl.appendChild(tpl.content.cloneNode(true));
+    recalc();
+  });
+  recalc();
+})();
+</script>

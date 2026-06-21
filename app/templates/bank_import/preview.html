@@ -97,193 +97,15 @@
         <tr>
           <th style="width:32px"></th>
           <th style="width:90px">Datum</th>
-          <th>Gegenpartei / Verwendungszweck</th>
-          <th class="text-end" style="width:120px">Betrag</th>
-          <th>Zuordnung</th>
-          <th style="width:40px"></th>
+          <th style="width:200px">Gegenpartei</th>
+          <th>Verwendungszweck</th>
+          <th class="text-end" style="width:110px">Betrag</th>
+          <th style="width:360px">Zuordnung</th>
         </tr>
       </thead>
       <tbody>
         {% for line in lines %}
-        {% set is_pending = line.line_status == 'pending' %}
-        {% set is_income = line.amount > 0 %}
-        <tr class="{% if line.line_status == 'committed' %}table-success{% elif line.line_status == 'skipped' %}text-muted{% endif %}">
-          <td>
-            {% if is_pending %}
-            <form method="post"
-                  action="{{ url_for('bank_import.update_line', statement_id=stmt.id, line_id=line.id) }}"
-                  class="m-0">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <input type="hidden" name="action" value="toggle_selected">
-              <input type="hidden" name="selected" value="{{ '0' if line.selected else '1' }}">
-              <button type="submit" class="btn btn-link p-0 border-0">
-                {% if line.selected %}
-                  <i class="fas fa-check-square text-primary"></i>
-                {% else %}
-                  <i class="far fa-square text-muted"></i>
-                {% endif %}
-              </button>
-            </form>
-            {% elif line.line_status == 'committed' %}
-              <i class="fas fa-check text-success" title="Verbucht"></i>
-            {% else %}
-              <i class="fas fa-ban text-muted" title="Übersprungen"></i>
-            {% endif %}
-          </td>
-          <td>{{ line.booking_date.strftime('%d.%m.%Y') }}</td>
-          <td>
-            <div class="fw-bold">
-              {{ line.counterparty_name or '—' }}
-            </div>
-            {% if line.counterparty_iban %}
-              <div class="text-muted small">{{ line.counterparty_iban }}</div>
-            {% endif %}
-            {% if line.purpose %}
-              <div class="text-muted small" style="white-space: pre-wrap;">{{ line.purpose }}</div>
-            {% endif %}
-          </td>
-          <td class="text-end">
-            <span class="fw-bold {% if is_income %}text-success{% else %}text-danger{% endif %}">
-              {{ line.amount | de_number(decimals=2, signed=True) }} €
-            </span>
-          </td>
-          <td>
-            {% if line.matched_open_item_id %}
-              {% set op = line.matched_open_item %}
-              <div>
-                <i class="fas fa-link text-primary me-1"></i>
-                {% if line.matched_invoice_id %}
-                  <a href="{{ url_for('invoices.edit', invoice_id=line.matched_invoice_id) }}">
-                    Rechnung {{ line.matched_invoice.invoice_number if line.matched_invoice else '' }}
-                  </a>
-                {% else %}
-                  OP #{{ op.id }}
-                {% endif %}
-                {% if line.matched_customer %}
-                  <span class="text-muted">· {{ line.matched_customer.name }}</span>
-                {% endif %}
-              </div>
-              {% set pstat = payment_status.get(line.id) %}
-              {% set op_balance = pstat[2] if pstat else op.open_balance %}
-              <div class="text-muted small">
-                OP-Betrag: {{ op.amount | de_number(decimals=2) }} € ·
-                offen: {{ op_balance | de_number(decimals=2) }} €
-              </div>
-              {% if pstat and pstat[0] == 'over' %}
-                <div class="text-warning small mt-1">
-                  <i class="fas fa-exclamation-triangle me-1"></i>
-                  Überzahlung: Eingang {{ line.amount | de_number(decimals=2) }} € übersteigt offenen Betrag um {{ pstat[1] | de_number(decimals=2) }} €
-                </div>
-              {% elif pstat and pstat[0] == 'under' %}
-                <div class="text-warning small mt-1">
-                  <i class="fas fa-exclamation-triangle me-1"></i>
-                  Teilzahlung: {{ pstat[1] | de_number(decimals=2) }} € bleiben nach Verbuchung offen
-                </div>
-              {% endif %}
-              {% if is_pending %}
-              {% set _sel_acc = line.override_account_id or op.account_id %}
-              <form method="post"
-                    action="{{ url_for('bank_import.update_line', statement_id=stmt.id, line_id=line.id) }}"
-                    class="d-flex gap-2 align-items-center m-0 mt-1">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <input type="hidden" name="action" value="set_account">
-                <select name="account_id" class="form-select form-select-sm"
-                        onchange="this.form.submit()">
-                  <option value="">– Buchungskonto –</option>
-                  {% for acc in accounts %}
-                  <option value="{{ acc.id }}" {% if acc.id == _sel_acc %}selected{% endif %}>
-                    {% if acc.code %}{{ acc.code }} · {% endif %}{{ acc.name }}
-                  </option>
-                  {% endfor %}
-                </select>
-              </form>
-              <form method="post"
-                    action="{{ url_for('bank_import.update_line', statement_id=stmt.id, line_id=line.id) }}"
-                    class="m-0 mt-1 d-inline">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <input type="hidden" name="action" value="clear_match">
-                <button type="submit" class="btn btn-sm btn-link text-danger p-0">
-                  OP entfernen
-                </button>
-              </form>
-              {% endif %}
-            {% elif is_income and line.matched_customer_id and open_items_by_customer.get(line.matched_customer_id) %}
-              <div class="text-muted small mb-1">
-                Kunde erkannt: <strong>{{ line.matched_customer.name }}</strong> — wählen Sie einen offenen Posten:
-              </div>
-              {% if is_pending %}
-              <form method="post"
-                    action="{{ url_for('bank_import.update_line', statement_id=stmt.id, line_id=line.id) }}"
-                    class="d-flex gap-2 align-items-center m-0">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <input type="hidden" name="action" value="set_open_item">
-                <select name="open_item_id" class="form-select form-select-sm tom-select"
-                        onchange="this.form.submit()">
-                  <option value="">– offenen Posten suchen –</option>
-                  {% for op in open_items_by_customer[line.matched_customer_id] %}
-                    <option value="{{ op.id }}">
-                      {{ op.customer.name }} · {{ op.description }} · {{ op.amount | de_number(decimals=2) }} €
-                      (offen: {{ op.open_balance | de_number(decimals=2) }} €)
-                    </option>
-                  {% endfor %}
-                </select>
-              </form>
-              <form method="post"
-                    action="{{ url_for('bank_import.update_line', statement_id=stmt.id, line_id=line.id) }}"
-                    class="m-0 mt-1 d-inline">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <input type="hidden" name="action" value="clear_customer">
-                <button type="submit" class="btn btn-sm btn-link text-danger p-0">
-                  Kunde entfernen
-                </button>
-              </form>
-              {% endif %}
-            {% else %}
-              <div class="text-muted small mb-1">
-                <i class="fas fa-exclamation-triangle me-1"></i>Keine Zuordnung zu einem offenen Posten.
-              </div>
-              {% if is_pending %}
-              <form method="post"
-                    action="{{ url_for('bank_import.update_line', statement_id=stmt.id, line_id=line.id) }}"
-                    class="d-flex gap-2 align-items-center m-0 mb-1">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <input type="hidden" name="action" value="set_open_item">
-                <select name="open_item_id" class="form-select form-select-sm tom-select"
-                        onchange="this.form.submit()">
-                  <option value="">– offenen Posten suchen –</option>
-                  {% for op in all_open_items %}
-                    <option value="{{ op.id }}">
-                      {{ op.customer.name }} · {{ op.description }} · {{ op.amount | de_number(decimals=2) }} €
-                      (offen: {{ op.open_balance | de_number(decimals=2) }} €)
-                    </option>
-                  {% endfor %}
-                </select>
-              </form>
-              <form method="post"
-                    action="{{ url_for('bank_import.update_line', statement_id=stmt.id, line_id=line.id) }}"
-                    class="d-flex gap-2 align-items-center m-0">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <input type="hidden" name="action" value="set_account">
-                <select name="account_id" class="form-select form-select-sm"
-                        onchange="this.form.submit()">
-                  <option value="">– oder direkt auf Konto buchen –</option>
-                  {% for acc in accounts %}
-                    <option value="{{ acc.id }}"
-                            {% if line.override_account_id == acc.id %}selected{% endif %}>
-                      {% if acc.code %}{{ acc.code }} · {% endif %}{{ acc.name }}
-                    </option>
-                  {% endfor %}
-                </select>
-              </form>
-              {% endif %}
-            {% endif %}
-          </td>
-          <td>
-            {% if line.end_to_end_id %}
-              <i class="fas fa-info-circle text-muted" title="End-to-End-ID: {{ line.end_to_end_id }}"></i>
-            {% endif %}
-          </td>
-        </tr>
+          {% include "bank_import/_row.html" %}
         {% endfor %}
       </tbody>
     </table>
@@ -297,26 +119,61 @@
 </div>
 {% endblock %}
 
+{% block modals %}
+<div class="modal modal-blur fade" id="bankSplitModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
+    <div class="modal-content" id="bankSplitModalBody">
+      {# Inhalt wird per HTMX aus bank_import.split_form geladen #}
+    </div>
+  </div>
+</div>
+{% endblock %}
+
 {% block scripts %}
 <script>
-  // Scrollposition ueber den POST-Redirect-GET-Roundtrip retten:
-  // Alle Form-Submits auf dieser Seite (Checkbox toggle, Konto-/OP-Auswahl
-  // via onchange, Verknuepfung entfernen) sind klassische Full-Page-Reloads.
-  // Ohne diesen Hook scrollt der Browser nach jedem Klick zum Seitenanfang.
-  (function () {
-    var KEY = "bank-import-preview-scroll:{{ stmt.id }}";
-    document.addEventListener("submit", function () {
-      try { sessionStorage.setItem(KEY, String(window.scrollY)); } catch (e) {}
-    }, true);
-    window.addEventListener("DOMContentLoaded", function () {
-      try {
-        var y = sessionStorage.getItem(KEY);
-        if (y !== null) {
-          sessionStorage.removeItem(KEY);
-          window.scrollTo(0, parseInt(y, 10) || 0);
-        }
-      } catch (e) {}
+  // Buchung auf mehrere offene Posten aufteilen: Modal-Body per HTMX laden,
+  // dann Bootstrap-Modal zeigen. Nach erfolgreichem Speichern feuert der Server
+  // den HX-Trigger „bankSplitSaved" -> Modal schliessen (die Tabellenzeile hat
+  // sich da bereits via hx-target=#bank-line-.. aktualisiert).
+  function openSplitModal(lineId) {
+    var url = "{{ url_for('bank_import.preview', statement_id=stmt.id) }}/lines/" + lineId + "/split";
+    var modalEl = document.getElementById('bankSplitModal');
+    htmx.ajax('GET', url, {target: '#bankSplitModalBody', swap: 'innerHTML'}).then(function () {
+      if (window.bootstrap && modalEl) {
+        bootstrap.Modal.getOrCreateInstance(modalEl).show();
+      }
     });
-  })();
+  }
+  if (!window.__bankSplitCloseBound) {
+    window.__bankSplitCloseBound = true;
+    document.body.addEventListener('bankSplitSaved', function () {
+      var modalEl = document.getElementById('bankSplitModal');
+      if (window.bootstrap && modalEl) {
+        var inst = bootstrap.Modal.getInstance(modalEl);
+        if (inst) inst.hide();
+      }
+    });
+  }
+
+  // Zeilen-Aktionen (Checkbox, Konto-/OP-Auswahl, Verknuepfung entfernen) laufen
+  // per HTMX und tauschen via hx-target="closest tr" nur die betroffene Zeile —
+  // kein Full-Reload, daher kein Scroll-Sprung.
+  //
+  // TomSelect im OP-Dropdown der frisch eingetauschten Zeile zuverlaessig
+  // (re-)initialisieren: htmx.onLoad feuert fuer JEDEN neu eingefuegten Knoten
+  // (auch bei outerHTML-Row-Swaps, wo der globale htmx:afterSwap-Handler je nach
+  // htmx-Version den falschen Target-Bezug haette). Einmal pro Tab registrieren
+  // (das scripts-Block laeuft bei jedem hx-boost-Swap neu), Doppel-Init ist via
+  // el.tomselect ohnehin abgefangen.
+  if (window.htmx && !window.__bankImportRowInit) {
+    window.__bankImportRowInit = true;
+    htmx.onLoad(function (content) {
+      if (!content.querySelectorAll) return;
+      content.querySelectorAll('select.tom-select').forEach(function (el) {
+        if (el.tomselect || !window.TomSelect) return;
+        new TomSelect(el, { allowEmptyOption: true, selectOnTab: true });
+      });
+    });
+  }
 </script>
 {% endblock %}
