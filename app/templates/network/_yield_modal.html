@@ -1,0 +1,32 @@
+{# Wiederverwendbares Quellschüttung-Modal. Markup gehört in {% block modals %};
+   das zugehörige JS liegt in _yield_modal_scripts.html (in {% block scripts %}).
+   Eingebunden von Elementliste und Monitoring-Seite. Der Body wird per HTMX-GET
+   (X-From-Modal) aus network.yield_add geladen (_yield_modal_body.html); der
+   Footer-Submit sendet die Felder. Geöffnet via window.openFeatureYieldModal(btn)
+   (btn.dataset.url = yield_add-URL der jeweiligen Quelle). #}
+<div class="modal fade" id="featureYieldModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="fas fa-chart-line me-2"></i>Quellschüttung</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <form id="featureYieldForm" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-body" id="featureYieldModalBody">
+          <div class="text-center text-muted py-4">
+            <div class="spinner-border spinner-border-sm" role="status"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+            <i class="fas fa-times me-1"></i> Schließen
+          </button>
+          <button type="submit" class="btn btn-primary">
+            <i class="fas fa-plus me-1"></i> Messung hinzufügen
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>

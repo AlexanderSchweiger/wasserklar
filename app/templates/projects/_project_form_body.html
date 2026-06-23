@@ -1,0 +1,117 @@
+{# Form-Body fuers Projekt-Modal — per HTMX in projectModalBody geladen.
+   Erwartet project (oder None) + optional form (nach Validierungsfehler).
+   Der Farb-Picker-Script laeuft nach dem HTMX-Swap (htmx fuehrt Inline-Scripts
+   im geswappten Inhalt aus). #}
+{% include "_flash_inline.html" %}
+{% if form %}
+  {% set val_code = form.get('code', '') %}
+  {% set val_name = form.get('name', '') %}
+  {% set val_description = form.get('description', '') %}
+  {% set val_color = form.get('color', '#3498db') or '#3498db' %}
+{% elif project %}
+  {% set val_code = project.code or '' %}
+  {% set val_name = project.name %}
+  {% set val_description = project.description or '' %}
+  {% set val_color = project.color or '#3498db' %}
+{% else %}
+  {% set val_code = '' %}
+  {% set val_name = '' %}
+  {% set val_description = '' %}
+  {% set val_color = '#3498db' %}
+{% endif %}
+<input type="hidden" name="color" id="color-input" value="{{ val_color }}">
+<div class="mb-3">
+  <label class="form-label">Kürzel</label>
+  <input type="text" name="code" class="form-control" maxlength="3"
+    style="text-transform:uppercase; max-width:100px; font-family:monospace; font-weight:bold;"
+    value="{{ val_code }}"
+    placeholder="z. B. INV"
+    pattern="[A-Za-z0-9]{3}"
+    title="Genau 3 Zeichen: Großbuchstaben A–Z oder Ziffern 0–9">
+  <small class="form-hint">3 Zeichen (A–Z, 0–9), eindeutig. Dient zum schnellen Finden in Auswahlfeldern.</small>
+</div>
+<div class="mb-3">
+  <label class="form-label">Name <span class="text-danger">*</span></label>
+  <input type="text" name="name" class="form-control" value="{{ val_name }}" required maxlength="100">
+</div>
+<div class="mb-3">
+  <label class="form-label">Beschreibung</label>
+  <textarea name="description" class="form-control" rows="4">{{ val_description }}</textarea>
+</div>
+<div class="mb-3">
+  <label class="form-label">Farbe</label>
+  <div class="d-flex flex-wrap" style="gap:8px">
+    {% set colors = [
+      ('#e74c3c', 'Rot'),
+      ('#e67e22', 'Orange'),
+      ('#f1c40f', 'Gelb'),
+      ('#2ecc71', 'Grün'),
+      ('#1abc9c', 'Türkis'),
+      ('#3498db', 'Blau'),
+      ('#2980b9', 'Dunkelblau'),
+      ('#9b59b6', 'Lila'),
+      ('#8e44ad', 'Dunkelviolett'),
+      ('#e91e63', 'Pink'),
+      ('#ff5722', 'Tieforange'),
+      ('#00bcd4', 'Cyan'),
+      ('#8bc34a', 'Hellgrün'),
+      ('#009688', 'Dunkelgrün'),
+      ('#2196f3', 'Hellblau'),
+      ('#673ab7', 'Violett'),
+      ('#607d8b', 'Blaugrau'),
+      ('#795548', 'Braun'),
+      ('#34495e', 'Dunkelgrau'),
+      ('#ff9800', 'Hellorange'),
+    ] %}
+    {% for hex, label in colors %}
+    <div class="color-swatch"
+         data-color="{{ hex }}"
+         title="{{ label }}"
+         style="
+           width:32px; height:32px; border-radius:50%;
+           background:{{ hex }}; cursor:pointer;
+           border: 3px solid transparent;
+           transition: border-color 0.15s, transform 0.15s;
+         ">
+    </div>
+    {% endfor %}
+  </div>
+  <small class="form-hint mt-1 d-block">
+    Gewählte Farbe:
+    <span id="color-preview"
+          style="display:inline-block; width:14px; height:14px; border-radius:50%;
+                 background:{{ val_color }};
+                 vertical-align:middle; margin-right:4px;"></span>
+    <span id="color-label">{{ val_color }}</span>
+  </small>
+</div>
+<script>
+(function () {
+  var root = document.getElementById('projectModalBody') || document;
+  var input = root.querySelector('#color-input');
+  var preview = root.querySelector('#color-preview');
+  var label = root.querySelector('#color-label');
+  var swatches = root.querySelectorAll('.color-swatch');
+  if (!input) return;
+
+  function selectColor(hex) {
+    input.value = hex;
+    if (preview) preview.style.background = hex;
+    if (label) label.textContent = hex;
+    swatches.forEach(function (s) {
+      if (s.dataset.color === hex) {
+        s.style.borderColor = '#333';
+        s.style.transform = 'scale(1.2)';
+      } else {
+        s.style.borderColor = 'transparent';
+        s.style.transform = 'scale(1)';
+      }
+    });
+  }
+
+  swatches.forEach(function (s) {
+    s.addEventListener('click', function () { selectColor(s.dataset.color); });
+  });
+  selectColor(input.value);
+})();
+</script>

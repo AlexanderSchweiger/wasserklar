@@ -158,11 +158,25 @@ tr.overdue { background-color: #fff3cd !important; }
 /* TomSelect Dropdown – weißer Hintergrund (Tabler-Kompatibilität) */
 .ts-dropdown {
   background-color: #fff;
+  /* Über der Modal-Ebene (Tabler/Bootstrap: Modal 1055, Tooltip 1080). In
+     Modalen wird die Dropdown-Liste per dropdownParent an <body> gehängt
+     (siehe app.js initTomSelects), damit sie nicht vom Modal-Overflow
+     abgeschnitten wird — dann muss sie auch über dem Modal liegen. */
+  z-index: 1085;
 }
 .ts-dropdown .option:hover,
 .ts-dropdown .option.active {
   background-color: #e9ecef;
   color: inherit;
+}
+/* Optionen brauchen ihre Höhe/Padding auch dann, wenn das Dropdown per
+   dropdownParent='body' (Modal, gegen Clipping) AUS dem .ts-wrapper an <body>
+   wandert — sonst greifen wrapper-skopierte Theme-Regeln nicht mehr und die
+   Liste kollabiert auf Null-Höhe (sichtbar nur als Scrollbalken). */
+.ts-dropdown .option,
+.ts-dropdown .create {
+  padding: 6px 10px;
+  line-height: 1.4;
 }
 
 /* Color-Select – kompakt in Tabellen, Suchfeld ausblenden */

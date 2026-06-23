@@ -5,6 +5,14 @@ mit Zaehlerstaenden, laufende Periode mit ~20 Zaehlertauschen, gemischte
 Rechnungen / offene Posten / Mahnungen, 2 Bankkonten + Umbuchungen,
 Sammelbuchungen mit Projekten und verschiedenen Steuersaetzen, passende Tarife.
 
+Dazu ein kompletter **Leitungsnetz**-Datensatz: ein aktiver Leitungsplan mit
+3 Quellen (inkl. historischer Schuettungs-Messreihen mit Trockenperioden),
+Hochbehaelter, Zubringer-/Haupt-/Versorgungsleitungen, ~30 Hausanschluessen
+(grossteils Liegenschaften zugeordnet + geocodet, einige bewusst unzugeordnet
+zum Testen der Zuordnen-Funktion), Hydranten/Schiebern mit Wartungs-/Pruef-Logs
+(teils faellig) sowie ein gefuelltes **Stoerungsjournal** (Rohrbrueche, Lecks,
+Druckverlust ...).
+
 Wird von zwei CLI-Wrappern aufgerufen:
 - OSS: ``flask --app run seed-demo`` (cli.py)
 - SaaS: ``flask --app run seed-demo --slug <tenant>`` (saas/cli.py)
@@ -54,7 +62,8 @@ _STRASSEN = [
 ]
 
 
-def seed_demo_data(db, *, today: date = date(2025, 9, 15), verbose: bool = True) -> dict:
+def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
+                   verbose: bool = True) -> dict:
     """Seedet den vollstaendigen Demo-Datensatz.
 
     Voraussetzung: DB hat die Defaults (TaxRates, DunningPolicy "Standard",
@@ -63,7 +72,16 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), verbose: bool = True)
 
     Parameter:
         db: SQLAlchemy-Instanz (`app.extensions.db`).
-        today: Stichtag fuer die aktuelle Periode. Default 2025-09-15.
+        today: Historischer Anker fuer den Hauptdatensatz (Perioden,
+            Ablesungen, Zaehlertausche, Rechnungen). Default 2025-09-15 —
+            bewusst fix, weil viele Stichtage darauf kalibriert sind (u.a. die
+            statischen Bank-Sample-Dateien). NICHT auf ``date.today()`` setzen.
+        now: Echtes „heute" (vom CLI = ``date.today()``). Liegt es in einem
+            spaeteren Jahr als ``today``, wird die Buchhaltung bis ``now``
+            fortgeschrieben: Vorjahre abgeschlossen, ein offenes Buchungsjahr
+            im aktuellen Jahr, laufende Buchungen/Posten/Umbuchungen bis ``now``.
+            ``None`` -> faellt auf ``today`` zurueck (Tests bleiben deterministisch
+            und das Bestandsverhalten unveraendert).
         verbose: Print-Output.
 
     Rueckgabe: Dict mit Counts pro Entitaet (fuer Tests / Smoke-Asserts).
@@ -75,8 +93,11 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), verbose: bool = True)
         Project, RealAccount,
         Transfer, Invoice, InvoiceItem, BookingGroup, Booking, OpenItem,
         DunningPolicy, DunningStage, DunningNotice, FiscalYear,
+        NetworkPlan, NetworkFeature, MaintenanceLog, SpringYield, Incident,
     )
 
+    if now is None:
+        now = today
     rng = random.Random(42)
     current_year = today.year
     prev_year = current_year - 1
@@ -752,6 +773,490 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), verbose: bool = True)
     db.session.add_all(transfers)
     db.session.flush()
     counts["transfers"] = 3
+
+    # ==================================================================
+    # Leitungsnetz (network) — Plan, Anlagen, Hausanschluesse, Quellen,
+    # Schuettungs-Messreihen, Wartung; danach Stoerungsjournal.
+    # ==================================================================
+    import json
+    import math
+    from app.network import services as net_svc
+
+    # Koordinaten-Helfer: Meter-Offsets (Nord/Ost) ab einem Ortsmittelpunkt in
+    # WGS84 umrechnen. Synthetischer Ort rund um Hagenberg im Muehlkreis.
+    BASE_LAT, BASE_LNG = 48.3680, 14.5120
+    M_PER_DEG_LAT = 111320.0
+    _cos_lat = math.cos(math.radians(BASE_LAT))
+
+    def ll(north_m, east_m):
+        """(Nord-, Ost-Offset in m) -> (lat, lng)."""
+        lat = BASE_LAT + north_m / M_PER_DEG_LAT
+        lng = BASE_LNG + east_m / (M_PER_DEG_LAT * _cos_lat)
+        return lat, lng
+
+    plan = NetworkPlan(
+        name="Leitungsnetz (Demo)",
+        status=NetworkPlan.STATUS_ACTIVE,
+        maintenance_enabled=True,
+        description="Demonstrations-Leitungsplan: Quellen, Hochbehaelter, "
+                    "Versorgungsnetz, Hausanschluesse, Hydranten und Schieber "
+                    "rund um den Demo-Ort.",
+        created_by_id=admin.id, updated_by_id=admin.id,
+    )
+    db.session.add(plan)
+    db.session.flush()
+    counts["network_plans"] = 1
+
+    net_features: list = []
+
+    def add_point(ftype, name, north, east, **kw):
+        lat, lng = ll(north, east)
+        f = NetworkFeature(
+            plan_id=plan.id, feature_type=ftype, name=name, created_by_id=admin.id,
+        )
+        net_svc.apply_geometry(f, {"type": "Point", "coordinates": [lng, lat]})
+        for k, v in kw.items():
+            setattr(f, k, v)
+        db.session.add(f)
+        net_features.append(f)
+        return f
+
+    def add_line(ftype, name, waypoints, **kw):
+        coords = []
+        for (n, e) in waypoints:
+            la, lo = ll(n, e)
+            coords.append([lo, la])
+        f = NetworkFeature(
+            plan_id=plan.id, feature_type=ftype, name=name, created_by_id=admin.id,
+        )
+        net_svc.apply_geometry(f, {"type": "LineString", "coordinates": coords})
+        for k, v in kw.items():
+            setattr(f, k, v)
+        db.session.add(f)
+        net_features.append(f)
+        return f
+
+    # --- Anlagen (Punkte) ---------------------------------------------
+    behaelter_pos = (520, 90)
+    behaelter = add_point(
+        "behaelter", "Hochbehälter Sonnberg", *behaelter_pos,
+        accuracy="exakt", material="Beton", year_built=1987,
+        ground_level_m=512.0, notes="Nutzinhalt 150 m³, zwei Kammern.",
+    )
+    add_point("pumpe", "Druckerhöhung Sonnberg", 500, 78,
+              accuracy="exakt", year_built=2009, manufacturer="Grundfos")
+    pumpe = net_features[-1]
+    add_point("probenahme", "Probenahmestelle Behälterabgang", 514, 92, accuracy="gut")
+    add_point("verteiler", "Ortsverteiler", 10, 120, accuracy="gut")
+
+    # 3 Quellen mit je (Position, Basis-Schuettung l/s, Saison-Amplitude,
+    # Sommer-Trockenheitsfaktor) — Steinbründl faellt im Trockensommer fast trocken.
+    spring_cfg = [
+        ("Quelle Brunnertal",  (900, -300), 2.40, 0.28, 0.62),
+        ("Quelle Lärchwald",   (1010, 220), 1.10, 0.34, 0.48),
+        ("Quelle Steinbründl", (840, 600),  0.50, 0.42, 0.28),
+    ]
+    springs = []
+    for sp_name, sp_pos, base, amp, drought in spring_cfg:
+        sp = add_point(
+            "quelle", sp_name, *sp_pos, accuracy="exakt",
+            year_built=rng.randint(1958, 1992), notes="Gefasste Hangquelle.",
+        )
+        springs.append({"f": sp, "pos": sp_pos, "base": base, "amp": amp,
+                        "drought": drought})
+
+    # --- Transport-/Versorgungsleitungen (Linien) ---------------------
+    for sp in springs:
+        add_line("zubringer", f"Zubringer {sp['f'].name}",
+                 [sp["pos"], (700, behaelter_pos[1]), behaelter_pos],
+                 accuracy="geschaetzt", material="PE",
+                 dimension_dn=rng.choice([80, 100]), year_built=rng.randint(1985, 2010),
+                 pressure_rating="PN 10")
+
+    hauptleitung = add_line(
+        "hauptleitung", "Hauptleitung Hochbehälter–Ort",
+        [behaelter_pos, (300, 108), (10, 120)],
+        accuracy="gut", material="Duktilguss (GGG)", dimension_dn=150,
+        year_built=1992, pressure_rating="PN 10",
+    )
+
+    # --- Versorgungsstraenge + Hausanschluesse ------------------------
+    # Je Strasse eine Versorgungsleitung; entlang sechs Hausanschluesse, jeweils
+    # mit Stichleitung und einer geocodeten Liegenschaft (BEV-Treffer simuliert).
+    streets = [
+        ("Dorfstraße",  (10, 120),  (0, 27)),     # nach Osten
+        ("Hauptstraße", (-40, 116), (-26, 3)),    # nach Suedwesten
+        ("Birkenweg",   (16, 124),  (21, 21)),    # nach Nordosten
+        ("Quellweg",    (4, 116),   (9, -25)),    # nach Westen
+    ]
+    assigned_props = properties[:24]
+    versorg_lines = []
+    ha_stub_example = None
+    ha_idx = 0
+    geocoded_count = 0
+    geocode_ts = datetime(current_year, 3, 15, 9, 0, 0)
+
+    for st_name, (s_n, s_e), (d_n, d_e) in streets:
+        n_houses = 6
+        end = (s_n + d_n * (n_houses + 1), s_e + d_e * (n_houses + 1))
+        vleitung = add_line(
+            "versorgungsleitung", f"Versorgungsleitung {st_name}",
+            [(s_n, s_e), end], accuracy="gut",
+            material=rng.choice(["PE", "Guss (GG)", "PVC"]),
+            dimension_dn=rng.choice([80, 100, 100, 125]),
+            year_built=rng.randint(1978, 2016), pressure_rating="PN 10",
+        )
+        versorg_lines.append(vleitung)
+        # Einheits-Perpendikular (Meter) fuer den seitlichen Hausversatz.
+        mag = math.hypot(d_n, d_e)
+        pn, pe = d_e / mag, -d_n / mag
+        for j in range(1, n_houses + 1):
+            base_n, base_e = s_n + d_n * j, s_e + d_e * j
+            side = 1 if j % 2 else -1
+            ha_n, ha_e = base_n + side * 14 * pn, base_e + side * 14 * pe
+            prop = assigned_props[ha_idx]
+            add_point("hausanschluss", None, ha_n, ha_e, accuracy="gut",
+                      material="PE", dimension_dn=rng.choice([25, 32, 40]),
+                      year_built=rng.randint(1980, 2020), property_id=prop.id)
+            stub = add_line("hausanschlussleitung", None,
+                            [(base_n, base_e), (ha_n, ha_e)],
+                            accuracy="geschaetzt", material="PE", dimension_dn=25)
+            if ha_stub_example is None:
+                ha_stub_example = stub
+            # Liegenschaft ~4 m neben dem Hausanschluss geocoden (BEV-Treffer).
+            plat, plng = ll(ha_n + rng.uniform(-4, 4), ha_e + rng.uniform(-4, 4))
+            prop.lat, prop.lng = round(plat, 6), round(plng, 6)
+            prop.geocoded_at = geocode_ts
+            geocoded_count += 1
+            ha_idx += 1
+
+    # 3 unzugeordnete Hausanschluesse NAHE je einer freien geocodeten
+    # Liegenschaft -> per „Zuordnen"-Button (assign-hausanschluss) loesbar.
+    for k, prop in enumerate(properties[24:27]):
+        base_n, base_e = [(-30, 60), (-58, 72), (44, -78)][k]
+        plat, plng = ll(base_n, base_e)
+        prop.lat, prop.lng = round(plat, 6), round(plng, 6)
+        prop.geocoded_at = geocode_ts
+        geocoded_count += 1
+        add_point("hausanschluss", None, base_n + 12, base_e + 4, accuracy="gut",
+                  material="PE", dimension_dn=32, property_id=None)
+
+    # 3 unzugeordnete Hausanschluesse ohne Liegenschaft im Umkreis -> bleiben
+    # auch nach dem Zuordnen-Lauf grell markiert (kein Kandidat im Radius).
+    for k in range(3):
+        add_point("hausanschluss", None, -380 - k * 25, 540 + k * 18,
+                  accuracy="geschaetzt", material="PE", dimension_dn=25,
+                  property_id=None)
+
+    # --- Hydranten & Schieber -----------------------------------------
+    hydranten = []
+    for i, (hn, he) in enumerate(
+            [(0, 180), (-30, 60), (90, 175), (130, 165), (300, 108), (12, 122)], start=1):
+        hydranten.append(add_point(
+            "hydrant", f"Hydrant H{i:02d}", hn, he, accuracy="gut",
+            year_built=rng.randint(1990, 2021),
+            manufacturer=rng.choice(["HAWLE", "VONROLL", "Düker"])))
+
+    schieber = []
+    for i, (sn, se) in enumerate(
+            [(260, 104), (0, 250), (-26, 40), (35, 130), (520, 86)], start=1):
+        schieber.append(add_point(
+            "schieber", f"Schieber S{i:02d}", sn, se, accuracy="gut",
+            dimension_dn=rng.choice([80, 100, 125]),
+            manufacturer=rng.choice(["HAWLE", "VONROLL"])))
+
+    db.session.flush()  # alle Features -> IDs
+    counts["network_features"] = len(net_features)
+    counts["properties_geocoded"] = geocoded_count
+    counts["hausanschluss_unassigned"] = net_svc.count_unassigned_hausanschluss(plan.id)
+
+    # --- Wartungs-/Pruef-Logs (teils faellig) -------------------------
+    # (feature, Art, letzte Durchfuehrung, Intervall Monate, Ergebnis)
+    maint_plan = [
+        (hydranten[0], MaintenanceLog.KIND_FLUSH, date(prev_year, 5, 12), 12, "ok"),
+        (hydranten[1], MaintenanceLog.KIND_FLUSH, date(current_year, 4, 8), 12, "ok"),
+        (hydranten[2], MaintenanceLog.KIND_FLUSH, date(current_year, 8, 20), 12, "mangel"),
+        (hydranten[3], MaintenanceLog.KIND_FLUSH, date(prev_year, 9, 3), 12, "ok"),
+        (hydranten[4], MaintenanceLog.KIND_FLUSH, date(current_year, 6, 30), 12, "ok"),
+        (hydranten[5], MaintenanceLog.KIND_FLUSH, date(current_year, 7, 15), 12, "ok"),
+        (schieber[0], MaintenanceLog.KIND_FUNCTION_TEST, date(prev_year - 1, 10, 5), 24, "ok"),
+        (schieber[1], MaintenanceLog.KIND_FUNCTION_TEST, date(current_year, 3, 18), 24, "ok"),
+        (schieber[2], MaintenanceLog.KIND_FUNCTION_TEST, date(prev_year, 11, 2), 24, "mangel"),
+        (schieber[3], MaintenanceLog.KIND_FUNCTION_TEST, date(prev_year - 1, 6, 14), 24, "ok"),
+        (schieber[4], MaintenanceLog.KIND_FUNCTION_TEST, date(current_year, 5, 9), 24, "ok"),
+        (behaelter, MaintenanceLog.KIND_INSPECTION, date(current_year, 4, 2), 12, "ok"),
+        (springs[0]["f"], MaintenanceLog.KIND_INSPECTION, date(prev_year, 8, 1), 12, "ok"),
+        (springs[1]["f"], MaintenanceLog.KIND_INSPECTION, date(current_year, 5, 20), 24, "ok"),
+        (springs[2]["f"], MaintenanceLog.KIND_INSPECTION, date(current_year, 7, 1), 12, "ok"),
+    ]
+    for feat, kind, last_date, interval, result in maint_plan:
+        db.session.add(MaintenanceLog(
+            feature_id=feat.id, date=last_date, kind=kind, result=result,
+            interval_months=interval,
+            next_due=net_svc.add_months(last_date, interval),
+            performed_by="Wassermeister Huber", created_by_id=admin.id,
+            notes=("Mangel dokumentiert, Nacharbeit veranlasst." if result == "mangel"
+                   else None),
+        ))
+    counts["maintenance_logs"] = len(maint_plan)
+
+    # --- Quellschuettung (historisch, mit Trockenperioden) ------------
+    def _month_grid(start_year):
+        """Mid-Month-Messdaten von Jan ``start_year`` bis zum Monat von ``today``."""
+        out, y, m = [], start_year, 1
+        while (y < today.year) or (y == today.year and m <= today.month):
+            out.append(date(y, m, 15))
+            m += 1
+            if m > 12:
+                m, y = 1, y + 1
+        return out
+
+    yield_count = 0
+    grid = _month_grid(current_year - 2)
+    for sp in springs:
+        base, amp, drought = sp["base"], sp["amp"], sp["drought"]
+        for d in grid:
+            # Saison: Maximum ~April (Schneeschmelze), Minimum ~Oktober.
+            seasonal = math.cos((d.month - 4) / 12.0 * 2 * math.pi)
+            val = base * (1 + amp * seasonal)
+            note = None
+            if d.year == current_year and d.month in (6, 7, 8, 9, 10):
+                val *= drought                     # schwerer Trockensommer akt. Jahr
+                if d.month in (8, 9):
+                    note = "Ausgeprägte Trockenperiode."
+            elif d.year == prev_year and d.month in (7, 8, 9):
+                val *= 0.78                         # milder Trockensommer Vorjahr
+            if d.year == current_year - 2 and d.month in (3, 4, 5):
+                val *= 1.18                         # nasses Fruehjahr vor zwei Jahren
+            val += rng.uniform(-0.05, 0.05) * base  # Messrauschen
+            val = max(0.03, val)
+            db.session.add(SpringYield(
+                feature_id=sp["f"].id, measurement_date=d,
+                flow_rate_lps=Decimal(str(round(val, 3))),
+                notes=note, created_by_id=admin.id,
+            ))
+            yield_count += 1
+    counts["spring_yields"] = yield_count
+
+    # ------------------------------------------------------------------
+    # Stoerungsjournal (incidents)
+    # ------------------------------------------------------------------
+    def _rep_point(f):
+        """Repraesentativer (lat, lng) eines Features (Punkt -> selbst, Linie -> Mitte)."""
+        if f.lat is not None and f.lng is not None:
+            return f.lat, f.lng
+        coords = json.loads(f.geometry)["coordinates"]
+        mid = coords[len(coords) // 2]
+        return mid[1], mid[0]
+
+    def add_incident(*, title, itype, sev, status, cause, detected_off, repair_days,
+                     feature=None, water_loss=None, affected=None, cost=None,
+                     performed_by=None, desc=None, repair=None, customer_id=None,
+                     property_id=None, loc_desc=None):
+        det = today - timedelta(days=detected_off)
+        res = (det + timedelta(days=repair_days)
+               if (status == Incident.STATUS_RESOLVED and repair_days is not None) else None)
+        lat = lng = geo = None
+        if feature is not None:
+            rlat, rlng = _rep_point(feature)
+            rlat += rng.uniform(-0.00010, 0.00010)
+            rlng += rng.uniform(-0.00012, 0.00012)
+            lat, lng = round(rlat, 6), round(rlng, 6)
+            geo = json.dumps({"type": "Point", "coordinates": [lng, lat]})
+        db.session.add(Incident(
+            title=title, incident_type=itype, severity=sev, status=status, cause=cause,
+            detected_at=det, resolved_at=res, location_geojson=geo, lat=lat, lng=lng,
+            location_description=loc_desc, water_loss_m3=water_loss,
+            affected_count=affected, cost=cost, performed_by=performed_by,
+            description=desc, repair_notes=repair, customer_id=customer_id,
+            property_id=property_id,
+            feature_id=(feature.id if feature is not None else None),
+            created_by_id=admin.id,
+        ))
+
+    p_inc = assigned_props[2]
+    c_inc = ownership_map.get(p_inc.id)
+
+    add_incident(
+        title="Rohrbruch Hauptleitung Hochbehälter", itype=Incident.TYPE_ROHRBRUCH,
+        sev=Incident.SEVERITY_CRITICAL, status=Incident.STATUS_RESOLVED,
+        cause="frostschaden", detected_off=420, repair_days=1, feature=hauptleitung,
+        water_loss=Decimal("85.00"), affected=42, cost=Decimal("3200.00"),
+        performed_by="Tiefbau Mayr GmbH", loc_desc="Böschung unterhalb Hochbehälter",
+        desc="Längsriss an der Gussleitung nach Frostperiode, großflächiger "
+             "Wasseraustritt an der Böschung.",
+        repair="Rohrabschnitt (3 m) getauscht, Bettung erneuert, Fahrbahn "
+               "provisorisch verschlossen.")
+    add_incident(
+        title="Undichtheit Versorgungsleitung Dorfstraße", itype=Incident.TYPE_UNDICHTHEIT,
+        sev=Incident.SEVERITY_MEDIUM, status=Incident.STATUS_RESOLVED,
+        cause="korrosion", detected_off=300, repair_days=3, feature=versorg_lines[0],
+        water_loss=Decimal("22.50"), affected=0, cost=Decimal("780.00"),
+        performed_by="Eigene Crew", loc_desc="Muffe Höhe Dorfstraße 14",
+        desc="Schleichendes Muffenleck, durch feuchte Stelle im Belag aufgefallen.",
+        repair="Muffe nachgezogen und abgedichtet.")
+    add_incident(
+        title="Druckverlust Netzbereich Ost", itype=Incident.TYPE_DRUCKVERLUST,
+        sev=Incident.SEVERITY_HIGH, status=Incident.STATUS_IN_PROGRESS,
+        cause="ueberdruck", detected_off=12, repair_days=None, feature=versorg_lines[2],
+        affected=0, loc_desc="Birkenweg",
+        desc="Wiederkehrender Druckabfall in den Abendstunden, Ursache wird "
+             "eingegrenzt (Schieberstellung / verdeckte Leckage).")
+    add_incident(
+        title="Trübung nach Starkregen", itype=Incident.TYPE_VERSCHMUTZUNG,
+        sev=Incident.SEVERITY_HIGH, status=Incident.STATUS_RESOLVED,
+        cause="unbekannt", detected_off=210, repair_days=5, feature=behaelter,
+        affected=60, cost=Decimal("450.00"), performed_by="Eigene Crew + Labor",
+        loc_desc="Hochbehälter Sonnberg",
+        desc="Eintrübung im Zulauf nach Starkregen, Verdacht Oberflächenwasser-"
+             "eintrag an der Quellfassung.",
+        repair="Behälter gespült, Beprobung veranlasst (Befund unauffällig), "
+               "Quellschacht abgedichtet.")
+    add_incident(
+        title="Baggerschaden Hausanschluss", itype=Incident.TYPE_ROHRBRUCH,
+        sev=Incident.SEVERITY_MEDIUM, status=Incident.STATUS_RESOLVED,
+        cause="fremdeinwirkung", detected_off=150, repair_days=1, feature=ha_stub_example,
+        water_loss=Decimal("6.00"), affected=1, cost=Decimal("540.00"),
+        performed_by="Tiefbau Mayr GmbH",
+        customer_id=(c_inc.id if c_inc else None), property_id=p_inc.id,
+        loc_desc="Grundstückszufahrt",
+        desc="Hausanschlussleitung bei Erdarbeiten eines Anrainers beschädigt.",
+        repair="Leitung auf 2 m erneuert, Anschluss wiederhergestellt.")
+    add_incident(
+        title="Versorgungsausfall durch Stromausfall", itype=Incident.TYPE_AUSFALL,
+        sev=Incident.SEVERITY_MEDIUM, status=Incident.STATUS_RESOLVED,
+        cause="unbekannt", detected_off=95, repair_days=1, feature=pumpe,
+        affected=120, performed_by="Eigene Crew", loc_desc="Druckerhöhung Sonnberg",
+        desc="Stromausfall legte die Druckerhöhung lahm, Druckabfall in Hochzonen.",
+        repair="Notstrom angeschlossen, nach Netzwiederkehr Normalbetrieb.")
+    add_incident(
+        title="Schleichendes Leck Hauptstraße", itype=Incident.TYPE_UNDICHTHEIT,
+        sev=Incident.SEVERITY_LOW, status=Incident.STATUS_OPEN,
+        cause="materialermuedung", detected_off=8, repair_days=None,
+        feature=versorg_lines[1], loc_desc="Hauptstraße",
+        desc="Geringe Dauerleckage anhand der Nachtmengenmessung vermutet, "
+             "Ortung steht aus.")
+    add_incident(
+        title="Rohrbruch Quellweg (Setzung)", itype=Incident.TYPE_ROHRBRUCH,
+        sev=Incident.SEVERITY_HIGH, status=Incident.STATUS_IN_PROGRESS,
+        cause="erddruck", detected_off=20, repair_days=None, feature=versorg_lines[3],
+        water_loss=Decimal("40.00"), affected=8, loc_desc="Quellweg",
+        desc="Rohrbruch nach Hangsetzung, Versorgung über Schieber umgeleitet.")
+    add_incident(
+        title="Hydrant undicht", itype=Incident.TYPE_SONSTIGES,
+        sev=Incident.SEVERITY_LOW, status=Incident.STATUS_RESOLVED,
+        cause="montagefehler", detected_off=60, repair_days=2, feature=hydranten[1],
+        water_loss=Decimal("1.50"), affected=0, cost=Decimal("120.00"),
+        performed_by="Eigene Crew", loc_desc="Hydrant H02",
+        desc="Entwässerung des Hydranten undicht, ständiger Wasseraustritt.",
+        repair="Dichtung getauscht, Funktionsprüfung ok.")
+    db.session.flush()
+    counts["incidents"] = 9
+
+    # ==================================================================
+    # Buchhaltung — Fortschreibung bis zum aktuellen Datum (``now``)
+    # ==================================================================
+    # Liegt ``now`` (CLI: date.today()) in einem spaeteren Jahr als der
+    # historische Anker ``today``, reicht der Hauptdatensatz nur bis ``today``.
+    # Damit die Buchhaltung bis in die Gegenwart laeuft: das bisher offene
+    # aktuelle Jahr (``current_year``) abschliessen, fuer jedes Jahr bis
+    # ``now.year`` ein Buchungsjahr anlegen (nur das letzte offen) und ein paar
+    # laufende Buchungen / Offene Posten / eine Umbuchung bis ``now`` erzeugen.
+    # ``now == today`` (Default/Tests) -> Block uebersprungen, alles unveraendert.
+    if now.year > current_year:
+        # 1) Bisher offenes aktuelles Jahr abschliessen.
+        fy_curr.closed = True
+        fy_curr.closed_at = datetime(current_year + 1, 1, 31, 12, 0, 0)
+        fy_curr.closed_by_id = admin.id
+
+        # 2) Buchungsjahre current_year+1 .. now.year — nur das letzte offen.
+        bridge_years = list(range(current_year + 1, now.year + 1))
+        for y in bridge_years:
+            is_latest = (y == now.year)
+            db.session.add(FiscalYear(
+                year=y, start_date=date(y, 1, 1), end_date=date(y, 12, 31),
+                closed=not is_latest,
+                closed_at=(None if is_latest else datetime(y + 1, 1, 31, 12, 0, 0)),
+                closed_by_id=(None if is_latest else admin.id),
+                is_vat_liable=False,
+            ))
+        db.session.flush()
+        counts["fiscal_years"] += len(bridge_years)
+        counts["current_fiscal_year"] = now.year
+
+        # 3) Laufende Buchungen, ein Eintrag je Monat ab Jan des ersten neuen
+        #    Jahres bis ``now`` (Mitte des Monats). Plan wird zyklisch genutzt;
+        #    Buchungen der letzten ~40 Tage bleiben „Offen" (noch nicht verbucht).
+        bridge_plan = [
+            (acc_reparatur, 1, Decimal("20.00"), Decimal("-380.00"),  giro,   "Reparatur Schieber Dorfstraße"),
+            (acc_buero,     3, Decimal("20.00"), Decimal("-54.90"),   giro,   "Büromaterial"),
+            (acc_bank,   None, None,             Decimal("-26.50"),   giro,   "Bankkosten"),
+            (acc_wasser, None, Decimal("10.00"), Decimal("1240.00"),  giro,   "Sammel-Zahlungseingang Wassergebühren"),
+            (acc_reparatur, 2, Decimal("20.00"), Decimal("-210.00"),  giro,   "Hydrantenwartung Frühjahr"),
+            (acc_anschluss, 1, Decimal("20.00"), Decimal("450.00"),   giro,   "Anschlussgebühr Neubau"),
+            (acc_reparatur, 4, Decimal("20.00"), Decimal("-1340.00"), kredit, "Pumpentausch Material"),
+            (acc_buero,     3, Decimal("20.00"), Decimal("-72.00"),   giro,   "Toner / Porto"),
+            (acc_bank,   None, None,             Decimal("-185.00"),  kredit, "Kreditzinsen"),
+            (acc_reparatur, 0, Decimal("20.00"), Decimal("-560.00"),  giro,   "Quellschacht-Sanierung Material"),
+        ]
+        offen_cutoff = now - timedelta(days=40)
+        bridge_bookings = 0
+        gy, gm = current_year + 1, 1
+        plan_i = 0
+        while (gy < now.year) or (gy == now.year and gm <= now.month):
+            bdate = date(gy, gm, 14)
+            account, proj_idx, tax, amt, ra, desc = bridge_plan[plan_i % len(bridge_plan)]
+            status_b = (Booking.STATUS_OFFEN if bdate > offen_cutoff
+                        else Booking.STATUS_VERBUCHT)
+            ref = f"BG-{bdate.year}-{bdate.month:02d}{bdate.day:02d}"
+            grp = BookingGroup(
+                date=bdate, description=desc, reference=ref, total_amount=amt,
+                status=BookingGroup.STATUS_AKTIV, created_by_id=admin.id,
+            )
+            db.session.add(grp)
+            db.session.flush()
+            db.session.add(Booking(
+                date=bdate, account_id=account.id, amount=amt, description=desc,
+                reference=ref, project_id=(projects[proj_idx].id if proj_idx is not None else None),
+                real_account_id=ra.id, group_id=grp.id, tax_rate=tax,
+                status=status_b, created_by_id=admin.id,
+            ))
+            bridge_bookings += 1
+            plan_i += 1
+            gm += 1
+            if gm > 12:
+                gm, gy = 1, gy + 1
+        counts["current_year_bookings"] = bridge_bookings
+
+        # 4) Ein paar offene Posten (laufende Forderungen) im aktuellen Jahr.
+        bridge_open_items = [
+            OpenItem(
+                customer_id=customers[7].id,
+                description="Anschlussgebühr Erweiterung Gartenzähler",
+                amount=Decimal("260.00"), date=now - timedelta(days=24),
+                due_date=now + timedelta(days=6), period_year=now.year,
+                status=OpenItem.STATUS_OPEN, account_id=acc_anschluss.id,
+                created_by_id=admin.id),
+            OpenItem(
+                customer_id=customers[31].id,
+                description="Akontozahlung Wasser offen",
+                amount=Decimal("95.00"), date=now - timedelta(days=12),
+                due_date=now + timedelta(days=18), period_year=now.year,
+                status=OpenItem.STATUS_OPEN, account_id=acc_wasser.id,
+                created_by_id=admin.id),
+        ]
+        db.session.add_all(bridge_open_items)
+        counts["current_year_open_items"] = len(bridge_open_items)
+
+        # 5) Eine Umbuchung (Quartalstilgung) im aktuellen Jahr.
+        db.session.add(Transfer(
+            date=now - timedelta(days=70), amount=Decimal("2000.00"),
+            description=f"Quartalstilgung {now.year}",
+            from_real_account_id=giro.id, to_real_account_id=kredit.id,
+            created_by_id=admin.id,
+        ))
+        counts["current_year_transfers"] = 1
+        db.session.flush()
 
     if verbose:
         print("Demo-Daten-Counts:")

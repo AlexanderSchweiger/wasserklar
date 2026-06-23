@@ -8,22 +8,114 @@
 (function () {
   // --- Widget-Initialisierer ------------------------------------------------
 
+  function tomSelectScore(query) {
+    var q = query.toLowerCase();
+    return function (item) {
+      var text = (item.text || '').toLowerCase();
+      if (text.startsWith(q)) return 2;
+      if (text.indexOf(q) >= 0) return 1;
+      return 0;
+    };
+  }
+
+  // Optionale Farb-Swatch-Darstellung: Selects, deren <option>s ein
+  // data-color tragen (z.B. das Projekt-Feld der Buchung), bekommen einen
+  // farbigen Punkt vor dem Text. Die Farbzuordnung wird einmalig aus dem DOM
+  // gelesen, damit der Renderer nicht von TomSelect-Interna abhaengt.
+  function colorSwatchRender(el) {
+    var colorByValue = {};
+    var hasColor = false;
+    el.querySelectorAll('option[data-color]').forEach(function (o) {
+      if (o.value) { colorByValue[o.value] = o.getAttribute('data-color'); hasColor = true; }
+    });
+    if (!hasColor) return null;
+    function dot(color) {
+      return '<span style="display:inline-block;width:.8rem;height:.8rem;border-radius:50%;'
+        + 'flex:0 0 auto;background:' + color + ';margin-right:.45rem;vertical-align:middle;'
+        + 'border:1px solid rgba(0,0,0,.15)"></span>';
+    }
+    return {
+      option: function (data, escape) {
+        var color = colorByValue[data.value];
+        return '<div class="d-flex align-items-center py-1">'
+          + (color ? dot(escape(color)) : '')
+          + '<span>' + escape(data.text) + '</span></div>';
+      },
+      item: function (data, escape) {
+        var color = colorByValue[data.value];
+        return '<div class="d-flex align-items-center">'
+          + (color ? dot(escape(color)) : '')
+          + '<span>' + escape(data.text) + '</span></div>';
+      }
+    };
+  }
+
+  // In einem Modal die Dropdown-Liste an <body> haengen, sonst schneidet der
+  // Modal-Overflow (besonders modal-dialog-scrollable) sie ab. App-weit gueltig.
+  function dropdownParentFor(el) {
+    return el.closest('.modal') ? 'body' : null;
+  }
+
+  // Async-Create fuer TomSelects mit data-create-url: tippt der Nutzer einen
+  // neuen Namen, wird der Kontakt per POST im Hintergrund (mit leeren
+  // Adressdaten) angelegt und sofort ausgewaehlt — ohne separates Modal.
+  // data-create-type steuert is_customer/is_supplier (default: supplier).
+  function makeCreateHandler(el) {
+    var url = el.dataset.createUrl;
+    var type = el.dataset.createType || 'supplier';
+    return function (input, callback) {
+      var name = (input || '').trim();
+      if (!name) { callback(false); return; }
+      var fd = new FormData();
+      fd.append('name', name);
+      fd.append('force', '1');   // Dubletten-Dialog ueberspringen (Inline-Flow)
+      if (type === 'customer' || type === 'both') fd.append('is_customer', '1');
+      if (type === 'supplier' || type === 'both') fd.append('is_supplier', '1');
+      var form = el.closest('form');
+      var csrf = form && form.querySelector('input[name="csrf_token"]');
+      if (csrf) fd.append('csrf_token', csrf.value);
+      fetch(url, {
+        method: 'POST', body: fd, headers: {'X-Requested-With': 'XMLHttpRequest'}
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (data && data.ok) callback({value: String(data.id), text: data.name});
+          else callback(false);
+        })
+        .catch(function () { callback(false); });
+    };
+  }
+
   function initTomSelects(root) {
     (root || document).querySelectorAll('select.tom-select').forEach(function (el) {
       if (el.tomselect) return;
-      new TomSelect(el, {
+      var cfg = {
         allowEmptyOption: true,
-        selectOnTab: true,
-        score: function (query) {
-          var q = query.toLowerCase();
-          return function (item) {
-            var text = (item.text || '').toLowerCase();
-            if (text.startsWith(q)) return 2;
-            if (text.indexOf(q) >= 0) return 1;
-            return 0;
-          };
-        }
-      });
+        selectOnTab: true,            // Tab waehlt die markierte Option + springt weiter
+        score: tomSelectScore,
+        dropdownParent: dropdownParentFor(el)
+      };
+      var render = colorSwatchRender(el) || {};
+      if (el.dataset.createUrl) {
+        cfg.create = makeCreateHandler(el);
+        cfg.createOnBlur = false;   // nur bewusst per Enter/Tab/Klick, nicht beim Wegklicken
+        render.option_create = function (data, escape) {
+          return '<div class="create"><i class="fas fa-user-plus me-1"></i>'
+            + '„' + escape(data.input) + '“ als neuen Kontakt anlegen</div>';
+        };
+      }
+      if (Object.keys(render).length) cfg.render = render;
+      new TomSelect(el, cfg);
+    });
+  }
+
+  // TomSelect-Instanzen vor dem htmx-History-Snapshot zerstoeren. Sonst wird das
+  // bereits gerenderte .ts-wrapper-DOM mitgecacht; beim Restore fehlt dem
+  // Original-<select> die .tomselect-Referenz, der Guard greift nicht, und es
+  // entsteht ein ZWEITES Widget daneben (das beobachtete „Doppelt-Anzeigen").
+  function destroyTomSelects(root) {
+    (root || document).querySelectorAll('select.tom-select, select.color-select').forEach(function (el) {
+      if (el.tomselect) { try { el.tomselect.destroy(); } catch (e) {} }
     });
   }
 
@@ -34,6 +126,7 @@
         allowEmptyOption: true,
         selectOnTab: true,
         controlInput: null,
+        dropdownParent: el.closest('.modal') ? 'body' : null,
         render: {
           option: function (data, escape) {
             if (!data.value) return '<div class="py-1 px-2 text-muted">\u2013</div>';
@@ -115,10 +208,34 @@
 
   // --- Event-Listener (einmalig im head, bleiben ueber hx-boost-Swaps) -----
 
+  // VOR jedem Swap die TomSelects im Ziel zerstoeren. Sonst bleiben — speziell
+  // bei dropdownParent:'body' (Modal) — die ans <body> gehaengten Dropdown-
+  // Listen als Waisen zurueck, wenn htmx den alten Formularinhalt ersetzt
+  // (z.B. Fehler-Redisplay). Folge sonst: das neu gebaute Feld oeffnet eine
+  // leere/kaputte Liste (nur Scrollbalken). Danach baut afterSwap frisch auf.
+  document.addEventListener('htmx:beforeSwap', function (e) {
+    if (e.detail && e.detail.target) destroyTomSelects(e.detail.target);
+  });
+
   // Nach jedem HTMX-Swap (Boost oder Inline) Widgets neu initialisieren.
   document.addEventListener('htmx:afterSwap', function (e) {
     initTomSelects(e.detail.target);
     initColorSelects(e.detail.target);
+  });
+
+  // Vor dem History-Snapshot: TomSelects abbauen, damit kein gerendertes
+  // Widget-DOM in den Cache wandert (sonst Doppel-Init beim Zurueck/Vorwaerts).
+  document.addEventListener('htmx:beforeHistorySave', function () {
+    destroyTomSelects(document);
+  });
+
+  // Nach einem History-Restore (Cache-Hit ODER Server-Reload) die Widgets auf
+  // dem wiederhergestellten, sauberen DOM frisch aufbauen.
+  document.addEventListener('htmx:historyRestore', function () {
+    initTomSelects(); initColorSelects();
+  });
+  document.addEventListener('htmx:historyCacheMissLoad', function () {
+    initTomSelects(); initColorSelects();
   });
 
   // Spinner fuer HTMX-Requests (inkl. geboosteten Navigationen).

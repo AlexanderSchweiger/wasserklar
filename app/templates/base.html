@@ -114,6 +114,7 @@
             {# Leitungsnetz #}
             {% set _nav_leitungsplan = request.endpoint in ('network.index','network.print_view') %}
             {% set _nav_elementliste = request.endpoint == 'network.elements' %}
+            {% set _nav_monitoring   = request.endpoint == 'network.monitoring' %}
             {% set _nav_plaene       = request.endpoint and request.endpoint.startswith('network.plan') %}
             {% set _nav_plan_import  = request.endpoint == 'network.import_view' %}
             {% set technik_active    = request.blueprint == 'network' %}
@@ -435,6 +436,12 @@
                     <a class="nav-link {% if _nav_elementliste %}active{% endif %}"
                       href="{{ url_for('network.elements') }}">
                       <i class="fas fa-list me-2"></i>Elementliste
+                    </a>
+                  </li>
+                  <li class="nav-item">
+                    <a class="nav-link {% if _nav_monitoring %}active{% endif %}"
+                      href="{{ url_for('network.monitoring') }}" hx-boost="false">
+                      <i class="fas fa-chart-line me-2"></i>Quellschüttung
                     </a>
                   </li>
                   <li class="nav-item">

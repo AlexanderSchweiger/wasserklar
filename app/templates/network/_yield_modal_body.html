@@ -1,0 +1,46 @@
+{# Body des „Quellschüttung"-Modals (Elementliste). Liste + Eingabefelder OHNE
+   eigenes <form>/Submit — der Footer-Submit des Modals (#featureYieldForm,
+   „Messung hinzufügen") sendet die Felder. Loeschen-Buttons sind eigenstaendige
+   HTMX-Calls (type=button) und zielen auf #featureYieldModalBody; per X-From-Modal
+   liefert der Server dieses Fragment zurueck. Erwartet: f, today_iso. #}
+{% include "_flash_inline.html" %}
+{% if f.spring_yields %}
+<div class="list-group list-group-flush mb-3">
+  {# Relationship ist aufsteigend nach Datum — fuer die Liste neueste zuerst. #}
+  {% for y in f.spring_yields | reverse %}
+  <div class="list-group-item px-0 py-2">
+    <div class="d-flex align-items-center">
+      <span class="me-2">{{ y.measurement_date.strftime('%d.%m.%Y') }}</span>
+      <span class="badge bg-azure-lt me-1">{{ y.flow_rate_lps | de_number(2) }} l/s</span>
+      <button type="button" class="btn btn-icon btn-sm btn-ghost-secondary ms-auto"
+        hx-post="{{ url_for('network.yield_delete', yield_id=y.id) }}"
+        hx-target="#featureYieldModalBody" hx-swap="innerHTML"
+        hx-headers='{"X-From-Modal": "1"}'
+        hx-confirm="Messung löschen?" title="Löschen"><i class="fas fa-times"></i></button>
+    </div>
+    {% if y.notes %}<div class="small">{{ y.notes }}</div>{% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<p class="text-secondary small mb-3">Noch keine Schüttungsmessungen.</p>
+{% endif %}
+
+<div class="border-top pt-3">
+  <div class="fw-medium mb-2">Neue Messung</div>
+  <div class="row g-2">
+    <div class="col-6 mb-2">
+      <label class="form-label">Datum</label>
+      <input type="date" name="measurement_date" class="form-control" value="{{ today_iso }}">
+    </div>
+    <div class="col-6 mb-2">
+      <label class="form-label">Schüttung (l/s)</label>
+      <input type="text" inputmode="decimal" name="flow_rate_lps" class="form-control" placeholder="z. B. 1,5">
+    </div>
+  </div>
+  <div class="mb-2">
+    <label class="form-label">Notiz</label>
+    <input type="text" name="notes" class="form-control" placeholder="optional">
+  </div>
+  <div class="form-hint">Schüttung in Liter pro Sekunde (l/s). Dezimaltrenner Komma oder Punkt.</div>
+</div>

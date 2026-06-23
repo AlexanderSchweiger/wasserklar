@@ -32,7 +32,7 @@
         {% for p in plans %}
         <tr>
           <td>
-            <a href="{{ url_for('network.index', plan=p.id) }}" class="text-reset fw-bold text-decoration-none">{{ p.name }}</a>
+            <a href="{{ url_for('network.index', plan=p.id) }}" class="text-reset fw-bold text-decoration-none" hx-boost="false">{{ p.name }}</a>
             {% if p.source_plan %}
             <div class="small text-secondary"><i class="fas fa-code-branch me-1"></i>Kopie von {{ p.source_plan.name }}</div>
             {% endif %}
@@ -56,7 +56,7 @@
             {% if p.updated_at %}<div>{{ p.updated_at.strftime('%d.%m.%Y %H:%M') }}</div>{% endif %}
           </td>
           <td class="text-end text-nowrap">
-            <a href="{{ url_for('network.index', plan=p.id) }}" class="btn btn-sm btn-outline-secondary me-1" title="Auf der Karte öffnen">
+            <a href="{{ url_for('network.index', plan=p.id) }}" class="btn btn-sm btn-outline-secondary me-1" title="Auf der Karte öffnen" hx-boost="false">
               <i class="fas fa-map-marked-alt"></i>
             </a>
             <button type="button" class="btn btn-sm btn-outline-secondary me-1" title="Bearbeiten"

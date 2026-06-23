@@ -1,0 +1,149 @@
+{# Form-Body fuers Bankkonto-Modal — per HTMX in realAccountModalBody geladen.
+   Erwartet real_account (oder None) + optional form (nach Validierungsfehler).
+   Der Icon-Picker-Script laeuft nach dem HTMX-Swap (htmx fuehrt Inline-Scripts
+   im geswappten Inhalt aus). #}
+{% include "_flash_inline.html" %}
+{% if form %}
+  {% set val_name = form.get('name', '') %}
+  {% set val_iban = form.get('iban', '') %}
+  {% set val_description = form.get('description', '') %}
+  {% set val_opening = form.get('opening_balance', '0.00') %}
+  {% set val_icon = form.get('icon', 'fa-university') or 'fa-university' %}
+  {% set val_is_default = form.get('is_default') %}
+  {% set val_active = form.get('active') %}
+{% elif real_account %}
+  {% set val_name = real_account.name %}
+  {% set val_iban = real_account.iban or '' %}
+  {% set val_description = real_account.description or '' %}
+  {% set val_opening = real_account.opening_balance %}
+  {% set val_icon = real_account.icon or 'fa-university' %}
+  {% set val_is_default = real_account.is_default %}
+  {% set val_active = real_account.active %}
+{% else %}
+  {% set val_name = '' %}
+  {% set val_iban = '' %}
+  {% set val_description = '' %}
+  {% set val_opening = '0.00' %}
+  {% set val_icon = 'fa-university' %}
+  {% set val_is_default = false %}
+  {% set val_active = true %}
+{% endif %}
+<input type="hidden" name="icon" id="icon-input" value="{{ val_icon }}">
+<div class="mb-3">
+  <label class="form-label">Name <span class="text-danger">*</span></label>
+  <input type="text" name="name" class="form-control" required
+    value="{{ val_name }}" placeholder="z. B. Girokonto Raiffeisenbank">
+</div>
+<div class="mb-3">
+  <label class="form-label">IBAN</label>
+  <input type="text" name="iban" class="form-control"
+    value="{{ val_iban }}" placeholder="AT12 3456 7890 1234 5678">
+</div>
+<div class="mb-3">
+  <label class="form-label">Beschreibung</label>
+  <input type="text" name="description" class="form-control" value="{{ val_description }}">
+</div>
+<div class="mb-3">
+  <label class="form-label">Anfangssaldo (€)</label>
+  <div class="input-group">
+    <input type="number" name="opening_balance" step="0.01" class="form-control"
+      value="{{ val_opening }}">
+    <span class="input-group-text">€</span>
+  </div>
+  <small class="form-hint">
+    Kontostand vor der ersten im Programm erfassten Buchung (z. B. Stand per 1.1.).
+    Wird zum Berechnen des aktuellen Saldos addiert.
+  </small>
+</div>
+<div class="mb-3">
+  <label class="form-label">Icon</label>
+  <div class="d-flex flex-wrap" style="gap:8px">
+    {% set icons = [
+      ('fa-university',         'Bank'),
+      ('fa-landmark',           'Gebäude'),
+      ('fa-money-bill-wave',    'Geldschein'),
+      ('fa-money-bill',         'Banknote'),
+      ('fa-coins',              'Münzen'),
+      ('fa-credit-card',        'Kreditkarte'),
+      ('fa-wallet',             'Geldbörse'),
+      ('fa-piggy-bank',         'Sparschwein'),
+      ('fa-hand-holding-usd',   'Geld'),
+      ('fa-file-invoice-dollar','Rechnung'),
+      ('fa-receipt',            'Kassenbon'),
+      ('fa-money-check-alt',    'Scheck'),
+      ('fa-exchange-alt',       'Überweisung'),
+      ('fa-euro-sign',          'Euro'),
+      ('fa-dollar-sign',        'Dollar'),
+      ('fa-percentage',         'Zinsen'),
+      ('fa-chart-line',         'Entwicklung'),
+      ('fa-balance-scale',      'Bilanz'),
+      ('fa-building',           'Firma'),
+      ('fa-cash-register',      'Kasse'),
+    ] %}
+    {% for fa_class, label in icons %}
+    <div class="icon-swatch"
+         data-icon="{{ fa_class }}"
+         title="{{ label }}"
+         style="
+           width:42px; height:42px; border-radius:6px;
+           display:flex; align-items:center; justify-content:center;
+           cursor:pointer; border: 2px solid #dee2e6;
+           background:#f8f9fa; font-size:1.2rem;
+           transition: border-color 0.15s, background 0.15s;
+         ">
+      <i class="fas {{ fa_class }}"></i>
+    </div>
+    {% endfor %}
+  </div>
+  <small class="form-hint mt-1 d-block">
+    Gewählt: <i id="icon-preview" class="fas {{ val_icon }} me-1"></i>
+    <span id="icon-label">{{ val_icon }}</span>
+  </small>
+</div>
+<div class="mb-3">
+  <div class="form-check form-switch">
+    <input type="checkbox" class="form-check-input" id="is_default" name="is_default"
+      {{ 'checked' if val_is_default }}>
+    <label class="form-check-label" for="is_default">Standardkonto</label>
+  </div>
+  <small class="form-hint">Wird bei neuen Buchungen automatisch vorausgewählt.</small>
+</div>
+{% if real_account %}
+<div class="mb-3">
+  <div class="form-check form-switch">
+    <input type="checkbox" class="form-check-input" id="active" name="active"
+      {{ 'checked' if val_active }}>
+    <label class="form-check-label" for="active">Konto aktiv</label>
+  </div>
+</div>
+{% endif %}
+<script>
+(function () {
+  var root = document.getElementById('realAccountModalBody') || document;
+  var input = root.querySelector('#icon-input');
+  var preview = root.querySelector('#icon-preview');
+  var label = root.querySelector('#icon-label');
+  var swatches = root.querySelectorAll('.icon-swatch');
+  if (!input) return;
+
+  function selectIcon(fa) {
+    input.value = fa;
+    if (preview) preview.className = 'fas ' + fa + ' me-1';
+    if (label) label.textContent = fa;
+    swatches.forEach(function (s) {
+      if (s.dataset.icon === fa) {
+        s.style.borderColor = '#0054a6';
+        s.style.background = '#e8f0fe';
+      } else {
+        s.style.borderColor = '#dee2e6';
+        s.style.background = '#f8f9fa';
+      }
+    });
+  }
+
+  swatches.forEach(function (s) {
+    s.addEventListener('click', function () { selectIcon(s.dataset.icon); });
+  });
+  selectIcon(input.value);
+})();
+</script>

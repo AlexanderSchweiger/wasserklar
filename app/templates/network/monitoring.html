@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+{% block title %}Quellschüttung{% endblock %}
+{% block page_title %}<i class="fas fa-chart-line me-2"></i> Quellschüttung{% endblock %}
+
+{# Chart.js + Datums-Adapter (Zeitachse) per head_extra. Der Sidebar-Link traegt
+   hx-boost="false" (harter Reload), sonst werden diese <head>-Scripts nach einem
+   Boost nicht erneut ausgefuehrt — siehe CLAUDE.md „Seiten-spezifische JS-Libs". #}
+{% block head_extra %}
+  <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-header">
+    <div class="d-flex align-items-center flex-wrap" style="gap:.5rem">
+      <i class="fas fa-water text-secondary"></i>
+      {% if plans %}
+      <select class="form-select form-select-sm w-auto" aria-label="Plan wählen"
+              onchange="if(this.value){window.location.href='{{ url_for('network.monitoring') }}?plan='+this.value;}">
+        {% for p in plans %}
+        <option value="{{ p.id }}" {% if plan and p.id == plan.id %}selected{% endif %}>{{ p.name }}</option>
+        {% endfor %}
+      </select>
+      {% endif %}
+      {% if plan %}<span class="badge {{ vocab.plan_status_badge(plan.status) }}">{{ vocab.plan_status_label(plan.status) }}</span>{% endif %}
+      <span class="text-secondary small">Schüttung in l/s — Trockenheits-Monitoring</span>
+    </div>
+    <div class="card-actions">
+      <a href="{{ url_for('network.index') }}" class="btn btn-sm" hx-boost="false">
+        <i class="fas fa-map-marked-alt me-1"></i>Zur Karte
+      </a>
+    </div>
+  </div>
+
+  {% if empty_reason == 'no_plan' %}
+  <div class="card-body">
+    <div class="alert alert-warning mb-0">
+      Noch kein Leitungsplan vorhanden.
+      <a href="{{ url_for('network.plans_index') }}">Jetzt einen Plan anlegen</a> und eine Quelle platzieren, um die Schüttung zu erfassen.
+    </div>
+  </div>
+  {% elif empty_reason == 'no_quelle' %}
+  <div class="card-body">
+    <div class="alert alert-info mb-0">
+      Im Plan <em>{{ plan.name }}</em> ist noch keine <strong>Quelle</strong> erfasst.
+      <a href="{{ url_for('network.index') }}" hx-boost="false">Auf der Karte eine Quelle platzieren</a>, danach hier die Schüttung erfassen.
+    </div>
+  </div>
+  {% else %}
+  <div class="card-body">
+    <div style="height: 360px">
+      <canvas id="yieldChart"></canvas>
+    </div>
+    <div class="text-secondary small mt-2">
+      Eine Linie je Quelle des aktiven Plans. Messungen erfassen über die
+      <a href="{{ url_for('network.elements', type='quelle') }}">Elementliste</a> (Spalte „Schüttung").
+    </div>
+  </div>
+
+  <div class="card-body border-top">
+    <div class="row g-3">
+      {% for f in quellen %}
+      {% set s = stats[f.id] %}
+      <div class="col-md-6 col-xl-4">
+        <div class="card card-sm">
+          <div class="card-body">
+            <div class="d-flex align-items-center mb-2">
+              <i class="fas fa-tint me-2" style="color: {{ vocab.feature_type_color('quelle') }}"></i>
+              <strong class="text-truncate me-2">{{ f.label() }}</strong>
+              <button type="button" class="btn btn-sm btn-outline-primary ms-auto flex-shrink-0"
+                 data-url="{{ url_for('network.yield_add', feature_id=f.id) }}"
+                 onclick="openFeatureYieldModal(this)" title="Schüttungsmessung erfassen">
+                <i class="fas fa-plus me-1"></i>Messung
+              </button>
+            </div>
+            {% if s.count %}
+            <div class="row text-center g-2">
+              <div class="col">
+                <div class="h2 mb-0">{{ s.latest_value | de_number(2) }}</div>
+                <div class="text-secondary small">l/s aktuell<br>{{ s.latest_date.strftime('%d.%m.%Y') }}</div>
+              </div>
+              <div class="col">
+                <div class="h2 mb-0">{{ s.min_12m | de_number(2) if s.min_12m is not none else '—' }}</div>
+                <div class="text-secondary small">Min.<br>12 Monate</div>
+              </div>
+              <div class="col">
+                {% if s.pct_of_median is not none %}
+                {% set pct = s.pct_of_median %}
+                <span class="badge {{ 'bg-red-lt' if pct < 50 else ('bg-yellow-lt' if pct < 80 else 'bg-green-lt') }}">
+                  {{ pct | de_number(0) }} %
+                </span>
+                {% else %}<span class="text-secondary">—</span>{% endif %}
+                <div class="text-secondary small mt-1">vom<br>Median</div>
+              </div>
+            </div>
+            <div class="text-secondary small mt-2">
+              {{ s.count }} Messung(en) · Median {{ s.median_all | de_number(2) }} l/s
+            </div>
+            {% else %}
+            <div class="text-secondary small">
+              Noch keine Schüttungsmessung. Über die
+              <a href="{{ url_for('network.elements', type='quelle') }}">Elementliste</a> erfassen.
+            </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+{% if empty_reason is none %}
+<script type="application/json" id="yield-series">{{ series | tojson }}</script>
+{% endif %}
+{% endblock %}
+
+{% block modals %}
+{% include "network/_yield_modal.html" %}
+{% endblock %}
+
+{% block scripts %}
+{% include "network/_yield_modal_scripts.html" %}
+{# Nach einer erfassten/gelöschten Messung die Seite neu laden, damit Diagramm +
+   Kennzahlen den neuen Stand zeigen (Event aus _yield_modal_scripts.html). #}
+<script>document.addEventListener('yieldChanged', function () { window.location.reload(); });</script>
+<script>
+(function () {
+  function initYieldChart() {
+    var el = document.getElementById('yieldChart');
+    var dataEl = document.getElementById('yield-series');
+    if (!el || !dataEl) { return; }
+    var series;
+    try { series = JSON.parse(dataEl.textContent); } catch (e) { return; }
+    var palette = ['#1c7ed6', '#2b8a3e', '#e8590c', '#ae3ec9', '#0c8599',
+                   '#d6336c', '#f08c00', '#5f3dc4', '#2f9e44', '#c92a2a'];
+    var datasets = series.map(function (q, i) {
+      var color = palette[i % palette.length];
+      return {
+        label: q.label,
+        data: q.points.map(function (p) { return { x: p.date, y: p.value }; }),
+        borderColor: color,
+        backgroundColor: color,
+        tension: 0.2,
+        spanGaps: true,
+        pointRadius: 3,
+      };
+    });
+    new Chart(el.getContext('2d'), {
+      type: 'line',
+      data: { datasets: datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'nearest', intersect: false },
+        scales: {
+          x: {
+            type: 'time',
+            time: {
+              tooltipFormat: 'dd.MM.yyyy',
+              displayFormats: { day: 'dd.MM.yyyy', month: 'MM.yyyy' },
+            },
+            title: { display: true, text: 'Datum' },
+          },
+          y: { beginAtZero: true, title: { display: true, text: 'Schüttung (l/s)' } },
+        },
+        plugins: { legend: { display: true, position: 'bottom' } },
+      },
+    });
+  }
+
+  // Chart.js wird mit defer geladen — kann beim Lauf dieses Inline-Skripts noch
+  // fehlen. Kurz pollen statt auf ein einzelnes Event zu wetten (robust gegen
+  // defer-Timing, siehe CLAUDE.md). Abbruch nach ~2 s.
+  function whenReady(tries) {
+    if (window.Chart) { initYieldChart(); return; }
+    if (tries <= 0) { return; }
+    setTimeout(function () { whenReady(tries - 1); }, 50);
+  }
+  whenReady(40);
+})();
+</script>
+{% endblock %}

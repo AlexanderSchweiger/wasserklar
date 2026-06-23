@@ -120,6 +120,17 @@ _BOOKINGS_FILTER_INCLUDE = (
     "[name='kind'],[name='tax'],[name='account_id'],[name='project_id']"
 )
 
+# Wie _BOOKINGS_FILTER_INCLUDE, aber auf die Filter-Leiste eingeschraenkt
+# (#bookings-filter-bar). Wird vom Tabellen-Refresher nach dem Speichern einer
+# Buchung benutzt: ohne diese Eingrenzung wuerde das offene Buchungs-Modal (das
+# ebenfalls Felder wie account_id/project_id traegt) doppelte Parameter
+# einschleusen, sobald „Speichern und weitere Buchung" das Modal offen laesst.
+_BOOKINGS_REFRESH_INCLUDE = ", ".join(
+    "#bookings-filter-bar [name='%s']" % _n
+    for _n in ("year", "month", "quarter", "real_account_id",
+               "kind", "tax", "account_id", "project_id")
+)
+
 
 def _bookings_table_ctx(params, bulk_done_count=None):
     """Baut den Render-Kontext der Buchungstabelle aus den Filter-Parametern.
@@ -322,6 +333,7 @@ def bookings():
         customers=customers, assignable_projects=assignable_projects,
         tax_rates=tax_service.tax_rates(),
         filter_include=_BOOKINGS_FILTER_INCLUDE,
+        refresh_include=_BOOKINGS_REFRESH_INCLUDE,
         **filters,
         **table_ctx,
     )
@@ -386,76 +398,281 @@ def bookings_bulk_edit():
     return render_template("accounting/_bookings_table.html", **table_ctx)
 
 
+# ---------------------------------------------------------------------------
+# Buchung anlegen / bearbeiten — Modal-first, htmx- und dialekt-robust.
+#
+# Beide Routen liefern bei einem HX-Request (Modal) nur das Formular-Fragment
+# (`_booking_form.html`) bzw. nach dem Speichern ein frisches Fragment + den
+# `booking-saved`-HX-Trigger; bei normalen Requests (Direktlink/Fallback) die
+# Vollseite (`booking_form.html`). Die Validierung sitzt zentral in
+# `_parse_booking_form`, sodass kein roher `int()`/`Decimal()`-Cast mehr einen
+# 500er werfen kann und Eingaben bei Fehlern erhalten bleiben.
+# ---------------------------------------------------------------------------
+
+def _opt_int(raw):
+    """Parst einen optionalen Integer aus einem Formularwert (leer → None)."""
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except (ValueError, TypeError):
+        return None
+
+
+def _valid_fk(raw, model_cls):
+    """Parst eine optionale FK-Id und prueft Existenz; sonst None.
+
+    Schuetzt vor IntegrityError beim Commit, falls ein manipulierter oder
+    veralteter Wert ankommt — er wird dann schlicht verworfen.
+    """
+    pk = _opt_int(raw)
+    if pk is None:
+        return None
+    return pk if db.session.get(model_cls, pk) is not None else None
+
+
+def _booking_form_context(booking=None):
+    """Gemeinsamer Render-Kontext fuer das Buchungsformular (Modal + Vollseite).
+
+    Bei einer Bearbeitung werden referenzierte, aber inaktive/abgeschlossene
+    Entitaeten den Auswahllisten hinzugefuegt, damit sie sichtbar bleiben und
+    beim Speichern nicht verloren gehen.
+    """
+    accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
+    projects = Project.query.filter_by(closed=False).order_by(Project.name).all()
+    real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
+    customers = Customer.query.filter_by(active=True).order_by(Customer.name).all()
+    if booking is not None:
+        if booking.account is not None and booking.account not in accounts:
+            accounts.append(booking.account)
+        if booking.project is not None and booking.project not in projects:
+            projects.append(booking.project)
+        if booking.real_account is not None and booking.real_account not in real_accounts:
+            real_accounts.append(booking.real_account)
+        if booking.customer is not None and booking.customer not in customers:
+            customers.append(booking.customer)
+    return dict(
+        accounts=accounts,
+        projects=projects,
+        real_accounts=real_accounts,
+        customers=customers,
+        tax_rates=tax_service.tax_rates(),
+        default_real_account=RealAccount.query.filter_by(is_default=True, active=True).first(),
+        today=date.today(),
+    )
+
+
+def _parse_booking_form(form, today, *, booking=None):
+    """Validiert + parst die Buchungs-Formulardaten.
+
+    Liefert ``(data, errors)``. ``errors`` ist ein dict {feld → deutsche Meldung}
+    und leer, wenn alles gueltig ist. Bei verbuchten Buchungen werden
+    Datum/Betrag/Steuersatz/Belegnummer nicht geparst (gesperrt) — der Aufrufer
+    behaelt die bestehenden Werte.
+    """
+    errors = {}
+    is_verbucht = booking is not None and booking.status == Booking.STATUS_VERBUCHT
+    data = {}
+
+    # Konto (Pflicht, muss existieren)
+    account_id_raw = (form.get("account_id") or "").strip()
+    account = db.session.get(Account, int(account_id_raw)) if account_id_raw.isdigit() else None
+    if account is None:
+        errors["account_id"] = "Bitte ein gültiges Konto wählen."
+    data["account"] = account
+
+    # Beschreibung (Pflicht)
+    description = (form.get("description") or "").strip()
+    if not description:
+        errors["description"] = "Bitte eine Beschreibung eingeben."
+    data["description"] = description
+
+    # Optionale Zuordnungen (existenzgeprueft, gegen FK-Verletzungen)
+    data["project_id"] = _valid_fk(form.get("project_id"), Project)
+    data["customer_id"] = _valid_fk(form.get("customer_id"), Customer)
+    data["real_account_id"] = _valid_fk(form.get("real_account_id"), RealAccount)
+
+    if not is_verbucht:
+        # Datum (Pflicht, gueltig, nicht in der Zukunft, offenes Buchungsjahr)
+        date_raw = (form.get("date") or "").strip()
+        booking_date = None
+        if not date_raw:
+            errors["date"] = "Bitte ein Datum wählen."
+        else:
+            try:
+                booking_date = date.fromisoformat(date_raw)
+            except ValueError:
+                errors["date"] = "Ungültiges Datum."
+        if booking_date is not None:
+            if booking_date > today:
+                errors["date"] = "Das Buchungsdatum darf nicht in der Zukunft liegen."
+            else:
+                fy_error = acc_svc.open_fiscal_year_error(booking_date)
+                if fy_error:
+                    errors["date"] = fy_error
+        data["date"] = booking_date
+
+        # Betrag (Pflicht, gueltige Zahl, ungleich 0)
+        amount_raw = (form.get("amount") or "").strip().replace(",", ".")
+        amount = None
+        if amount_raw == "":
+            errors["amount"] = "Bitte einen Betrag eingeben."
+        else:
+            try:
+                amount = Decimal(amount_raw)
+            except (InvalidOperation, ValueError):
+                errors["amount"] = "Ungültiger Betrag."
+        if amount is not None and amount == 0:
+            errors["amount"] = "Der Betrag darf nicht 0 sein."
+        data["amount"] = amount
+
+        # Steuersatz (optional; 0/ungueltig/unbekannt → kein Steuersatz)
+        tax_rate_raw = (form.get("tax_rate") or "").strip().replace(",", ".")
+        try:
+            tax_rate = Decimal(tax_rate_raw) if tax_rate_raw else Decimal("0")
+        except (InvalidOperation, ValueError):
+            tax_rate = Decimal("0")
+        known_rates = set(tax_service.tax_rate_values())
+        data["tax_rate"] = tax_rate if (tax_rate > 0 and tax_rate in known_rates) else None
+
+        # Belegnummer (optional)
+        data["reference"] = (form.get("reference") or "").strip()
+
+    return data, errors
+
+
+def _render_booking_form(*, booking, ctx, hx, keep_date="", form_data=None,
+                         errors=None, sticky=None):
+    """Rendert das Buchungsformular — als Fragment (hx/Modal) oder Vollseite."""
+    is_verbucht = booking is not None and booking.status == Booking.STATUS_VERBUCHT
+    form_action_url = (
+        url_for("accounting.booking_edit", booking_id=booking.id) if booking
+        else url_for("accounting.booking_new")
+    )
+    template = "accounting/_booking_form.html" if hx else "accounting/booking_form.html"
+    return render_template(
+        template,
+        booking=booking,
+        is_modal=hx,
+        is_verbucht=is_verbucht,
+        form_action_url=form_action_url,
+        form_data=form_data,
+        errors=errors or {},
+        keep_date=keep_date,
+        sticky=sticky or {},
+        **ctx,
+    )
+
+
+def _booking_form_error(errors, form_data, *, booking, hx):
+    """Antwort bei Validierungsfehlern: Formular mit erhaltenen Werten + Fehlern."""
+    ctx = _booking_form_context(booking=booking)
+    if not hx:
+        for msg in errors.values():
+            flash(msg, "danger")
+    return _render_booking_form(
+        booking=booking, ctx=ctx, hx=hx, form_data=form_data, errors=errors,
+    )
+
+
+def _booking_blocked(message, hx):
+    """Antwort, wenn die Bearbeitung nicht erlaubt ist (Gruppe/Storno/FY)."""
+    if hx:
+        return render_template("accounting/_booking_blocked.html", message=message)
+    flash(message, "warning")
+    return redirect(url_for("accounting.bookings"))
+
+
+# Platzhalter, der nach dem Speichern ins Modal geswappt wird. Bewusst KEIN
+# Formular: der Client schliesst das Modal vollstaendig (und oeffnet es bei
+# „weiteres" frisch wieder). So entstehen keine doppelten TomSelects durch
+# In-Place-Swaps in einem offenen Modal.
+_BOOKING_SAVED_PLACEHOLDER = (
+    '<div class="text-center py-5 text-muted">'
+    '<div class="spinner-border" role="status"><span class="visually-hidden">…</span></div>'
+    '</div>'
+)
+
+
+def _booking_saved_response(*, action, last_date=None, last_real_account_id=None):
+    """HX-Antwort nach erfolgreichem Speichern.
+
+    Liefert nur einen Platzhalter plus einen ``booking-saved``-HX-Trigger. Der
+    Client aktualisiert daraufhin die Tabelle und schliesst das Modal — bei
+    „weiteres" oeffnet er es frisch wieder (Datum/Bankkonto werden im Trigger
+    fuer die naechste Erfassung mitgegeben).
+    """
+    weiteres = action == "weiteres"
+    detail = {"action": "weiteres" if weiteres else "save"}
+    if weiteres:
+        if last_date:
+            detail["date"] = last_date.isoformat()
+        if last_real_account_id:
+            detail["real_account_id"] = last_real_account_id
+    resp = make_response(_BOOKING_SAVED_PLACEHOLDER)
+    resp.headers["HX-Trigger"] = json.dumps({"booking-saved": detail})
+    return resp
+
+
 @bp.route("/bookings/new", methods=["GET", "POST"])
 @login_required
 def booking_new():
-    accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
-    active_projects = Project.query.filter_by(closed=False).order_by(Project.name).all()
-    real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
-    customers = Customer.query.filter_by(active=True).order_by(Customer.name).all()
-    tax_rates = tax_service.tax_rates()
-    default_real_account = RealAccount.query.filter_by(is_default=True, active=True).first()
     today = date.today()
-
-    def _render_new(keep_date="", **extra):
-        return render_template(
-            "accounting/booking_form.html",
-            booking=None, accounts=accounts,
-            projects=active_projects, real_accounts=real_accounts,
-            customers=customers, tax_rates=tax_rates,
-            default_real_account=default_real_account,
-            today=today,
-            keep_date=keep_date,
-            **extra,
-        )
+    hx = bool(request.headers.get("HX-Request"))
 
     if request.method == "POST":
-        booking_date = date.fromisoformat(request.form["date"])
-        if booking_date > today:
-            flash("Das Buchungsdatum darf nicht in der Zukunft liegen.", "danger")
-            return _render_new(form_data=request.form, keep_date=request.form.get("date", ""))
-        fy_error = acc_svc.open_fiscal_year_error(booking_date)
-        if fy_error:
-            flash(f"{fy_error} Buchung wurde nicht gespeichert.", "danger")
-            return _render_new(form_data=request.form, keep_date=request.form.get("date", ""))
-        amount_raw = request.form.get("amount", "0").replace(",", ".")
-        amount = Decimal(amount_raw)
-        acc = db.get_or_404(Account, int(request.form["account_id"]))
-        project_id_raw = request.form.get("project_id") or None
-        real_account_id_raw = request.form.get("real_account_id") or None
-        customer_id_raw = request.form.get("customer_id") or None
-        tax_rate_raw = request.form.get("tax_rate", "0") or "0"
-        try:
-            tax_rate = Decimal(tax_rate_raw)
-        except Exception:
-            tax_rate = Decimal("0")
+        data, errors = _parse_booking_form(request.form, today)
+        if errors:
+            return _booking_form_error(errors, request.form, booking=None, hx=hx)
         b = Booking(
-            date=booking_date,
-            account_id=acc.id,
-            amount=amount,
-            description=request.form.get("description", "").strip(),
-            reference=request.form.get("reference", "").strip(),
-            project_id=int(project_id_raw) if project_id_raw else None,
-            real_account_id=int(real_account_id_raw) if real_account_id_raw else None,
-            customer_id=int(customer_id_raw) if customer_id_raw else None,
-            tax_rate=tax_rate if tax_rate > 0 else None,
+            date=data["date"],
+            account_id=data["account"].id,
+            amount=data["amount"],
+            description=data["description"],
+            reference=data["reference"],
+            project_id=data["project_id"],
+            real_account_id=data["real_account_id"],
+            customer_id=data["customer_id"],
+            tax_rate=data["tax_rate"],
             created_by_id=current_user.id,
         )
         db.session.add(b)
         db.session.commit()
+        action = request.form.get("action")
+        if hx:
+            return _booking_saved_response(
+                action=action, last_date=data["date"],
+                last_real_account_id=data["real_account_id"],
+            )
         flash("Buchung gespeichert.", "success")
-        if request.form.get("action") == "weiteres":
-            return redirect(url_for("accounting.booking_new", date=booking_date.isoformat()))
+        if action == "weiteres":
+            return redirect(url_for("accounting.booking_new", date=data["date"].isoformat()))
         return redirect(url_for("accounting.bookings"))
+
     keep_date = request.args.get("date", "")
-    return _render_new(keep_date=keep_date)
+    # Sticky-Bankkonto beim erneuten Oeffnen via „weiteres" (Query-Param vom Client).
+    sticky = {}
+    ra_raw = (request.args.get("real_account_id") or "").strip()
+    if ra_raw.isdigit() and db.session.get(RealAccount, int(ra_raw)) is not None:
+        sticky["real_account_id"] = int(ra_raw)
+    ctx = _booking_form_context(booking=None)
+    return _render_booking_form(booking=None, ctx=ctx, hx=hx, keep_date=keep_date, sticky=sticky)
 
 
 @bp.route("/bookings/<int:booking_id>/edit", methods=["GET", "POST"])
 @login_required
 def booking_edit(booking_id):
     b = db.get_or_404(Booking, booking_id)
+    today = date.today()
+    hx = bool(request.headers.get("HX-Request"))
+
     if b.group_id is not None:
+        if hx:
+            return _booking_blocked(
+                "Kinder einer Sammelbuchung können nicht einzeln bearbeitet werden. "
+                "Bitte die Sammelbuchung stornieren und neu anlegen.", True,
+            )
         flash(
             "Kinder einer Sammelbuchung können nicht einzeln bearbeitet werden. "
             "Bitte Sammelbuchung stornieren und neu anlegen.",
@@ -463,47 +680,38 @@ def booking_edit(booking_id):
         )
         return redirect(url_for("accounting.booking_group_edit", group_id=b.group_id))
     if b.status == Booking.STATUS_STORNIERT:
-        flash("Stornierte Buchungen können nicht bearbeitet werden.", "warning")
-        return redirect(url_for("accounting.bookings"))
+        return _booking_blocked("Stornierte Buchungen können nicht bearbeitet werden.", hx)
     fy_locked = _locked_fiscal_year(b.date)
     if fy_locked:
-        flash(f"Das Buchungsjahr {fy_locked.year} ist abgeschlossen. Diese Buchung kann nicht bearbeitet werden.", "danger")
-        return redirect(url_for("accounting.bookings"))
+        return _booking_blocked(
+            f"Das Buchungsjahr {fy_locked.year} ist abgeschlossen. "
+            "Diese Buchung kann nicht bearbeitet werden.", hx,
+        )
+
     is_verbucht = b.status == Booking.STATUS_VERBUCHT
-    accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
-    active_projects = Project.query.filter_by(closed=False).order_by(Project.name).all()
-    real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
-    customers = Customer.query.filter_by(active=True).order_by(Customer.name).all()
-    tax_rates = tax_service.tax_rates()
+
     if request.method == "POST":
-        acc = db.get_or_404(Account, int(request.form["account_id"]))
-        project_id_raw = request.form.get("project_id") or None
-        real_account_id_raw = request.form.get("real_account_id") or None
-        customer_id_raw = request.form.get("customer_id") or None
-        b.account_id = acc.id
-        b.description = request.form.get("description", "").strip()
-        b.project_id = int(project_id_raw) if project_id_raw else None
-        b.real_account_id = int(real_account_id_raw) if real_account_id_raw else None
-        b.customer_id = int(customer_id_raw) if customer_id_raw else None
+        data, errors = _parse_booking_form(request.form, today, booking=b)
+        if errors:
+            return _booking_form_error(errors, request.form, booking=b, hx=hx)
+        b.account_id = data["account"].id
+        b.description = data["description"]
+        b.project_id = data["project_id"]
+        b.real_account_id = data["real_account_id"]
+        b.customer_id = data["customer_id"]
         if not is_verbucht:
-            amount_raw = request.form.get("amount", "0").replace(",", ".")
-            b.amount = Decimal(amount_raw)
-            b.date = date.fromisoformat(request.form["date"])
-            b.reference = request.form.get("reference", "").strip()
-            tax_rate_raw = request.form.get("tax_rate", "0") or "0"
-            try:
-                tax_rate = Decimal(tax_rate_raw)
-            except Exception:
-                tax_rate = Decimal("0")
-            b.tax_rate = tax_rate if tax_rate > 0 else None
+            b.amount = data["amount"]
+            b.date = data["date"]
+            b.reference = data["reference"]
+            b.tax_rate = data["tax_rate"]
         db.session.commit()
+        if hx:
+            return _booking_saved_response(action="save")
         flash("Buchung aktualisiert.", "success")
         return redirect(url_for("accounting.bookings"))
-    return render_template(
-        "accounting/booking_form.html", booking=b, accounts=accounts,
-        projects=active_projects, real_accounts=real_accounts, customers=customers,
-        is_verbucht=is_verbucht, tax_rates=tax_rates,
-    )
+
+    ctx = _booking_form_context(booking=b)
+    return _render_booking_form(booking=b, ctx=ctx, hx=hx)
 
 
 @bp.route("/bookings/<int:booking_id>/delete", methods=["POST"])

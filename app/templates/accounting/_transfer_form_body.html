@@ -1,0 +1,94 @@
+{# Form-Body fuers Umbuchungs-Modal — per HTMX in transferModalBody geladen.
+   Erwartet real_accounts, today + optional form (nach Validierungsfehler).
+   TomSelect wird vom globalen htmx:afterSwap-Listener (app.js) reinitialisiert. #}
+{% include "_flash_inline.html" %}
+{% if form %}
+  {% set val_date = form.get('date', today) %}
+  {% set val_amount = form.get('amount', '') %}
+  {% set val_from = form.get('from_real_account_id', '') %}
+  {% set val_to = form.get('to_real_account_id', '') %}
+  {% set val_description = form.get('description', '') %}
+{% else %}
+  {% set val_date = today %}
+  {% set val_amount = '' %}
+  {% set val_from = '' %}
+  {% set val_to = '' %}
+  {% set val_description = '' %}
+{% endif %}
+<div class="row g-2">
+  <div class="col-md-6">
+    <div class="mb-3">
+      <label class="form-label">Datum <span class="text-danger">*</span></label>
+      <input type="date" name="date" class="form-control" value="{{ val_date }}" required>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="mb-3">
+      <label class="form-label">Betrag (€) <span class="text-danger">*</span></label>
+      <div class="input-group">
+        <input type="number" name="amount" step="0.01" min="0.01"
+          class="form-control" value="{{ val_amount }}" required>
+        <span class="input-group-text">€</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="mb-3">
+  <label class="form-label">Ausgangskonto <span class="text-danger">*</span></label>
+  <select name="from_real_account_id" id="from_account" class="form-select tom-select" required>
+    <option value="">– Konto wählen –</option>
+    {% for ra in real_accounts %}
+    <option value="{{ ra.id }}" {{ 'selected' if val_from == ra.id|string }}>
+      {{ ra.name }}{% if ra.iban %} ({{ ra.iban }}){% endif %}
+    </option>
+    {% endfor %}
+  </select>
+  <small class="form-hint">Von diesem Konto wird der Betrag abgebucht.</small>
+</div>
+
+<div class="mb-3">
+  <label class="form-label">Zielkonto <span class="text-danger">*</span></label>
+  <select name="to_real_account_id" id="to_account" class="form-select tom-select" required>
+    <option value="">– Konto wählen –</option>
+    {% for ra in real_accounts %}
+    <option value="{{ ra.id }}" {{ 'selected' if val_to == ra.id|string }}>
+      {{ ra.name }}{% if ra.iban %} ({{ ra.iban }}){% endif %}
+    </option>
+    {% endfor %}
+  </select>
+  <small class="form-hint">Auf dieses Konto wird der Betrag gutgeschrieben.</small>
+</div>
+
+<div class="mb-3">
+  <label class="form-label">Beschreibung <span class="text-danger">*</span></label>
+  <input type="text" name="description" class="form-control" value="{{ val_description }}"
+    placeholder="z. B. Monatliche Überweisung auf Sparkonto" required>
+</div>
+
+<div id="same-account-warning" class="alert alert-warning d-none">
+  <i class="fas fa-exclamation-triangle me-1"></i>
+  Ausgangs- und Zielkonto dürfen nicht gleich sein.
+</div>
+<script>
+(function () {
+  var body = document.getElementById('transferModalBody');
+  if (!body) return;
+  var fromEl = body.querySelector('#from_account');
+  var toEl = body.querySelector('#to_account');
+  var warning = body.querySelector('#same-account-warning');
+  var form = document.getElementById('transferForm');
+  var submitBtn = form ? form.querySelector('button[type="submit"]') : null;
+  if (!fromEl || !toEl) return;
+
+  function check() {
+    var same = fromEl.value && toEl.value && fromEl.value === toEl.value;
+    if (warning) warning.classList.toggle('d-none', !same);
+    if (submitBtn) submitBtn.disabled = same;
+  }
+
+  fromEl.addEventListener('change', check);
+  toEl.addEventListener('change', check);
+  check();
+})();
+</script>

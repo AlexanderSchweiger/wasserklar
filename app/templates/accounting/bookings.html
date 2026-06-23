@@ -7,10 +7,25 @@
 {# Out-of-Band-Ziel fuer die Massen-Bearbeiten-Bestaetigung (siehe _bookings_table.html). #}
 <div id="bookings-bulk-flash"></div>
 
+{# Toast-Bereich fuer „Buchung gespeichert"-Rueckmeldungen aus dem Modal. #}
+<div id="booking-toast-host" style="position:fixed;top:1rem;right:1rem;z-index:1090;pointer-events:none"></div>
+
+{# Unsichtbarer Tabellen-Refresher: aktualisiert die Buchungsliste (unter
+   Beibehaltung der aktiven Filter), sobald im Modal eine Buchung gespeichert
+   wurde. hx-include ist auf die Filter-Leiste eingegrenzt, damit das offene
+   Modal keine doppelten Parameter einschleust. #}
+<span id="bookings-refresher"
+      hx-get="{{ url_for('accounting.bookings') }}"
+      hx-trigger="booking-saved from:body"
+      hx-target="#bookings-table"
+      hx-swap="innerHTML"
+      hx-include="{{ refresh_include }}"
+      style="display:none"></span>
+
 <div class="card table-card">
   <div class="card-header">
     {% set months = [(1,'Jänner'),(2,'Februar'),(3,'März'),(4,'April'),(5,'Mai'),(6,'Juni'),(7,'Juli'),(8,'August'),(9,'September'),(10,'Oktober'),(11,'November'),(12,'Dezember')] %}
-    <div class="filter-bar">
+    <div class="filter-bar" id="bookings-filter-bar">
       <div class="mb-3">
         <label class="form-label mb-0 me-1">Jahr</label>
         <input type="number" name="year" value="{{ year }}" min="2000" max="2100"
@@ -130,9 +145,15 @@
     </div>
     <div class="card-options">
       <div class="btn-group">
-        <a href="{{ url_for('accounting.booking_new') }}" class="btn btn-primary">
+        {# Modal-first: laedt das Formular bei jedem Oeffnen frisch vom Server
+           (kein gecachtes DOM → keine doppelten TomSelects). #}
+        <button type="button" class="btn btn-primary"
+                data-bs-toggle="modal" data-bs-target="#bookingFormModal"
+                data-modal-title="Neue Buchung"
+                hx-get="{{ url_for('accounting.booking_new') }}"
+                hx-target="#booking-form-host" hx-swap="innerHTML">
           <i class="fas fa-plus me-1"></i> Neue Buchung
-        </a>
+        </button>
         <button type="button" class="btn btn-primary dropdown-toggle dropdown-toggle-split"
                 data-bs-toggle="dropdown" aria-expanded="false">
           <span class="visually-hidden">Dropdown</span>
@@ -273,10 +294,153 @@
   }
 })();
 </script>
+
+<script>
+{# ===== Buchungs-Modal: Lebenszyklus, Speicher-Rueckmeldung, Kontaktanlage =====
+   Element-gebundene Listener (Modale werden bei hx-boost frisch erzeugt → keine
+   Mehrfach-Einhaengung); body-/window-Listener sind per Flag idempotent. #}
+
+{# Toast-Helfer auf window, damit der einmalig gebundene booking-saved-Listener
+   stets die aktuelle Definition trifft. #}
+window.__bookingToast = function (msg, kind) {
+  var host = document.getElementById('booking-toast-host');
+  if (!host) return;
+  var el = document.createElement('div');
+  el.className = 'alert alert-' + (kind || 'success') + ' shadow-sm mb-2';
+  el.style.cssText = 'min-width:240px;pointer-events:auto;transition:opacity .4s';
+  el.innerHTML = '<i class="fas fa-check-circle me-2"></i>' + msg;
+  host.appendChild(el);
+  setTimeout(function () {
+    el.style.opacity = '0';
+    setTimeout(function () { el.remove(); }, 400);
+  }, 2400);
+};
+
+// Fokus aufs sinnvollste Feld (Betrag, sonst erstes nicht-readonly Feld).
+// Wird per shown.bs.modal (Erst-Oeffnen, gewinnt nach Bootstraps Fokus-Enforce)
+// UND per htmx:afterSettle (nach „weiteres"-Swap / langsamem Laden) ausgeloest.
+window.__focusBookingField = function () {
+  var host = document.getElementById('booking-form-host');
+  if (!host) return;
+  var amt = host.querySelector('#amount');
+  if (amt && !amt.readOnly && amt.offsetParent !== null) {
+    amt.focus(); try { amt.select(); } catch (e) {}
+    return;
+  }
+  var first = host.querySelector('input:not([type=hidden]):not([readonly]), textarea, select.tom-select');
+  if (first) { if (first.tomselect) first.tomselect.focus(); else first.focus(); }
+};
+
+(function () {
+  var bookingModal = document.getElementById('bookingFormModal');
+  if (bookingModal) {
+    // Titel aus dem ausloesenden Button uebernehmen (Neu vs. Bearbeiten).
+    bookingModal.addEventListener('show.bs.modal', function (e) {
+      var t = e.relatedTarget;
+      var titleEl = document.getElementById('bookingFormModalTitle');
+      if (titleEl) titleEl.textContent = (t && t.getAttribute('data-modal-title')) || 'Buchung';
+    });
+    bookingModal.addEventListener('shown.bs.modal', function () {
+      if (window.__focusBookingField) window.__focusBookingField();
+    });
+    // Beim Schliessen TomSelects sauber zerstoeren und Host leeren, damit beim
+    // naechsten Oeffnen frisch geladen wird (keine verwaisten Widgets/Dropdowns).
+    bookingModal.addEventListener('hidden.bs.modal', function () {
+      var host = document.getElementById('booking-form-host');
+      if (!host) return;
+      host.querySelectorAll('select.tom-select').forEach(function (el) {
+        if (el.tomselect) { try { el.tomselect.destroy(); } catch (err) {} }
+      });
+      host.innerHTML = '<div class="text-center py-5 text-muted">'
+        + '<div class="spinner-border" role="status"></div></div>';
+    });
+  }
+})();
+
+{# Speicher-Rueckmeldung. „save": Modal vollstaendig schliessen. „weiteres":
+   Modal vollstaendig schliessen UND frisch wieder oeffnen (mit Sticky-Datum/
+   -Bankkonto) — der vollstaendige Close+Reopen-Zyklus garantiert frische, nie
+   doppelte TomSelects (kein In-Place-Swap in einem offenen Modal). #}
+if (!window.__bookingSavedBound) {
+  window.__bookingSavedBound = true;
+  document.body.addEventListener('booking-saved', function (e) {
+    var d = e.detail || {};
+    var action = d.action || 'save';
+    var m = document.getElementById('bookingFormModal');
+    var modal = (m && window.bootstrap) ? bootstrap.Modal.getOrCreateInstance(m) : null;
+    if (window.__bookingToast) {
+      window.__bookingToast(action === 'weiteres'
+        ? 'Buchung gespeichert – weiter erfassen.'
+        : 'Buchung gespeichert.');
+    }
+    if (!modal) return;
+
+    if (action === 'weiteres') {
+      var base = m.getAttribute('data-booking-new-url') || '';
+      var params = [];
+      if (d.date) params.push('date=' + encodeURIComponent(d.date));
+      if (d.real_account_id) params.push('real_account_id=' + encodeURIComponent(d.real_account_id));
+      var url = base + (params.length ? ('?' + params.join('&')) : '');
+      // Nach VOLLSTAENDIGEM Schliessen frisch laden und wieder oeffnen.
+      m.addEventListener('hidden.bs.modal', function reopen() {
+        m.removeEventListener('hidden.bs.modal', reopen);
+        if (window.htmx && base) {
+          window.htmx.ajax('GET', url, {target: '#booking-form-host', swap: 'innerHTML'})
+            .then(function () { modal.show(); });
+        } else {
+          modal.show();
+        }
+      });
+      modal.hide();
+    } else {
+      modal.hide();
+    }
+  });
+}
+
+{# Nach dem Einsetzen des Formulars ins Modal (Erst-Laden ODER „weiteres"-Swap)
+   das sinnvollste Feld fokussieren. Einmalig gebunden (Body-Listener). #}
+if (!window.__bookingFocusBound) {
+  window.__bookingFocusBound = true;
+  document.body.addEventListener('htmx:afterSettle', function (e) {
+    var tgt = e.detail && e.detail.target;
+    if (tgt && tgt.id === 'booking-form-host' && window.__focusBookingField) {
+      window.__focusBookingField();
+    }
+  });
+}
+</script>
 {% endblock %}
 
 {% block modals %}
 {{ super() }}
+
+{# Buchung anlegen / bearbeiten. Inhalt wird pro Oeffnen frisch per hx-get in
+   #booking-form-host geladen; beim Schliessen werden die TomSelects zerstoert
+   und der Host geleert (siehe scripts). #}
+<div class="modal fade" id="bookingFormModal" tabindex="-1" aria-hidden="true"
+     data-booking-new-url="{{ url_for('accounting.booking_new') }}">
+  {# Bewusst KEIN modal-dialog-scrollable: dessen overflow:auto wuerde die
+     TomSelect-Dropdowns abschneiden. Das Formular ist kompakt genug. #}
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="fas fa-book me-2"></i><span id="bookingFormModalTitle">Buchung</span></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      {# hx-on::before-swap: TomSelects im Host VOR jedem In-Place-Swap (z.B.
+         Fehler-Redisplay) sauber zerstoeren → keine doppelten Widgets. Im
+         Template ausgeliefert (nicht vom statischen JS abhaengig). #}
+      <div id="booking-form-host" class="modal-body"
+           hx-on::before-swap="this.querySelectorAll('select.tom-select').forEach(function(s){ if (s.tomselect) { try { s.tomselect.destroy(); } catch(e){} } })">
+        <div class="text-center py-5 text-muted">
+          <div class="spinner-border" role="status"><span class="visually-hidden">Wird geladen…</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="modal fade" id="bookingsBulkEditModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog">
     <div class="modal-content">

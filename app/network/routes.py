@@ -16,7 +16,9 @@ import json
 import os
 import unicodedata
 import uuid
-from datetime import date
+from datetime import date, timedelta
+from decimal import Decimal, InvalidOperation
+from statistics import median
 
 from flask import (
     render_template, request, jsonify, redirect, url_for, flash,
@@ -32,7 +34,7 @@ from app.network import wlk_import as wlk
 from app.extensions import db
 from app.pagination import paginate_list
 from app.models import (
-    NetworkPlan, NetworkFeature, MaintenanceLog, FeaturePhoto,
+    NetworkPlan, NetworkFeature, MaintenanceLog, SpringYield, FeaturePhoto,
     Property, PropertyOwnership, Customer,
 )
 
@@ -64,6 +66,8 @@ def _map_config(plan):
         "base": url_for("network.index"),
         "featuresUrl": url_for("network.features_geojson", plan=pid),
         "createUrl": url_for("network.feature_create"),
+        # Basis-URL fuer den Liegenschafts-Link im Popup (JS haengt die ID an).
+        "propertyUrl": url_for("properties.detail", property_id=0).rsplit("/", 1)[0] + "/",
         "planId": pid,
         "vocab": vocab.as_client_dict(),
     }
@@ -143,6 +147,14 @@ def _render_maintenance_modal_body(f):
     return render_template(
         "network/_maintenance_modal_body.html",
         f=f, vocab=vocab, today_iso=date.today().isoformat(),
+    )
+
+
+def _render_yield_modal_body(f):
+    """Body des „Quellschüttung"-Modals der Elementliste (Liste + Felder, ohne <form>)."""
+    return render_template(
+        "network/_yield_modal_body.html",
+        f=f, today_iso=date.today().isoformat(),
     )
 
 
@@ -554,6 +566,134 @@ def maintenance_delete(log_id):
     if request.headers.get("X-From-Modal"):
         return _render_maintenance_modal_body(f)
     return _render_panel(f)
+
+
+# ---------------------------------------------------------------------------
+# Quellschuettung (Schuettungs-Messreihe je Quelle)
+# ---------------------------------------------------------------------------
+
+@bp.route("/features/<int:feature_id>/yields", methods=["GET", "POST"])
+@login_required
+def yield_add(feature_id):
+    """GET: Quellschüttungs-Modal-Body (Elementliste) laden. POST: Schüttungs-
+    messung (l/s) anlegen. Nur fuer Features vom Typ 'quelle' (sonst 404 — der
+    Button erscheint ohnehin nur bei Quellen). Antwort kontextabhaengig: aus dem
+    Modal (X-From-Modal) das Body-Fragment (Modal bleibt offen), sonst das Panel.
+    Bewusst KEIN ``maintenance_enabled``-Gate — Monitoring ist davon unabhaengig."""
+    f = NetworkFeature.query.get_or_404(feature_id)
+    if f.feature_type != "quelle":
+        abort(404)
+    from_modal = bool(request.headers.get("X-From-Modal"))
+    saved = False
+
+    if request.method == "POST":
+        when = _parse_date(request.form.get("measurement_date")) or date.today()
+        raw = (request.form.get("flow_rate_lps") or "").strip().replace(",", ".")
+        try:
+            flow = Decimal(raw)
+        except (InvalidOperation, ValueError):
+            flow = None
+        if flow is None or not flow.is_finite() or flow < 0:
+            flash("Bitte eine gültige Schüttung in l/s (≥ 0) angeben.", "warning")
+        else:
+            db.session.add(SpringYield(
+                feature_id=f.id,
+                measurement_date=when,
+                flow_rate_lps=flow,
+                notes=(request.form.get("notes") or "").strip() or None,
+                created_by_id=current_user.id,
+            ))
+            db.session.commit()
+            saved = True
+
+    if from_modal:
+        # HX-Trigger 'yieldSaved' nur bei echter Änderung → das Modal kann beim
+        # Schliessen die Host-Seite (Monitoring-Diagramm) zum Reload anstossen.
+        resp = make_response(_render_yield_modal_body(f))
+        if saved:
+            resp.headers["HX-Trigger"] = "yieldSaved"
+        return resp
+    return _render_panel(f)
+
+
+@bp.route("/yields/<int:yield_id>/delete", methods=["POST"])
+@login_required
+def yield_delete(yield_id):
+    reading = SpringYield.query.get_or_404(yield_id)
+    f = reading.feature
+    db.session.delete(reading)
+    db.session.commit()
+    if request.headers.get("X-From-Modal"):
+        resp = make_response(_render_yield_modal_body(f))
+        resp.headers["HX-Trigger"] = "yieldSaved"
+        return resp
+    return _render_panel(f)
+
+
+@bp.route("/monitoring")
+@login_required
+def monitoring():
+    """Quellschüttung-Monitoring: Schüttungs-Zeitreihen aller Quellen des aktiven
+    Plans als Liniendiagramm (Trockenheits-Monitoring) plus Kennzahlen je Quelle.
+
+    Scope = aktiver Plan via ``current_plan()`` (mit ``?plan=``/Session-Override +
+    Plan-Switcher). Messungen haengen an EINER ``feature_id`` — bei mehreren
+    Plan-Kopien einer Quelle ist die Reihe pro Plan-Feature getrennt; der aktive
+    Plan ist der operative Wahrheitsstand."""
+    plan = current_plan()
+    plans = NetworkPlan.query.order_by(NetworkPlan.name.asc()).all()
+    if plan is None:
+        return render_template(
+            "network/monitoring.html", plan=None, plans=plans, vocab=vocab,
+            quellen=[], series=[], stats={}, empty_reason="no_plan",
+        )
+
+    quellen = (
+        NetworkFeature.query
+        .filter_by(plan_id=plan.id, feature_type="quelle")
+        .order_by(NetworkFeature.name.asc())
+        .all()
+    )
+    if not quellen:
+        return render_template(
+            "network/monitoring.html", plan=plan, plans=plans, vocab=vocab,
+            quellen=[], series=[], stats={}, empty_reason="no_quelle",
+        )
+
+    cutoff_12m = date.today() - timedelta(days=365)
+    series, stats = [], {}
+    for f in quellen:
+        readings = list(f.spring_yields)  # bereits aufsteigend nach Datum (Relationship)
+        series.append({
+            "id": f.id,
+            "label": f.label(),
+            "points": [
+                {"date": r.measurement_date.isoformat(), "value": float(r.flow_rate_lps)}
+                for r in readings
+            ],
+        })
+        if readings:
+            values = [float(r.flow_rate_lps) for r in readings]
+            vals_12m = [float(r.flow_rate_lps) for r in readings
+                        if r.measurement_date >= cutoff_12m]
+            med = median(values)
+            last = readings[-1]
+            stats[f.id] = {
+                "count": len(readings),
+                "latest_value": values[-1],
+                "latest_date": last.measurement_date,
+                "min_12m": min(vals_12m) if vals_12m else None,
+                "median_all": med,
+                "pct_of_median": (values[-1] / med * 100) if med else None,
+            }
+        else:
+            stats[f.id] = {"count": 0, "latest_value": None, "latest_date": None,
+                           "min_12m": None, "median_all": None, "pct_of_median": None}
+
+    return render_template(
+        "network/monitoring.html", plan=plan, plans=plans, vocab=vocab,
+        quellen=quellen, series=series, stats=stats, empty_reason=None,
+    )
 
 
 # ---------------------------------------------------------------------------

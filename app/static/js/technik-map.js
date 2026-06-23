@@ -125,11 +125,17 @@
     if (props.pressure_rating) html += '<br>' + escapeHtml(props.pressure_rating);
     if (props.manufacturer) html += '<br>Fabrikat: ' + escapeHtml(props.manufacturer);
     // Verknuepfte Liegenschaft: aktueller Besitzer + Adresse (Strasse + HNR).
+    // Die Adresse ist ein Link auf die Liegenschaft, wenn das Feature verknuepft
+    // ist; hx-boost="false", damit htmx den Klick nicht boostet (Map-Container).
     var owners = props.owner_names || [];
     if (props.property_address || owners.length) {
       html += '<hr class="my-1">';
       if (props.property_address) {
-        html += '<div><i class="fas fa-map-marker-alt text-secondary"></i> ' + escapeHtml(props.property_address) + '</div>';
+        var addr = escapeHtml(props.property_address);
+        if (props.property_id != null && T.propertyUrl) {
+          addr = '<a href="' + T.propertyUrl + props.property_id + '" hx-boost="false">' + addr + '</a>';
+        }
+        html += '<div><i class="fas fa-map-marker-alt text-secondary"></i> ' + addr + '</div>';
       }
       if (owners.length) {
         html += '<div><i class="fas fa-user text-secondary"></i> ' + escapeHtml(owners.join(", ")) + '</div>';

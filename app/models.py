@@ -2188,6 +2188,13 @@ class NetworkFeature(db.Model):
         cascade="all, delete-orphan",
         order_by="MaintenanceLog.date.desc()",
     )
+    # Schuettungs-Messreihe (nur fuer Quellen relevant) — aufsteigend nach Datum,
+    # damit die Werte chronologisch fuer das Diagramm vorliegen.
+    spring_yields = db.relationship(
+        "SpringYield", backref="feature", lazy="selectin",
+        cascade="all, delete-orphan",
+        order_by="SpringYield.measurement_date.asc()",
+    )
 
     def is_line(self):
         return self.geometry_kind == self.GEOMETRY_LINE
@@ -2242,6 +2249,37 @@ class MaintenanceLog(db.Model):
 
     def __repr__(self):
         return f"<MaintenanceLog feature={self.feature_id} {self.date} {self.kind}>"
+
+
+class SpringYield(db.Model):
+    """Schuettungs-Messung (Quellergiebigkeit) zu einer NetworkFeature vom Typ
+    'quelle'. Zeitreihe fuer das Trockenheits-Monitoring — Durchfluss in l/s je
+    Messdatum. Geschwister-Pattern zu ``MaintenanceLog`` (gleicher feature_id-FK,
+    gleiche Audit-Spalten). Bewusst kein eigenes Quell-Stammdaten-Model: die
+    Quelle IST die NetworkFeature im Leitungsplan.
+    """
+    __tablename__ = "spring_yields"
+
+    id = db.Column(db.Integer, primary_key=True)
+    feature_id = db.Column(
+        db.Integer, db.ForeignKey("network_features.id"),
+        nullable=False, index=True,
+    )
+    measurement_date = db.Column(db.Date, nullable=False)
+    # Schuettung in Liter/Sekunde. Numeric (nicht Float) — exakte Dezimalwerte,
+    # dialekt-portabel. 8,3 → bis 99999,999 l/s, mehr als genug fuer Quellen.
+    flow_rate_lps = db.Column(db.Numeric(precision=8, scale=3), nullable=False)
+    notes = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_by_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+
+    def __repr__(self):
+        return (
+            f"<SpringYield feature={self.feature_id} "
+            f"{self.measurement_date} {self.flow_rate_lps} l/s>"
+        )
 
 
 class FeaturePhoto(db.Model):

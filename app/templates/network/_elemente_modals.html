@@ -4,7 +4,9 @@
      HX-Trigger closeFeatureEditModal). Body = _feature_form_fields.html.
    - „Wartung & Prüfung": Schließen / „Eintrag hinzufügen" — Modal bleibt offen,
      schließt nur über „Schließen". Body = _maintenance_modal_body.html.
-   Beide Bodies werden per HTMX-GET geladen (siehe _elemente_modals_scripts.html). #}
+   Beide Bodies werden per HTMX-GET geladen (siehe _elemente_modals_scripts.html).
+   Das „Quellschüttung"-Modal ist ausgelagert (_yield_modal.html + _yield_modal_scripts.html),
+   weil es auch auf der Monitoring-Seite genutzt wird — elemente.html bindet es separat ein. #}
 
 <div class="modal fade" id="featureEditModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-lg">

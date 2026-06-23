@@ -945,17 +945,27 @@ def register_commands(app):
         (abgeschlossen) mit Ablesungen, aktuelle Periode mit ~20 Zaehlertauschen,
         20 Rechnungen (gemischte Status), 4 Mahnungen (Stufen 1-4),
         2 Bankkonten + 3 Umbuchungen, 12 Sammelbuchungen mit Projekten und
-        verschiedenen Steuersaetzen, passende Tarife.
+        verschiedenen Steuersaetzen, passende Tarife. Plus kompletter
+        Leitungsnetz-Datensatz: aktiver Plan mit 3 Quellen (historische
+        Schuettungs-Messreihen mit Trockenperioden), Hochbehaelter, Leitungen,
+        ~30 Hausanschluessen (grossteils zugeordnet + geocodet), Hydranten/
+        Schiebern mit teils faelligen Pruef-Logs und 9 Stoerungsjournal-Eintraegen.
+
+        Die Buchhaltung wird zudem bis ins **aktuelle Jahr** fortgeschrieben
+        (``now=date.today()``): Vorjahre abgeschlossen, ein offenes Buchungsjahr
+        im laufenden Jahr und laufende Buchungen/Posten/Umbuchung bis heute.
 
         Login: admin / demo1234.
         """
+        from datetime import date
         from app.seed.demo import seed_demo_data
 
         _assert_demo_seed_allowed(app, yes=yes)
 
         print("Wipe und Demo-Seed laeuft...")
         _wipe_business_data(db, verbose=True)
-        seed_demo_data(db, verbose=True)
+        # ``now`` = echtes heute -> Buchhaltung bis ins aktuelle Jahr fortschreiben.
+        seed_demo_data(db, verbose=True, now=date.today())
         # OpenItems fuer SENT-Rechnungen + ggf. Kundennummern nachziehen
         run_data_migrations(db, verbose=True)
         db.session.commit()

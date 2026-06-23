@@ -410,10 +410,13 @@
         {% if fy_locked %}
         <span class="text-muted" title="Buchungsjahr abgeschlossen"><i class="fas fa-lock"></i></span>
         {% elif b.status == 'Offen' %}
-        <a href="{{ url_for('accounting.booking_edit', booking_id=b.id) }}"
-           class="btn btn-sm btn-outline-secondary" title="Bearbeiten">
+        <button type="button" class="btn btn-sm btn-outline-secondary" title="Bearbeiten"
+           data-bs-toggle="modal" data-bs-target="#bookingFormModal"
+           data-modal-title="Buchung bearbeiten"
+           hx-get="{{ url_for('accounting.booking_edit', booking_id=b.id) }}"
+           hx-target="#booking-form-host" hx-swap="innerHTML">
           <i class="fas fa-edit"></i>
-        </a>
+        </button>
         <form method="post" action="{{ url_for('accounting.booking_delete', booking_id=b.id) }}"
               style="display:inline"
               hx-boost="false"
@@ -424,10 +427,13 @@
           </button>
         </form>
         {% elif b.status == 'Verbucht' %}
-        <a href="{{ url_for('accounting.booking_edit', booking_id=b.id) }}"
-           class="btn btn-sm btn-outline-secondary" title="Bearbeiten">
+        <button type="button" class="btn btn-sm btn-outline-secondary" title="Bearbeiten"
+           data-bs-toggle="modal" data-bs-target="#bookingFormModal"
+           data-modal-title="Buchung bearbeiten"
+           hx-get="{{ url_for('accounting.booking_edit', booking_id=b.id) }}"
+           hx-target="#booking-form-host" hx-swap="innerHTML">
           <i class="fas fa-edit"></i>
-        </a>
+        </button>
         {% if not b.storno_of_id %}
         <a href="{{ url_for('accounting.booking_stornieren', booking_id=b.id) }}"
            class="btn btn-sm btn-outline-danger" title="Stornieren">

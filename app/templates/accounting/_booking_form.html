@@ -1,0 +1,292 @@
+{# ===========================================================================
+   Buchungs-Formular — gemeinsames Fragment fuer Modal (is_modal=True) und
+   Vollseiten-Fallback (is_modal=False, eingebunden aus booking_form.html).
+
+   Erwartete Variablen:
+     booking            — Booking oder None (Neuanlage)
+     is_modal           — bool: hx-Modal-Kontext (hx-post) vs. nativer POST
+     is_verbucht        — bool: gesperrte Felder (Datum/Betrag/Steuer/Beleg)
+     form_action_url    — Ziel-URL fuer POST
+     form_data          — request.form bei Fehler-Redisplay (sonst None)
+     errors             — dict {feld → meldung} (oder leer)
+     keep_date          — Sticky-Datum (Neuanlage / „weiteres")
+     sticky             — dict mit Sticky-Werten (z.B. real_account_id)
+     focus_amount       — bool: nach „weiteres" Fokus auf Betrag setzen
+     accounts/projects/real_accounts/customers/tax_rates/default_real_account/today
+
+   Robustheit: alle Feldwerte werden aus (form_data → booking → default)
+   aufgeloest, sodass bei einem Validierungsfehler KEINE Eingabe verloren geht.
+=========================================================================== #}
+{% set locked = is_verbucht %}
+{% set fd = form_data if (form_data is defined and form_data) else None %}
+
+{# --- Vorausgewaehlte Werte robust aufloesen ------------------------------ #}
+{% set date_val = (fd.get('date') if fd else (booking.date.isoformat() if booking else (keep_date or (today.isoformat() if today else '')))) %}
+{% set amount_val = (fd.get('amount') if fd else (booking.amount if booking else '')) %}
+{% set desc_val = (fd.get('description') if fd else (booking.description if booking else '')) %}
+{% set ref_val = (fd.get('reference') if fd else (booking.reference if booking else '')) %}
+
+{% set sel_account = (fd.get('account_id') if fd else ((booking.account_id|string) if booking else '')) or '' %}
+{% set sel_project = (fd.get('project_id') if fd else ((booking.project_id|string) if (booking and booking.project_id) else '')) or '' %}
+{% set sel_customer = (fd.get('customer_id') if fd else ((booking.customer_id|string) if (booking and booking.customer_id) else '')) or '' %}
+{% set sel_real %}{% if fd %}{{ fd.get('real_account_id') or '' }}{% elif booking %}{{ booking.real_account_id|string if booking.real_account_id else '' }}{% elif sticky.get('real_account_id') %}{{ sticky.get('real_account_id')|string }}{% elif default_real_account %}{{ default_real_account.id|string }}{% endif %}{% endset %}
+{% set sel_real = sel_real | trim %}
+
+<form id="booking-form" data-new="{{ 'true' if not booking else 'false' }}"
+      {% if is_modal %}
+      hx-post="{{ form_action_url }}"
+      hx-target="#booking-form-host"
+      hx-swap="innerHTML"
+      hx-sync="this:drop"
+      {% else %}
+      method="post" action="{{ form_action_url }}"
+      {% endif %}>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+  {% if errors and is_modal %}
+  <div class="alert alert-danger" role="alert">
+    <div class="fw-bold mb-1"><i class="fas fa-exclamation-circle me-1"></i>Bitte korrigieren:</div>
+    <ul class="mb-0 ps-3">
+      {% for field, msg in errors.items() %}<li>{{ msg }}</li>{% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  {% if locked %}
+  <div class="alert alert-warning py-2" role="alert">
+    <i class="fas fa-lock me-1"></i> Verbuchte Buchung — Datum, Betrag, Belegnummer und
+    Steuersatz können nicht mehr geändert werden.
+  </div>
+  {% endif %}
+
+  {# Zeile 1: Datum | Betrag | Steuersatz (nativ) | berechnete Steuer #}
+  <div class="row g-3">
+    <div class="col-12 col-sm-3">
+      <label class="form-label">Datum <span class="text-danger">*</span></label>
+      <input type="date" name="date" id="booking-date" class="form-control{{ ' is-invalid' if errors.get('date') }}"
+        value="{{ date_val }}"
+        {% if not locked and today is defined %}max="{{ today.isoformat() }}"{% endif %}
+        {{ 'readonly' if locked }} required>
+    </div>
+    <div class="col-12 col-sm-3">
+      <label class="form-label">Betrag (€) <span class="text-danger">*</span></label>
+      <div class="input-group">
+        <input type="number" name="amount" id="amount" step="0.01"
+          class="form-control{{ ' is-invalid' if errors.get('amount') }}"
+          value="{{ amount_val }}" {{ 'readonly' if locked }}
+          {% if not booking %}autofocus{% endif %} required>
+        <span class="input-group-text">€</span>
+      </div>
+      <div class="mt-1">
+        <span id="buchungstyp_badge" class="badge bg-secondary text-white">—</span>
+      </div>
+    </div>
+    <div class="col-12 col-sm-3">
+      <label class="form-label">Steuersatz</label>
+      {# Bewusst NATIVES Select: nur wenige feste Werte → maximal tastatur-
+         freundlich und nie doppelt initialisiert. #}
+      <select name="tax_rate" id="tax_rate" class="form-select" {{ 'disabled' if locked }}>
+        <option value="">–</option>
+        {% for tr in tax_rates %}
+        {# Numerischer Vergleich beim Bearbeiten (DB liefert 20.00, Option-Wert 20);
+           bei Fehler-Redisplay String-Vergleich gegen den abgeschickten Wert. #}
+        {% set tax_selected = false %}
+        {% if fd %}
+          {% if fd.get('tax_rate') == tr.rate|string %}{% set tax_selected = true %}{% endif %}
+        {% elif booking and booking.tax_rate is not none and booking.tax_rate == tr.rate %}
+          {% set tax_selected = true %}
+        {% endif %}
+        <option value="{{ tr.rate }}" {{ 'selected' if tax_selected }}>
+          {{ tr.label or (tr.rate | int ~ ' %') }}
+        </option>
+        {% endfor %}
+      </select>
+      {% if locked %}<input type="hidden" name="tax_rate" value="{{ booking.tax_rate or 0 }}">{% endif %}
+    </div>
+    <div class="col-12 col-sm-3">
+      <label class="form-label">&nbsp;</label>
+      <div class="input-group">
+        <input type="text" id="tax_amount_display" class="form-control" readonly tabindex="-1"
+          placeholder="Steuer –" style="pointer-events:none;background:var(--tblr-bg-surface-secondary,#f6f8fb);">
+        <span class="input-group-text">€</span>
+      </div>
+      <small class="text-muted">Netto: <span id="net_amount_display">–</span>&nbsp;€</small>
+    </div>
+  </div>
+
+  {# Zeile 2: Konto | Projekt (mit Farbe) #}
+  <div class="row g-3 mt-1">
+    <div class="col-12 col-sm-6">
+      <label class="form-label">Konto <span class="text-danger">*</span></label>
+      <select name="account_id" id="booking-account-select"
+        class="form-select tom-select{{ ' is-invalid' if errors.get('account_id') }}" required>
+        <option value=""></option>
+        {% for a in accounts %}
+        <option value="{{ a.id }}" {{ 'selected' if sel_account == a.id|string }}>
+          {% if a.code %}{{ a.code }} – {% endif %}{{ a.name }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-12 col-sm-6">
+      <label class="form-label">Projekt</label>
+      {# data-color treibt die Farb-Swatch-Darstellung im TomSelect (siehe app.js). #}
+      <select name="project_id" id="booking-project-select" class="form-select tom-select">
+        <option value="">– kein Projekt –</option>
+        {% for p in projects %}
+        <option value="{{ p.id }}" data-color="{{ p.color or '#3498db' }}"
+          {{ 'selected' if sel_project == p.id|string }}>
+          {% if p.code %}{{ p.code }} – {% endif %}{{ p.name }}{% if p.closed %} (abgeschlossen){% endif %}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+
+  {# Zeile 3: Beschreibung | Belegnr. #}
+  <div class="row g-3 mt-1">
+    <div class="col-12 col-sm-8">
+      <label class="form-label">Beschreibung <span class="text-danger">*</span></label>
+      <input type="text" name="description" class="form-control{{ ' is-invalid' if errors.get('description') }}"
+        value="{{ desc_val }}" maxlength="500" required>
+    </div>
+    <div class="col-12 col-sm-4">
+      <label class="form-label">Belegnr.</label>
+      <input type="text" name="reference" class="form-control" value="{{ ref_val }}" {{ 'readonly' if locked }}>
+    </div>
+  </div>
+
+  {# Zeile 4: Kontakt (Kunde/Lieferant) | Bankkonto #}
+  <div class="row g-3 mt-1">
+    <div class="col-12 col-sm-6">
+      <label class="form-label">Kontakt (Kunde/Lieferant)</label>
+      {# Bestehenden Kontakt wählen ODER neuen Namen eintippen → wird per
+         data-create-url im Hintergrund (leere Adressdaten) angelegt; siehe
+         app.js makeCreateHandler. Kein separates Modal mehr. #}
+      <select name="customer_id" id="booking-customer-select" class="form-select tom-select"
+              data-create-url="{{ url_for('customers.quick_create') }}"
+              data-create-type="supplier">
+        <option value="">– kein Kontakt –</option>
+        {% for c in customers %}
+        <option value="{{ c.id }}" {{ 'selected' if sel_customer == c.id|string }}>{{ c.name }}</option>
+        {% endfor %}
+      </select>
+      <small class="form-hint">Bestehenden wählen oder neuen Namen eintippen und mit <kbd>Enter</kbd> anlegen.</small>
+    </div>
+    <div class="col-12 col-sm-6">
+      <label class="form-label">Bankkonto</label>
+      <select name="real_account_id" id="booking-real-account-select" class="form-select tom-select">
+        <option value="">– kein Bankkonto –</option>
+        {% for ra in real_accounts %}
+        <option value="{{ ra.id }}" {{ 'selected' if sel_real == ra.id|string }}>
+          {{ ra.name }}{% if ra.iban %} ({{ ra.iban }}){% endif %}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+
+  {# --- Aktionen ---------------------------------------------------------- #}
+  <div class="d-flex flex-wrap gap-2 mt-4 pt-3 border-top">
+    {% if not booking %}
+    {# Submit-Buttons tragen name/value selbst → htmx sendet den Submitter mit,
+       keine fragile onclick-Reihenfolge noetig. #}
+    <button type="submit" name="action" value="weiteres" id="btn_weiteres" class="btn btn-primary">
+      <i class="fas fa-plus me-1"></i> Speichern und weitere Buchung
+    </button>
+    <button type="submit" name="action" value="" id="btn_save" class="btn btn-outline-primary">
+      <i class="fas fa-save me-1"></i> Speichern
+    </button>
+    {% else %}
+    <button type="submit" name="action" value="" id="btn_save" class="btn btn-primary">
+      <i class="fas fa-save me-1"></i> Speichern
+    </button>
+    {% endif %}
+    {% if is_modal %}
+    <button type="button" class="btn btn-secondary ms-auto" data-bs-dismiss="modal">Abbrechen</button>
+    {% else %}
+    <a href="{{ url_for('accounting.bookings') }}" class="btn btn-secondary ms-auto">Abbrechen</a>
+    {% endif %}
+  </div>
+</form>
+
+<script>
+{# Formular-lokale Logik. Laeuft bei jedem Fragment-Swap (Modal-Open, Fehler-
+   Redisplay, „weiteres") frisch — alle Listener haengen an Elementen, die beim
+   naechsten Swap ersetzt werden → keine Mehrfach-Einhaengung, keine globalen
+   Listener hier. #}
+(function () {
+  var form = document.getElementById('booking-form');
+  if (!form) return;
+
+  var amountEl = form.querySelector('#amount');
+  var rateEl = form.querySelector('#tax_rate');
+  var taxAmountEl = form.querySelector('#tax_amount_display');
+  var netAmountEl = form.querySelector('#net_amount_display');
+  var badgeEl = form.querySelector('#buchungstyp_badge');
+
+  // Deutsche Zahlendarstellung inkl. 1000er-Trennpunkt (z.B. 10.102,50).
+  function deNum(n) {
+    return (n || 0).toLocaleString('de-DE', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  }
+
+  function updateUI() {
+    var amount = parseFloat((amountEl.value || '').replace(',', '.'));
+    var rate = rateEl ? (parseFloat(rateEl.value) || 0) : 0;
+    if (isNaN(amount) || (amountEl.value || '').trim() === '') {
+      badgeEl.textContent = '—';
+      badgeEl.className = 'badge bg-secondary text-white';
+    } else if (amount > 0) {
+      badgeEl.textContent = 'Einnahme';
+      badgeEl.className = 'badge bg-success text-white';
+    } else if (amount < 0) {
+      badgeEl.textContent = 'Ausgabe';
+      badgeEl.className = 'badge bg-danger text-white';
+    } else {
+      badgeEl.textContent = 'Betrag = 0';
+      badgeEl.className = 'badge bg-warning text-dark';
+    }
+    if (taxAmountEl && netAmountEl) {
+      var absAmount = Math.abs(amount || 0);
+      if (rate > 0 && absAmount > 0) {
+        var tax = absAmount * rate / (100 + rate);
+        taxAmountEl.value = deNum(tax);
+        netAmountEl.textContent = deNum(absAmount - tax);
+      } else {
+        taxAmountEl.value = '';
+        netAmountEl.textContent = '–';
+      }
+    }
+  }
+
+  if (amountEl) amountEl.addEventListener('input', updateUI);
+  if (rateEl) rateEl.addEventListener('change', updateUI);
+  updateUI();
+
+  {# Tastatur: Enter = naechstes Feld; Ctrl/Cmd+Enter = Speichern + weitere.
+     TomSelect erledigt Tab-Auswahl selbst (selectOnTab). #}
+  var focusable = 'input:not([type=hidden]):not([readonly]):not([disabled]), select:not([disabled]), textarea, button[type=submit]';
+  form.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter') return;
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      var w = form.querySelector('#btn_weiteres') || form.querySelector('#btn_save');
+      if (w) w.click();
+      return;
+    }
+    if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'BUTTON') return;
+    {# Enter im TomSelect-Suchfeld waehlt dort die Option — e.target ist dann
+       nicht eines unserer Formularfelder, also kein Feldsprung hier. #}
+    e.preventDefault();
+    var fields = Array.from(form.querySelectorAll(focusable)).filter(function (el) {
+      return !el.disabled && el.offsetParent !== null;
+    });
+    var idx = fields.indexOf(e.target);
+    if (idx >= 0 && idx < fields.length - 1) {
+      var next = fields[idx + 1];
+      next.focus();
+      if (next.tagName === 'SELECT' && next.tomselect) next.tomselect.open();
+    }
+  });
+})();
+</script>
