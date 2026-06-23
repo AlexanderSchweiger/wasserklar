@@ -366,6 +366,19 @@ tr.overdue { background-color: #fff3cd !important; }
 .navbar-vertical { scrollbar-width: none; }            /* Firefox */
 .navbar-vertical::-webkit-scrollbar { display: none; } /* Chrome/Edge/Safari */
 
+/* Top-Navbar (.wk-topbar): seit dem Responsive-Fix auf allen Breiten sichtbar
+   (frueher d-none d-lg-flex). Unterhalb lg erscheint sie als zweite Zeile unter
+   der eingeklappten Sidebar. Dort: alles in EINER Zeile halten (kein Umbruch,
+   sonst rutschen Glocke/Benutzermenue unter die Suche), kompakteres Padding,
+   und die Schnellsuche darf schrumpfen statt die Icons rauszudruecken. */
+@media (max-width: 991.98px) {
+  .wk-topbar { padding-top: 0.25rem; padding-bottom: 0.25rem; }
+  .wk-topbar > .container-fluid { flex-wrap: nowrap; }
+  /* .wk-quicksearch existiert nur im SaaS — im OSS-Standalone No-op. min-width:0
+     hebt die Flex-Default-Mindestbreite (Eingabe-Intrinsic) auf. */
+  .wk-topbar .wk-quicksearch { min-width: 0; }
+}
+
 /* Seiten-Transitions
    Greifen in zwei Faellen:
    - Cross-Document-Navigation via @view-transition (voller Reload, z.B. Login-Redirect).

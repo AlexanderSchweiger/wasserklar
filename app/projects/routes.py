@@ -1,6 +1,7 @@
 import re
+import json
 
-from flask import render_template, redirect, url_for, flash, request, abort
+from flask import render_template, redirect, url_for, flash, request, abort, make_response
 from flask_login import login_required
 from sqlalchemy import exists
 
@@ -39,28 +40,48 @@ def index():
     )
 
 
+def _project_modal_saved(project_id):
+    """204 + HX-Trigger fuers Projekt-Modal (schliessen + neu laden)."""
+    resp = make_response("", 204)
+    resp.headers["HX-Trigger"] = json.dumps({
+        "closeProjectModal": True,
+        "projectSaved": {"project_id": project_id},
+    })
+    return resp
+
+
 @bp.route("/neu", methods=["GET", "POST"])
 @login_required
 def new():
+    is_modal = bool(request.headers.get("X-From-Modal"))
+
+    def _err():
+        return render_template("projects/_project_form_body.html", project=None, form=request.form) \
+            if is_modal else render_template("projects/form.html", project=None)
+
     if request.method == "POST":
         name = request.form.get("name", "").strip()
         description = request.form.get("description", "").strip() or None
         if not name:
             flash("Projektname ist erforderlich.", "danger")
-            return render_template("projects/form.html", project=None)
+            return _err()
         if Project.query.filter_by(name=name).first():
             flash("Ein Projekt mit diesem Namen existiert bereits.", "danger")
-            return render_template("projects/form.html", project=None)
+            return _err()
         code, err = _validate_code(request.form.get("code", ""))
         if err:
             flash(err, "danger")
-            return render_template("projects/form.html", project=None)
+            return _err()
         color = request.form.get("color", "#3498db").strip() or "#3498db"
         project = Project(name=name, description=description, color=color, code=code)
         db.session.add(project)
         db.session.commit()
         flash(f'Projekt "{project.name}" wurde angelegt.', "success")
+        if is_modal:
+            return _project_modal_saved(project.id)
         return redirect(url_for("projects.index"))
+    if is_modal:
+        return render_template("projects/_project_form_body.html", project=None, form=None)
     return render_template("projects/form.html", project=None)
 
 
@@ -68,30 +89,40 @@ def new():
 @login_required
 def edit(project_id):
     project = db.session.get(Project, project_id) or abort(404)
+    is_modal = bool(request.headers.get("X-From-Modal"))
     if request.method == "POST":
         from_view = request.form.get("from", "detail")
+
+        def _err():
+            return render_template("projects/_project_form_body.html", project=project, form=request.form) \
+                if is_modal else render_template("projects/form.html", project=project, from_view=from_view)
+
         name = request.form.get("name", "").strip()
         description = request.form.get("description", "").strip() or None
         if not name:
             flash("Projektname ist erforderlich.", "danger")
-            return render_template("projects/form.html", project=project, from_view=from_view)
+            return _err()
         existing = Project.query.filter_by(name=name).first()
         if existing and existing.id != project.id:
             flash("Ein Projekt mit diesem Namen existiert bereits.", "danger")
-            return render_template("projects/form.html", project=project, from_view=from_view)
+            return _err()
         code, err = _validate_code(request.form.get("code", ""), exclude_id=project.id)
         if err:
             flash(err, "danger")
-            return render_template("projects/form.html", project=project, from_view=from_view)
+            return _err()
         project.name = name
         project.description = description
         project.color = request.form.get("color", "#3498db").strip() or "#3498db"
         project.code = code
         db.session.commit()
         flash(f'Projekt "{project.name}" wurde gespeichert.', "success")
+        if is_modal:
+            return _project_modal_saved(project.id)
         if from_view == "list":
             return redirect(url_for("projects.index"))
         return redirect(url_for("projects.detail", project_id=project.id))
+    if is_modal:
+        return render_template("projects/_project_form_body.html", project=project, form=None)
     from_view = request.args.get("from", "detail")
     return render_template("projects/form.html", project=project, from_view=from_view)
 

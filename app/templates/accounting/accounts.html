@@ -8,9 +8,10 @@
       <div class="card-header">
         <h3 class="card-title"><i class="fas fa-list me-1"></i> Konten</h3>
         <div class="card-options">
-          <a href="{{ url_for('accounting.account_new') }}" class="btn btn-primary">
+          <button type="button" data-url="{{ url_for('accounting.account_new') }}"
+                  onclick="openAccountModal(this)" class="btn btn-primary">
             <i class="fas fa-plus me-1"></i> Neues Konto
-          </a>
+          </button>
         </div>
       </div>
       <div class="card-body p-0">
@@ -38,8 +39,9 @@
                 {% endif %}
               </td>
               <td class="text-end">
-                <a href="{{ url_for('accounting.account_edit', account_id=a.id) }}"
-                   class="btn btn-sm btn-outline-secondary"><i class="fas fa-edit"></i></a>
+                <button type="button" data-url="{{ url_for('accounting.account_edit', account_id=a.id) }}"
+                   onclick="openAccountModal(this)"
+                   class="btn btn-sm btn-outline-secondary"><i class="fas fa-edit"></i></button>
               </td>
             </tr>
             {% else %}
@@ -62,4 +64,22 @@
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block modals %}
+{% include "accounting/_account_modal.html" %}
+{% endblock %}
+
+{% block scripts %}
+{% include "_modal_edit_helpers.html" %}
+<script>
+setupEditModal({
+  formId: 'accountForm',
+  bodyId: 'accountModalBody',
+  modalId: 'accountModal',
+  openFn: 'openAccountModal',
+  closeEvent: 'closeAccountModal',
+  savedEvent: 'accountSaved',
+});
+</script>
 {% endblock %}

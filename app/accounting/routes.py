@@ -58,14 +58,26 @@ def _validate_code(code_raw, model_cls, exclude_id=None):
     return code, None
 
 
+def _account_modal_saved(account_id):
+    """204 + HX-Trigger fuers Kontenplan-Modal (schliessen + neu laden)."""
+    resp = make_response("", 204)
+    resp.headers["HX-Trigger"] = json.dumps({
+        "closeAccountModal": True,
+        "accountSaved": {"account_id": account_id},
+    })
+    return resp
+
+
 @bp.route("/accounts/new", methods=["GET", "POST"])
 @login_required
 def account_new():
+    is_modal = bool(request.headers.get("X-From-Modal"))
     if request.method == "POST":
         code, err = _validate_code(request.form.get("code", ""), Account)
         if err:
             flash(err, "danger")
-            return render_template("accounting/account_form.html", account=None)
+            return render_template("accounting/_account_form_body.html", account=None, form=request.form) \
+                if is_modal else render_template("accounting/account_form.html", account=None)
         a = Account(
             code=code,
             name=request.form["name"].strip(),
@@ -74,7 +86,11 @@ def account_new():
         db.session.add(a)
         db.session.commit()
         flash("Konto angelegt.", "success")
+        if is_modal:
+            return _account_modal_saved(a.id)
         return redirect(url_for("accounting.accounts"))
+    if is_modal:
+        return render_template("accounting/_account_form_body.html", account=None, form=None)
     return render_template("accounting/account_form.html", account=None)
 
 
@@ -82,18 +98,24 @@ def account_new():
 @login_required
 def account_edit(account_id):
     a = db.get_or_404(Account, account_id)
+    is_modal = bool(request.headers.get("X-From-Modal"))
     if request.method == "POST":
         code, err = _validate_code(request.form.get("code", ""), Account, exclude_id=a.id)
         if err:
             flash(err, "danger")
-            return render_template("accounting/account_form.html", account=a)
+            return render_template("accounting/_account_form_body.html", account=a, form=request.form) \
+                if is_modal else render_template("accounting/account_form.html", account=a)
         a.code = code
         a.name = request.form["name"].strip()
         a.description = request.form.get("description", "")
         a.active = "active" in request.form
         db.session.commit()
         flash("Konto aktualisiert.", "success")
+        if is_modal:
+            return _account_modal_saved(a.id)
         return redirect(url_for("accounting.accounts"))
+    if is_modal:
+        return render_template("accounting/_account_form_body.html", account=a, form=None)
     return render_template("accounting/account_form.html", account=a)
 
 
@@ -2930,9 +2952,20 @@ def real_accounts():
     )
 
 
+def _real_account_modal_saved(ra_id):
+    """204 + HX-Trigger fuers Bankkonto-Modal (schliessen + neu laden)."""
+    resp = make_response("", 204)
+    resp.headers["HX-Trigger"] = json.dumps({
+        "closeRealAccountModal": True,
+        "realAccountSaved": {"real_account_id": ra_id},
+    })
+    return resp
+
+
 @bp.route("/real-accounts/new", methods=["GET", "POST"])
 @login_required
 def real_account_new():
+    is_modal = bool(request.headers.get("X-From-Modal"))
     if request.method == "POST":
         opening_raw = request.form.get("opening_balance", "0").replace(",", ".")
         set_default = "is_default" in request.form
@@ -2949,7 +2982,11 @@ def real_account_new():
         db.session.add(ra)
         db.session.commit()
         flash("Bankkonto angelegt.", "success")
+        if is_modal:
+            return _real_account_modal_saved(ra.id)
         return redirect(url_for("accounting.real_accounts"))
+    if is_modal:
+        return render_template("accounting/_real_account_form_body.html", real_account=None, form=None)
     return render_template("accounting/real_account_form.html", real_account=None)
 
 
@@ -2957,6 +2994,7 @@ def real_account_new():
 @login_required
 def real_account_edit(ra_id):
     ra = db.get_or_404(RealAccount, ra_id)
+    is_modal = bool(request.headers.get("X-From-Modal"))
     if request.method == "POST":
         opening_raw = request.form.get("opening_balance", "0").replace(",", ".")
         set_default = "is_default" in request.form
@@ -2971,7 +3009,11 @@ def real_account_edit(ra_id):
         ra.is_default = set_default
         db.session.commit()
         flash("Bankkonto aktualisiert.", "success")
+        if is_modal:
+            return _real_account_modal_saved(ra.id)
         return redirect(url_for("accounting.real_accounts"))
+    if is_modal:
+        return render_template("accounting/_real_account_form_body.html", real_account=ra, form=None)
     return render_template("accounting/real_account_form.html", real_account=ra)
 
 
@@ -3001,33 +3043,57 @@ def transfers():
     )
 
 
+def _transfer_modal_saved(transfer_id):
+    """204 + HX-Trigger fuers Umbuchungs-Modal (schliessen + neu laden)."""
+    resp = make_response("", 204)
+    resp.headers["HX-Trigger"] = json.dumps({
+        "closeTransferModal": True,
+        "transferSaved": {"transfer_id": transfer_id},
+    })
+    return resp
+
+
 @bp.route("/transfers/new", methods=["GET", "POST"])
 @login_required
 def transfer_new():
+    is_modal = bool(request.headers.get("X-From-Modal"))
     real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
+    today = date.today().isoformat()
+
+    def _render_form():
+        if is_modal:
+            return render_template(
+                "accounting/_transfer_form_body.html",
+                real_accounts=real_accounts, today=today,
+                form=(request.form or None),
+            )
+        return render_template(
+            "accounting/transfer_form.html", real_accounts=real_accounts, today=today,
+        )
+
     if request.method == "POST":
         transfer_date = date.fromisoformat(request.form["date"])
         fy_error = acc_svc.open_fiscal_year_error(transfer_date)
         if fy_error:
             flash(f"{fy_error} Umbuchung nicht möglich.", "danger")
-            return render_template("accounting/transfer_form.html", real_accounts=real_accounts, today=date.today().isoformat())
+            return _render_form()
 
         amount_raw = request.form["amount"].replace(",", ".")
         try:
             amount = Decimal(amount_raw)
         except InvalidOperation:
             flash("Ungültiger Betrag.", "danger")
-            return render_template("accounting/transfer_form.html", real_accounts=real_accounts, today=date.today().isoformat())
+            return _render_form()
 
         if amount <= 0:
             flash("Der Betrag muss größer als 0 sein.", "danger")
-            return render_template("accounting/transfer_form.html", real_accounts=real_accounts, today=date.today().isoformat())
+            return _render_form()
 
         from_id = int(request.form["from_real_account_id"])
         to_id = int(request.form["to_real_account_id"])
         if from_id == to_id:
             flash("Ausgangs- und Zielkonto dürfen nicht gleich sein.", "danger")
-            return render_template("accounting/transfer_form.html", real_accounts=real_accounts, today=date.today().isoformat())
+            return _render_form()
 
         t = Transfer(
             date=transfer_date,
@@ -3040,9 +3106,11 @@ def transfer_new():
         db.session.add(t)
         db.session.commit()
         flash("Umbuchung gespeichert.", "success")
+        if is_modal:
+            return _transfer_modal_saved(t.id)
         return redirect(url_for("accounting.transfers"))
 
-    return render_template("accounting/transfer_form.html", real_accounts=real_accounts, today=date.today().isoformat())
+    return _render_form()
 
 
 @bp.route("/transfers/<int:transfer_id>/delete", methods=["POST"])

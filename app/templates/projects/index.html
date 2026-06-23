@@ -15,9 +15,10 @@
           <label class="form-check-label" for="show_closed">Abgeschlossene anzeigen</label>
         </div>
       </form>
-      <a href="{{ url_for('projects.new') }}" class="btn btn-primary">
+      <button type="button" data-url="{{ url_for('projects.new') }}"
+              onclick="openProjectModal(this)" class="btn btn-primary">
         <i class="fas fa-plus me-1"></i> Neues Projekt
-      </a>
+      </button>
     </div>
   </div>
   <div class="table-fill">
@@ -68,11 +69,12 @@
                title="Ansicht">
               <i class="fas fa-eye"></i>
             </a>
-            <a href="{{ url_for('projects.edit', project_id=p.id, **{'from': 'list'}) }}"
+            <button type="button" data-url="{{ url_for('projects.edit', project_id=p.id) }}"
+               onclick="openProjectModal(this)"
                class="btn btn-sm btn-outline-secondary"
                title="Bearbeiten">
               <i class="fas fa-edit"></i>
-            </a>
+            </button>
             <form method="post" action="{{ url_for('projects.toggle_closed', project_id=p.id) }}"
                   style="display:inline">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -96,4 +98,22 @@
   </div>
   </div>
 </div>
+{% endblock %}
+
+{% block modals %}
+{% include "projects/_project_modal.html" %}
+{% endblock %}
+
+{% block scripts %}
+{% include "_modal_edit_helpers.html" %}
+<script>
+setupEditModal({
+  formId: 'projectForm',
+  bodyId: 'projectModalBody',
+  modalId: 'projectModal',
+  openFn: 'openProjectModal',
+  closeEvent: 'closeProjectModal',
+  savedEvent: 'projectSaved',
+});
+</script>
 {% endblock %}

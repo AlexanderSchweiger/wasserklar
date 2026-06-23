@@ -601,8 +601,12 @@
     <!-- ===== Page Wrapper ===== -->
     <div class="page-wrapper {% block page_wrapper_class %}{% endblock %}">
       {% if current_user.is_authenticated %}
-      <!-- Top Navbar -->
-      <header class="navbar navbar-expand-md d-none d-lg-flex d-print-none">
+      <!-- Top Navbar — auf allen Breiten sichtbar (frueher d-none d-lg-flex und
+           damit am Handy komplett weg). Sonst sind Schnellsuche, Benachrichtigungs-
+           Glocke und das Benutzermenue (Abmelden) auf Mobilgeraeten nicht
+           erreichbar. Auf kleinen Screens erscheint die Leiste als kompakte
+           zweite Zeile unter der eingeklappten Sidebar (Hamburger + WG-Name). -->
+      <header class="navbar navbar-expand-md d-flex d-print-none wk-topbar">
         <div class="container-fluid">
           {% block saas_navbar_search %}{% endblock %}
           <div class="navbar-nav flex-row order-md-last ms-auto">

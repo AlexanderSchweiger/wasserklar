@@ -21,9 +21,10 @@
     </form>
   </div>
   <div class="col text-end">
-    <a href="{{ url_for('accounting.transfer_new') }}" class="btn btn-primary">
+    <button type="button" data-url="{{ url_for('accounting.transfer_new') }}"
+            onclick="openTransferModal(this)" class="btn btn-primary">
       <i class="fas fa-plus me-1"></i> Neue Umbuchung
-    </a>
+    </button>
   </div>
 </div>
 
@@ -95,4 +96,22 @@
     </table>
   </div>
 </div>
+{% endblock %}
+
+{% block modals %}
+{% include "accounting/_transfer_modal.html" %}
+{% endblock %}
+
+{% block scripts %}
+{% include "_modal_edit_helpers.html" %}
+<script>
+setupEditModal({
+  formId: 'transferForm',
+  bodyId: 'transferModalBody',
+  modalId: 'transferModal',
+  openFn: 'openTransferModal',
+  closeEvent: 'closeTransferModal',
+  savedEvent: 'transferSaved',
+});
+</script>
 {% endblock %}

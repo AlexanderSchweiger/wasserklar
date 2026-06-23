@@ -5,9 +5,10 @@
 
 <div class="row mb-3">
   <div class="col text-end">
-    <a href="{{ url_for('accounting.real_account_new') }}" class="btn btn-primary">
+    <button type="button" data-url="{{ url_for('accounting.real_account_new') }}"
+            onclick="openRealAccountModal(this)" class="btn btn-primary">
       <i class="fas fa-plus me-1"></i> Neues Bankkonto
-    </a>
+    </button>
   </div>
 </div>
 
@@ -24,10 +25,11 @@
           {% if not ra.active %}<span class="badge bg-secondary text-white ms-1">Inaktiv</span>{% endif %}
         </h3>
         <div class="card-options">
-          <a href="{{ url_for('accounting.real_account_edit', ra_id=ra.id) }}"
+          <button type="button" data-url="{{ url_for('accounting.real_account_edit', ra_id=ra.id) }}"
+             onclick="openRealAccountModal(this)"
              class="btn btn-sm btn-ghost-secondary" title="Bearbeiten">
             <i class="fas fa-edit"></i>
-          </a>
+          </button>
         </div>
       </div>
 
@@ -110,9 +112,30 @@
   <div class="col">
     <div class="alert alert-info">
       Noch keine Bankkonten angelegt.
-      <a href="{{ url_for('accounting.real_account_new') }}">Erstes Bankkonto anlegen</a>
+      <button type="button" data-url="{{ url_for('accounting.real_account_new') }}"
+              onclick="openRealAccountModal(this)" class="btn btn-link p-0 align-baseline">
+        Erstes Bankkonto anlegen
+      </button>
     </div>
   </div>
   {% endfor %}
 </div>
+{% endblock %}
+
+{% block modals %}
+{% include "accounting/_real_account_modal.html" %}
+{% endblock %}
+
+{% block scripts %}
+{% include "_modal_edit_helpers.html" %}
+<script>
+setupEditModal({
+  formId: 'realAccountForm',
+  bodyId: 'realAccountModalBody',
+  modalId: 'realAccountModal',
+  openFn: 'openRealAccountModal',
+  closeEvent: 'closeRealAccountModal',
+  savedEvent: 'realAccountSaved',
+});
+</script>
 {% endblock %}
