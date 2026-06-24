@@ -2149,6 +2149,11 @@ class NetworkFeature(db.Model):
     ground_level_m = db.Column(db.Float, nullable=True)             # GOK-Hoehe (Gelaendeoberkante) in m ue. A.
     pressure_rating = db.Column(db.String(20), nullable=True)       # Druckstufe (z. B. "PN 10")
 
+    # Bauart eines Hydranten (Ueber-/Unterflur). Nur fuer feature_type='hydrant'
+    # befuellt; treibt das Hydranten-Register im Feuerwehr-Druck/-Plan
+    # (vocab.HYDRANT_TYPES).
+    hydrant_type = db.Column(db.String(20), nullable=True)          # ueberflur | unterflur
+
     notes = db.Column(db.Text, nullable=True)
 
     # Verknuepfung mit bestehenden Stammdaten (Hausanschluss -> Objekt/Zaehler).
@@ -2306,6 +2311,60 @@ class FeaturePhoto(db.Model):
 
     def __repr__(self):
         return f"<FeaturePhoto feature={self.feature_id} {self.filename}>"
+
+
+class HydrantShareLink(db.Model):
+    """Oeffentlicher Freigabe-Link fuer den Hydrantenplan (Feuerwehr-Zugriff
+    ohne Login). Pro ``NetworkPlan`` beliebig viele benannte Links (z. B. ein
+    eigener je Feuerwehr) — erlaubt selektives Widerrufen und Zugriffs-Audit.
+
+    Sicherheits-Anker: Das ``token`` ist ein hochentropischer Zufallswert
+    (``secrets.token_urlsafe(32)`` → 43 Zeichen, ~256 bit). Die Mandanten-
+    Isolation ergibt sich strukturell aus dem ``search_path`` — das Token
+    existiert physisch nur im Schema des erzeugenden Tenants, ein Lookup vom
+    Subdomain eines anderen Tenants findet es schlicht nicht. Daher (anders als
+    bei ``user_invites``) KEINE explizite HMAC-/Slug-Bindung noetig.
+
+    Die oeffentliche, einloesende Route liegt im SaaS-Layer
+    (``saas/hydrant_share``, gehaertet mit Rate-Limit + CSP). Das Anlegen/
+    Widerrufen passiert hier im OSS (network-Blueprint, ``@login_required``),
+    gegated ueber ``config.FEATURE_HYDRANT_PUBLIC_SHARE`` (SaaS-only).
+    """
+    __tablename__ = "hydrant_share_links"
+
+    id = db.Column(db.Integer, primary_key=True)
+    plan_id = db.Column(
+        db.Integer, db.ForeignKey("network_plans.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    token = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    label = db.Column(db.String(120), nullable=True)   # z. B. "FF Musterdorf"
+    is_active = db.Column(
+        db.Boolean, nullable=False, default=True, server_default=sa.true(),
+    )
+    expires_at = db.Column(db.DateTime, nullable=True)  # None = unbefristet
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_by_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+    last_accessed_at = db.Column(db.DateTime, nullable=True)
+    access_count = db.Column(
+        db.Integer, nullable=False, default=0, server_default=db.text("0"),
+    )
+
+    plan = db.relationship("NetworkPlan")
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+
+    def is_valid(self):
+        """Aktiv UND (unbefristet ODER noch nicht abgelaufen)."""
+        if not self.is_active:
+            return False
+        if self.expires_at is not None and self.expires_at < datetime.utcnow():
+            return False
+        return True
+
+    def __repr__(self):
+        return f"<HydrantShareLink plan={self.plan_id} {self.label!r} active={self.is_active}>"
 
 
 # ---------------------------------------------------------------------------

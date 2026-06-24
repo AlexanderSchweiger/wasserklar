@@ -65,6 +65,18 @@ class Config:
         os.environ.get("FEATURE_HAUSANSCHLUSS_AUTOASSIGN", "false").lower() == "true"
     )
 
+    # Oeffentlicher Hydrantenplan-Freigabe-Link fuer die Feuerwehr (Zugriff ohne
+    # Login ueber ein Token, siehe app.models.HydrantShareLink). Steuert NUR die
+    # Link-Verwaltung (Anlegen/Widerrufen) + das zugehoerige UI auf der
+    # Hydranten-Druckseite — der reine A4/A3-Druck (authentifiziert) ist immer
+    # verfuegbar. Bewusst ein SaaS-only-Komfortfeature: im OSS-Standalone
+    # defaultet es AUS (ein Selbst-Hoster hat keine einloesende Public-Route;
+    # die liegt im SaaS-Layer). Der SaaS-Layer schaltet das Flag in
+    # register_saas_extensions fuer alle Tenants (Basis + Pro) an.
+    FEATURE_HYDRANT_PUBLIC_SHARE = (
+        os.environ.get("FEATURE_HYDRANT_PUBLIC_SHARE", "false").lower() == "true"
+    )
+
     # Obergrenze fuer Massendruck/-export von Dokumenten pro Durchgang.
     # Schuetzt vor Speicher-/CPU-Last und Timeouts: WeasyPrint rendert jedes
     # Dokument einzeln in den RAM. Wird die Auswahl groesser, bietet die UI

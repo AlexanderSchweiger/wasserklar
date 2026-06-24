@@ -1,0 +1,241 @@
+{% extends "base.html" %}
+{% block title %}Hydrantenplan – Feuerwehr{% endblock %}
+
+{% block head_extra %}
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    .technik-print-controls .technik-legend-swatch { width: .9rem; height: .9rem; }
+
+    @media print {
+      .page-header, .footer, aside.navbar, header.navbar { display: none !important; }
+      .page-wrapper { margin: 0 !important; }
+      .technik-print-title { margin-bottom: .25rem !important; }
+      .technik-print-title h2 { font-size: 1.05rem !important; }
+      .leaflet-control-zoom, .leaflet-control-layers { display: none !important; }
+      .technik-print-legend { break-before: page; }
+      .technik-print-legend [class^="col"] { break-inside: avoid; }
+      #technik-print-list { break-before: page; }
+      .technik-print-list-off { display: none !important; }
+      .technik-print-list table { font-size: 10px; }
+      a[href]::after { content: "" !important; }
+    }
+  </style>
+  {# Format (A4/A3) + Orientierung -> @page-Groesse + Kartenmasse. Per JS
+     umgeschrieben (technik-map.js: applyPageFormat). Default: A4 quer. #}
+  <style id="technik-page-style">
+    @media print { @page { size: A4 landscape; margin: 10mm; } #technik-print-map { width: 24.75cm !important; height: 17.5cm !important; margin-left: auto !important; margin-right: auto !important; } }
+  </style>
+{% endblock %}
+
+{% block content %}
+{# --- Steuerleiste (nur am Bildschirm) ------------------------------------ #}
+<div class="card mb-3 d-print-none technik-print-controls">
+  <div class="card-body">
+    <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+      <button type="button" id="technik-print-btn" class="btn btn-primary">
+        <i class="fas fa-print me-1"></i>Drucken
+      </button>
+      <a href="{{ url_for('network.index') }}" class="btn" hx-boost="false">
+        <i class="fas fa-arrow-left me-1"></i>Zurück zum Plan
+      </a>
+      <label class="form-check form-switch ms-auto mb-0">
+        <input class="form-check-input" type="checkbox" id="technik-print-show-list" checked>
+        <span class="form-check-label">Hydranten-Verzeichnis mitdrucken ({{ hydrants | length }})</span>
+      </label>
+    </div>
+
+    <div class="row g-3 mb-2">
+      <div class="col-sm-6 col-lg-3">
+        <label class="form-label">Papierformat</label>
+        <select class="form-select" id="technik-print-format">
+          <option value="A4" selected>A4</option>
+          <option value="A3">A3</option>
+        </select>
+      </div>
+      <div class="col-sm-6 col-lg-3">
+        <label class="form-label">Ausrichtung</label>
+        <select class="form-select" id="technik-print-orientation">
+          <option value="landscape" selected>Querformat</option>
+          <option value="portrait">Hochformat</option>
+        </select>
+      </div>
+      <div class="col-sm-6 col-lg-3">
+        <label class="form-label">Symbolgröße <span class="text-secondary" id="technik-print-ms-val">20 px</span></label>
+        <input type="range" class="form-range" id="technik-print-marker-scale"
+               min="0.3" max="1.2" step="0.05" value="0.75"
+               oninput="document.getElementById('technik-print-ms-val').textContent = Math.round(26 * this.value) + ' px';">
+      </div>
+      <div class="col-sm-6 col-lg-3">
+        <label class="form-label">Linienstärke <span class="text-secondary" id="technik-print-lw-val">3 px</span></label>
+        <input type="range" class="form-range" id="technik-print-line-weight"
+               min="1" max="8" step="0.5" value="3"
+               oninput="document.getElementById('technik-print-lw-val').textContent = this.value + ' px';">
+      </div>
+    </div>
+
+    <div class="d-flex align-items-center flex-wrap gap-2 mb-1">
+      <strong class="small">Sichtbare Elemente</strong>
+      <span class="text-secondary small">Versorgungsleitungen ausblenden, um eine reine Hydrantenkarte zu drucken.</span>
+    </div>
+    <div class="border rounded p-2">
+      <div class="row">
+        <div class="col-md-4">
+          <label class="form-check">
+            <input class="form-check-input technik-print-type" type="checkbox" checked data-type="hydrant">
+            <span class="form-check-label"><span class="technik-legend-swatch" style="background: {{ vocab.feature_type_color('hydrant') }}"></span>{{ vocab.feature_type_label('hydrant') }}</span>
+          </label>
+        </div>
+        <div class="col-md-4">
+          <label class="form-check">
+            <input class="form-check-input technik-print-type" type="checkbox" checked data-type="hauptleitung">
+            <span class="form-check-label"><span class="technik-legend-line" style="border-color: {{ vocab.feature_type_color('hauptleitung') }}"></span>{{ vocab.feature_type_label('hauptleitung') }}</span>
+          </label>
+        </div>
+        <div class="col-md-4">
+          <label class="form-check">
+            <input class="form-check-input technik-print-type" type="checkbox" checked data-type="versorgungsleitung">
+            <span class="form-check-label"><span class="technik-legend-line" style="border-color: {{ vocab.feature_type_color('versorgungsleitung') }}"></span>{{ vocab.feature_type_label('versorgungsleitung') }}</span>
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# --- Feuerwehr-Freigabe-Links (SaaS-only via FEATURE_HYDRANT_PUBLIC_SHARE) -- #}
+{% if share_enabled %}
+<div class="card mb-3 d-print-none">
+  <div class="card-header">
+    <h3 class="card-title"><i class="fas fa-share-alt me-2 text-secondary"></i>Öffentliche Feuerwehr-Links</h3>
+  </div>
+  <div class="card-body">
+    <p class="text-secondary">
+      Geben Sie der Feuerwehr einen Link, über den sie diesen Hydrantenplan jederzeit
+      ohne Anmeldung ansehen und drucken kann. Der Link zeigt nur Hydranten und das
+      Versorgungsnetz — keine Eigentümer- oder Adressdaten.
+    </p>
+    {% if plan %}
+    <form method="post" action="{{ url_for('network.share_link_create', plan=plan.id) }}" class="row g-2 align-items-end mb-3">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="col-sm-6 col-md-5">
+        <label class="form-label">Bezeichnung (optional)</label>
+        <input type="text" name="label" class="form-control" placeholder="z. B. FF Musterdorf" maxlength="120">
+      </div>
+      <div class="col-auto">
+        <button type="submit" class="btn btn-primary"><i class="fas fa-plus me-1"></i>Link erstellen</button>
+      </div>
+    </form>
+
+    {% if share_links %}
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead>
+          <tr><th>Bezeichnung</th><th>Link</th><th>Status</th><th class="text-end">Aufrufe</th><th>Letzter Zugriff</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for l in share_links %}
+          <tr>
+            <td>{{ l.label or '—' }}</td>
+            <td>
+              <div class="input-group input-group-sm" style="max-width: 26rem;">
+                <input type="text" class="form-control" readonly value="{{ share_urls[l.id] }}"
+                       onclick="this.select();" aria-label="Feuerwehr-Link">
+                <button type="button" class="btn btn-outline-secondary"
+                        onclick="navigator.clipboard &amp;&amp; navigator.clipboard.writeText('{{ share_urls[l.id] }}'); this.innerHTML='<i class=&quot;fas fa-check&quot;></i>';"
+                        title="Link kopieren"><i class="fas fa-copy"></i></button>
+              </div>
+            </td>
+            <td>
+              {% if l.is_active %}
+                <span class="badge bg-success text-white">Aktiv</span>
+              {% else %}
+                <span class="badge bg-secondary-lt">Widerrufen</span>
+              {% endif %}
+            </td>
+            <td class="text-end">{{ l.access_count }}</td>
+            <td>{{ l.last_accessed_at.strftime('%d.%m.%Y %H:%M') if l.last_accessed_at else '—' }}</td>
+            <td class="text-end">
+              <div class="btn-list justify-content-end">
+                {% if l.is_active %}
+                <form method="post" action="{{ url_for('network.share_link_revoke', link_id=l.id) }}" class="d-inline"
+                      onsubmit="return confirm('Diesen Feuerwehr-Link widerrufen? Er funktioniert danach nicht mehr.');">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button type="submit" class="btn btn-sm btn-outline-warning">Widerrufen</button>
+                </form>
+                {% endif %}
+                <form method="post" action="{{ url_for('network.share_link_delete', link_id=l.id) }}" class="d-inline"
+                      onsubmit="return confirm('Diesen Feuerwehr-Link endgültig löschen?');">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button type="submit" class="btn btn-sm btn-outline-danger">Löschen</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="text-secondary mb-0">Noch keine Links erstellt.</p>
+    {% endif %}
+    {% else %}
+    <div class="alert alert-warning mb-0">Kein Plan gewählt — bitte zuerst einen Plan anlegen.</div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+<div class="d-flex align-items-baseline mb-2 technik-print-title">
+  <h2 class="me-auto mb-0">{{ wg.name }} — Hydrantenplan{% if plan %}: {{ plan.name }}{% endif %}</h2>
+  <span class="text-secondary small">Stand: {{ today_iso }}</span>
+</div>
+
+<div id="technik-print-map" class="mb-3 border rounded" style="height: 60vh; min-height: 420px;"></div>
+
+<div class="row mb-3 technik-print-legend">
+  <div class="col-md-6">
+    <h4>Legende</h4>
+    <div><span class="technik-legend-swatch" style="background: {{ vocab.feature_type_color('hydrant') }}"></span>{{ vocab.feature_type_label('hydrant') }}</div>
+    <div><span class="technik-legend-line" style="border-color: {{ vocab.feature_type_color('hauptleitung') }}"></span>{{ vocab.feature_type_label('hauptleitung') }}</div>
+    <div><span class="technik-legend-line" style="border-color: {{ vocab.feature_type_color('versorgungsleitung') }}"></span>{{ vocab.feature_type_label('versorgungsleitung') }}</div>
+  </div>
+</div>
+
+<div id="technik-print-list">
+  <h4>Hydranten-Verzeichnis ({{ hydrants | length }})</h4>
+  <table class="table table-sm table-bordered">
+    <thead>
+      <tr>
+        <th>Bezeichnung</th><th>Bauart</th><th>DN</th><th>Druckstufe</th>
+        <th>Koordinaten (Lat, Lng)</th><th>Letzte Wartung</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for f in hydrants %}
+      {% set st = status_map.get(f.id) %}
+      <tr>
+        <td>{{ f.name or '' }}</td>
+        <td>{{ vocab.hydrant_type_label(f.hydrant_type) if f.hydrant_type else '' }}</td>
+        <td>{{ f.dimension_dn if f.dimension_dn is not none else '' }}</td>
+        <td>{{ f.pressure_rating or '' }}</td>
+        <td>{% if f.lat is not none and f.lng is not none %}{{ '%.5f'|format(f.lat) }}, {{ '%.5f'|format(f.lng) }}{% endif %}</td>
+        <td>{{ st.log.date.strftime('%d.%m.%Y') if st and st.log else '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  window.TECHNIK = {{ cfg|tojson }};
+</script>
+<script src="{{ url_for('static', filename='js/technik-map.js') }}"></script>
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    if (window.TECHNIK_MAP) window.TECHNIK_MAP.renderPrint('technik-print-map');
+  });
+</script>
+{% endblock %}

@@ -26,6 +26,14 @@ from app.network import vocab
 # Hausanschluesse auf der Karte.
 HAUSANSCHLUSS_TYPE = "hausanschluss"
 
+# Feature-Typ-Key des Hydranten und die Linientypen, die im oeffentlichen
+# Feuerwehr-Plan als dezenter Versorgungsnetz-Kontext mitgezeigt werden.
+# Hausanschlussleitungen sind bewusst NICHT dabei (privat + Karten-Clutter).
+HYDRANT_TYPE = "hydrant"
+PUBLIC_LINE_TYPES = ("hauptleitung", "versorgungsleitung")
+# Feature-Typen, die der oeffentliche Hydrantenplan ueberhaupt ausliefert.
+FEUERWEHR_TYPES = (HYDRANT_TYPE,) + PUBLIC_LINE_TYPES
+
 # Default-Suchradius (m) fuer die Hausanschluss->Liegenschaft-Zuordnung. Ein
 # Hausanschluss liegt typischerweise wenige bis einige zehn Meter vom Gebaeude;
 # darueber hinaus ist „naechste Liegenschaft" zu unsicher -> bleibt unzugeordnet
@@ -252,6 +260,9 @@ def apply_attributes(feature, data):
     feature.installation_depth_m = _to_float(data.get("installation_depth_m"))
     feature.ground_level_m = _to_float(data.get("ground_level_m"))
     feature.pressure_rating = (data.get("pressure_rating") or "").strip() or None
+    # Bauart nur fuer Hydranten sinnvoll; ungueltige Werte verwerfen.
+    ht = (data.get("hydrant_type") or "").strip()
+    feature.hydrant_type = ht if ht in vocab.HYDRANT_TYPES else None
     feature.notes = (data.get("notes") or "").strip() or None
     feature.property_id = _to_int(data.get("property_id"))
     # Wasserzaehler-Zuordnung entfaellt bewusst (das Objekt genuegt) — meter_id
@@ -312,6 +323,8 @@ def feature_to_geojson(f, property_map=None, owner_map=None):
             "installation_depth_m": f.installation_depth_m,
             "ground_level_m": f.ground_level_m,
             "pressure_rating": f.pressure_rating,
+            "hydrant_type": f.hydrant_type,
+            "hydrant_type_label": vocab.hydrant_type_label(f.hydrant_type) if f.hydrant_type else None,
             "notes": f.notes,
             "property_id": f.property_id,
             # Hausanschluss ohne zugeordnete Liegenschaft -> auf der Karte grell
@@ -339,6 +352,55 @@ def collection_geojson(features):
     return {
         "type": "FeatureCollection",
         "features": [feature_to_geojson(f, property_map, owner_map) for f in feats],
+    }
+
+
+def public_hydrant_feature(f):
+    """Datenschutz-sicheres GeoJSON-Feature fuer den oeffentlichen Feuerwehr-Plan.
+
+    Nur FW-relevante, unkritische Properties — bewusst KEIN ``owner_names``,
+    ``property_label/address``, ``meter_id`` oder ``notes`` (kann interne
+    Vermerke enthalten). Linien tragen zusaetzlich ``material``.
+    """
+    is_point = f.geometry_kind == NetworkFeature.GEOMETRY_POINT
+    props = {
+        "id": f.id,
+        "geometry_kind": f.geometry_kind,
+        "feature_type": f.feature_type,
+        "type_label": vocab.feature_type_label(f.feature_type),
+        "color": vocab.feature_type_color(f.feature_type),
+        "name": f.name,
+        "dimension_dn": f.dimension_dn,
+    }
+    if is_point:
+        props["pressure_rating"] = f.pressure_rating
+        props["hydrant_type"] = f.hydrant_type
+        props["hydrant_type_label"] = (
+            vocab.hydrant_type_label(f.hydrant_type) if f.hydrant_type else None
+        )
+    else:
+        props["material"] = f.material
+        props["accuracy"] = f.accuracy
+        props["length_m"] = round(f.length_m, 1) if f.length_m is not None else None
+    return {
+        "type": "Feature",
+        "id": f.id,
+        "geometry": json.loads(f.geometry),
+        "properties": props,
+    }
+
+
+def public_network_collection(features):
+    """FeatureCollection fuer den oeffentlichen Feuerwehr-Plan. Harter Typ-Filter
+    auf Hydranten + Versorgungs-/Hauptleitungen als Defense-in-Depth zusaetzlich
+    zum Query-Filter der aufrufenden Route."""
+    return {
+        "type": "FeatureCollection",
+        "features": [
+            public_hydrant_feature(f)
+            for f in features
+            if f.feature_type in FEUERWEHR_TYPES
+        ],
     }
 
 
@@ -397,6 +459,8 @@ def build_feature_from_geojson(feat, user_id=None, plan_id=None,
     nf.installation_depth_m = _to_float(props.get("installation_depth_m"))
     nf.ground_level_m = _to_float(props.get("ground_level_m"))
     nf.pressure_rating = (props.get("pressure_rating") or "").strip() or None
+    ht = (props.get("hydrant_type") or "").strip()
+    nf.hydrant_type = ht if ht in vocab.HYDRANT_TYPES else None
     nf.notes = (props.get("notes") or "").strip() or None
     nf.created_by_id = user_id
 
@@ -466,7 +530,8 @@ FEATURE_COPY_ATTRS = (
     "geometry_kind", "feature_type", "name", "geometry",
     "lat", "lng", "length_m", "accuracy", "material",
     "dimension_dn", "year_built", "manufacturer", "installation_depth_m",
-    "ground_level_m", "pressure_rating", "notes", "property_id", "meter_id",
+    "ground_level_m", "pressure_rating", "hydrant_type", "notes",
+    "property_id", "meter_id",
 )
 
 

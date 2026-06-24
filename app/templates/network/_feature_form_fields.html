@@ -59,6 +59,22 @@
     <input type="text" name="pressure_rating" class="form-control" value="{{ f.pressure_rating or '' }}" placeholder="z. B. PN 10">
   </div>
 </div>
+{# Bauart nur fuer Hydranten — treibt das Hydranten-Register im Feuerwehr-Plan.
+   Nur bei bereits als Hydrant erfassten Elementen sichtbar; nach Typwechsel auf
+   "Hydrant" + Speichern erscheint das Feld beim erneuten Oeffnen. #}
+{% if f.feature_type == 'hydrant' %}
+<div class="row g-2">
+  <div class="col-6 mb-2">
+    <label class="form-label">Bauart</label>
+    <select name="hydrant_type" class="form-select">
+      <option value="">—</option>
+      {% for key, label in vocab.HYDRANT_TYPES.items() %}
+      <option value="{{ key }}" {{ 'selected' if f.hydrant_type == key }}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+</div>
+{% endif %}
 <div class="row g-2">
   <div class="col-6 mb-2">
     <label class="form-label">Einbautiefe (m)</label>

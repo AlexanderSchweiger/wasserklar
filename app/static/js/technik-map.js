@@ -144,6 +144,20 @@
     return html;
   }
 
+  // Schlankes Popup fuer den oeffentlichen Feuerwehr-Plan: nur FW-relevante,
+  // datenschutz-unkritische Felder (KEINE Eigentuemer/Adresse/Notiz).
+  function popupHtmlPublic(props) {
+    var html = '<strong>' + escapeHtml(props.name || props.type_label) + '</strong>';
+    html += '<br><span class="text-secondary">' + escapeHtml(props.type_label) + '</span>';
+    if (props.hydrant_type_label) html += '<br>' + escapeHtml(props.hydrant_type_label);
+    var line2 = [];
+    if (props.dimension_dn != null) line2.push('DN ' + props.dimension_dn);
+    if (props.pressure_rating) line2.push(escapeHtml(props.pressure_rating));
+    if (line2.length) html += '<br>' + line2.join(' · ');
+    if (props.length_m != null) html += '<br>Länge: ' + props.length_m + ' m';
+    return html;
+  }
+
   function escapeHtml(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
@@ -167,7 +181,9 @@
     }
     layer._technikId = feature.id;
     layer._technikType = props.feature_type;
-    layer.bindPopup(popupHtml(props));
+    // Oeffentlicher Feuerwehr-Plan: schlankes Popup ohne Eigentuemer/Adresse
+    // (die Daten kommen ohnehin nicht im Public-GeoJSON). Sonst das volle Popup.
+    layer.bindPopup((opts.publicPopup ? popupHtmlPublic : popupHtml)(props));
     return layer;
   }
 
@@ -903,22 +919,33 @@
     // Karte (mehr vertikaler Platz auf A4 portrait).
     var pageStyle = document.getElementById("technik-page-style");
     var orientEl = document.getElementById("technik-print-orientation");
-    function applyOrientation() {
+    var formatEl = document.getElementById("technik-print-format");
+    // Kartenmasse je Format/Orientierung (cm) — exaktes A4/A3-Seitenverhaeltnis,
+    // zentriert. Hoehe bewusst < druckbarer Seitenhoehe, damit der kompakte Titel
+    // drueber passt und die Karte trotzdem Seite 1 fuellt (Legende -> Seite 2).
+    // A3 = A4 x sqrt(2), bleibt damit innerhalb der druckbaren Flaeche (10 mm Rand).
+    var PAGE_DIMS = {
+      "A4-landscape": [24.75, 17.5],
+      "A4-portrait":  [18.38, 26],
+      "A3-landscape": [35.0, 24.75],
+      "A3-portrait":  [25.99, 36.77],
+    };
+    // Verallgemeinert die fruehere applyOrientation: liest zusaetzlich ein
+    // optionales Format-Select (#technik-print-format, A4/A3). Fehlt es (alte
+    // Druckseite), bleibt es bei A4 -> unveraendertes Verhalten.
+    function applyPageFormat() {
       if (!pageStyle) return;
-      var portrait = orientEl && orientEl.value === "portrait";
-      // Karte EXAKT im A4-Seitenverhaeltnis (Breite = Hoehe x Verhaeltnis),
-      // zentriert: Hochformat 18.38 x 26 cm (210:297), Querformat 24.75 x 17.5 cm
-      // (297:210). Hoehe bewusst < druckbare Seitenhoehe, damit der kompakte Titel
-      // drueber passt und die Karte trotzdem Seite 1 fuellt (Legende -> Seite 2).
-      var dims = portrait
-        ? "width:18.38cm!important;height:26cm!important"
-        : "width:24.75cm!important;height:17.5cm!important";
+      var fmt = (formatEl && formatEl.value === "A3") ? "A3" : "A4";
+      var orient = (orientEl && orientEl.value === "portrait") ? "portrait" : "landscape";
+      var dims = PAGE_DIMS[fmt + "-" + orient] || PAGE_DIMS["A4-landscape"];
       pageStyle.textContent =
-        "@media print{@page{size:A4 " + (portrait ? "portrait" : "landscape") + ";margin:10mm}" +
-        "#technik-print-map{" + dims + ";margin-left:auto!important;margin-right:auto!important}}";
+        "@media print{@page{size:" + fmt + " " + orient + ";margin:10mm}" +
+        "#technik-print-map{width:" + dims[0] + "cm!important;height:" + dims[1] +
+        "cm!important;margin-left:auto!important;margin-right:auto!important}}";
     }
-    if (orientEl) orientEl.addEventListener("change", applyOrientation);
-    applyOrientation();
+    if (orientEl) orientEl.addEventListener("change", applyPageFormat);
+    if (formatEl) formatEl.addEventListener("change", applyPageFormat);
+    applyPageFormat();
 
     // Beim Drucken NUR neu vermessen (Print-CSS aendert die Karten-Hoehe), aber
     // den vom Nutzer gewaehlten Ausschnitt behalten: Mittelpunkt + Zoom vorher
@@ -964,9 +991,35 @@
     wirePrintControls(map, store);
   }
 
+  // --- Oeffentlicher Hydrantenplan (Feuerwehr, read-only) ------------------
+  // Wie renderPrint, aber ohne jegliche Editor-Anteile: nur Hydranten +
+  // Versorgungs-/Hauptleitungen (das Backend liefert per featuresUrl genau die),
+  // schlankes Popup (popupHtmlPublic), keine Liegenschafts-/Eigentuemer-Daten.
+  // Die Druck-Steuerung (Format/Orientierung/Drucken) teilt sich wirePrintControls.
+  function renderPublic(elId) {
+    if (typeof L === "undefined" || !document.getElementById(elId)) return;
+    var map = createMap(elId, { startLayer: "_grau" });
+    var store = new FeatureStore(map);
+    store.renderOpts = {
+      markerScale: num(document.getElementById("technik-print-marker-scale"), 0.75),
+      lineWeight: num(document.getElementById("technik-print-line-weight"), 3),
+      dashMode: (document.getElementById("technik-print-dash") || {}).value || "auto",
+      publicPopup: true,
+    };
+    fetchFeatures(T.featuresUrl).then(function (fc) {
+      var feats = fc.features || [];
+      feats.forEach(function (f) { store.add(f, {}); });
+      store.fit();
+      var empty = document.getElementById("technik-public-empty");
+      if (empty) empty.style.display = feats.length ? "none" : "";
+    });
+    wirePrintControls(map, store);
+  }
+
   window.TECHNIK_MAP = {
     initEditor: initEditor,
     renderPrint: renderPrint,
+    renderPublic: renderPublic,
     renderStatic: renderPrint, // Rueckwaerts-Kompat (alter Aufrufname)
     createMap: createMap,
   };
@@ -977,6 +1030,31 @@
       document.addEventListener("DOMContentLoaded", initEditor, { once: true });
     } else {
       initEditor();
+    }
+  }
+
+  // Oeffentlichen Hydrantenplan ohne Inline-Script starten (enger CSP auf der
+  // Public-Route, kein 'unsafe-inline' in script-src). Die Karten-Konfig liegt
+  // als nicht-ausfuehrbares <script type="application/json" id="technik-config">;
+  // der Map-Container traegt data-technik-public.
+  function autoPublic() {
+    var el = document.querySelector("[data-technik-public]");
+    if (!el) return;
+    var cfgEl = document.getElementById("technik-config");
+    if (cfgEl) {
+      try {
+        T = JSON.parse(cfgEl.textContent || "{}");
+        V = T.vocab || {};
+        window.TECHNIK = T;
+      } catch (e) { /* kaputte Konfig -> leere Karte statt Crash */ }
+    }
+    renderPublic(el.id);
+  }
+  if (document.querySelector("[data-technik-public]")) {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", autoPublic, { once: true });
+    } else {
+      autoPublic();
     }
   }
 })();

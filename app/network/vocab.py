@@ -35,6 +35,13 @@ LINE_TYPES = {
     "sonstige_leitung":     {"label": "Sonstige Leitung",            "color": "#868e96", "desc": "Sonstige Leitung ohne eigene Kategorie."},
 }
 
+# Hydranten-Bauart: key -> Label. Nur fuer feature_type='hydrant' relevant;
+# treibt das Hydranten-Register im Feuerwehr-Druck/-Plan.
+HYDRANT_TYPES = {
+    "ueberflur": "Überflurhydrant",
+    "unterflur": "Unterflurhydrant",
+}
+
 # Lagegenauigkeit: key -> {label, badge (Tabler-Soft), dash (SVG-Strichmuster fuer Linien)}
 ACCURACIES = {
     "geschaetzt": {"label": "geschätzt", "badge": "bg-yellow-lt", "dash": "8 8"},
@@ -92,6 +99,10 @@ def accuracy_label(key):
     return item["label"] if item else key
 
 
+def hydrant_type_label(key):
+    return HYDRANT_TYPES.get(key, key or "")
+
+
 def maintenance_kind_label(key):
     return MAINTENANCE_KINDS.get(key, key)
 
@@ -118,6 +129,7 @@ def as_client_dict():
         "pointTypes": POINT_TYPES,
         "lineTypes": LINE_TYPES,
         "accuracies": ACCURACIES,
+        "hydrantTypes": HYDRANT_TYPES,
         "materials": MATERIALS,
         "maintenanceKinds": MAINTENANCE_KINDS,
         "maintenanceResults": MAINTENANCE_RESULTS,

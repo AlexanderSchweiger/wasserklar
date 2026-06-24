@@ -14,9 +14,10 @@ authentifizierte Requests NICHT — daher traegt jede Route ``@login_required``.
 
 import json
 import os
+import secrets
 import unicodedata
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from statistics import median
 
@@ -35,7 +36,7 @@ from app.extensions import db
 from app.pagination import paginate_list
 from app.models import (
     NetworkPlan, NetworkFeature, MaintenanceLog, SpringYield, FeaturePhoto,
-    Property, PropertyOwnership, Customer,
+    HydrantShareLink, Property, PropertyOwnership, Customer,
 )
 
 _ALLOWED_IMG_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
@@ -68,6 +69,21 @@ def _map_config(plan):
         "createUrl": url_for("network.feature_create"),
         # Basis-URL fuer den Liegenschafts-Link im Popup (JS haengt die ID an).
         "propertyUrl": url_for("properties.detail", property_id=0).rsplit("/", 1)[0] + "/",
+        "planId": pid,
+        "vocab": vocab.as_client_dict(),
+    }
+
+
+def _hydrant_map_config(plan):
+    """Schlanke Karten-Konfig fuer den Feuerwehr-/Hydranten-Druck (read-only):
+    nur Hydranten + Versorgungs-/Hauptleitungen, kein Anlegen/Liegenschafts-Link.
+    ``type`` ist wiederholbar (siehe ``features_geojson``)."""
+    pid = plan.id if plan else None
+    return {
+        "base": url_for("network.index"),
+        "featuresUrl": url_for(
+            "network.features_geojson", plan=pid, type=list(svc.FEUERWEHR_TYPES),
+        ),
         "planId": pid,
         "vocab": vocab.as_client_dict(),
     }
@@ -263,9 +279,11 @@ def features_geojson():
         plan = current_plan()
         pid = plan.id if plan else None
     query = NetworkFeature.query.filter(NetworkFeature.plan_id == pid)
-    ftype = request.args.get("type")
-    if ftype:
-        query = query.filter(NetworkFeature.feature_type == ftype)
+    # ``?type=`` ist wiederholbar (z. B. der Feuerwehr-Plan filtert auf Hydrant +
+    # Versorgungs-/Hauptleitung); ein einzelnes ``?type=hydrant`` bleibt gueltig.
+    ftypes = [t for t in request.args.getlist("type") if t]
+    if ftypes:
+        query = query.filter(NetworkFeature.feature_type.in_(ftypes))
     return jsonify(svc.collection_geojson(query.all()))
 
 
@@ -949,6 +967,100 @@ def print_view():
         vocab=vocab,
         today_iso=date.today().strftime("%d.%m.%Y"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Hydrantenplan fuer die Feuerwehr (Druck A4/A3 + oeffentliche Freigabe-Links)
+# ---------------------------------------------------------------------------
+
+def _share_public_url(token):
+    """Vollstaendige Public-URL eines Freigabe-Links. Bewusst aus ``host_url``
+    zusammengebaut statt via ``url_for`` — die einloesende Route ``/feuerwehr/...``
+    lebt im SaaS-Blueprint und existiert im OSS-Prozess nicht."""
+    return request.host_url.rstrip("/") + "/feuerwehr/" + token
+
+
+@bp.route("/hydrants/print")
+@login_required
+def hydrants_print():
+    """Druckoptimierter Hydrantenplan fuer die Feuerwehr: nur Hydranten +
+    Versorgungs-/Hauptleitungen + basemap.at-Strassen, A4/A3. Zusaetzlich (sofern
+    FEATURE_HYDRANT_PUBLIC_SHARE an) die Verwaltung oeffentlicher Freigabe-Links."""
+    plan = current_plan()
+    hydrants = (
+        NetworkFeature.query
+        .filter_by(plan_id=plan.id, feature_type=svc.HYDRANT_TYPE)
+        .order_by(NetworkFeature.name.asc())
+        .all() if plan else []
+    )
+    status_map = svc.feature_maintenance_status(hydrants)
+    share_enabled = bool(current_app.config.get("FEATURE_HYDRANT_PUBLIC_SHARE"))
+    share_links = (
+        HydrantShareLink.query.filter_by(plan_id=plan.id)
+        .order_by(HydrantShareLink.created_at.desc()).all()
+        if (plan and share_enabled) else []
+    )
+    return render_template(
+        "network/hydrants_print.html",
+        cfg=_hydrant_map_config(plan),
+        plan=plan,
+        hydrants=hydrants,
+        status_map=status_map,
+        share_enabled=share_enabled,
+        share_links=share_links,
+        share_urls={l.id: _share_public_url(l.token) for l in share_links},
+        vocab=vocab,
+        today=date.today(),
+        today_iso=date.today().strftime("%d.%m.%Y"),
+    )
+
+
+@bp.route("/hydrants/share-links", methods=["POST"])
+@login_required
+def share_link_create():
+    """Neuen oeffentlichen Freigabe-Link fuer den aktuellen Plan anlegen.
+    SaaS-only (FEATURE_HYDRANT_PUBLIC_SHARE) -> 404 im OSS-Standalone."""
+    if not current_app.config.get("FEATURE_HYDRANT_PUBLIC_SHARE"):
+        abort(404)
+    plan = current_plan()
+    if plan is None:
+        flash("Kein Plan gewählt — bitte zuerst einen Plan anlegen.", "warning")
+        return redirect(url_for("network.hydrants_print"))
+    link = HydrantShareLink(
+        plan_id=plan.id,
+        token=secrets.token_urlsafe(32),
+        label=(request.form.get("label") or "").strip() or None,
+        created_by_id=current_user.id,
+    )
+    db.session.add(link)
+    db.session.commit()
+    flash("Feuerwehr-Link erstellt. Bitte den Link an die Feuerwehr weitergeben.", "success")
+    return redirect(url_for("network.hydrants_print", plan=plan.id))
+
+
+@bp.route("/hydrants/share-links/<int:link_id>/revoke", methods=["POST"])
+@login_required
+def share_link_revoke(link_id):
+    if not current_app.config.get("FEATURE_HYDRANT_PUBLIC_SHARE"):
+        abort(404)
+    link = HydrantShareLink.query.get_or_404(link_id)
+    link.is_active = False
+    db.session.commit()
+    flash("Feuerwehr-Link widerrufen.", "success")
+    return redirect(url_for("network.hydrants_print", plan=link.plan_id))
+
+
+@bp.route("/hydrants/share-links/<int:link_id>/delete", methods=["POST"])
+@login_required
+def share_link_delete(link_id):
+    if not current_app.config.get("FEATURE_HYDRANT_PUBLIC_SHARE"):
+        abort(404)
+    link = HydrantShareLink.query.get_or_404(link_id)
+    pid = link.plan_id
+    db.session.delete(link)
+    db.session.commit()
+    flash("Feuerwehr-Link gelöscht.", "success")
+    return redirect(url_for("network.hydrants_print", plan=pid))
 
 
 # ---------------------------------------------------------------------------

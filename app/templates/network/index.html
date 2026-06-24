@@ -68,6 +68,9 @@
           <a href="{{ url_for('network.print_view') }}" class="dropdown-item" hx-boost="false" target="_blank" rel="noopener">
             <i class="fas fa-print me-2"></i>Drucken
           </a>
+          <a href="{{ url_for('network.hydrants_print') }}" class="dropdown-item" hx-boost="false" target="_blank" rel="noopener">
+            <i class="fas fa-fire-extinguisher me-2"></i>Hydrantenplan (Feuerwehr)
+          </a>
           {# Automatische Hausanschluss-Zuordnung: SaaS-only-Komfortfeature
              (FEATURE_HAUSANSCHLUSS_AUTOASSIGN). Im OSS-Standalone aus — dort
              ordnet man Liegenschaften im Feature-Formular manuell zu. #}
