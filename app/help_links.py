@@ -121,7 +121,6 @@ ENDPOINT_TO_DOC = {
     "support.index":               "faq",
     "support.new":                 "faq",
     "files.index":                 "einstellungen",
-    "export.index":                "abonnement#export",
     "backups.index":               "abonnement#export",
     "bank_import.index":           "buchhaltung",
 }

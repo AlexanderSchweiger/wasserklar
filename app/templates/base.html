@@ -148,7 +148,6 @@
             {% set _nav_einstellungen  = request.blueprint == 'settings' %}
             {% set _nav_data_transfer  = request.blueprint == 'data_transfer' %}
             {% set _nav_dokumente      = is_saas is defined and is_saas and request.blueprint == 'files' %}
-            {% set _nav_export         = is_saas is defined and is_saas and request.blueprint == 'export' %}
             {% set _nav_backups        = is_saas is defined and is_saas and request.blueprint == 'backups' %}
             {% set _nav_support        = is_saas is defined and is_saas and request.blueprint == 'support' %}
             {% set _nav_abonnement     = is_saas is defined and is_saas and request.blueprint == 'billing' %}
@@ -160,7 +159,7 @@
             {% set auswertungen_active = _nav_jahresbericht or _nav_ust or _nav_kundenauswertung %}
             {% set zaehler_active      = _nav_zaehler or _nav_ablesungen or _nav_ablesungen_import or _nav_zaehlertausch or _nav_zaehlertausch_hist or _nav_selbsterfassung %}
             {% set stammdaten_active   = _nav_kunden or _nav_objekte or _nav_import or _nav_buchungsjahre or _nav_perioden %}
-            {% set verwaltung_active   = _nav_benutzer or _nav_einstellungen or _nav_data_transfer or _nav_dokumente or _nav_export or _nav_backups or _nav_support or _nav_abonnement %}
+            {% set verwaltung_active   = _nav_benutzer or _nav_einstellungen or _nav_data_transfer or _nav_dokumente or _nav_backups or _nav_support or _nav_abonnement %}
 
             {% if current_user.has_permission('stammdaten') %}
             <li class="nav-item">

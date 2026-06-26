@@ -88,7 +88,7 @@ def _detect_variant() -> str:
     try:
         if "tenant" in current_app.blueprints or "saas_main" in current_app.blueprints:
             return "saas"
-        # SaaS ergaenzt registrierte Blueprints wie "bank_import", "export", "files".
+        # SaaS ergaenzt registrierte Blueprints wie "bank_import", "files".
         if any(bp in current_app.blueprints for bp in ("bank_import", "files")):
             return "saas"
     except RuntimeError:
