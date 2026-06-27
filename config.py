@@ -94,6 +94,11 @@ class Config:
     WG_EMAIL = os.environ.get("WG_EMAIL", "")
     WG_PHONE = os.environ.get("WG_PHONE", "")
 
+    # Produkt-/Markenname fuer nutzersichtbare Stellen (Footer, 2FA-Aussteller,
+    # Export-Dateiname, iCal-Metadaten). Default "wasserklar" fuer den
+    # OSS-Standalone; der SaaS-Layer ueberschreibt das via register_saas_extensions.
+    APP_BRAND_NAME = os.environ.get("APP_BRAND_NAME", "wasserklar")
+
     # Hilfe-Link im App-Header. Default: oeffentliche Doku auf wasserklar.at.
     # Self-hosted Installationen koennen via .env auf eine eigene Doku zeigen
     # (oder leer setzen, dann ist der Help-Button im Template versteckt).

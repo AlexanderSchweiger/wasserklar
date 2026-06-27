@@ -151,6 +151,10 @@ def create_app(config_name=None):
     from app.auth.permissions import ALL_PERMISSIONS as _ALL_PERMISSIONS
     app.jinja_env.globals["ALL_PERMISSIONS"] = _ALL_PERMISSIONS
 
+    # Produkt-/Markenname fuer Templates (Footer etc.). OSS-Default aus der
+    # Config; der SaaS-Layer setzt APP_BRAND_NAME um und re-injiziert den Global.
+    app.jinja_env.globals["app_brand_name"] = app.config["APP_BRAND_NAME"]
+
     # WG-Domaene (Mandant-Typ Wassergenossenschaft): Label-/Badge-Dicts +
     # Funktions-Label-Helper fuer Formulare und Listen.
     from app.wg import (

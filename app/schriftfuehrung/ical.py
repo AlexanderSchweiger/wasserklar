@@ -5,6 +5,14 @@ gängigen Kalender-Clients für Einladungen.
 """
 from datetime import datetime, time, timedelta
 
+from flask import current_app
+
+
+def _brand_slug():
+    """Markenname als iCal-taugliches Token (klein, nur alphanumerisch)."""
+    name = current_app.config.get("APP_BRAND_NAME", "wasserklar")
+    return "".join(c for c in name.lower() if c.isalnum()) or "app"
+
 
 def _escape(text):
     if not text:
@@ -37,11 +45,11 @@ def build_meeting_ics(meeting, description=""):
     lines = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
-        "PRODID:-//wasserklar//Schriftfuehrung//DE",
+        f"PRODID:-//{_brand_slug()}//Schriftfuehrung//DE",
         "CALSCALE:GREGORIAN",
         "METHOD:PUBLISH",
         "BEGIN:VEVENT",
-        f"UID:meeting-{meeting.id}@wasserklar",
+        f"UID:meeting-{meeting.id}@{_brand_slug()}",
         f"DTSTAMP:{stamp}",
         f"DTSTART:{dtstart}",
         f"DTEND:{dtend}",

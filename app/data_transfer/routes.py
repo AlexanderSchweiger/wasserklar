@@ -117,7 +117,8 @@ def export_run():
 
     buf.seek(0)
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    filename = f"wasserklar-export-{ts}.zip"
+    brand = current_app.config["APP_BRAND_NAME"].lower().replace(" ", "-")
+    filename = f"{brand}-export-{ts}.zip"
     return send_file(
         buf,
         mimetype="application/zip",

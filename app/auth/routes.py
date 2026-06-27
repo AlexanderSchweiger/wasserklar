@@ -249,8 +249,9 @@ _RECOVERY_ONCE_KEY = "recovery_codes_once"
 
 
 def _enroll_issuer():
-    """Anzeigename der Authenticator-App (Mandantenname, Fallback statisch)."""
-    return wg_settings().get("name") or "Wasserklar"
+    """Anzeigename der Authenticator-App (Mandantenname, Fallback Markenname)."""
+    from flask import current_app
+    return wg_settings().get("name") or current_app.config["APP_BRAND_NAME"]
 
 
 def _render_enable(secret, issuer):

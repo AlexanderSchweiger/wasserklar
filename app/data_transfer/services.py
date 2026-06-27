@@ -352,7 +352,7 @@ def extract_to_temp(uploaded_fileobj, instance_path: str) -> tuple[Path, dict]:
     manifest_path = extract_dir / "manifest.json"
     if not manifest_path.exists():
         shutil.rmtree(extract_dir, ignore_errors=True)
-        raise ValueError("manifest.json fehlt — keine gueltige Wasserklar-Export-Datei.")
+        raise ValueError("manifest.json fehlt — keine gueltige Export-Datei.")
 
     with open(manifest_path, "r", encoding="utf-8") as fh:
         manifest = json.load(fh)
