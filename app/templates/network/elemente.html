@@ -71,9 +71,27 @@
 {% block modals %}
 {% include "network/_elemente_modals.html" %}
 {% include "network/_yield_modal.html" %}
+{% include "network/_sample_modal.html" %}
 {% endblock %}
 
 {% block scripts %}
 {% include "network/_elemente_modals_scripts.html" %}
 {% include "network/_yield_modal_scripts.html" %}
+{% include "network/_sample_modal_scripts.html" %}
+{# Tabelle nach erfasstem/gelöschtem Befund mit aktuellen Filtern neu laden,
+   damit ggf. neue „Wasserprobe"-Zustände sichtbar werden (Elementliste ignoriert
+   sonst das sampleChanged-Event). #}
+<script>
+document.addEventListener('sampleChanged', function () {
+  if (!document.getElementById('elemente-table') || !window.htmx) { return; }
+  var p = new URLSearchParams();
+  ['q', 'plan', 'type', 'sort', 'dir'].forEach(function (name) {
+    var el = document.querySelector("[name='" + name + "']");
+    if (el && el.value) { p.set(name, el.value); }
+  });
+  var s = p.toString();
+  htmx.ajax('GET', '{{ url_for("network.elements") }}' + (s ? '?' + s : ''),
+            { target: '#elemente-table', swap: 'innerHTML' });
+});
+</script>
 {% endblock %}

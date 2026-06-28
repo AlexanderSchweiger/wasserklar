@@ -1881,12 +1881,16 @@ def _billing_run_amounts(invoice, base_label, add_label):
     }
 
 
-@bp.route("/billing-runs/<int:run_id>")
-@login_required
-def billing_run_detail(run_id):
+def _billing_run_overview(run):
+    """Aggregiert die Kennzahlen eines Rechnungslaufs für die Detailseite und
+    den Komplett-Ausdruck (Deckblatt).
+
+    Liefert ein Dict mit der Rechnungsliste (`rows`/`invoices`), Versand- und
+    Zahlungs-Zählern sowie den Summen. Stornierte Rechnungen sind gegenstandslos
+    und fließen nicht in die Summen ein — es gilt: Gesamtsumme = Bezahlt + Offen.
+    """
     from sqlalchemy.orm import selectinload, joinedload
 
-    run = db.get_or_404(BillingRun, run_id)
     invoices = (
         run.invoices
         .options(
@@ -1897,7 +1901,6 @@ def billing_run_detail(run_id):
         .order_by(Invoice.invoice_number, Invoice.id)
         .all()
     )
-    doc_format = AppSetting.get("invoice.document_format", "pdf")
 
     base_label = run.tariff_base_fee_label or "Grundgebühr"
     add_label = run.tariff_additional_fee_label or "Zusatzgebühr"
@@ -1965,17 +1968,30 @@ def billing_run_detail(run_id):
     pct_sent = round(count_sent / count_live * 100) if count_live else 0
     pct_paid = round(float(sum_paid) / float(sum_total) * 100) if sum_total else 0
 
+    return {
+        "invoices": invoices,
+        "rows": rows,
+        "base_label": base_label,
+        "add_label": add_label,
+        "count_draft": count_draft, "count_sent": count_sent,
+        "count_mail": count_mail, "count_post": count_post,
+        "count_paid": count_paid, "count_open": count_open,
+        "count_total": count_total, "count_live": count_live,
+        "other_status_counts": other_status_counts,
+        "sum_total": sum_total, "sum_paid": sum_paid, "sum_open": sum_open,
+        "pct_sent": pct_sent, "pct_paid": pct_paid,
+        "run_has_vat": run_has_vat, "mailable": mailable, "post_ids": post_ids,
+    }
+
+
+@bp.route("/billing-runs/<int:run_id>")
+@login_required
+def billing_run_detail(run_id):
+    run = db.get_or_404(BillingRun, run_id)
+    doc_format = AppSetting.get("invoice.document_format", "pdf")
     return render_template(
         "invoices/billing_run_detail.html",
-        run=run, rows=rows, invoices=invoices, doc_format=doc_format,
-        count_draft=count_draft, count_sent=count_sent,
-        count_mail=count_mail, count_post=count_post,
-        count_paid=count_paid, count_open=count_open,
-        count_total=count_total, count_live=count_live,
-        other_status_counts=other_status_counts,
-        sum_total=sum_total, sum_paid=sum_paid, sum_open=sum_open,
-        pct_sent=pct_sent, pct_paid=pct_paid,
-        run_has_vat=run_has_vat, mailable=mailable, post_ids=post_ids,
+        run=run, doc_format=doc_format, **_billing_run_overview(run),
     )
 
 
@@ -2121,6 +2137,153 @@ def billing_run_post_bulk(run_id):
         writer.write(fh)
     writer.close()
     return send_file(merged_path, as_attachment=True, download_name="Rechnungen_Post.pdf")
+
+
+@bp.route("/billing-runs/<int:run_id>/export/excel")
+@login_required
+def billing_run_export_excel(run_id):
+    """Übersicht eines Rechnungslaufs als Excel: oben das Deckblatt
+    (Lauf-Metadaten, Tarif-Snapshot, Summen), darunter die Rechnungstabelle.
+
+    Exportiert ausschließlich die **Übersichtsdaten** — nicht die einzelnen
+    Rechnungen. Die Tabelle entspricht der Ansicht auf der Detailseite (alle
+    Rechnungen inkl. stornierter, die Summen rechnen stornierte heraus).
+    """
+    import io
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    run = db.get_or_404(BillingRun, run_id)
+    ov = _billing_run_overview(run)
+    rows = ov["rows"]
+    run_has_vat = ov["run_has_vat"]
+    base_label = ov["base_label"]
+    add_label = ov["add_label"]
+
+    EUR = '#,##0.00 "€"'
+    EUR4 = '#,##0.0000 "€"'
+    NUM = '#,##0.00'
+    TITLE_FONT = Font(bold=True, size=14)
+    SECTION_FONT = Font(bold=True, size=11)
+    LBL_FONT = Font(bold=True)
+    HDR_FILL = PatternFill("solid", fgColor="2F5496")
+    HDR_FONT = Font(bold=True, color="FFFFFF")
+    TOTAL_FONT = Font(bold=True)
+    BORDER_TOP = Border(top=Side(style="thin"))
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Rechnungslauf"
+
+    def kv(row, label, value, fmt=None):
+        ws.cell(row=row, column=1, value=label).font = LBL_FONT
+        cell = ws.cell(row=row, column=2, value=value)
+        if fmt:
+            cell.number_format = fmt
+
+    r = 1
+    title = "Rechnungslauf" + (f" — {run.billing_period.name}" if run.billing_period else "")
+    ws.cell(row=r, column=1, value=title).font = TITLE_FONT
+    r += 1
+    ws.cell(row=r, column=1, value=f"Erstellt am {run.created_at.strftime('%d.%m.%Y %H:%M')} Uhr")
+    r += 2
+
+    # --- Deckblatt: Details ---
+    ws.cell(row=r, column=1, value="Details").font = SECTION_FONT
+    r += 1
+    kv(r, "Benutzer", run.created_by.username if run.created_by else "—"); r += 1
+    kv(r, "Abrechnungsperiode", run.billing_period.name if run.billing_period else "—"); r += 1
+    if run.sort_order:
+        kv(r, "Sortierung", dict(BillingRun.SORT_ORDER_CHOICES).get(run.sort_order, run.sort_order)); r += 1
+    kv(r, "Rechnungen erstellt", run.invoices_created); r += 1
+    kv(r, "Übersprungen", run.invoices_skipped); r += 1
+    r += 1
+
+    # --- Deckblatt: Tarif-Snapshot ---
+    ws.cell(row=r, column=1, value="Verwendeter Tarif (Kopie)").font = SECTION_FONT
+    r += 1
+    kv(r, "Name", run.tariff_name); r += 1
+    kv(r, "Gültig", f"{run.tariff_valid_from or '—'} – {run.tariff_valid_to or 'aktuell'}"); r += 1
+    if run.tariff_base_fee is not None:
+        kv(r, base_label, float(run.tariff_base_fee), EUR); r += 1
+    if run.tariff_additional_fee is not None:
+        kv(r, add_label, float(run.tariff_additional_fee), EUR); r += 1
+    kv(r, "Preis/m³", float(run.tariff_price_per_m3), EUR4); r += 1
+    r += 1
+
+    # --- Deckblatt: Summen ---
+    ws.cell(row=r, column=1, value="Zusammenfassung").font = SECTION_FONT
+    r += 1
+    kv(r, "Gesamtsumme", float(ov["sum_total"]), EUR)
+    ws.cell(row=r, column=3, value=f"{ov['count_paid'] + ov['count_open']} Rechnung(en)"); r += 1
+    kv(r, "Bezahlt", float(ov["sum_paid"]), EUR)
+    ws.cell(row=r, column=3, value=f"{ov['count_paid']} Rechnung(en)"); r += 1
+    kv(r, "Offen", float(ov["sum_open"]), EUR)
+    ws.cell(row=r, column=3, value=f"{ov['count_open']} Rechnung(en)"); r += 1
+    kv(r, "Versendet", f"{ov['count_sent']} von {ov['count_live']}"); r += 1
+    if ov["other_status_counts"]:
+        kv(r, "Weitere Status",
+           ", ".join(f"{k}: {v}" for k, v in ov["other_status_counts"].items())); r += 1
+    r += 1
+
+    # --- Rechnungstabelle ---
+    headers = ["Rechnungsnr.", "Kunde", "Liegenschaft", "Adresse", "Versandart",
+               "m³", "Wasser", base_label, add_label, "Netto"]
+    if run_has_vat:
+        headers.append("USt")
+    headers += ["Brutto", "Mail-Status", "Status"]
+    brutto_col = len(headers) - 2
+
+    for c, val in enumerate(headers, 1):
+        cell = ws.cell(row=r, column=c, value=val)
+        cell.font = HDR_FONT
+        cell.fill = HDR_FILL
+        cell.alignment = Alignment(horizontal="center")
+    r += 1
+
+    for row in rows:
+        inv = row["inv"]
+        amt = row["amt"]
+        addr = " ".join(p for p in [inv.property.strasse, inv.property.hausnummer] if p) if inv.property else ""
+        liegenschaft = (inv.property.object_number or str(inv.property_id)) if inv.property else "—"
+        c = 1
+        ws.cell(row=r, column=c, value=inv.invoice_number); c += 1
+        ws.cell(row=r, column=c, value=inv.customer.name); c += 1
+        ws.cell(row=r, column=c, value=liegenschaft); c += 1
+        ws.cell(row=r, column=c, value=addr); c += 1
+        ws.cell(row=r, column=c, value="Mail" if row["wants_email"] else "Post"); c += 1
+        mc = ws.cell(row=r, column=c, value=(float(amt["m3"]) if amt["m3"] else None)); mc.number_format = NUM; c += 1
+        for key in ("water_net", "base_fee", "additional_fee", "net"):
+            ws.cell(row=r, column=c, value=float(amt[key])).number_format = EUR; c += 1
+        if run_has_vat:
+            ws.cell(row=r, column=c, value=float(amt["ust"])).number_format = EUR; c += 1
+        ws.cell(row=r, column=c, value=float(amt["gross"])).number_format = EUR; c += 1
+        ws.cell(row=r, column=c, value=inv.last_email_status_de or ""); c += 1
+        ws.cell(row=r, column=c, value=inv.status); c += 1
+        r += 1
+
+    if rows:
+        ws.cell(row=r, column=1, value="Gesamt (ohne stornierte)").font = TOTAL_FONT
+        tc = ws.cell(row=r, column=brutto_col, value=float(ov["sum_total"]))
+        tc.number_format = EUR
+        tc.font = TOTAL_FONT
+        tc.border = BORDER_TOP
+
+    for col in ws.columns:
+        length = max((len(str(cell.value)) for cell in col if cell.value is not None), default=10)
+        ws.column_dimensions[get_column_letter(col[0].column)].width = min(45, max(11, length + 2))
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    period = run.billing_period.name if run.billing_period else "Lauf"
+    safe_period = re.sub(r"[^0-9A-Za-zÄÖÜäöüß._-]+", "_", period)
+    fname = f"Rechnungslauf_{safe_period}_{run.created_at.strftime('%Y-%m-%d')}.xlsx"
+    return send_file(
+        buf, as_attachment=True, download_name=fname,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 
 # ---------------------------------------------------------------------------

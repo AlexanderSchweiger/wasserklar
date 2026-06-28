@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Laborbefund{% endblock %}
+{% block page_title %}<i class="fas fa-vial me-2"></i> Laborbefund{% endblock %}
+
+{% block content %}
+<div class="mb-3 d-flex gap-2 flex-wrap">
+  <a href="{{ url_for('network.samples_overview', feature_id=f.id) }}" class="btn btn-sm btn-outline-secondary" hx-boost="false">
+    <i class="fas fa-arrow-left me-1"></i> Alle Befunde: {{ f.label() }}
+  </a>
+  <a href="{{ url_for('network.water_quality', plan=f.plan_id) }}" class="btn btn-sm btn-outline-secondary" hx-boost="false">
+    <i class="fas fa-vial me-1"></i> Zur Wasserqualität
+  </a>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h3 class="card-title mb-0">
+      {{ f.label() }} · {{ sample.sample_date.strftime('%d.%m.%Y') }}
+    </h3>
+    {% set ost = sample.overall_status() %}
+    {% if ost %}
+    <div class="card-actions">
+      <span class="badge {{ wq.status_badge(ost) }}">Gesamt: {{ wq.status_label(ost) }}</span>
+    </div>
+    {% endif %}
+  </div>
+  <div class="card-body">
+    <div class="datagrid mb-3">
+      {% if sample.lab_name %}
+      <div class="datagrid-item"><div class="datagrid-title">Labor</div><div class="datagrid-content">{{ sample.lab_name }}</div></div>
+      {% endif %}
+      {% if sample.sample_no %}
+      <div class="datagrid-item"><div class="datagrid-title">Probennummer</div><div class="datagrid-content">{{ sample.sample_no }}</div></div>
+      {% endif %}
+      {% if sample.sample_type %}
+      <div class="datagrid-item"><div class="datagrid-title">Art</div><div class="datagrid-content">{{ sample.sample_type }}</div></div>
+      {% endif %}
+    </div>
+    {% if sample.notes %}<p class="text-secondary">{{ sample.notes }}</p>{% endif %}
+
+    <div class="table-responsive">
+      <table class="table table-vcenter card-table">
+        <thead>
+          <tr>
+            <th>Parameter</th>
+            <th class="text-end">Messwert</th>
+            <th>Einheit</th>
+            <th>Grenzwert</th>
+            <th>Bewertung</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in sample.results %}
+          <tr>
+            <td>{{ wq.parameter_label(r.parameter_key) }}</td>
+            <td class="text-end">
+              {% if r.value_text %}{{ r.value_text }}
+              {% elif r.value_num is not none %}{{ r.value_num | de_number(4) }}
+              {% else %}—{% endif %}
+            </td>
+            <td class="text-secondary">{{ r.unit or '—' }}</td>
+            <td class="text-secondary">{{ r.limit_text or '—' }}</td>
+            <td><span class="badge {{ wq.status_badge(r.status) }}">{{ wq.status_label(r.status) }}</span></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="text-center text-muted py-3">Keine Laborwerte erfasst.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

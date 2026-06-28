@@ -2200,6 +2200,13 @@ class NetworkFeature(db.Model):
         cascade="all, delete-orphan",
         order_by="SpringYield.measurement_date.asc()",
     )
+    # Wasserproben/Laborbefunde (nur fuer Probenahmestellen relevant) —
+    # aufsteigend nach Entnahmedatum.
+    water_samples = db.relationship(
+        "WaterSample", backref="feature", lazy="selectin",
+        cascade="all, delete-orphan",
+        order_by="WaterSample.sample_date.asc()",
+    )
 
     def is_line(self):
         return self.geometry_kind == self.GEOMETRY_LINE
@@ -2284,6 +2291,101 @@ class SpringYield(db.Model):
         return (
             f"<SpringYield feature={self.feature_id} "
             f"{self.measurement_date} {self.flow_rate_lps} l/s>"
+        )
+
+
+class WaterSample(db.Model):
+    """Wasserprobe / Laborbefund zu einer NetworkFeature vom Typ 'probenahme'.
+    Ein Befund buendelt mehrere Laborwerte (``LabResult``) eines Entnahmedatums
+    (TWV-Beprobung). Geschwister-Pattern zu ``SpringYield``/``MaintenanceLog``
+    (gleicher feature_id-FK, gleiche Audit-Spalten). Bewusst kein eigenes
+    Probenahmestellen-Stammdaten-Model: die Stelle IST die NetworkFeature im
+    Leitungsplan (feature_type='probenahme').
+    """
+    __tablename__ = "water_samples"
+
+    STATUS_OK = "ok"
+    STATUS_WARNING = "warning"
+    STATUS_ALARM = "alarm"
+    STATUS_UNKNOWN = "unknown"
+    # Rang fuer overall_status: alarm > warning > unknown > ok.
+    _STATUS_RANK = {"ok": 0, "unknown": 1, "warning": 2, "alarm": 3}
+
+    id = db.Column(db.Integer, primary_key=True)
+    feature_id = db.Column(
+        db.Integer, db.ForeignKey("network_features.id"),
+        nullable=False, index=True,
+    )
+    sample_date = db.Column(db.Date, nullable=False)
+    lab_name = db.Column(db.String(160), nullable=True)        # untersuchendes Labor
+    sample_no = db.Column(db.String(80), nullable=True)        # Befund-/Probennummer
+    sample_type = db.Column(db.String(40), nullable=True)      # Routine/Vollanalyse/Anlassbezogen
+    notes = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_by_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+
+    results = db.relationship(
+        "LabResult", backref="sample", lazy="selectin",
+        cascade="all, delete-orphan",
+        order_by="LabResult.parameter_key.asc()",
+    )
+
+    def overall_status(self):
+        """Schlechtester Status aller Laborwerte (alarm > warning > unknown > ok).
+        ``None`` wenn keine Werte erfasst sind."""
+        if not self.results:
+            return None
+        worst = self.STATUS_OK
+        for r in self.results:
+            if self._STATUS_RANK.get(r.status, 1) > self._STATUS_RANK.get(worst, 0):
+                worst = r.status
+        return worst
+
+    def alarm_count(self):
+        return sum(1 for r in self.results if r.status == self.STATUS_ALARM)
+
+    def __repr__(self):
+        return f"<WaterSample feature={self.feature_id} {self.sample_date}>"
+
+
+class LabResult(db.Model):
+    """Einzelner Laborwert (ein Parameter) innerhalb einer ``WaterSample``.
+    ``unit``/``limit_text``/``status`` sind Snapshots zur Erfassungszeit, damit
+    ein Befund auch nach Grenzwert-Aenderungen (AppSetting-Override) als Beleg
+    gueltig bleibt. ``value_text`` haelt nicht-numerische Ergebnisse ("n.n.",
+    "< 0,01"); ``value_num`` treibt Ampel + Diagramm.
+    """
+    __tablename__ = "lab_results"
+
+    id = db.Column(db.Integer, primary_key=True)
+    water_sample_id = db.Column(
+        db.Integer, db.ForeignKey("water_samples.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    parameter_key = db.Column(db.String(40), nullable=False)
+    value_num = db.Column(db.Numeric(precision=12, scale=4), nullable=True)
+    value_text = db.Column(db.String(80), nullable=True)
+    unit = db.Column(db.String(20), nullable=True)             # Snapshot
+    limit_text = db.Column(db.String(60), nullable=True)       # Snapshot des Grenzwerts
+    status = db.Column(
+        db.String(12), nullable=False,
+        default="ok", server_default=db.text("'ok'"),
+    )
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def display_value(self):
+        """Anzeige-Wert: value_text falls gesetzt, sonst value_num (dt. Format
+        macht der ``de_number``-Filter im Template)."""
+        if self.value_text:
+            return self.value_text
+        return self.value_num
+
+    def __repr__(self):
+        return (
+            f"<LabResult sample={self.water_sample_id} "
+            f"{self.parameter_key}={self.value_num}>"
         )
 
 

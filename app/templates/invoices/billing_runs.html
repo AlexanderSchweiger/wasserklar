@@ -55,10 +55,15 @@
             <span class="text-muted">0</span>
             {% endif %}
           </td>
-          <td class="text-end">
+          <td class="text-end text-nowrap">
             <a href="{{ url_for('invoices.billing_run_detail', run_id=run.id) }}"
-               class="btn btn-sm btn-outline-secondary">
+               class="btn btn-sm btn-outline-secondary" title="Details">
               <i class="fas fa-eye"></i>
+            </a>
+            <a href="{{ url_for('invoices.billing_run_export_excel', run_id=run.id) }}"
+               class="btn btn-sm btn-outline-success ms-1"
+               title="Übersicht als Excel (Deckblatt + Rechnungstabelle)">
+              <i class="fas fa-file-excel"></i>
             </a>
           </td>
         </tr>

@@ -534,6 +534,10 @@
           </button>
         </div>
       </div>
+
+      {# Erweiterungspunkt: die SaaS-Schicht haengt hier „Testdaten laden"
+         (Demo-Datensatz selbst seeden) an. Im OSS-Standalone leer. #}
+      {% block danger_zone_extra %}{% endblock %}
     </div>
     {% endif %}
 
@@ -818,6 +822,10 @@ document.getElementById('btnTestMail')?.addEventListener('click', function () {
   </div>
 </div>
 {% endif %}
+
+{# Erweiterungspunkt: Bestaetigungs-Modal(e) der SaaS-Danger-Zone
+   („Testdaten laden"). Im OSS-Standalone leer. #}
+{% block danger_modals %}{% endblock %}
 {% endblock %}
 
 {% block scripts %}

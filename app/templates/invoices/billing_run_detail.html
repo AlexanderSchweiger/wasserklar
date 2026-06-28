@@ -256,7 +256,12 @@
         <i class="fas fa-list me-1"></i> Alle der Periode
       </a>
     </div>
-    <button type="button" class="btn btn-primary ms-auto" data-bs-toggle="modal" data-bs-target="#versendenModal">
+    <a href="{{ url_for('invoices.billing_run_export_excel', run_id=run.id) }}"
+       class="btn btn-success ms-auto"
+       title="Übersicht dieses Laufs als Excel (Deckblatt + Rechnungstabelle, ohne die Rechnungen selbst)">
+      <i class="fas fa-file-excel me-1"></i> Excel-Export
+    </a>
+    <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#versendenModal">
       <i class="fas fa-paper-plane me-1"></i> Mailing &amp; Druck
     </button>
   </div>

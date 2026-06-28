@@ -1663,6 +1663,9 @@ def report():
             "dec31": dec31,
         })
 
+    # Rechnungsläufe des Jahres (nach created_at; nicht bankkonto-gebunden)
+    billing_runs_year = acc_svc.year_billing_runs(year)
+
     return render_template(
         "accounting/report.html",
         year=year,
@@ -1675,6 +1678,7 @@ def report():
         balance=balance,
         project_summary_list=project_summary_list,
         konten_list=konten_list,
+        billing_runs_year=billing_runs_year,
         fy_vat_liable=acc_svc.is_year_vat_liable(year),
     )
 
@@ -1910,7 +1914,28 @@ def report_export_excel():
     _autowidth(ws5)
 
     # ================================================================
-    # BLÄTTER 6-10: USt-Voranmeldungen Q1–Q4 + Gesamtjahr
+    # BLATT 6: Rechnungsläufe
+    # ================================================================
+    billing_runs = acc_svc.year_billing_runs(year)
+    if billing_runs:
+        ws6 = wb.create_sheet("Rechnungsläufe")
+        _hdr(ws6, 1, ["Datum", "Periode", "Tarif", "Rechnungen", "Übersprungen", "Gesamtsumme"])
+        r6 = 2
+        for br in billing_runs:
+            ws6.cell(row=r6, column=1, value=br["created_at"]).number_format = DATE_FMT
+            ws6.cell(row=r6, column=2, value=br["period_name"] or "—")
+            ws6.cell(row=r6, column=3, value=br["tariff_name"])
+            ws6.cell(row=r6, column=4, value=br["count"])
+            ws6.cell(row=r6, column=5, value=br["invoices_skipped"])
+            _eur(ws6, r6, 6, br["sum_total"])
+            r6 += 1
+        total_br = sum((br["sum_total"] for br in billing_runs), Decimal("0"))
+        ws6.cell(row=r6, column=1, value="Gesamt").font = TOTAL_FONT
+        c = _eur(ws6, r6, 6, total_br); c.font = TOTAL_FONT; c.border = BORDER
+        _autowidth(ws6)
+
+    # ================================================================
+    # BLÄTTER 7-11: USt-Voranmeldungen Q1–Q4 + Gesamtjahr
     # ================================================================
     def _ust_sheet(ws_ust, label, date_from, date_to, ust_r, vst_r):
         ws_ust.cell(row=1, column=1, value="Zeitraum").font = SUBHDR_FONT

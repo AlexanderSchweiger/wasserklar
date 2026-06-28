@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Trinkwasser-Untersuchungsbericht{% endblock %}
+{% block page_title %}<i class="fas fa-file-pdf me-2"></i> Trinkwasser-Untersuchungsbericht{% if year %} {{ year }}{% endif %}{% endblock %}
+
+{% block content %}
+<div class="mb-3 d-flex gap-2 flex-wrap d-print-none">
+  <a href="{{ url_for('network.water_quality') }}" class="btn btn-sm btn-outline-secondary" hx-boost="false">
+    <i class="fas fa-arrow-left me-1"></i> Zurück
+  </a>
+  <button type="button" class="btn btn-sm btn-primary" onclick="window.print()">
+    <i class="fas fa-print me-1"></i> Drucken / als PDF speichern
+  </button>
+  <a href="{{ url_for('network.water_quality_report_pdf', year=year) }}" class="btn btn-sm btn-outline-primary" hx-boost="false">
+    <i class="fas fa-file-pdf me-1"></i> PDF (Server)
+  </a>
+  {% if years %}
+  <select class="form-select form-select-sm w-auto" aria-label="Jahr"
+          onchange="window.location.href='{{ url_for('network.water_quality_print') }}'+(this.value?('?year='+this.value):'');">
+    <option value="">Alle Jahre</option>
+    {% for y in years %}
+    <option value="{{ y }}" {% if year == y %}selected{% endif %}>{{ y }}</option>
+    {% endfor %}
+  </select>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-start mb-2">
+      <div>
+        <h2 class="mb-0">Trinkwasser-Untersuchungsbericht</h2>
+        <div class="text-muted">
+          {{ wg.name }}{% if plan %} · Plan {{ plan.name }}{% endif %}{% if year %} · Berichtsjahr {{ year }}{% else %} · alle Jahre{% endif %}
+        </div>
+      </div>
+      <div class="text-muted">Erstellt am {{ today_de }}</div>
+    </div>
+
+    <div class="row g-2 my-2">
+      <div class="col"><div class="border rounded p-2"><div class="h3 mb-0">{{ stellen_count }}</div><small class="text-muted">Probenahmestellen</small></div></div>
+      <div class="col"><div class="border rounded p-2"><div class="h3 mb-0">{{ total_samples }}</div><small class="text-muted">Befunde gesamt</small></div></div>
+      <div class="col"><div class="border rounded p-2"><div class="h3 mb-0 {% if total_breaches %}text-danger{% endif %}">{{ total_breaches }}</div><small class="text-muted">Grenzwert-Überschreitungen</small></div></div>
+    </div>
+
+    {% for entry in stellen_data %}
+    <h3 class="mt-4">{{ entry.feature.label() }}</h3>
+    {% for s in entry.samples %}
+    <div class="fw-bold mt-3">Befund vom {{ s.sample_date.strftime('%d.%m.%Y') }}</div>
+    <div class="text-muted small">
+      {% if s.lab_name %}Labor: {{ s.lab_name }}{% endif %}
+      {% if s.sample_no %} · Nr. {{ s.sample_no }}{% endif %}
+      {% if s.sample_type %} · {{ s.sample_type }}{% endif %}
+    </div>
+    <table class="table table-sm mt-1">
+      <thead>
+        <tr><th>Parameter</th><th class="text-end">Messwert</th><th>Einheit</th><th>Grenzwert</th><th>Bewertung</th></tr>
+      </thead>
+      <tbody>
+        {% for r in s.results %}
+        <tr>
+          <td>{{ wq.parameter_label(r.parameter_key) }}</td>
+          <td class="text-end {% if r.status == 'alarm' %}text-danger fw-bold{% endif %}">
+            {% if r.value_text %}{{ r.value_text }}{% elif r.value_num is not none %}{{ r.value_num | de_number(4) }}{% else %}—{% endif %}
+          </td>
+          <td>{{ r.unit or '' }}</td>
+          <td>{{ r.limit_text or '' }}</td>
+          <td><span class="badge {{ wq.status_badge(r.status) }}">{{ wq.status_label(r.status) }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if s.notes %}<div class="text-muted small">Anmerkung: {{ s.notes }}</div>{% endif %}
+    {% endfor %}
+    {% else %}
+    <p class="text-muted mt-3">Keine Befunde im Berichtszeitraum.</p>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

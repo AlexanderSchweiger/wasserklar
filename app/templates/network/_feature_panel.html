@@ -214,4 +214,68 @@
     </form>
   </div>
   {% endif %}
+
+  {# --- Wasserproben / Laborwerte (nur fuer Probenahmestellen) — inline.
+     Post ohne X-From-Modal => network.sample_add liefert das neu gerenderte Panel.
+     Katalog wird nur hier (nicht bei jedem Panel) geladen. #}
+  {% if f.feature_type == 'probenahme' %}
+  {% set catalog = wq.catalog_for_form() %}
+  <div class="mt-3">
+    <div class="d-flex align-items-center mb-2">
+      <strong class="me-auto"><i class="fas fa-vial me-1 text-secondary"></i>Wasserproben</strong>
+      <span class="badge bg-secondary-lt">{{ f.water_samples | length }}</span>
+    </div>
+    {% if f.water_samples %}
+    <div class="list-group list-group-flush mb-2">
+      {% for s in f.water_samples | reverse %}
+      {% set ost = s.overall_status() %}
+      <div class="list-group-item px-0 py-2">
+        <div class="d-flex align-items-center">
+          <a href="{{ url_for('network.sample_detail', sample_id=s.id) }}" target="_blank"
+             rel="noopener" hx-boost="false" class="me-2 text-decoration-none">{{ s.sample_date.strftime('%d.%m.%Y') }}</a>
+          {% if ost %}<span class="badge {{ wq.status_badge(ost) }} me-1">{{ wq.status_label(ost) }}</span>{% endif %}
+          <span class="text-secondary small">{{ s.results | length }} Param.</span>
+          <button type="button" class="btn btn-icon btn-sm btn-ghost-secondary ms-auto"
+            hx-post="{{ url_for('network.sample_delete', sample_id=s.id) }}"
+            hx-target="#technik-panel" hx-swap="innerHTML"
+            hx-confirm="Diesen Befund löschen?" title="Löschen"><i class="fas fa-times"></i></button>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <form hx-post="{{ url_for('network.sample_add', feature_id=f.id) }}"
+          hx-target="#technik-panel" hx-swap="innerHTML" class="border-top pt-2">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="row g-2">
+        <div class="col-6 mb-2">
+          <label class="form-label">Entnahmedatum</label>
+          <input type="date" name="sample_date" class="form-control" value="{{ today_iso }}">
+        </div>
+        <div class="col-6 mb-2">
+          <label class="form-label">Labor</label>
+          <input type="text" name="lab_name" class="form-control" placeholder="optional">
+        </div>
+      </div>
+      {% for group_label, params in catalog %}
+      <div class="text-secondary small text-uppercase mt-1 mb-1">{{ group_label }}</div>
+      {% for key, label, unit, limit in params %}
+      <div class="row g-1 align-items-center mb-1">
+        <div class="col-5"><label class="form-label mb-0 small" for="panel_value__{{ key }}">{{ label }}</label></div>
+        <div class="col-4">
+          <div class="input-group input-group-sm">
+            <input type="text" inputmode="decimal" id="panel_value__{{ key }}" name="value__{{ key }}" class="form-control" placeholder="—">
+            {% if unit %}<span class="input-group-text">{{ unit }}</span>{% endif %}
+          </div>
+        </div>
+        <div class="col-3 text-secondary small text-truncate" title="Grenzwert (TWV)">{{ limit or '—' }}</div>
+      </div>
+      {% endfor %}
+      {% endfor %}
+      <button type="submit" class="btn btn-sm btn-outline-primary mt-2"><i class="fas fa-plus me-1"></i>Befund speichern</button>
+      <div class="form-hint mt-1">Nur ausgefüllte Parameter werden gespeichert.</div>
+    </form>
+  </div>
+  {% endif %}
 </div>

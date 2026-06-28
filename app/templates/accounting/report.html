@@ -219,6 +219,70 @@
   </div>
 </div>
 
+<!-- Rechnungsläufe -->
+{% if billing_runs_year %}
+<div class="row mt-2">
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title"><i class="fas fa-file-invoice me-1"></i> Rechnungsläufe {{ year }}</h3>
+        {% if real_account_id %}
+        <div class="card-options">
+          <small class="text-muted">unabhängig vom Bankkonto-Filter</small>
+        </div>
+        {% endif %}
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-hover table-sm mb-0">
+          <thead>
+            <tr>
+              <th>Datum</th>
+              <th>Periode</th>
+              <th>Tarif</th>
+              <th class="text-end">Rechnungen</th>
+              <th class="text-end">Gesamtsumme</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% set ns_br = namespace(total=0) %}
+            {% for br in billing_runs_year %}
+            {% set ns_br.total = ns_br.total + br.sum_total %}
+            <tr>
+              <td>
+                <a href="{{ url_for('invoices.billing_run_detail', run_id=br.id) }}"
+                   class="text-reset text-decoration-none fw-bold"
+                   title="Rechnungslauf öffnen">{{ br.created_at.strftime('%d.%m.%Y') }}</a>
+              </td>
+              <td>{{ br.period_name or '—' }}</td>
+              <td>{{ br.tariff_name }}</td>
+              <td class="text-end">
+                {{ br.count }}{% if br.invoices_skipped %} <span class="text-muted" style="font-size:.85em">(+{{ br.invoices_skipped }} überspr.)</span>{% endif %}
+              </td>
+              <td class="text-end fw-bold">{{ br.sum_total|de_number }} €</td>
+              <td class="text-end text-nowrap">
+                <a href="{{ url_for('invoices.billing_run_detail', run_id=br.id) }}"
+                   class="btn btn-sm btn-outline-secondary" title="Details"><i class="fas fa-eye"></i></a>
+                <a href="{{ url_for('invoices.billing_run_export_excel', run_id=br.id) }}"
+                   class="btn btn-sm btn-outline-success ms-1" title="Übersicht als Excel"><i class="fas fa-file-excel"></i></a>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot class="table-light">
+            <tr>
+              <th colspan="4">Gesamt</th>
+              <th class="text-end">{{ ns_br.total|de_number }} €</th>
+              <th></th>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <!-- Projektübersicht -->
 {% if project_summary_list %}
 <div class="row mt-2">

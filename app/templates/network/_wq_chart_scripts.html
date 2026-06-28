@@ -1,0 +1,80 @@
+{# Gemeinsames Trend-Diagramm fuer Wasserwerte. Erwartet im DOM:
+   - <canvas id="wqChart">
+   - <script type="application/json" id="wq-series"> [{id,label,points:[{date,value}]}]
+   - <script type="application/json" id="wq-meta">   {limit, label, unit}
+   Genutzt von water_quality.html (eine Linie je Stelle) und samples_overview.html
+   (eine Linie fuer die einzelne Stelle). Chart.js wird mit defer geladen → kurz
+   pollen (robust gegen defer-Timing, siehe CLAUDE.md). #}
+<script>
+(function () {
+  function initWqChart() {
+    var el = document.getElementById('wqChart');
+    var dataEl = document.getElementById('wq-series');
+    var metaEl = document.getElementById('wq-meta');
+    if (!el || !dataEl) { return; }
+    var series, meta;
+    try { series = JSON.parse(dataEl.textContent); meta = JSON.parse(metaEl.textContent); }
+    catch (e) { return; }
+    var palette = ['#1c7ed6', '#2b8a3e', '#e8590c', '#ae3ec9', '#0c8599',
+                   '#d6336c', '#f08c00', '#5f3dc4', '#2f9e44', '#c92a2a'];
+    var datasets = series.map(function (q, i) {
+      var color = palette[i % palette.length];
+      return {
+        label: q.label,
+        data: q.points.map(function (p) { return { x: p.date, y: p.value }; }),
+        borderColor: color,
+        backgroundColor: color,
+        tension: 0.2,
+        spanGaps: true,
+        pointRadius: 3,
+      };
+    });
+    // Grenzwert-Referenzlinie (nur bei Max-Parametern) ueber den ganzen Zeitraum.
+    if (meta && meta.limit !== null && meta.limit !== undefined) {
+      var xs = [];
+      series.forEach(function (q) { q.points.forEach(function (p) { xs.push(p.date); }); });
+      if (xs.length) {
+        xs.sort();
+        datasets.push({
+          label: 'Grenzwert',
+          data: [{ x: xs[0], y: meta.limit }, { x: xs[xs.length - 1], y: meta.limit }],
+          borderColor: '#c92a2a',
+          borderDash: [6, 4],
+          borderWidth: 1.5,
+          pointRadius: 0,
+          fill: false,
+        });
+      }
+    }
+    var yTitle = meta.unit ? (meta.label + ' (' + meta.unit + ')') : meta.label;
+    new Chart(el.getContext('2d'), {
+      type: 'line',
+      data: { datasets: datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'nearest', intersect: false },
+        scales: {
+          x: {
+            type: 'time',
+            time: {
+              tooltipFormat: 'dd.MM.yyyy',
+              displayFormats: { day: 'dd.MM.yyyy', month: 'MM.yyyy' },
+            },
+            title: { display: true, text: 'Datum' },
+          },
+          y: { beginAtZero: true, title: { display: true, text: yTitle } },
+        },
+        plugins: { legend: { display: true, position: 'bottom' } },
+      },
+    });
+  }
+
+  function whenReady(tries) {
+    if (window.Chart) { initWqChart(); return; }
+    if (tries <= 0) { return; }
+    setTimeout(function () { whenReady(tries - 1); }, 50);
+  }
+  whenReady(40);
+})();
+</script>

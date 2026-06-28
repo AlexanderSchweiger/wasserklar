@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% block title %}Wasserqualität{% endblock %}
+{% block page_title %}<i class="fas fa-vial me-2"></i> Wasserqualität{% endblock %}
+
+{# Chart.js + Datums-Adapter (Zeitachse) per head_extra. Der Sidebar-Link traegt
+   hx-boost="false" (harter Reload), sonst werden diese <head>-Scripts nach einem
+   Boost nicht erneut ausgefuehrt — siehe CLAUDE.md „Seiten-spezifische JS-Libs". #}
+{% block head_extra %}
+  <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-header">
+    <div class="d-flex align-items-center flex-wrap" style="gap:.5rem">
+      <i class="fas fa-vial text-secondary"></i>
+      {% if plans %}
+      <select class="form-select form-select-sm w-auto" aria-label="Plan wählen"
+              onchange="if(this.value){window.location.href='{{ url_for('network.water_quality') }}?plan='+this.value;}">
+        {% for p in plans %}
+        <option value="{{ p.id }}" {% if plan and p.id == plan.id %}selected{% endif %}>{{ p.name }}</option>
+        {% endfor %}
+      </select>
+      {% endif %}
+      {% if plan %}<span class="badge {{ vocab.plan_status_badge(plan.status) }}">{{ vocab.plan_status_label(plan.status) }}</span>{% endif %}
+      <span class="text-secondary small">TWV-Beprobung — Laborwerte &amp; Grenzwert-Ampel</span>
+    </div>
+    <div class="card-actions">
+      {% if plan and stellen %}
+      <a href="{{ url_for('network.water_quality_export_csv', plan=plan.id) }}" class="btn btn-sm" hx-boost="false">
+        <i class="fas fa-file-csv me-1"></i>CSV
+      </a>
+      <a href="{{ url_for('network.water_quality_print') }}" class="btn btn-sm" hx-boost="false">
+        <i class="fas fa-file-pdf me-1"></i>Behördenbericht
+      </a>
+      {% endif %}
+      <a href="{{ url_for('network.water_quality_limits') }}" class="btn btn-sm">
+        <i class="fas fa-sliders-h me-1"></i>Grenzwerte
+      </a>
+      <a href="{{ url_for('network.index') }}" class="btn btn-sm" hx-boost="false">
+        <i class="fas fa-map-marked-alt me-1"></i>Zur Karte
+      </a>
+    </div>
+  </div>
+
+  {% if empty_reason == 'no_plan' %}
+  <div class="card-body">
+    <div class="alert alert-warning mb-0">
+      Noch kein Leitungsplan vorhanden.
+      <a href="{{ url_for('network.plans_index') }}">Jetzt einen Plan anlegen</a> und eine Probenahmestelle platzieren, um Laborwerte zu erfassen.
+    </div>
+  </div>
+  {% elif empty_reason == 'no_probenahme' %}
+  <div class="card-body">
+    <div class="alert alert-info mb-0">
+      Im Plan <em>{{ plan.name }}</em> ist noch keine <strong>Probenahmestelle</strong> erfasst.
+      <a href="{{ url_for('network.index') }}" hx-boost="false">Auf der Karte eine Probenahmestelle platzieren</a> (Punkt-Typ „Probenahmestelle"), danach hier die Laborwerte erfassen.
+    </div>
+  </div>
+  {% else %}
+  <div class="card-body">
+    <div class="d-flex align-items-center flex-wrap mb-2" style="gap:.5rem">
+      <label class="form-label mb-0 small text-secondary">Trend-Parameter:</label>
+      <select class="form-select form-select-sm w-auto" aria-label="Parameter wählen"
+              onchange="window.location.href='{{ url_for('network.water_quality', plan=plan.id) }}&param='+this.value;">
+        {% for key, meta in wq.PARAMETERS.items() %}
+        <option value="{{ key }}" {% if key == param %}selected{% endif %}>{{ meta.label }}{% if meta.unit %} ({{ meta.unit }}){% endif %}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div style="height: 340px">
+      <canvas id="wqChart"></canvas>
+    </div>
+    <div class="text-secondary small mt-2">
+      Eine Linie je Probenahmestelle des aktiven Plans für den gewählten Parameter.
+      {% if limit_value is not none %}Rote Linie = Grenzwert.{% endif %}
+    </div>
+  </div>
+
+  <div class="card-body border-top">
+    <div class="row g-3">
+      {% for f in stellen %}
+      {% set s = stats[f.id] %}
+      <div class="col-md-6 col-xl-4">
+        <div class="card card-sm">
+          <div class="card-body">
+            <div class="d-flex align-items-center mb-2">
+              <i class="fas fa-vial me-2" style="color: {{ vocab.feature_type_color('probenahme') }}"></i>
+              <a href="{{ url_for('network.samples_overview', feature_id=f.id) }}"
+                 class="text-truncate me-2 text-decoration-none fw-bold" hx-boost="false"
+                 title="Alle Befunde dieser Stelle">{{ f.label() }}</a>
+              <button type="button" class="btn btn-sm btn-outline-primary ms-auto flex-shrink-0"
+                 data-url="{{ url_for('network.sample_add', feature_id=f.id) }}"
+                 onclick="openFeatureSampleModal(this)" title="Wasserprobe erfassen">
+                <i class="fas fa-plus me-1"></i>Probe
+              </button>
+            </div>
+            {% if s.count %}
+            <div class="d-flex align-items-center mb-1">
+              {% if s.latest_status %}
+              <span class="badge {{ wq.status_badge(s.latest_status) }} me-2">{{ wq.status_label(s.latest_status) }}</span>
+              {% endif %}
+              {% if s.alarm_count %}
+              <span class="text-danger small me-2">{{ s.alarm_count }} Überschreitung(en)</span>
+              {% endif %}
+            </div>
+            <div class="text-secondary small">
+              Letzte Probe: {{ s.latest.sample_date.strftime('%d.%m.%Y') }}
+              · {{ s.count }} Befund(e)
+            </div>
+            <div class="mt-2 d-flex gap-2 flex-wrap">
+              <a href="{{ url_for('network.sample_detail', sample_id=s.latest.id) }}"
+                 class="btn btn-sm btn-ghost-secondary" hx-boost="false">
+                <i class="fas fa-list me-1"></i>Letzter Befund
+              </a>
+              <a href="{{ url_for('network.samples_overview', feature_id=f.id) }}"
+                 class="btn btn-sm btn-ghost-secondary" hx-boost="false">
+                <i class="fas fa-history me-1"></i>Alle {{ s.count }} Befunde
+              </a>
+            </div>
+            {% else %}
+            <div class="text-secondary small">
+              Noch keine Probe erfasst. Über „Probe" oben erfassen.
+            </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+{% if empty_reason is none %}
+<script type="application/json" id="wq-series">{{ series | tojson }}</script>
+<script type="application/json" id="wq-meta">{{ {"limit": limit_value, "label": wq.parameter_label(param), "unit": wq.parameter_unit(param)} | tojson }}</script>
+{% endif %}
+{% endblock %}
+
+{% block modals %}
+{% include "network/_sample_modal.html" %}
+{% endblock %}
+
+{% block scripts %}
+{% include "network/_sample_modal_scripts.html" %}
+{# Nach einem erfassten/gelöschten Befund die Seite neu laden, damit Diagramm +
+   Kennzahlen aktualisiert sind (Event aus _sample_modal_scripts.html). #}
+<script>document.addEventListener('sampleChanged', function () { window.location.reload(); });</script>
+{% include "network/_wq_chart_scripts.html" %}
+{% endblock %}

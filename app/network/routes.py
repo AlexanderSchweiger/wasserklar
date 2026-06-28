@@ -12,6 +12,8 @@ Das Blueprint-``before_request`` (require_blueprint_permission) blockt nicht-
 authentifizierte Requests NICHT — daher traegt jede Route ``@login_required``.
 """
 
+import csv
+import io
 import json
 import os
 import secrets
@@ -31,11 +33,13 @@ from werkzeug.utils import secure_filename
 from app.network import bp
 from app.network import services as svc
 from app.network import vocab
+from app.network import water_quality as wq
 from app.network import wlk_import as wlk
 from app.extensions import db
 from app.pagination import paginate_list
 from app.models import (
     NetworkPlan, NetworkFeature, MaintenanceLog, SpringYield, FeaturePhoto,
+    WaterSample, LabResult, AppSetting,
     HydrantShareLink, Property, PropertyOwnership, Customer,
 )
 
@@ -154,7 +158,7 @@ def _link_options():
 def _render_panel(f):
     return render_template(
         "network/_feature_panel.html",
-        f=f, vocab=vocab, today_iso=date.today().isoformat(), **_link_options()
+        f=f, vocab=vocab, wq=wq, today_iso=date.today().isoformat(), **_link_options()
     )
 
 
@@ -174,6 +178,16 @@ def _render_yield_modal_body(f):
     )
 
 
+def _render_sample_modal_body(f):
+    """Body des „Wasserprobe"-Modals der Elementliste (Liste + Parameter-Felder,
+    ohne <form>)."""
+    return render_template(
+        "network/_sample_modal_body.html",
+        f=f, wq=wq, catalog=wq.catalog_for_form(),
+        today_iso=date.today().isoformat(),
+    )
+
+
 def _parse_date(value):
     if not value:
         return None
@@ -181,6 +195,26 @@ def _parse_date(value):
         return date.fromisoformat(value.strip())
     except (ValueError, AttributeError):
         return None
+
+
+def _parse_decimal(value):
+    """'1,5' / '1.5' -> Decimal; None bei leer/ungueltig (z. B. 'n.n.', '< 0,01').
+    Dezimaltrenner Komma oder Punkt."""
+    raw = (value or "").strip().replace(",", ".")
+    if not raw:
+        return None
+    try:
+        d = Decimal(raw)
+    except (InvalidOperation, ValueError):
+        return None
+    return d if d.is_finite() else None
+
+
+def _de_decimal(value):
+    """Decimal/Float -> deutscher String mit Dezimalkomma, leer bei None (CSV)."""
+    if value is None:
+        return ""
+    return str(value).replace(".", ",")
 
 
 def _add_months(d, months):
@@ -712,6 +746,327 @@ def monitoring():
         "network/monitoring.html", plan=plan, plans=plans, vocab=vocab,
         quellen=quellen, series=series, stats=stats, empty_reason=None,
     )
+
+
+# ---------------------------------------------------------------------------
+# Wasserproben / Laborwerte (TWV-Beprobung) — Geschwister des Quellschuettungs-
+# Musters: haengen an einer Probenahmestelle (feature_type='probenahme').
+# ---------------------------------------------------------------------------
+
+@bp.route("/features/<int:feature_id>/samples", methods=["GET", "POST"])
+@login_required
+def sample_add(feature_id):
+    """GET: Wasserprobe-Modal-Body (Elementliste) laden. POST: einen Laborbefund
+    (WaterSample) mit n Laborwerten (LabResult) anlegen. Nur fuer Features vom
+    Typ 'probenahme' (sonst 404 — der Button erscheint ohnehin nur dort).
+
+    Pro Katalog-Parameter wird das Formularfeld ``value__<key>`` gelesen; leere
+    Felder werden uebersprungen. unit/limit_text/status werden zur Erfassungszeit
+    eingefroren (Beleg-Stabilitaet trotz spaeterer Grenzwert-Aenderung). Antwort
+    kontextabhaengig: aus dem Modal (X-From-Modal) das Body-Fragment, sonst Panel."""
+    f = NetworkFeature.query.get_or_404(feature_id)
+    if f.feature_type != "probenahme":
+        abort(404)
+    from_modal = bool(request.headers.get("X-From-Modal"))
+    saved = False
+
+    if request.method == "POST":
+        when = _parse_date(request.form.get("sample_date")) or date.today()
+        results = []
+        for key in wq.PARAMETERS:
+            raw = (request.form.get(f"value__{key}") or "").strip()
+            if not raw:
+                continue
+            num = _parse_decimal(raw)
+            results.append(LabResult(
+                parameter_key=key,
+                value_num=num,
+                value_text=raw if num is None else None,
+                unit=wq.parameter_unit(key) or None,
+                limit_text=wq.limit_display(key) or None,
+                status=wq.assess(key, num),
+            ))
+        if not results:
+            flash("Bitte mindestens einen Laborwert erfassen.", "warning")
+        else:
+            sample = WaterSample(
+                feature_id=f.id,
+                sample_date=when,
+                lab_name=(request.form.get("lab_name") or "").strip() or None,
+                sample_no=(request.form.get("sample_no") or "").strip() or None,
+                sample_type=(request.form.get("sample_type") or "").strip() or None,
+                notes=(request.form.get("notes") or "").strip() or None,
+                created_by_id=current_user.id,
+            )
+            sample.results = results
+            db.session.add(sample)
+            db.session.commit()
+            saved = True
+
+    if from_modal:
+        resp = make_response(_render_sample_modal_body(f))
+        if saved:
+            resp.headers["HX-Trigger"] = "sampleSaved"
+        return resp
+    return _render_panel(f)
+
+
+@bp.route("/samples/<int:sample_id>/delete", methods=["POST"])
+@login_required
+def sample_delete(sample_id):
+    sample = WaterSample.query.get_or_404(sample_id)
+    f = sample.feature
+    db.session.delete(sample)   # ORM-Cascade loescht die lab_results mit
+    db.session.commit()
+    if request.headers.get("X-From-Modal"):
+        resp = make_response(_render_sample_modal_body(f))
+        resp.headers["HX-Trigger"] = "sampleSaved"
+        return resp
+    return _render_panel(f)
+
+
+@bp.route("/features/<int:feature_id>/water-samples")
+@login_required
+def samples_overview(feature_id):
+    """Befund-Historie EINER Probenahmestelle: Tabelle aller Befunde (neueste
+    zuerst, je Zeile zum Einzelbefund) plus Trend-Diagramm fuer einen waehlbaren
+    Parameter (``?param=``). Nur fuer Features vom Typ 'probenahme' (sonst 404)."""
+    f = NetworkFeature.query.get_or_404(feature_id)
+    if f.feature_type != "probenahme":
+        abort(404)
+    param = request.args.get("param") or "nitrat"
+    if param not in wq.PARAMETERS:
+        param = "nitrat"
+    samples_asc = list(f.water_samples)  # aufsteigend nach Datum (Relationship)
+    points = [
+        {"date": s.sample_date.isoformat(), "value": float(r.value_num)}
+        for s in samples_asc for r in s.results
+        if r.parameter_key == param and r.value_num is not None
+    ]
+    series = [{"id": f.id, "label": f.label(), "points": points}]
+    return render_template(
+        "network/samples_overview.html",
+        f=f, samples=list(reversed(samples_asc)), wq=wq, vocab=vocab,
+        param=param, series=series, limit_value=wq.limit_value(param),
+    )
+
+
+@bp.route("/samples/<int:sample_id>")
+@login_required
+def sample_detail(sample_id):
+    """Einzelbefund: alle Laborwerte mit Ampel + Grenzwert (Snapshot)."""
+    sample = WaterSample.query.get_or_404(sample_id)
+    return render_template(
+        "network/sample_detail.html",
+        sample=sample, f=sample.feature, wq=wq, vocab=vocab,
+    )
+
+
+def _probenahmestellen(plan):
+    return (
+        NetworkFeature.query
+        .filter_by(plan_id=plan.id, feature_type="probenahme")
+        .order_by(NetworkFeature.name.asc())
+        .all()
+    )
+
+
+@bp.route("/water-quality")
+@login_required
+def water_quality():
+    """Wasserqualitaets-Uebersicht: je Probenahmestelle des aktiven Plans der
+    letzte Befund samt Gesamt-Ampel, plus ein Trend-Diagramm fuer EINEN waehlbaren
+    Parameter (``?param=``, Default Nitrat) als Linie je Stelle. Scope = aktiver
+    Plan via ``current_plan()`` (analog Quellschuettungs-Monitoring)."""
+    plan = current_plan()
+    plans = NetworkPlan.query.order_by(NetworkPlan.name.asc()).all()
+    param = request.args.get("param") or "nitrat"
+    if param not in wq.PARAMETERS:
+        param = "nitrat"
+
+    if plan is None:
+        return render_template(
+            "network/water_quality.html", plan=None, plans=plans, vocab=vocab, wq=wq,
+            stellen=[], series=[], stats={}, param=param, limit_value=None,
+            empty_reason="no_plan",
+        )
+
+    stellen = _probenahmestellen(plan)
+    if not stellen:
+        return render_template(
+            "network/water_quality.html", plan=plan, plans=plans, vocab=vocab, wq=wq,
+            stellen=[], series=[], stats={}, param=param, limit_value=None,
+            empty_reason="no_probenahme",
+        )
+
+    series, stats = [], {}
+    for st in stellen:
+        samples = list(st.water_samples)  # aufsteigend nach Datum (Relationship)
+        points = []
+        for s in samples:
+            for r in s.results:
+                if r.parameter_key == param and r.value_num is not None:
+                    points.append({"date": s.sample_date.isoformat(),
+                                   "value": float(r.value_num)})
+        series.append({"id": st.id, "label": st.label(), "points": points})
+        latest = samples[-1] if samples else None
+        stats[st.id] = {
+            "count": len(samples),
+            "latest": latest,
+            "latest_status": latest.overall_status() if latest else None,
+            "alarm_count": latest.alarm_count() if latest else 0,
+        }
+
+    return render_template(
+        "network/water_quality.html", plan=plan, plans=plans, vocab=vocab, wq=wq,
+        stellen=stellen, series=series, stats=stats, param=param,
+        limit_value=wq.limit_value(param), empty_reason=None,
+    )
+
+
+@bp.route("/water-quality/export.csv")
+@login_required
+def water_quality_export_csv():
+    """Alle Laborwerte (je Zeile ein Parameter) des aktiven Plans als CSV
+    (UTF-8-BOM, Semikolon, dt. Dezimalkomma)."""
+    plan = current_plan()
+    query = (
+        WaterSample.query
+        .join(NetworkFeature, WaterSample.feature_id == NetworkFeature.id)
+        .filter(NetworkFeature.feature_type == "probenahme")
+    )
+    if plan:
+        query = query.filter(NetworkFeature.plan_id == plan.id)
+    samples = query.order_by(
+        WaterSample.sample_date.desc(), WaterSample.id.desc()
+    ).all()
+
+    output = io.StringIO()
+    output.write("﻿")  # UTF-8-BOM fuer Excel
+    writer = csv.writer(output, delimiter=";")
+    writer.writerow([
+        "Probenahmestelle", "Entnahmedatum", "Labor", "Probennummer",
+        "Parameter", "Wert", "Einheit", "Grenzwert", "Bewertung",
+    ])
+    for s in samples:
+        for r in s.results:
+            value = (_de_decimal(r.value_num) if r.value_num is not None
+                     else (r.value_text or ""))
+            writer.writerow([
+                s.feature.label(),
+                s.sample_date.strftime("%d.%m.%Y"),
+                s.lab_name or "",
+                s.sample_no or "",
+                wq.parameter_label(r.parameter_key),
+                value,
+                r.unit or "",
+                r.limit_text or "",
+                wq.status_label(r.status),
+            ])
+    resp = make_response(output.getvalue())
+    resp.headers["Content-Type"] = "text/csv; charset=utf-8"
+    resp.headers["Content-Disposition"] = 'attachment; filename="wasserproben.csv"'
+    return resp
+
+
+def _wq_available_years(plan):
+    if not plan:
+        return []
+    rows = (
+        db.session.query(WaterSample.sample_date)
+        .join(NetworkFeature, WaterSample.feature_id == NetworkFeature.id)
+        .filter(NetworkFeature.plan_id == plan.id,
+                NetworkFeature.feature_type == "probenahme")
+        .all()
+    )
+    return sorted({d[0].year for d in rows if d[0]}, reverse=True)
+
+
+def _wq_report_ctx():
+    """Kontext fuer Behoerdenbericht (Print + PDF): je Stelle die Befunde des
+    aktiven Plans (optional Jahr-Filter), plus Summen-Kennzahlen."""
+    plan = current_plan()
+    year = request.args.get("year", type=int)
+    stellen_data, total_samples, total_breaches = [], 0, 0
+    if plan:
+        for st in _probenahmestellen(plan):
+            samples = sorted(st.water_samples,
+                             key=lambda x: x.sample_date, reverse=True)
+            if year:
+                samples = [s for s in samples if s.sample_date.year == year]
+            if not samples:
+                continue
+            total_samples += len(samples)
+            for s in samples:
+                total_breaches += s.alarm_count()
+            stellen_data.append({"feature": st, "samples": samples})
+    return {
+        "plan": plan, "year": year, "vocab": vocab, "wq": wq,
+        "stellen_data": stellen_data,
+        "total_samples": total_samples,
+        "total_breaches": total_breaches,
+        "stellen_count": len(stellen_data),
+        "years": _wq_available_years(plan),
+        "today_de": date.today().strftime("%d.%m.%Y"),
+    }
+
+
+@bp.route("/water-quality/print")
+@login_required
+def water_quality_print():
+    return render_template("network/water_quality_print.html", **_wq_report_ctx())
+
+
+@bp.route("/water-quality/report.pdf")
+@login_required
+def water_quality_report_pdf():
+    try:
+        from weasyprint import HTML
+    except (ImportError, OSError):
+        flash("PDF-Export ist nur im Docker-Container verfügbar. "
+              "Die Druckansicht steht als Alternative bereit.", "warning")
+        return redirect(url_for("network.water_quality_print",
+                                year=request.args.get("year")))
+    ctx = _wq_report_ctx()
+    html = render_template("network/water_quality_pdf.html", **ctx)
+    pdf = HTML(string=html, base_url=request.url_root).write_pdf()
+    resp = make_response(pdf)
+    resp.headers["Content-Type"] = "application/pdf"
+    suffix = ctx["year"] or "alle"
+    resp.headers["Content-Disposition"] = f'inline; filename="wasserbefund_{suffix}.pdf"'
+    return resp
+
+
+@bp.route("/water-quality/limits", methods=["GET", "POST"])
+@login_required
+def water_quality_limits():
+    """Pro-Tenant-Override der TWV-Grenzwerte (AppSetting ``water_quality.<key>.limit``).
+    Leeres Feld = Standard-Grenzwert verwenden (Override wird geloescht)."""
+    if request.method == "POST":
+        for key in wq.PARAMETERS:
+            skey = f"water_quality.{key}.limit"
+            raw = (request.form.get(f"limit__{key}") or "").strip()
+            if raw:
+                AppSetting.set(skey, raw)
+            else:
+                AppSetting.query.filter_by(key=skey).delete()  # zurueck auf Standard
+        db.session.commit()
+        flash("Grenzwerte gespeichert.", "success")
+        return redirect(url_for("network.water_quality"))
+
+    rows = []
+    for key, meta in wq.PARAMETERS.items():
+        if meta["kind"] == "info":
+            continue  # kein Grenzwert anpassbar
+        rows.append({
+            "key": key,
+            "label": meta["label"],
+            "unit": meta["unit"],
+            "kind": meta["kind"],
+            "override": (AppSetting.get(f"water_quality.{key}.limit") or ""),
+            "default_display": wq.limit_display(key),
+        })
+    return render_template("network/water_quality_limits.html", rows=rows, wq=wq)
 
 
 # ---------------------------------------------------------------------------

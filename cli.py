@@ -950,6 +950,8 @@ def register_commands(app):
         Schuettungs-Messreihen mit Trockenperioden), Hochbehaelter, Leitungen,
         ~30 Hausanschluessen (grossteils zugeordnet + geocodet), Hydranten/
         Schiebern mit teils faelligen Pruef-Logs und 9 Stoerungsjournal-Eintraegen.
+        Dazu Schriftfuehrung (nur WG-Modus): Vorstandssitzungen + Hauptversammlungen
+        mit Tagesordnung, Anwesenheit, Protokollen und einem Beschluss-Register.
 
         Die Buchhaltung wird zudem bis ins **aktuelle Jahr** fortgeschrieben
         (``now=date.today()``): Vorjahre abgeschlossen, ein offenes Buchungsjahr

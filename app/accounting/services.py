@@ -436,6 +436,62 @@ def year_bookings(year, real_account_id=None):
     return q.order_by(Booking.date).all()
 
 
+def year_billing_runs(year):
+    """Rechnungsläufe eines Kalenderjahres (nach ``created_at``) mit Anzahl und
+    Summe der nicht stornierten Rechnungen.
+
+    Liefert eine Liste von Dicts ``{id, created_at, period_name, tariff_name,
+    invoices_created, invoices_skipped, count, sum_total}``, aufsteigend nach
+    ``created_at``. ``sum_total`` ist die Brutto-Summe (``Invoice.total_amount``)
+    der nicht stornierten Rechnungen des Laufs; Läufe ganz ohne gültige Rechnung
+    erscheinen mit ``count=0`` / ``sum_total=0``. Rechnungsläufe sind **nicht**
+    bankkonto-gebunden — daher kein ``real_account_id``-Filter.
+    """
+    from app.models import BillingRun, Invoice, BillingPeriod
+
+    q = (
+        db.session.query(
+            BillingRun.id.label("id"),
+            BillingRun.created_at.label("created_at"),
+            BillingRun.tariff_name.label("tariff_name"),
+            BillingRun.invoices_created.label("invoices_created"),
+            BillingRun.invoices_skipped.label("invoices_skipped"),
+            BillingPeriod.name.label("period_name"),
+            func.count(Invoice.id).label("count"),
+            func.coalesce(func.sum(Invoice.total_amount), 0).label("sum_total"),
+        )
+        .outerjoin(BillingPeriod, BillingRun.billing_period_id == BillingPeriod.id)
+        .outerjoin(
+            Invoice,
+            db.and_(
+                Invoice.billing_run_id == BillingRun.id,
+                Invoice.status != Invoice.STATUS_CANCELLED,
+            ),
+        )
+        .filter(extract("year", BillingRun.created_at) == year)
+        .group_by(
+            BillingRun.id, BillingRun.created_at, BillingRun.tariff_name,
+            BillingRun.invoices_created, BillingRun.invoices_skipped,
+            BillingPeriod.name,
+        )
+        .order_by(BillingRun.created_at)
+    )
+
+    return [
+        {
+            "id": r.id,
+            "created_at": r.created_at,
+            "period_name": r.period_name,
+            "tariff_name": r.tariff_name,
+            "invoices_created": r.invoices_created,
+            "invoices_skipped": r.invoices_skipped,
+            "count": r.count,
+            "sum_total": Decimal(str(r.sum_total or 0)),
+        }
+        for r in q.all()
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Umsatzsteuer
 # ---------------------------------------------------------------------------

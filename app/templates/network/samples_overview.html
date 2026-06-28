@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}Befunde — {{ f.label() }}{% endblock %}
+{% block page_title %}<i class="fas fa-vial me-2"></i> Befunde: {{ f.label() }}{% endblock %}
+
+{% block head_extra %}
+  <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="mb-3 d-flex gap-2 flex-wrap">
+  <a href="{{ url_for('network.water_quality', plan=f.plan_id) }}" class="btn btn-sm btn-outline-secondary" hx-boost="false">
+    <i class="fas fa-arrow-left me-1"></i> Zur Wasserqualität
+  </a>
+  <a href="{{ url_for('network.index', plan=f.plan_id, feature=f.id) }}" class="btn btn-sm btn-outline-secondary" hx-boost="false">
+    <i class="fas fa-map-marked-alt me-1"></i> Auf der Karte
+  </a>
+  <button type="button" class="btn btn-sm btn-primary ms-auto"
+     data-url="{{ url_for('network.sample_add', feature_id=f.id) }}"
+     onclick="openFeatureSampleModal(this)">
+    <i class="fas fa-plus me-1"></i> Neue Probe
+  </button>
+</div>
+
+{% if samples %}
+<div class="card mb-3">
+  <div class="card-header">
+    <div class="d-flex align-items-center flex-wrap" style="gap:.5rem">
+      <span class="text-secondary small">Trend</span>
+      <select class="form-select form-select-sm w-auto" aria-label="Parameter wählen"
+              onchange="window.location.href='{{ url_for('network.samples_overview', feature_id=f.id) }}?param='+this.value;">
+        {% for key, meta in wq.PARAMETERS.items() %}
+        <option value="{{ key }}" {% if key == param %}selected{% endif %}>{{ meta.label }}{% if meta.unit %} ({{ meta.unit }}){% endif %}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+  <div class="card-body">
+    <div style="height: 300px"><canvas id="wqChart"></canvas></div>
+    {% if limit_value is not none %}<div class="text-secondary small mt-2">Rote Linie = Grenzwert.</div>{% endif %}
+  </div>
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-header">
+    <h3 class="card-title mb-0">Alle Befunde</h3>
+    <div class="card-actions"><span class="badge bg-secondary-lt">{{ samples | length }}</span></div>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-vcenter table-hover card-table">
+      <thead>
+        <tr>
+          <th>Entnahmedatum</th>
+          <th>Labor</th>
+          <th>Probennummer</th>
+          <th>Art</th>
+          <th class="text-end">Parameter</th>
+          <th class="text-end">Überschreitungen</th>
+          <th>Gesamt</th>
+          <th class="col-actions"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in samples %}
+        {% set ost = s.overall_status() %}
+        {% set alarms = s.alarm_count() %}
+        <tr>
+          <td class="text-nowrap">
+            <a href="{{ url_for('network.sample_detail', sample_id=s.id) }}" class="text-decoration-none fw-medium" hx-boost="false">
+              {{ s.sample_date.strftime('%d.%m.%Y') }}
+            </a>
+          </td>
+          <td>{{ s.lab_name or '—' }}</td>
+          <td>{{ s.sample_no or '—' }}</td>
+          <td>{{ s.sample_type or '—' }}</td>
+          <td class="text-end">{{ s.results | length }}</td>
+          <td class="text-end">
+            {% if alarms %}<span class="text-danger fw-bold">{{ alarms }}</span>{% else %}0{% endif %}
+          </td>
+          <td>{% if ost %}<span class="badge {{ wq.status_badge(ost) }}">{{ wq.status_label(ost) }}</span>{% else %}—{% endif %}</td>
+          <td class="text-end col-actions">
+            <a href="{{ url_for('network.sample_detail', sample_id=s.id) }}" class="btn btn-sm btn-outline-secondary" hx-boost="false">
+              <i class="fas fa-list me-1"></i>Ansehen
+            </a>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8" class="text-center text-muted py-4">Noch keine Befunde für diese Probenahmestelle.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block modals %}
+{% include "network/_sample_modal.html" %}
+{% endblock %}
+
+{% block scripts %}
+{% include "network/_sample_modal_scripts.html" %}
+{# Nach Erfassen/Löschen eines Befunds neu laden (Tabelle + Diagramm aktualisieren). #}
+<script>document.addEventListener('sampleChanged', function () { window.location.reload(); });</script>
+{% if samples %}
+<script type="application/json" id="wq-series">{{ series | tojson }}</script>
+<script type="application/json" id="wq-meta">{{ {"limit": limit_value, "label": wq.parameter_label(param), "unit": wq.parameter_unit(param)} | tojson }}</script>
+{% include "network/_wq_chart_scripts.html" %}
+{% endif %}
+{% endblock %}

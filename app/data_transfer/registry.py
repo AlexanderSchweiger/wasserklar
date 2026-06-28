@@ -15,6 +15,7 @@ from app.models import (
     DunningPolicy, DunningStage, DunningNotice,
     AppSetting, InvoiceCounter, CustomerCounter,
     NetworkPlan, NetworkFeature, MaintenanceLog, SpringYield, Incident,
+    WaterSample, LabResult,
     CustomerWgProfile, PropertyWgProfile, WgFunction,
     Note, ReadingCorrection,
 )
@@ -39,6 +40,7 @@ NULL_ON_IMPORT_COLS = {
     MaintenanceLog: ["created_by_id"],
     SpringYield: ["created_by_id"],
     Incident: ["created_by_id"],
+    WaterSample: ["created_by_id"],
     Note: ["created_by_id"],
 }
 
@@ -51,6 +53,7 @@ CATEGORIES = {
         Customer, Property, PropertyOwnership, WaterMeter,
         BillingPeriod, MeterReadingAccessCode, WaterTariff,
         NetworkPlan, NetworkFeature, MaintenanceLog, SpringYield, Incident,
+        WaterSample, LabResult,
         CustomerWgProfile, PropertyWgProfile, WgFunction,
         Note,
     ],
@@ -87,6 +90,7 @@ INSERT_ORDER = [
     DunningPolicy, DunningStage, DunningNotice,
     AppSetting, InvoiceCounter, CustomerCounter,
     NetworkPlan, NetworkFeature, MaintenanceLog, SpringYield, Incident,
+    WaterSample, LabResult,   # WaterSample VOR LabResult (FK water_sample_id)
     # Note ans Ende: sein polymorphes entity_id zeigt potenziell auf JEDE der
     # obigen Tabellen (Customer/Property/Invoice/Booking). Beim Voll-Ersatz
     # bleiben IDs erhalten → korrekt. Im Merge-Modus wird entity_id NICHT
@@ -112,6 +116,7 @@ YEAR_FILTERS = {
     RealAccountYearBalance: "year",
     InvoiceCounter: "year",
     Incident: ("date_year", "detected_at"),
+    WaterSample: ("date_year", "sample_date"),
 }
 
 
@@ -157,6 +162,8 @@ NATURAL_KEYS = {
     MaintenanceLog: None,
     SpringYield: ("feature_id", "measurement_date"),  # je Quelle hoechstens 1 Messung/Tag
     Incident: None,                     # kein stabiler natuerlicher Schluessel — immer Insert
+    WaterSample: None,                  # je Stelle koennen mehrere Befunde/Tag existieren — immer Insert
+    LabResult: None,                    # Kind eines WaterSample — immer Insert
     Note: None,                         # Freitext — kein natuerlicher Schluessel, immer Insert
 }
 
@@ -203,6 +210,8 @@ FOREIGN_KEYS = {
     MaintenanceLog: {"feature_id": NetworkFeature},
     SpringYield: {"feature_id": NetworkFeature},
     Incident: {"customer_id": Customer, "property_id": Property, "feature_id": NetworkFeature},
+    WaterSample: {"feature_id": NetworkFeature},
+    LabResult: {"water_sample_id": WaterSample},
 }
 
 

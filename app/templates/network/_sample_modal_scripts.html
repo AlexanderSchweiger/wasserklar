@@ -1,0 +1,59 @@
+{# JS fuer das wiederverwendbare Wasserprobe-Modal (#featureSampleModal).
+   - window.openFeatureSampleModal(btn): laedt den Body (GET, X-From-Modal) und merkt
+     die Action-URL fuer den Footer-Submit.
+   - Footer-Submit: POST (X-From-Modal) -> Body-Fragment zurueck (Modal bleibt offen).
+   - Server feuert HX-Trigger 'sampleSaved' nur bei echter Änderung; beim Schliessen
+     dispatcht das Modal dann 'sampleChanged' auf document — die Host-Seite
+     (Wasserqualitäts-Seite) kann darauf reagieren (Reload). Elementliste ignoriert es.
+   Setup ist auf DOMContentLoaded gegated: base.html laedt htmx/bootstrap mit `defer`,
+   daher sind sie bei hartem Reload (hx-boost="false") erst nach dem Parsen da. #}
+<script>
+(function () {
+  function setup() {
+    var modal = document.getElementById('featureSampleModal');
+    if (!modal || !window.htmx || !window.bootstrap) { return; }
+    var form = document.getElementById('featureSampleForm');
+    var changed = false;
+
+    function spinner() {
+      return '<div class="text-center text-muted py-4">' +
+             '<div class="spinner-border spinner-border-sm" role="status"></div></div>';
+    }
+
+    window.openFeatureSampleModal = function (btn) {
+      var url = btn.dataset.url;
+      if (!url) { return; }
+      form.dataset.actionUrl = url;
+      document.getElementById('featureSampleModalBody').innerHTML = spinner();
+      bootstrap.Modal.getOrCreateInstance(modal).show();
+      htmx.ajax('GET', url, { target: '#featureSampleModalBody', swap: 'innerHTML', headers: {'X-From-Modal': '1'} });
+    };
+
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var url = form.dataset.actionUrl;
+      if (!url) { return; }
+      var values = {};
+      new FormData(form).forEach(function (v, k) { values[k] = v; });
+      htmx.ajax('POST', url, {
+        target: '#featureSampleModalBody', swap: 'innerHTML', values: values, headers: {'X-From-Modal': '1'},
+      });
+    });
+
+    document.body.addEventListener('sampleSaved', function () { changed = true; });
+
+    modal.addEventListener('hidden.bs.modal', function () {
+      if (changed) {
+        changed = false;
+        document.dispatchEvent(new CustomEvent('sampleChanged'));
+      }
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setup);
+  } else {
+    setup();
+  }
+})();
+</script>

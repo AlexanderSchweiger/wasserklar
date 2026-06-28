@@ -10,8 +10,16 @@ Dazu ein kompletter **Leitungsnetz**-Datensatz: ein aktiver Leitungsplan mit
 Hochbehaelter, Zubringer-/Haupt-/Versorgungsleitungen, ~30 Hausanschluessen
 (grossteils Liegenschaften zugeordnet + geocodet, einige bewusst unzugeordnet
 zum Testen der Zuordnen-Funktion), Hydranten/Schiebern mit Wartungs-/Pruef-Logs
-(teils faellig) sowie ein gefuelltes **Stoerungsjournal** (Rohrbrueche, Lecks,
-Druckverlust ...).
+(teils faellig), drei **Probenahmestellen** mit quartalsweisen **Wasserproben/
+Laborwerten** (groesstenteils unauffaellig, mit einigen Grenzwert-Ueberschreitungen:
+Nitrat-Trend, mikrobiologische Beanstandung, Eisen/Mangan) sowie ein gefuelltes
+**Stoerungsjournal** (Rohrbrueche, Lecks, Druckverlust ...).
+
+Dazu eine gefuellte **Schriftfuehrung** (nur im WG-Modus sichtbar): mehrere
+**Vorstandssitzungen** und **Hauptversammlungen** ueber zwei Jahre — mit
+Tagesordnung, Anwesenheit, Protokoll (inkl. Quorum, eine HV nach Wartefrist
+erneut eroeffnet) und einem Register an **Beschluessen** (angenommen / abgelehnt
+/ vertagt mit Stimmenzahlen); je eine geplante Sitzung ohne Protokoll.
 
 Wird von zwei CLI-Wrappern aufgerufen:
 - OSS: ``flask --app run seed-demo`` (cli.py)
@@ -63,7 +71,7 @@ _STRASSEN = [
 
 
 def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
-                   verbose: bool = True) -> dict:
+                   verbose: bool = True, author=None) -> dict:
     """Seedet den vollstaendigen Demo-Datensatz.
 
     Voraussetzung: DB hat die Defaults (TaxRates, DunningPolicy "Standard",
@@ -83,6 +91,11 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
             ``None`` -> faellt auf ``today`` zurueck (Tests bleiben deterministisch
             und das Bestandsverhalten unveraendert).
         verbose: Print-Output.
+        author: Optionaler ``User``, der als Autor (``created_by_id`` etc.) aller
+            erzeugten Eintraege verwendet wird. Wird er gesetzt (Web-/Self-
+            Service-Pfad, z.B. SaaS-Danger-Zone), legt der Seeder KEINE Demo-
+            Logins an. ``None`` (CLI-Pfad) -> die Demo-User ``admin``/``kassier``
+            mit Passwort ``demo1234`` werden wie gehabt angelegt.
 
     Rueckgabe: Dict mit Counts pro Entitaet (fuer Tests / Smoke-Asserts).
     """
@@ -94,6 +107,9 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         Transfer, Invoice, InvoiceItem, BookingGroup, Booking, OpenItem,
         DunningPolicy, DunningStage, DunningNotice, FiscalYear,
         NetworkPlan, NetworkFeature, MaintenanceLog, SpringYield, Incident,
+        WaterSample, LabResult,
+        Meeting, MeetingAgendaItem, MeetingResolution, MeetingAttendance,
+        MeetingProtocol,
     )
 
     if now is None:
@@ -104,27 +120,34 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     counts: dict[str, int] = {}
 
     # ------------------------------------------------------------------
-    # Admin-User (fuer created_by_id auf allen Folge-Eintraegen)
+    # Autor-User (fuer created_by_id auf allen Folge-Eintraegen)
     # ------------------------------------------------------------------
-    admin_role = Role.query.filter_by(name="Admin").first()
-    kassier_role = Role.query.filter_by(name="Kassier").first()
-    admin = User.query.filter_by(username="admin").first()
-    if not admin:
-        admin = User(
-            username="admin", email="admin@demo.local",
-            role_id=admin_role.id, active=True,
-        )
-        admin.set_password("demo1234")
-        db.session.add(admin)
-    if not User.query.filter_by(username="kassier").first():
-        kassier = User(
-            username="kassier", email="kassier@demo.local",
-            role_id=kassier_role.id, active=True,
-        )
-        kassier.set_password("demo1234")
-        db.session.add(kassier)
-    db.session.flush()
-    admin = User.query.filter_by(username="admin").first()
+    # Web-/Self-Service-Pfad reicht ``author`` herein: dann ist der eingeloggte
+    # (Tenant-)Admin der Autor und es werden KEINE Demo-Logins angelegt — die
+    # haetten in einem echten Mandanten ein Konto mit dem schwachen Passwort
+    # "demo1234" erzeugt. Der CLI-Pfad (author=None) legt sie wie bisher an.
+    if author is not None:
+        admin = author
+    else:
+        admin_role = Role.query.filter_by(name="Admin").first()
+        kassier_role = Role.query.filter_by(name="Kassier").first()
+        admin = User.query.filter_by(username="admin").first()
+        if not admin:
+            admin = User(
+                username="admin", email="admin@demo.local",
+                role_id=admin_role.id, active=True,
+            )
+            admin.set_password("demo1234")
+            db.session.add(admin)
+        if not User.query.filter_by(username="kassier").first():
+            kassier = User(
+                username="kassier", email="kassier@demo.local",
+                role_id=kassier_role.id, active=True,
+            )
+            kassier.set_password("demo1234")
+            db.session.add(kassier)
+        db.session.flush()
+        admin = User.query.filter_by(username="admin").first()
 
     # ------------------------------------------------------------------
     # Abrechnungsperioden
@@ -846,8 +869,19 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     add_point("pumpe", "Druckerhöhung Sonnberg", 500, 78,
               accuracy="exakt", year_built=2009, manufacturer="Grundfos")
     pumpe = net_features[-1]
-    add_point("probenahme", "Probenahmestelle Behälterabgang", 514, 92, accuracy="gut")
+    # Drei Probenahmestellen (Rohwasser an der Quelle, Behälterabgang, Ortsnetz)
+    # — bewusst ohne rng-Parameter, damit die nachfolgenden rng-Ziehungen
+    # (Quellen/Strassen/Hydranten) unveraendert deterministisch bleiben.
+    probe_behaelter = add_point(
+        "probenahme", "Probenahmestelle Behälterabgang", 514, 92, accuracy="gut",
+        notes="Reinwasser-Beprobung am Behälterabgang.")
     add_point("verteiler", "Ortsverteiler", 10, 120, accuracy="gut")
+    probe_ortsnetz = add_point(
+        "probenahme", "Probenahmestelle Ortsnetz", 8, 150, accuracy="gut",
+        notes="Zapfstelle am Ende des Versorgungsstrangs (Ortsnetz).")
+    probe_quelle = add_point(
+        "probenahme", "Probenahmestelle Quelle Brunnertal", 895, -290, accuracy="gut",
+        notes="Rohwasser-Beprobung an der Quellfassung.")
 
     # 3 Quellen mit je (Position, Basis-Schuettung l/s, Saison-Amplitude,
     # Sommer-Trockenheitsfaktor) — Steinbründl faellt im Trockensommer fast trocken.
@@ -1154,6 +1188,108 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     counts["incidents"] = 9
 
     # ==================================================================
+    # Wasserproben / Laborwerte (TWV-Beprobung)
+    # ==================================================================
+    # Quartalsweise Befunde je Probenahmestelle, groesstenteils unauffaellig,
+    # mit einigen bewusst gesetzten Grenzwert-Ueberschreitungen: mikrobiologische
+    # Beanstandung an der Quelle nach Starkregen, Nitrat-Trend ueber den
+    # Grenzwert im Ortsnetz, Eisen/Mangan-Event am Behaelter. Status/Einheit/
+    # Grenzwert werden — wie in der Route ``network.sample_add`` — zur
+    # Erfassungszeit per ``water_quality`` gesnapshotet. Steht am Ende der
+    # rng-nutzenden Abschnitte, damit fruehere Ziehungen unveraendert bleiben.
+    from app.network import water_quality as wq
+
+    def _panel(**ov):
+        """Unauffaelliger TWV-Standardbefund; ``ov`` ueberschreibt einzelne Werte."""
+        base = {
+            "e_coli": 0, "enterokokken": 0, "coliforme": 0,
+            "koloniezahl_22": 5, "koloniezahl_37": 1,
+            "nitrat": 12.0, "nitrit": 0.01, "ammonium": 0.02,
+            "ph": 7.4, "leitfaehigkeit": 470, "truebung": 0.20,
+            "eisen": 0.02, "mangan": 0.01, "gesamthaerte": 12,
+        }
+        base.update(ov)
+        return base
+
+    probe_dates = []
+    for _y in (prev_year, current_year):
+        for _mo in (2, 5, 8, 11):
+            _d = date(_y, _mo, 10)
+            if _d <= today:
+                probe_dates.append(_d)
+
+    _labs = ["Landeslabor OÖ", "AGES Linz", "Hydro-Labor GmbH"]
+    ws_count = lr_count = ws_alarm = befund_seq = 0
+
+    def add_sample(feature, when, values, *, notes=None, sample_type="Routine"):
+        nonlocal ws_count, lr_count, ws_alarm, befund_seq
+        befund_seq += 1
+        s = WaterSample(
+            feature_id=feature.id, sample_date=when, lab_name=rng.choice(_labs),
+            sample_no=f"B-{when.year}-{befund_seq:03d}", sample_type=sample_type,
+            notes=notes, created_by_id=admin.id,
+        )
+        had_alarm = False
+        for key, val in values.items():
+            num = Decimal(str(val))
+            status = wq.assess(key, num)
+            had_alarm = had_alarm or (status == wq.STATUS_ALARM)
+            s.results.append(LabResult(
+                parameter_key=key, value_num=num,
+                unit=wq.parameter_unit(key) or None,
+                limit_text=wq.limit_display(key) or None,
+                status=status,
+            ))
+            lr_count += 1
+        db.session.add(s)
+        ws_count += 1
+        if had_alarm:
+            ws_alarm += 1
+
+    n_dates = len(probe_dates)
+    for i, d in enumerate(probe_dates):
+        # --- Behälterabgang: meist sauber; einmal Eisen/Mangan erhoeht. ---
+        ov = {"nitrat": round(10 + rng.uniform(-2, 3), 1),
+              "ph": round(7.3 + rng.uniform(-0.2, 0.3), 2),
+              "leitfaehigkeit": rng.randint(440, 520)}
+        notes = None
+        if d.year == current_year and d.month == 2:
+            ov.update(eisen=0.28, mangan=0.07, truebung=0.9)
+            notes = ("Erhöhte Eisen-/Manganwerte nach Stagnation — Behälter "
+                     "gespült, Nachprobe unauffällig.")
+        add_sample(probe_behaelter, d, _panel(**ov), notes=notes)
+
+        # --- Ortsnetz: Nitrat-Trend nach oben (20 -> 60 mg/l). ---
+        nitrat = 20 + (i / max(1, n_dates - 1)) * 40
+        ov = {"nitrat": round(nitrat, 1),
+              "ph": round(7.2 + rng.uniform(-0.2, 0.3), 2),
+              "leitfaehigkeit": rng.randint(520, 720),
+              "gesamthaerte": rng.randint(14, 22)}
+        notes = ("Nitrat über Parameterwert (50 mg/l) — landwirtschaftlicher "
+                 "Eintrag, Beobachtung läuft." if nitrat > 50 else None)
+        add_sample(probe_ortsnetz, d, _panel(**ov), notes=notes)
+
+        # --- Quelle: ein mikrobiologischer Befund nach Starkregen. ---
+        ov = {"nitrat": round(6 + rng.uniform(-1, 2), 1),
+              "ph": round(7.0 + rng.uniform(-0.2, 0.3), 2),
+              "leitfaehigkeit": rng.randint(360, 460),
+              "truebung": round(rng.uniform(0.1, 0.4), 2)}
+        notes, stype = None, "Routine"
+        if d.year == current_year and d.month == 5:
+            ov.update(e_coli=8, coliforme=22, enterokokken=3, truebung=3.1,
+                      koloniezahl_22=180)
+            notes = ("Mikrobiologische Beanstandung nach Starkregen "
+                     "(Oberflächenwassereinfluss) — Abkochgebot, Desinfektion "
+                     "und Nachprobe veranlasst.")
+            stype = "Anlassbezogen"
+        add_sample(probe_quelle, d, _panel(**ov), notes=notes, sample_type=stype)
+
+    db.session.flush()
+    counts["water_samples"] = ws_count
+    counts["lab_results"] = lr_count
+    counts["water_samples_with_alarm"] = ws_alarm
+
+    # ==================================================================
     # Buchhaltung — Fortschreibung bis zum aktuellen Datum (``now``)
     # ==================================================================
     # Liegt ``now`` (CLI: date.today()) in einem spaeteren Jahr als der
@@ -1257,6 +1393,258 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         ))
         counts["current_year_transfers"] = 1
         db.session.flush()
+
+    # ==================================================================
+    # Schriftfuehrung — Vorstandssitzungen, Hauptversammlungen, Beschluesse
+    # ==================================================================
+    # Nur im WG-Modus (org.type=cooperative) in der UI sichtbar; die Daten werden
+    # aber immer angelegt (die Tabellen existieren unabhaengig vom Mandant-Typ —
+    # org.type wird vom Seed bewusst NICHT gesetzt). Voll deterministisch (kein
+    # rng), steht ohnehin am Ende. Anwesenheit + Beschluesse referenzieren die
+    # geseedeten Kunden als Mitglieder; Autor ist ``admin`` (= ``author`` im Web-Pfad).
+    from datetime import time as _time
+
+    board_members = customers[:6]        # Vorstand
+    assembly_members = customers[:55]    # stimmberechtigte Mitglieder (HV)
+
+    m_meetings = m_agenda = m_resolutions = m_attend = m_protocols = 0
+
+    def _seed_attendance(meeting, members, present_ratio):
+        """Deterministische Anwesenheit; gibt die Zahl der Anwesenden zurueck."""
+        nonlocal m_attend
+        threshold = int(round(present_ratio * 10))
+        present_n = 0
+        for k, cust in enumerate(members):
+            r = (k * 7 + meeting.meeting_date.day) % 10
+            if r < threshold:
+                st, present_n = MeetingAttendance.STATUS_PRESENT, present_n + 1
+            elif r < threshold + 1:
+                st = MeetingAttendance.STATUS_EXCUSED
+            else:
+                st = MeetingAttendance.STATUS_ABSENT
+            db.session.add(MeetingAttendance(
+                meeting_id=meeting.id, customer_id=cust.id, status=st,
+                is_member=True, weight=1,
+            ))
+            m_attend += 1
+        return present_n
+
+    def add_meeting(*, mtype, title, when, start, end, status, agenda,
+                    location="Vereinslokal / Genossenschaftsbüro",
+                    resolutions=(), attendees=None, present_ratio=0.8,
+                    quorum_total=None, reconvened=False, reconvene_wait=None,
+                    protocol_html=None, intro=None, closing=None):
+        nonlocal m_meetings, m_agenda, m_resolutions, m_protocols
+        m = Meeting(
+            meeting_type=mtype, title=title, meeting_date=when,
+            start_time=start, end_time=end, location=location, status=status,
+            intro_text=intro, closing_text=closing,
+            created_at=datetime(when.year, when.month, when.day, 8, 0, 0),
+            created_by_id=admin.id,
+        )
+        db.session.add(m)
+        db.session.flush()
+        m_meetings += 1
+
+        items = []
+        for pos, (it_title, it_desc, it_vote) in enumerate(agenda, start=1):
+            ai = MeetingAgendaItem(meeting_id=m.id, position=pos, title=it_title,
+                                   description=it_desc, requires_vote=it_vote)
+            db.session.add(ai)
+            items.append(ai)
+            m_agenda += 1
+        db.session.flush()
+
+        for (r_title, r_status, vf, va, vab, r_notes, ai_idx) in resolutions:
+            db.session.add(MeetingResolution(
+                meeting_id=m.id,
+                agenda_item_id=(items[ai_idx].id if ai_idx is not None
+                                and ai_idx < len(items) else None),
+                title=r_title, status=r_status,
+                votes_for=vf, votes_against=va, votes_abstain=vab,
+                notes=r_notes, decided_on=when,
+                created_at=datetime(when.year, when.month, when.day, 20, 30, 0),
+                created_by_id=admin.id,
+            ))
+            m_resolutions += 1
+
+        # Anwesenheit + Protokoll nur bei abgehaltenen Sitzungen.
+        if status == Meeting.STATUS_HELD:
+            present_n = _seed_attendance(m, attendees or [], present_ratio)
+            qtot = quorum_total if quorum_total is not None else len(attendees or [])
+            # Beschlussfaehig bei einfacher Mehrheit der Anwesenden — ODER nach
+            # erneuter Eroeffnung der HV (Wartefrist) mit den dann Anwesenden.
+            quorate = True if reconvened else (qtot > 0 and present_n * 2 > qtot)
+            db.session.add(MeetingProtocol(
+                meeting_id=m.id, source_type=MeetingProtocol.SOURCE_RICHTEXT,
+                content_html=protocol_html, status=MeetingProtocol.STATUS_FINAL,
+                quorum_present=present_n, quorum_total=qtot, is_quorate=quorate,
+                attendance_mode=MeetingProtocol.ATTENDANCE_LIST,
+                reconvened=reconvened, reconvene_wait_minutes=reconvene_wait,
+                present_headcount=(present_n if reconvened else None),
+                finalized_at=datetime(when.year, when.month, when.day, 21, 30, 0),
+                created_at=datetime(when.year, when.month, when.day, 21, 0, 0),
+                created_by_id=admin.id,
+            ))
+            m_protocols += 1
+        return m
+
+    R = MeetingResolution  # kuerzere Statuskonstanten unten
+    _board_agenda = [
+        ("Begrüßung und Feststellung der Beschlussfähigkeit", None, False),
+        ("Genehmigung des Protokolls der letzten Sitzung", None, True),
+        ("Kassabericht", "Aktueller Kontostand, offene Posten, Mahnstand.", False),
+        ("Anstehende Investitionen und Reparaturen", "Beschlussfassung über Vergaben.", True),
+        ("Allfälliges", None, False),
+    ]
+    _board_intro = ("<p>Der Obmann begrüßt die Anwesenden und stellt die "
+                    "fristgerechte Einladung sowie die Beschlussfähigkeit fest.</p>")
+
+    # --- Vorstandssitzungen (abgehalten) ------------------------------
+    add_meeting(
+        mtype=Meeting.TYPE_BOARD, title=f"Vorstandssitzung März {prev_year}",
+        when=date(prev_year, 3, 12), start=_time(19, 0), end=_time(20, 45),
+        status=Meeting.STATUS_HELD, agenda=_board_agenda,
+        attendees=board_members, present_ratio=0.83, intro=_board_intro,
+        protocol_html="<p>Die laufenden Geschäfte wurden besprochen; der Kassier "
+                      "berichtet einen ausgeglichenen Kontostand.</p>",
+        resolutions=[
+            ("Genehmigung des Protokolls der letzten Sitzung",
+             R.STATUS_ACCEPTED, 6, 0, 0, "Einstimmig angenommen.", 1),
+            ("Beauftragung Frühjahrs-Hydrantenwartung",
+             R.STATUS_ACCEPTED, 5, 0, 1,
+             "Vergabe an die eigene Crew, Materialbudget 500 €.", 3),
+        ])
+    add_meeting(
+        mtype=Meeting.TYPE_BOARD, title=f"Vorstandssitzung Juni {prev_year}",
+        when=date(prev_year, 6, 18), start=_time(19, 0), end=_time(20, 30),
+        status=Meeting.STATUS_HELD, agenda=_board_agenda,
+        attendees=board_members, present_ratio=0.83, intro=_board_intro,
+        protocol_html="<p>Vorbereitung der Hauptversammlung und Beschluss über "
+                      "die Anschaffung von Betriebsmitteln.</p>",
+        resolutions=[
+            ("Anschaffung eines neuen Standrohrzählers für Bautätigkeit",
+             R.STATUS_ACCEPTED, 4, 1, 1, "Mehrheitlich angenommen.", 3),
+        ])
+    add_meeting(
+        mtype=Meeting.TYPE_BOARD, title=f"Vorstandssitzung Oktober {prev_year}",
+        when=date(prev_year, 10, 8), start=_time(19, 0), end=_time(21, 0),
+        status=Meeting.STATUS_HELD, agenda=_board_agenda,
+        attendees=board_members, present_ratio=1.0, intro=_board_intro,
+        protocol_html="<p>Investitionsplanung für das kommende Jahr; Vergabe des "
+                      "Pumpentauschs beschlossen, Leitungstausch vertagt.</p>",
+        resolutions=[
+            ("Vergabe Pumpentausch Druckerhöhung Sonnberg",
+             R.STATUS_ACCEPTED, 6, 0, 0, "Angebot Grundfos einstimmig angenommen.", 3),
+            ("Leitungstausch Quellweg",
+             R.STATUS_POSTPONED, 0, 0, 0,
+             "Vertagt bis zur Klärung der Förderzusage des Landes.", 3),
+        ])
+    add_meeting(
+        mtype=Meeting.TYPE_BOARD, title=f"Vorstandssitzung März {current_year}",
+        when=date(current_year, 3, 11), start=_time(19, 0), end=_time(20, 40),
+        status=Meeting.STATUS_HELD, agenda=_board_agenda,
+        attendees=board_members, present_ratio=0.83, intro=_board_intro,
+        protocol_html="<p>Nachbereitung der Hauptversammlung; Beauftragung der "
+                      "Quellschacht-Sanierung.</p>",
+        resolutions=[
+            ("Genehmigung des Protokolls der Hauptversammlung",
+             R.STATUS_ACCEPTED, 6, 0, 0, "Einstimmig angenommen.", 1),
+            ("Beauftragung Sanierung Quellschacht Brunnertal",
+             R.STATUS_ACCEPTED, 5, 1, 0, "Angebot Tiefbau Mayr GmbH angenommen.", 3),
+        ])
+    add_meeting(
+        mtype=Meeting.TYPE_BOARD, title=f"Vorstandssitzung Juni {current_year}",
+        when=date(current_year, 6, 17), start=_time(19, 0), end=_time(20, 20),
+        status=Meeting.STATUS_HELD, agenda=_board_agenda,
+        attendees=board_members, present_ratio=0.66, intro=_board_intro,
+        protocol_html="<p>Diskussion über die Beschaffung eines Notstromaggregats; "
+                      "Antrag abgelehnt, zunächst Mietlösung prüfen.</p>",
+        resolutions=[
+            ("Anschaffung eines Notstromaggregats für die Druckerhöhung",
+             R.STATUS_REJECTED, 2, 4, 0,
+             "Abgelehnt — kostengünstigere Mietlösung wird geprüft.", 3),
+        ])
+    # --- Vorstandssitzung (geplant, ohne Protokoll) -------------------
+    add_meeting(
+        mtype=Meeting.TYPE_BOARD, title="Vorstandssitzung (geplant)",
+        when=now + timedelta(days=21), start=_time(19, 0), end=None,
+        status=Meeting.STATUS_PLANNING, agenda=_board_agenda,
+        intro=_board_intro)
+
+    # --- Hauptversammlungen -------------------------------------------
+    _assembly_agenda = [
+        ("Begrüßung und Feststellung der ordnungsgemäßen Einladung", None, False),
+        ("Bericht des Obmanns über das abgelaufene Geschäftsjahr", None, False),
+        ("Kassabericht und Bericht der Rechnungsprüfer", None, False),
+        ("Entlastung des Vorstands", None, True),
+        ("Beschluss über die Wassergebühren",
+         "Anpassung der Grund- und Verbrauchsgebühren.", True),
+        ("Allfälliges", None, False),
+    ]
+    _assembly_close = ("<p>Der Obmann dankt den Mitgliedern für ihr Erscheinen und "
+                       "schließt die Versammlung.</p>")
+
+    add_meeting(
+        mtype=Meeting.TYPE_ASSEMBLY,
+        title=f"Ordentliche Hauptversammlung {prev_year}",
+        when=date(prev_year, 5, 6), start=_time(19, 30), end=_time(22, 0),
+        location="Gasthaus zur Quelle, Saal", status=Meeting.STATUS_HELD,
+        agenda=_assembly_agenda, attendees=assembly_members, present_ratio=0.62,
+        quorum_total=len(assembly_members), closing=_assembly_close,
+        protocol_html="<p>Die Versammlung war beschlussfähig. Jahresabschluss "
+                      "genehmigt, Vorstand entlastet.</p>",
+        resolutions=[
+            ("Genehmigung des Jahresabschlusses",
+             R.STATUS_ACCEPTED, 32, 0, 2, "Mit großer Mehrheit angenommen.", 2),
+            ("Entlastung des Vorstands",
+             R.STATUS_ACCEPTED, 31, 1, 2, "Angenommen.", 3),
+            ("Beibehaltung der Wassergebühren",
+             R.STATUS_ACCEPTED, 30, 3, 1,
+             "Keine Anpassung im laufenden Jahr.", 4),
+        ])
+    add_meeting(
+        mtype=Meeting.TYPE_ASSEMBLY,
+        title=f"Ordentliche Hauptversammlung {current_year}",
+        when=date(current_year, 5, 13), start=_time(19, 30), end=_time(22, 15),
+        location="Gasthaus zur Quelle, Saal", status=Meeting.STATUS_HELD,
+        agenda=_assembly_agenda + [("Neuwahl des Vorstands", None, True)],
+        attendees=assembly_members, present_ratio=0.44,
+        quorum_total=len(assembly_members), reconvened=True, reconvene_wait=30,
+        closing=_assembly_close,
+        protocol_html="<p>Zu Beginn nicht beschlussfähig; nach 30 Minuten "
+                      "Wartefrist mit den Anwesenden ordnungsgemäß eröffnet. "
+                      "Gebührenanpassung und Neuwahl beschlossen.</p>",
+        resolutions=[
+            ("Genehmigung des Jahresabschlusses",
+             R.STATUS_ACCEPTED, 23, 0, 1, "Angenommen.", 2),
+            ("Entlastung des Vorstands",
+             R.STATUS_ACCEPTED, 22, 1, 1, "Angenommen.", 3),
+            ("Anhebung der Verbrauchsgebühr auf 1,55 €/m³",
+             R.STATUS_ACCEPTED, 18, 5, 1,
+             "Nach Diskussion mehrheitlich angenommen.", 4),
+            ("Neuwahl des Vorstands für die laufende Funktionsperiode",
+             R.STATUS_ACCEPTED, 24, 0, 0, "Einstimmig wiedergewählt.", 6),
+        ])
+    # --- Hauptversammlung (geplant, ohne Protokoll) -------------------
+    add_meeting(
+        mtype=Meeting.TYPE_ASSEMBLY,
+        title="Außerordentliche Hauptversammlung (geplant)",
+        when=now + timedelta(days=45), start=_time(19, 30), end=None,
+        location="Gasthaus zur Quelle, Saal", status=Meeting.STATUS_PLANNING,
+        agenda=[
+            ("Begrüßung und Feststellung der Beschlussfähigkeit", None, False),
+            ("Beschluss über eine Sonderumlage für die Quellsanierung",
+             "Außerordentliche Investition.", True),
+            ("Allfälliges", None, False),
+        ])
+
+    db.session.flush()
+    counts["meetings"] = m_meetings
+    counts["meeting_agenda_items"] = m_agenda
+    counts["meeting_resolutions"] = m_resolutions
+    counts["meeting_attendances"] = m_attend
+    counts["meeting_protocols"] = m_protocols
 
     if verbose:
         print("Demo-Daten-Counts:")

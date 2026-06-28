@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<style>
+  @page {
+    size: A4;
+    margin: 16mm 16mm 18mm;
+    @bottom-center {
+      content: "Seite " counter(page) " / " counter(pages);
+      font-family: Arial, sans-serif; font-size: 8pt; color: #888;
+    }
+  }
+  body { font-family: Arial, sans-serif; font-size: 10pt; color: #2d3748; line-height: 1.4; }
+  .head { display: flex; justify-content: space-between; align-items: flex-start; }
+  h1 { font-size: 16pt; color: #102a44; margin: 0 0 1mm; }
+  .meta { color: #555; font-size: 9pt; }
+  .rule { height: 2px; background: #2f6a93; margin: 4mm 0 6mm; }
+  .kpis { display: flex; flex-wrap: wrap; gap: 4mm; margin-bottom: 6mm; }
+  .kpi { border: 1px solid #e2e8f0; border-radius: 3px; padding: 3mm 4mm; min-width: 40mm; }
+  .kpi .v { font-size: 14pt; font-weight: bold; color: #102a44; }
+  .kpi .l { font-size: 8pt; color: #666; }
+  .stelle-title { font-size: 12pt; color: #102a44; border-bottom: 1px solid #e2e8f0; padding-bottom: 1.5mm; margin: 6mm 0 2mm; }
+  .sample-head { font-size: 9.5pt; font-weight: bold; margin: 3mm 0 1mm; }
+  .sample-meta { color: #555; font-size: 8.5pt; margin-bottom: 1mm; }
+  table { width: 100%; border-collapse: collapse; font-size: 8.5pt; margin-bottom: 2mm; }
+  th, td { border-bottom: 1px solid #e2e8f0; padding: 1.2mm 2mm; text-align: left; vertical-align: top; }
+  th { background: #f1f5f9; color: #334155; }
+  td.num, th.num { text-align: right; white-space: nowrap; }
+  .alarm { color: #c92a2a; font-weight: bold; }
+  .warning { color: #b8860b; }
+  .muted { color: #888; }
+</style>
+</head>
+<body>
+  <div class="head">
+    <div>
+      <h1>Trinkwasser-Untersuchungsbericht</h1>
+      <div class="meta">
+        {{ wg.name }}{% if plan %} · Plan {{ plan.name }}{% endif %}{% if year %} · Berichtsjahr {{ year }}{% else %} · alle Jahre{% endif %}
+      </div>
+    </div>
+    <div class="meta">Erstellt am {{ today_de }}</div>
+  </div>
+  <div class="rule"></div>
+
+  <div class="kpis">
+    <div class="kpi"><div class="v">{{ stellen_count }}</div><div class="l">Probenahmestellen mit Befunden</div></div>
+    <div class="kpi"><div class="v">{{ total_samples }}</div><div class="l">Befunde gesamt</div></div>
+    <div class="kpi"><div class="v {{ 'alarm' if total_breaches else '' }}">{{ total_breaches }}</div><div class="l">Grenzwert-Überschreitungen</div></div>
+  </div>
+
+  {% for entry in stellen_data %}
+  <div class="stelle-title">{{ entry.feature.label() }}</div>
+  {% for s in entry.samples %}
+  <div class="sample-head">Befund vom {{ s.sample_date.strftime('%d.%m.%Y') }}</div>
+  <div class="sample-meta">
+    {% if s.lab_name %}Labor: {{ s.lab_name }}{% endif %}
+    {% if s.sample_no %} · Nr. {{ s.sample_no }}{% endif %}
+    {% if s.sample_type %} · {{ s.sample_type }}{% endif %}
+  </div>
+  <table>
+    <thead>
+      <tr><th>Parameter</th><th class="num">Messwert</th><th>Einheit</th><th>Grenzwert</th><th>Bewertung</th></tr>
+    </thead>
+    <tbody>
+      {% for r in s.results %}
+      <tr>
+        <td>{{ wq.parameter_label(r.parameter_key) }}</td>
+        <td class="num {{ r.status }}">
+          {% if r.value_text %}{{ r.value_text }}{% elif r.value_num is not none %}{{ r.value_num | de_number(4) }}{% else %}—{% endif %}
+        </td>
+        <td>{{ r.unit or '' }}</td>
+        <td>{{ r.limit_text or '' }}</td>
+        <td class="{{ r.status }}">{{ wq.status_label(r.status) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if s.notes %}<div class="sample-meta">Anmerkung: {{ s.notes }}</div>{% endif %}
+  {% endfor %}
+  {% else %}
+  <p class="muted">Keine Befunde im Berichtszeitraum.</p>
+  {% endfor %}
+</body>
+</html>

@@ -1,0 +1,98 @@
+{# Body des „Wasserprobe"-Modals. Liste vergangener Befunde + Eingabefelder OHNE
+   eigenes <form>/Submit — der Footer-Submit des Modals (#featureSampleForm)
+   sendet die Felder. Loeschen-Buttons sind eigenstaendige HTMX-Calls (type=button)
+   und zielen auf #featureSampleModalBody (X-From-Modal). Erwartet: f, wq, catalog,
+   today_iso. #}
+{% include "_flash_inline.html" %}
+
+{% if f.water_samples %}
+<div class="mb-3">
+  <div class="fw-medium mb-2">Bisherige Befunde</div>
+  <div class="list-group list-group-flush">
+    {# Relationship ist aufsteigend nach Datum — fuer die Liste neueste zuerst. #}
+    {% for s in f.water_samples | reverse %}
+    {% set ost = s.overall_status() %}
+    <div class="list-group-item px-0 py-2">
+      <div class="d-flex align-items-center">
+        <a href="{{ url_for('network.sample_detail', sample_id=s.id) }}" target="_blank"
+           rel="noopener" hx-boost="false" class="me-2 text-decoration-none">
+          {{ s.sample_date.strftime('%d.%m.%Y') }}
+        </a>
+        {% if ost %}
+        <span class="badge {{ wq.status_badge(ost) }} me-1">{{ wq.status_label(ost) }}</span>
+        {% endif %}
+        <span class="text-secondary small me-2">{{ s.results | length }} Parameter</span>
+        <button type="button" class="btn btn-icon btn-sm btn-ghost-secondary ms-auto"
+          hx-post="{{ url_for('network.sample_delete', sample_id=s.id) }}"
+          hx-target="#featureSampleModalBody" hx-swap="innerHTML"
+          hx-headers='{"X-From-Modal": "1"}'
+          hx-confirm="Diesen Befund mit allen Laborwerten löschen?" title="Löschen">
+          <i class="fas fa-times"></i></button>
+      </div>
+      {% if s.lab_name %}<div class="small text-secondary">{{ s.lab_name }}{% if s.sample_no %} · Nr. {{ s.sample_no }}{% endif %}</div>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% else %}
+<p class="text-secondary small mb-3">Noch keine Befunde für diese Probenahmestelle.</p>
+{% endif %}
+
+<div class="border-top pt-3">
+  <div class="fw-medium mb-2">Neuer Befund</div>
+  <div class="row g-2">
+    <div class="col-6 col-md-3 mb-2">
+      <label class="form-label">Entnahmedatum</label>
+      <input type="date" name="sample_date" class="form-control" value="{{ today_iso }}">
+    </div>
+    <div class="col-6 col-md-3 mb-2">
+      <label class="form-label">Labor</label>
+      <input type="text" name="lab_name" class="form-control" placeholder="optional">
+    </div>
+    <div class="col-6 col-md-3 mb-2">
+      <label class="form-label">Probennummer</label>
+      <input type="text" name="sample_no" class="form-control" placeholder="optional">
+    </div>
+    <div class="col-6 col-md-3 mb-2">
+      <label class="form-label">Art</label>
+      <select name="sample_type" class="form-select">
+        <option value="">—</option>
+        <option value="Routine">Routineuntersuchung</option>
+        <option value="Vollanalyse">Vollanalyse</option>
+        <option value="Anlassbezogen">Anlassbezogen</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="fw-medium mt-2 mb-1">Laborwerte</div>
+  <div class="form-hint mb-2">
+    Nur ausgefüllte Parameter werden gespeichert. Dezimaltrenner Komma oder Punkt;
+    nicht-numerische Angaben (z. B. „n.n.") sind erlaubt (ohne Ampel-Bewertung).
+  </div>
+  {% for group_label, params in catalog %}
+  <div class="mb-2">
+    <div class="text-secondary small text-uppercase mb-1">{{ group_label }}</div>
+    <div class="row g-2">
+      {% for key, label, unit, limit in params %}
+      <div class="col-12 col-md-6">
+        <div class="row g-1 align-items-center">
+          <div class="col-5">
+            <label class="form-label mb-0 small" for="value__{{ key }}">{{ label }}</label>
+          </div>
+          <div class="col-4">
+            <div class="input-group input-group-sm">
+              <input type="text" inputmode="decimal" id="value__{{ key }}"
+                     name="value__{{ key }}" class="form-control" placeholder="—">
+              {% if unit %}<span class="input-group-text">{{ unit }}</span>{% endif %}
+            </div>
+          </div>
+          <div class="col-3 text-secondary small text-truncate" title="Grenzwert (TWV)">
+            {% if limit %}{{ limit }}{% else %}—{% endif %}
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+</div>

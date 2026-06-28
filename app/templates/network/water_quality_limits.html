@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Grenzwerte{% endblock %}
+{% block page_title %}<i class="fas fa-sliders-h me-2"></i> Grenzwerte anpassen{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+  <a href="{{ url_for('network.water_quality') }}" class="btn btn-sm btn-outline-secondary" hx-boost="false">
+    <i class="fas fa-arrow-left me-1"></i> Zur Wasserqualität
+  </a>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h3 class="card-title mb-0">Grenzwerte (Trinkwasserverordnung)</h3>
+  </div>
+  <form method="post" action="{{ url_for('network.water_quality_limits') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="card-body">
+      <p class="text-secondary">
+        Standardwerte entsprechen der österreichischen Trinkwasserverordnung. Ein
+        Feld leer lassen = Standard verwenden. Für Bereiche (z. B. pH) das Format
+        <code>min-max</code> nutzen (z. B. <code>6,5-9,5</code>). Bereits erfasste
+        Befunde behalten ihren damaligen Grenzwert (Snapshot).
+      </p>
+      <div class="table-responsive">
+        <table class="table table-vcenter">
+          <thead>
+            <tr>
+              <th>Parameter</th>
+              <th>Standard</th>
+              <th style="width:220px">Eigener Grenzwert</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in rows %}
+            <tr>
+              <td>{{ row.label }}</td>
+              <td class="text-secondary">{{ row.default_display or '—' }}</td>
+              <td>
+                <div class="input-group input-group-sm">
+                  <input type="text" name="limit__{{ row.key }}" class="form-control"
+                         value="{{ row.override }}"
+                         placeholder="{% if row.kind == 'range' %}z. B. 6,5-9,5{% else %}Standard{% endif %}">
+                  {% if row.unit %}<span class="input-group-text">{{ row.unit }}</span>{% endif %}
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card-footer d-flex">
+      <button type="submit" class="btn btn-primary ms-auto">
+        <i class="fas fa-save me-1"></i> Speichern
+      </button>
+    </div>
+  </form>
+</div>
+{% endblock %}

@@ -169,3 +169,55 @@ class TestBillingRunDetail:
             data={"invoice_ids": str(inv.id)}, follow_redirects=False)
         assert r.status_code == 302
         assert inv.status == Invoice.STATUS_DRAFT
+
+    def test_detail_page_has_excel_export_button(self, client, admin, billing_setup):
+        _login(client)
+        self._generate(client, billing_setup)
+        run = BillingRun.query.one()
+        r = client.get(f"/invoices/billing-runs/{run.id}")
+        html = r.get_data(as_text=True)
+        assert f"/invoices/billing-runs/{run.id}/export/excel" in html
+        assert "Excel-Export" in html
+
+    def test_excel_export_returns_xlsx_with_overview(self, client, admin, billing_setup):
+        # Excel-Export der Uebersicht (kein WeasyPrint noetig): valides xlsx mit
+        # Deckblatt-Titel und der Rechnung in der Tabelle; Status unveraendert.
+        import io
+        import openpyxl
+        _login(client)
+        self._generate(client, billing_setup)
+        run = BillingRun.query.one()
+        inv = Invoice.query.one()
+        r = client.get(f"/invoices/billing-runs/{run.id}/export/excel")
+        assert r.status_code == 200
+        assert "spreadsheetml" in r.headers["Content-Type"]
+        body = r.get_data()
+        assert body[:2] == b"PK"  # xlsx ist ein ZIP-Container
+        wb = openpyxl.load_workbook(io.BytesIO(body))
+        ws = wb.active
+        cells = [c.value for row in ws.iter_rows() for c in row if c.value is not None]
+        # Deckblatt-Titel oben + die Rechnung in der Tabelle, aber kein Seiteneffekt.
+        assert any(str(v).startswith("Rechnungslauf") for v in cells)
+        assert inv.invoice_number in cells
+        assert inv.status == Invoice.STATUS_DRAFT
+
+
+class TestBillingRunInReport:
+    def _generate(self, client, billing_setup):
+        return client.post("/invoices/generate", data={
+            "billing_period_id": str(billing_setup["period"].id),
+            "tariff_id": str(billing_setup["tariff"].id),
+            "account_id": str(billing_setup["account"].id),
+            "due_days": "30",
+        }, follow_redirects=False)
+
+    def test_report_lists_billing_run(self, client, admin, billing_setup):
+        _login(client)
+        self._generate(client, billing_setup)
+        run = BillingRun.query.one()
+        year = run.created_at.year
+        r = client.get(f"/accounting/report?year={year}")
+        assert r.status_code == 200
+        html = r.get_data(as_text=True)
+        assert "Rechnungsläufe" in html
+        assert f"/invoices/billing-runs/{run.id}" in html
