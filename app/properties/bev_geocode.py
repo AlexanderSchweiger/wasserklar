@@ -518,3 +518,53 @@ def geocode_properties(*, only_missing=True, index_path=None):
 
     db.session.commit()
     return {"total": len(props), "geocoded": geocoded, "not_found": not_found}
+
+
+# ---------------------------------------------------------------------------
+# Einzeladress-Abfrage (REST-API / MCP) — reine Lese-Operation, kein DB-Write
+# ---------------------------------------------------------------------------
+
+class _AddressLike:
+    """Duck-typed ``Property``-Ersatz fuer ``_lookup`` (nur die vier gelesenen
+    Felder). Vermeidet, dass die Einzeladress-Abfrage ein echtes Property-Objekt
+    braucht."""
+    __slots__ = ("strasse", "hausnummer", "plz", "ort")
+
+    def __init__(self, strasse, hausnummer, plz, ort):
+        self.strasse = strasse
+        self.hausnummer = hausnummer
+        self.plz = plz
+        self.ort = ort
+
+
+def geocode_address(strasse, hausnummer, *, plz=None, ort=None, index_path=None):
+    """Schlaegt eine **einzelne** Adresse im BEV-Index nach (ohne DB-Schreiben).
+
+    Reine Lese-Operation gegen den geteilten SQLite-Index — kein Personenbezug,
+    keine Tenant-Daten (das BEV-Adressregister ist oeffentliche Referenzdaten).
+    Liefert ``{"lat": float, "lng": float}`` oder ``None``, wenn die Adresse nicht
+    aufgeloest werden kann. Wirft ``BevImportError``, wenn kein Index vorhanden ist
+    (analog ``geocode_properties``).
+
+    Genutzt von der Pro-REST-API (``/api/v1/geocode``) und dem gleichnamigen
+    MCP-Tool — der einzige Geo-Schritt, der voellig ohne Mitgliederdaten auskommt
+    (Adresse rein, Koordinate raus).
+    """
+    from flask import current_app
+    index_path = index_path or current_app.config["BEV_INDEX_PATH"]
+    if not os.path.exists(index_path):
+        raise BevImportError(
+            "Es ist kein BEV-Adressindex vorhanden. Bitte zuerst "
+            "`flask bev-refresh` ausführen (im SaaS stellt ihn der "
+            "Plattform-Scheduler automatisch bereit)."
+        )
+    if not (strasse or "").strip():
+        return None
+    conn = sqlite3.connect(index_path)
+    try:
+        coord = _lookup(conn, _AddressLike(strasse, hausnummer, plz, ort))
+    finally:
+        conn.close()
+    if not coord:
+        return None
+    return {"lat": coord[0], "lng": coord[1]}

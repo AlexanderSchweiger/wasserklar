@@ -122,6 +122,7 @@ ENDPOINT_TO_DOC = {
     "support.new":                 "faq",
     "files.index":                 "einstellungen",
     "backups.index":               "abonnement#export",
+    "api_admin.index":             "api-rest",
     "bank_import.index":           "buchhaltung",
 }
 

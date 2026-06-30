@@ -993,6 +993,118 @@ class AdminNotificationRead(db.Model):
                 f"user={self.user_id}>")
 
 
+class AsyncJob(db.Model):
+    """Generischer Hintergrund-Job (Queue + Historie + Ergebnis-Metadaten).
+
+    Lebt im **Tenant-Schema**. Im OSS-Standalone bleibt die Tabelle ungenutzt
+    (analog ``AdminNotification``); die SaaS-Schicht befuellt und verarbeitet
+    sie ueber einen Worker-Sidecar (``saas/jobs``). ``kind`` diskriminiert die
+    Job-Art (z.B. ``invoices_merged``, ``dunning_merged``, ``letters``,
+    ``full_export``); ``params`` haelt die job-spezifische Nutzlast als
+    **JSON-in-Text** (dialekt-portabel, kein ``db.JSON``).
+
+    Status als String + Klassenkonstanten (kein Postgres-Enum); ``server_default``
+    auf allen NOT-NULL-Defaults, damit auch Raw-Inserts ohne die Spalte sicher
+    sind.
+    """
+    __tablename__ = "async_jobs"
+
+    STATUS_QUEUED = "queued"
+    STATUS_RUNNING = "running"
+    STATUS_DONE = "done"
+    STATUS_DOWNLOADED = "downloaded"
+    STATUS_FAILED = "failed"
+
+    id = db.Column(db.Integer, primary_key=True)
+    kind = db.Column(db.String(40), nullable=False)
+    status = db.Column(
+        db.String(20), nullable=False,
+        default=STATUS_QUEUED, server_default=STATUS_QUEUED, index=True,
+    )
+    params = db.Column(db.Text, nullable=False, default="{}", server_default="{}")
+    progress = db.Column(
+        db.Integer, nullable=False, default=0, server_default="0",
+    )
+    total = db.Column(
+        db.Integer, nullable=False, default=0, server_default="0",
+    )
+    result_path = db.Column(db.String(500), nullable=True)
+    result_name = db.Column(db.String(255), nullable=True)
+    error_message = db.Column(db.Text, nullable=True)
+    created_by_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )
+    created_at = db.Column(
+        db.DateTime, nullable=False,
+        default=datetime.utcnow, server_default=sa.func.now(), index=True,
+    )
+    started_at = db.Column(db.DateTime, nullable=True)
+    finished_at = db.Column(db.DateTime, nullable=True)
+
+    def __repr__(self):
+        return f"<AsyncJob {self.kind} #{self.id} {self.status}>"
+
+
+class ApiKey(db.Model):
+    """Pro-API-Schluessel fuer den maschinellen Zugriff (REST-API + MCP-Server).
+
+    Lebt im **Tenant-Schema** (analog ``AsyncJob``): im OSS-Standalone bleibt die
+    Tabelle ungenutzt — die REST-/MCP-Schicht liegt komplett im SaaS-Layer und
+    ist nur fuer Pro-Tenants freigeschaltet (``FEATURE_API_ENABLED`` + ``is_pro``).
+
+    Gespeichert wird **nur der SHA-256-Hash** des Schluessels, nie der Klartext.
+    Key-Format ``qs_live_<slug>_<hex>`` (Stripe-Stil): der Slug ist nicht geheim
+    (= Subdomain) und dient der Tenant-Zuordnung + Defense-in-Depth; geheim ist
+    allein der Hex-Teil. ``key_prefix`` haelt einen anzeigbaren, nicht-geheimen
+    Ausschnitt fuer die Verwaltungs-UI (der Klartext wird nur einmal bei der
+    Erzeugung gezeigt).
+
+    ``scopes`` ist eine kommaseparierte Teilmenge der OSS-Rechte (``zaehler``,
+    ``stammdaten``, ``network`` …, siehe app/auth/permissions.py). ``mcp_enabled``
+    schaltet den Key zusaetzlich fuer den MCP-Server frei (Tenant-Opt-in mit
+    Datenschutz-Hinweis — der MCP-Datenfluss erreicht ein Fremd-LLM).
+
+    Hashing/Erzeugung/Verifikation liegen in app/api_keys/service.py.
+    """
+    __tablename__ = "api_keys"
+
+    id = db.Column(db.Integer, primary_key=True)
+    label = db.Column(db.String(120), nullable=False)
+    key_prefix = db.Column(db.String(64), nullable=False)
+    key_hash = db.Column(db.String(64), nullable=False, index=True, unique=True)
+    scopes = db.Column(db.Text, nullable=False, default="", server_default=db.text("''"))
+    mcp_enabled = db.Column(
+        db.Boolean, nullable=False, default=False, server_default=db.text("false"),
+    )
+    created_by_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )
+    created_at = db.Column(
+        db.DateTime, nullable=False,
+        default=datetime.utcnow, server_default=sa.func.now(),
+    )
+    last_used_at = db.Column(db.DateTime, nullable=True)
+    revoked_at = db.Column(db.DateTime, nullable=True)
+
+    def scope_list(self):
+        return [s for s in (self.scopes or "").split(",") if s]
+
+    def has_scope(self, scope):
+        return scope in self.scope_list()
+
+    @property
+    def is_active(self):
+        return self.revoked_at is None
+
+    def __repr__(self):
+        state = "revoked" if self.revoked_at else "active"
+        return f"<ApiKey {self.key_prefix} {state}>"
+
+
 # ---------------------------------------------------------------------------
 # Abrechnungsperioden
 # ---------------------------------------------------------------------------

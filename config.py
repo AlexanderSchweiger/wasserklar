@@ -77,6 +77,18 @@ class Config:
         os.environ.get("FEATURE_HYDRANT_PUBLIC_SHARE", "false").lower() == "true"
     )
 
+    # Pro-API + MCP-Server (versionierte REST-API unter /api/v1 + MCP-Sidecar).
+    # Bewusst ein SaaS-only-Feature und nur fuer den Pro-Plan: im OSS-Standalone
+    # defaultet es AUS — die REST-/MCP-Schicht, das Tenant-Subdomain-Routing und
+    # das Pro-Gating liegen komplett im SaaS-Layer (app/api_keys liefert nur das
+    # Model + die Hash-Helfer, damit sie mit der Tenant-DB mitwandern). Der
+    # SaaS-Layer schaltet das Flag in register_saas_extensions an und gatet jeden
+    # API-/MCP-Request zusaetzlich ueber is_pro(slug). Steuert die Sichtbarkeit der
+    # API-Schluessel-Verwaltung; die /api/v1-Routen liegen ohnehin im SaaS-Layer.
+    FEATURE_API_ENABLED = (
+        os.environ.get("FEATURE_API_ENABLED", "false").lower() == "true"
+    )
+
     # Obergrenze fuer Massendruck/-export von Dokumenten pro Durchgang.
     # Schuetzt vor Speicher-/CPU-Last und Timeouts: WeasyPrint rendert jedes
     # Dokument einzeln in den RAM. Wird die Auswahl groesser, bietet die UI

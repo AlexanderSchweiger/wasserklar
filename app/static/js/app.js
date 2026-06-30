@@ -223,6 +223,24 @@
     initColorSelects(e.detail.target);
   });
 
+  // Selbstheilung des Lade-Spinners nach einer geboosteten Voll-Navigation.
+  // Der pending-Counter (s.u.) ueberlebt hx-boost-Swaps, das #global-spinner-
+  // Element NICHT — es liegt im getauschten <body>. Faellt waehrend einer
+  // (langsamen) Navigation ein Hintergrund-Request mit dem Body-Swap zusammen,
+  // wird sein ausloesendes Element abgekoppelt; dessen htmx:afterRequest feuert
+  // dann auf dem detachten Element und erreicht document nie -> spinnerEnd
+  // bleibt aus -> pending haengt > 0 -> der 300ms-Timer setzt .active auf den
+  // frischen Spinner, der nie wieder entfernt wird (Vollbild-Overlay haengt).
+  // Da nach einem Body-Swap ohnehin die fertige Seite steht, ist ein Nav-
+  // Spinner hier immer obsolet: Counter + Timer hart zuruecksetzen, Overlay weg.
+  // NUR fuer den Body-Swap (geboostete Navigation) — Fragment-/Badge-Swaps
+  // duerfen einen WAEHREND einer langsamen Navigation laufenden Spinner nicht
+  // vorzeitig abraeumen.
+  document.addEventListener('htmx:afterSwap', function (e) {
+    var t = e && e.detail && e.detail.target;
+    if (t && t.tagName === 'BODY') spinnerReset();
+  });
+
   // Vor dem History-Snapshot: TomSelects abbauen, damit kein gerendertes
   // Widget-DOM in den Cache wandert (sonst Doppel-Init beim Zurueck/Vorwaerts).
   document.addEventListener('htmx:beforeHistorySave', function () {

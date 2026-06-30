@@ -337,10 +337,15 @@
 {% block scripts %}
 <script>
 (function () {
+  // Toolbar-Status aus dem AKTUELLEN DOM ableiten. Liest live per Selektor,
+  // haelt also keine Element-Referenzen — funktioniert daher auch, wenn der
+  // (einmalig gebundene) delegierte Listener aus einem frueheren Closure
+  // stammt, die Checkboxen aber durch hx-boost/Filter laengst neu sind.
   function updateToolbar() {
-    const checked = document.querySelectorAll('.invoice-cb:checked');
     const toolbar = document.getElementById('bulk-toolbar');
     const countEl = document.getElementById('bulk-count');
+    if (!toolbar || !countEl) return;   // nicht auf der Rechnungsliste
+    const checked = document.querySelectorAll('.invoice-cb:checked');
     if (checked.length > 0) {
       toolbar.classList.remove('d-none');
       toolbar.style.display = 'flex';
@@ -357,33 +362,43 @@
     }
   }
 
-  function bindCheckboxes() {
-    document.querySelectorAll('.invoice-cb').forEach(cb => {
-      cb.addEventListener('change', updateToolbar);
-    });
-    const selectAll = document.getElementById('select-all');
-    if (selectAll) {
-      selectAll.addEventListener('change', function () {
-        document.querySelectorAll('.invoice-cb').forEach(cb => {
-          cb.checked = this.checked;
-        });
+  // Event-Delegation am document statt direkter Bindung an #select-all/.invoice-cb.
+  // Grund: Bei hx-boost-Navigation (Body-Swap mit transition:true) laeuft dieses
+  // Inline-Skript, BEVOR der getauschte Tabelleninhalt im DOM steht — ein damals
+  // direkt gesetztes getElementById('select-all') lieferte null, die Bindung
+  // verpuffte still, und „Alle auswaehlen" tat erst nach hartem Reload etwas.
+  // document existiert immer und ueberlebt den Swap → timing-unabhaengig.
+  //
+  // GENAU EINMAL pro Browser-Tab binden (das Inline-Skript wird bei jeder
+  // hx-boost-Navigation neu ausgefuehrt; document bleibt). Ohne den Guard
+  // stapelten sich die Listener — exakt der Grund, warum frueher (faelschlich)
+  // auf element-level umgestellt wurde, was diesen Timing-Bug einfuehrte.
+  if (!document.__wkInvoiceCbDelegated) {
+    document.__wkInvoiceCbDelegated = true;
+    document.addEventListener('change', function (e) {
+      const t = e.target;
+      if (!t) return;
+      // closest('#invoices-table') grenzt gegen gleichnamige #select-all-Boxen
+      // anderer Seiten ab (Mahnlauf, Selbstablesung-Admin nutzen denselben id).
+      if (t.id === 'select-all' && t.closest && t.closest('#invoices-table')) {
+        const on = t.checked;
+        document.querySelectorAll('.invoice-cb').forEach(cb => { cb.checked = on; });
         updateToolbar();
-      });
-    }
-  }
-
-  bindCheckboxes();
-
-  // Listener direkt am swap-Ziel statt an document: verhindert doppelte
-  // Bindings bei wiederholten hx-boost-Navigationen zu dieser Seite
-  // (document-Listener ueberleben den Body-Swap, element-Listener nicht).
-  var invoicesTable = document.getElementById('invoices-table');
-  if (invoicesTable) {
-    invoicesTable.addEventListener('htmx:afterSwap', function () {
-      bindCheckboxes();
-      updateToolbar();
+      } else if (t.classList && t.classList.contains('invoice-cb')) {
+        updateToolbar();
+      }
+    });
+    // Nach einem Tabellen-Fragment-Swap (Filter/Suche) sind die Checkboxen
+    // frisch und unchecked → Toolbar-Status neu ableiten.
+    document.addEventListener('htmx:afterSwap', function (e) {
+      const tgt = e.detail && e.detail.target;
+      if (tgt && tgt.id === 'invoices-table') updateToolbar();
     });
   }
+
+  // Bei jedem (Erst-/Boost-)Render den Toolbar-Status anhand des aktuellen DOM
+  // setzen (Toolbar verstecken, falls nichts ausgewaehlt ist).
+  updateToolbar();
 })();
 
 function handleBulkAction() {
