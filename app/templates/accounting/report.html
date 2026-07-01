@@ -102,6 +102,7 @@
         <h3 class="card-title"><i class="fas fa-university me-1"></i> Entwicklung Bankkonten {{ year }}</h3>
       </div>
       <div class="card-body p-0">
+        <div class="table-responsive">
         <table class="table table-hover table-sm mb-0">
           <thead>
             <tr>
@@ -147,6 +148,7 @@
             </tr>
           </tfoot>
         </table>
+        </div>
       </div>
     </div>
   </div>
@@ -164,6 +166,7 @@
         </div>
       </div>
       <div class="card-body p-0">
+        <div class="table-responsive">
         <table class="table table-hover mb-0">
           <tbody>
             {% for acc_id, name, total in income_rows %}
@@ -183,6 +186,7 @@
             {% endfor %}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   </div>
@@ -195,6 +199,7 @@
         </div>
       </div>
       <div class="card-body p-0">
+        <div class="table-responsive">
         <table class="table table-hover mb-0">
           <tbody>
             {% for acc_id, name, total in expense_rows %}
@@ -214,6 +219,7 @@
             {% endfor %}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   </div>
@@ -233,6 +239,7 @@
         {% endif %}
       </div>
       <div class="card-body p-0">
+        <div class="table-responsive">
         <table class="table table-hover table-sm mb-0">
           <thead>
             <tr>
@@ -277,6 +284,7 @@
             </tr>
           </tfoot>
         </table>
+        </div>
       </div>
     </div>
   </div>
@@ -306,6 +314,7 @@
         </h3>
       </div>
       <div class="card-body p-0">
+        <div class="table-responsive">
         <table class="table table-sm mb-0">
           <tbody>
             {% set ps_extra = dict(ra_arg, **({'project_id': ps.id} if ps.id else {})) %}
@@ -359,6 +368,7 @@
             </tr>
           </tfoot>
         </table>
+        </div>
       </div>
     </div>
   </div>

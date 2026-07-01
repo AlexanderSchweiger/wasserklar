@@ -54,7 +54,11 @@
     opts = opts || {};
     var layers = baseLayers();
     var start = (opts.startLayer && layers[opts.startLayer]) || layers._default;
-    var map = L.map(elId, { center: [47.59, 14.14], zoom: 7, layers: [start] });
+    // preferCanvas: Linien (Polylines) werden auf einem <canvas> gezeichnet statt
+    // als einzelne SVG-<path>-Elemente. Bei Plaenen mit vielen hundert bis tausend
+    // Leitungen ist das der groesste Rendering-Hebel — SVG-Pfade sind der teure Teil.
+    // Punkt-Marker (divIcon) sind immer DOM und davon unberuehrt.
+    var map = L.map(elId, { preferCanvas: true, center: [47.59, 14.14], zoom: 7, layers: [start] });
     var bases = {};
     Object.keys(layers).forEach(function (k) { if (k.charAt(0) !== "_") bases[k] = layers[k]; });
     L.control.layers(bases, {}, { position: "topright" }).addTo(map);
@@ -181,9 +185,13 @@
     }
     layer._technikId = feature.id;
     layer._technikType = props.feature_type;
+    layer._technikIsPoint = feature.geometry.type === "Point";
     // Oeffentlicher Feuerwehr-Plan: schlankes Popup ohne Eigentuemer/Adresse
     // (die Daten kommen ohnehin nicht im Public-GeoJSON). Sonst das volle Popup.
-    layer.bindPopup((opts.publicPopup ? popupHtmlPublic : popupHtml)(props));
+    // Content lazy als Funktion: Leaflet baut das Popup-HTML erst beim Oeffnen,
+    // nicht fuer alle Features beim Laden (spart 1000+ String-Konstruktionen).
+    var buildPopup = opts.publicPopup ? popupHtmlPublic : popupHtml;
+    layer.bindPopup(function () { return buildPopup(props); });
     return layer;
   }
 
@@ -224,41 +232,148 @@
 
   // --- Feature-Verwaltung --------------------------------------------------
 
-  function FeatureStore(map) {
+  // opts.cluster: Punkt-Marker im View-Modus per Leaflet.markercluster buendeln
+  // (grosse Netze: statt tausender DOM-Marker nur Cluster-Bubbles). Nur der Editor
+  // nutzt das; Druck/Feuerwehr rendern bewusst flach (geclusterte Positionen im
+  // Ausdruck waeren falsch). Linien liegen immer in einer Canvas-FeatureGroup.
+  function FeatureStore(map, opts) {
+    opts = opts || {};
     this.map = map;
-    this.group = L.featureGroup().addTo(map);
+    this.lineGroup = L.featureGroup().addTo(map);
+    var canCluster = opts.cluster && typeof L.markerClusterGroup === "function";
+    if (canCluster) {
+      this.clusterGroup = L.markerClusterGroup({
+        chunkedLoading: true,          // Marker progressiv einfuegen, UI bleibt reaktiv
+        showCoverageOnHover: false,
+        spiderfyOnMaxZoom: true,
+        disableClusteringAtZoom: 18,   // ab Arbeits-Zoom exakte Einzelpositionen
+        maxClusterRadius: 50,
+      });
+      // Im Edit-Modus liegen die Punkte einzeln (nicht geclustert), damit Geomans
+      // Global-Edit jeden Marker greift — siehe setEditing().
+      this.plainPointGroup = L.featureGroup();
+    } else {
+      this.clusterGroup = L.featureGroup();
+      this.plainPointGroup = this.clusterGroup;   // ohne Cluster ist der Edit-Swap ein No-Op
+    }
+    this.pointHost = this.clusterGroup;
+    this.pointHost.addTo(map);
     this.byId = {};
     this.featById = {};   // rohes GeoJSON-Feature je id — fuer Liste/Suche
     this.hiddenTypes = {};
     this.renderOpts = {}; // {markerScale, lineWeight} — Symbolgroesse (Druck)
+    this.editing = false;
   }
-  FeatureStore.prototype.add = function (feature, opts) {
+  // Zielgruppe eines Layers: Punkte in den (ggf. geclusterten) pointHost, Linien
+  // in die Canvas-FeatureGroup.
+  FeatureStore.prototype.hostFor = function (layer) {
+    return layer._technikIsPoint ? this.pointHost : this.lineGroup;
+  };
+  // Baut + registriert einen Layer, ohne ihn einer Karten-Gruppe hinzuzufuegen
+  // (das uebernehmen add/addAll — gebuendelt fuer markercluster/Canvas).
+  FeatureStore.prototype._prepare = function (feature, opts) {
     var layer = buildLayer(feature, this.renderOpts);
     this.byId[feature.id] = layer;
     this.featById[feature.id] = feature;
-    if (!this.hiddenTypes[layer._technikType]) this.group.addLayer(layer);
     if (opts && opts.onSelect) layer.on("click", function () { opts.onSelect(feature.id); });
     if (opts && opts.onGeometry) layer.on("pm:update", function () { opts.onGeometry(feature.id, layer); });
     return layer;
   };
+  // Einzel-Add (pm:create, featureSaved). Fuer den Massen-Load addAll() nutzen.
+  FeatureStore.prototype.add = function (feature, opts) {
+    var layer = this._prepare(feature, opts);
+    if (!this.hiddenTypes[layer._technikType]) this.hostFor(layer).addLayer(layer);
+    return layer;
+  };
+  // Massen-Load: Punkte gebuendelt (markercluster chunkedLoading) und Linien
+  // gebuendelt in die Canvas-Gruppe — deutlich schneller als tausende Einzel-adds.
+  FeatureStore.prototype.addAll = function (features, opts) {
+    var self = this, points = [], lines = [];
+    (features || []).forEach(function (feature) {
+      var layer = self._prepare(feature, opts);
+      if (self.hiddenTypes[layer._technikType]) return;
+      if (layer._technikIsPoint) points.push(layer); else lines.push(layer);
+    });
+    if (points.length) {
+      if (self.pointHost.addLayers) self.pointHost.addLayers(points);
+      else points.forEach(function (l) { self.pointHost.addLayer(l); });
+    }
+    lines.forEach(function (l) { self.lineGroup.addLayer(l); });
+  };
   FeatureStore.prototype.remove = function (id) {
     var layer = this.byId[id];
-    if (layer) { this.group.removeLayer(layer); delete this.byId[id]; }
+    if (layer) { this.hostFor(layer).removeLayer(layer); delete this.byId[id]; }
     delete this.featById[id];
   };
+  // Auf alle sichtbaren Features einpassen. Bounds direkt aus den Layern (byId)
+  // statt aus group.getBounds(), weil markerclusters chunkedLoading die Gruppe
+  // erst asynchron fuellt — die Layer-Geometrie liegt aber sofort vor.
   FeatureStore.prototype.fit = function () {
-    if (this.group.getLayers().length) {
-      try { this.map.fitBounds(this.group.getBounds().pad(0.2)); } catch (e) {}
+    var self = this, bounds = L.latLngBounds([]);
+    Object.keys(this.byId).forEach(function (id) {
+      var layer = self.byId[id];
+      if (self.hiddenTypes[layer._technikType]) return;
+      if (layer.getLatLng) bounds.extend(layer.getLatLng());
+      else if (layer.getBounds) { var b = layer.getBounds(); if (b && b.isValid()) bounds.extend(b); }
+    });
+    if (bounds.isValid()) {
+      try { this.map.fitBounds(bounds.pad(0.2)); } catch (e) {}
     }
   };
   FeatureStore.prototype.toggleType = function (type, visible) {
     this.hiddenTypes[type] = !visible;
-    var self = this;
+    var self = this, pts = [], lines = [];
     Object.keys(this.byId).forEach(function (id) {
       var layer = self.byId[id];
       if (layer._technikType !== type) return;
-      if (visible) self.group.addLayer(layer); else self.group.removeLayer(layer);
+      (layer._technikIsPoint ? pts : lines).push(layer);
     });
+    var host = this.pointHost;
+    if (visible) {
+      if (pts.length) { if (host.addLayers) host.addLayers(pts); else pts.forEach(function (l) { host.addLayer(l); }); }
+      lines.forEach(function (l) { self.lineGroup.addLayer(l); });
+    } else {
+      if (pts.length) { if (host.removeLayers) host.removeLayers(pts); else pts.forEach(function (l) { host.removeLayer(l); }); }
+      lines.forEach(function (l) { self.lineGroup.removeLayer(l); });
+    }
+  };
+  // Edit-Modus: Punkte aus dem Cluster in eine flache Gruppe (alle Marker einzeln
+  // auf der Karte) und zurueck. So greift Geomans Global-Edit jeden Marker; im
+  // View-Modus bleibt das Cluster fuer die Performance. No-Op ohne markercluster.
+  FeatureStore.prototype.setEditing = function (editing) {
+    editing = !!editing;
+    if (editing === this.editing) return;
+    this.editing = editing;
+    var to = editing ? this.plainPointGroup : this.clusterGroup;
+    var from = this.pointHost;
+    if (from === to) return;   // kein Cluster verfuegbar -> nichts zu tun
+    var self = this, movable = [];
+    Object.keys(this.byId).forEach(function (id) {
+      var layer = self.byId[id];
+      if (!layer._technikIsPoint) return;
+      if (self.hiddenTypes[layer._technikType]) return;   // versteckte Typen bleiben draussen
+      movable.push(layer);
+    });
+    this.map.removeLayer(from);
+    if (from.clearLayers) from.clearLayers();
+    this.pointHost = to;
+    if (movable.length) {
+      if (to.addLayers) to.addLayers(movable);
+      else movable.forEach(function (l) { to.addLayer(l); });
+    }
+    to.addTo(this.map);
+  };
+  // Punkt sichtbar machen (falls im Cluster): so weit hineinzoomen, dass der
+  // Marker einzeln steht, dann Callback. Fuer Deep-Link/Listen-/Marker-Fokus.
+  FeatureStore.prototype.reveal = function (id, cb) {
+    var layer = this.byId[id];
+    if (!layer) return;
+    var host = this.pointHost;
+    if (layer._technikIsPoint && host && typeof host.zoomToShowLayer === "function") {
+      host.zoomToShowLayer(layer, function () { if (cb) cb(layer); });
+    } else if (cb) {
+      cb(layer);
+    }
   };
   // Symbolgroesse live aendern (Druck-Regler), ohne die Features neu zu laden:
   // Marker bekommen ein neu skaliertes Icon, Linien eine neue Staerke.
@@ -457,9 +572,16 @@
     var layer = store.byId[id];
     if (!layer) return;
     openPanel(id);
-    if (layer.getLatLng) map.setView(layer.getLatLng(), 18);
-    else if (layer.getBounds) map.fitBounds(layer.getBounds().pad(0.5));
-    if (layer.openPopup) layer.openPopup();
+    if (layer.getLatLng) {
+      // Punkt ggf. erst aus dem Cluster aufklappen, dann hinzoomen + Popup oeffnen.
+      store.reveal(id, function (l) {
+        map.setView(l.getLatLng(), Math.max(map.getZoom(), 18));
+        if (l.openPopup) l.openPopup();
+      });
+    } else if (layer.getBounds) {
+      map.fitBounds(layer.getBounds().pad(0.5));
+      if (layer.openPopup) layer.openPopup();
+    }
   }
 
   // --- Editor-Init ---------------------------------------------------------
@@ -469,7 +591,7 @@
     if (!el || typeof L === "undefined") return;
 
     var map = createMap("technik-map");
-    var store = new FeatureStore(map);
+    var store = new FeatureStore(map, { cluster: true });
     // Gemerkte Symbolgroesse/Linienstaerke (Default = bisheriges Aussehen) —
     // gilt fuer alle danach hinzugefuegten Features (add liest store.renderOpts).
     store.renderOpts = {
@@ -600,10 +722,18 @@
     if (searchInput) {
       // Tippen blendet die gefilterte Liste ein; leeres Feld faellt auf das
       // Default-Panel zurueck (wie "Zurücksetzen").
-      searchInput.addEventListener("input", function () {
-        currentFilter = this.value || "";
+      // Debounced: renderList() baut die gesamte Liste neu — bei grossen Netzen
+      // nicht pro Tastendruck. Leeren wirkt sofort.
+      var searchDebounce = null;
+      function applySearch() {
         if (currentFilter) { renderList(); showList(); }
         else { showEmpty(); }
+      }
+      searchInput.addEventListener("input", function () {
+        currentFilter = this.value || "";
+        if (searchDebounce) { clearTimeout(searchDebounce); searchDebounce = null; }
+        if (!currentFilter) { applySearch(); return; }
+        searchDebounce = setTimeout(applySearch, 150);
       });
     }
     function clearAndClose() {   // Suche leeren + Liste schliessen (Zurücksetzen / Listen-X)
@@ -674,7 +804,7 @@
 
     // Bestehende Features laden
     fetchFeatures(T.featuresUrl).then(function (fc) {
-      (fc.features || []).forEach(function (f) { store.add(f, storeOpts); });
+      store.addAll(fc.features || [], storeOpts);
       store.fit();
       renderList();
       // Deep-Link (Dashboard / Elementliste): ?feature=<id> -> auswaehlen + zentrieren.
@@ -798,10 +928,12 @@
         editBtn.classList.toggle("active", editMode);
         if (drawBar) drawBar.classList.toggle("is-open", editMode);
         if (editMode) {
+          store.setEditing(true);       // Punkte entclustern -> Geoman greift jeden Marker
           map.pm.enableGlobalEditMode();
         } else {
           cancelDraw();                 // laufendes Zeichnen abbrechen
           map.pm.disableGlobalEditMode();
+          store.setEditing(false);      // wieder clustern (View-Modus)
         }
       });
     }
@@ -985,7 +1117,7 @@
       dashMode: (document.getElementById("technik-print-dash") || {}).value || "auto",
     };
     fetchFeatures(T.featuresUrl).then(function (fc) {
-      (fc.features || []).forEach(function (f) { store.add(f, {}); });
+      store.addAll(fc.features || [], {});
       store.fit();
     });
     wirePrintControls(map, store);
@@ -1008,7 +1140,7 @@
     };
     fetchFeatures(T.featuresUrl).then(function (fc) {
       var feats = fc.features || [];
-      feats.forEach(function (f) { store.add(f, {}); });
+      store.addAll(feats, {});
       store.fit();
       var empty = document.getElementById("technik-public-empty");
       if (empty) empty.style.display = feats.length ? "none" : "";

@@ -13,11 +13,12 @@ import re
 from datetime import date
 
 from flask import current_app
+from sqlalchemy import func
 
 from app.extensions import db
 from app.models import (
     NetworkFeature, MaintenanceLog, NetworkPlan,
-    Property, PropertyOwnership, Customer,
+    Property, PropertyOwnership, Customer, FeaturePhoto,
 )
 from app.network import vocab
 
@@ -288,12 +289,17 @@ def _owner_names_by_property(property_ids):
     return out
 
 
-def feature_to_geojson(f, property_map=None, owner_map=None):
+def feature_to_geojson(f, property_map=None, owner_map=None,
+                       photo_counts=None, maint_counts=None):
     """NetworkFeature -> GeoJSON-Feature-Dict (inkl. abgeleiteter Display-Props).
 
     ``property_map``/``owner_map`` erlauben N+1-freie Batch-Serialisierung
     (siehe ``collection_geojson``); fehlen sie, wird das verknuepfte Objekt
     per Relationship bzw. Einzelquery aufgeloest (Einzel-Feature-Responses).
+
+    ``photo_counts``/``maint_counts`` ({feature_id: Anzahl}) liefern die Foto-
+    bzw. Wartungs-Anzahl per Batch-COUNT; fehlen sie, wird pro Feature ueber die
+    ``selectin``-Relationship gezaehlt (Einzel-Feature-Responses).
     """
     pid = f.property_id
     if pid:
@@ -336,10 +342,33 @@ def feature_to_geojson(f, property_map=None, owner_map=None):
             "owner_names": owners,
             "meter_id": f.meter_id,
             "length_m": round(f.length_m, 1) if f.length_m is not None else None,
-            "photo_count": len(f.photos),
-            "maintenance_count": len(f.maintenance_logs),
+            "photo_count": photo_counts.get(f.id, 0) if photo_counts is not None else len(f.photos),
+            "maintenance_count": maint_counts.get(f.id, 0) if maint_counts is not None else len(f.maintenance_logs),
         },
     }
+
+
+def _count_by_feature(model, feature_ids):
+    """{feature_id: Anzahl} per COUNT-Aggregat statt die Kind-Zeilen zu laden.
+
+    ``feature_to_geojson`` braucht nur die *Anzahl* der Fotos/Wartungen je Feature.
+    Ueber die ``selectin``-Relationship wuerden dafuer saemtliche Kind-Zeilen
+    hydriert — auf grossen Plaenen unnoetig teuer (Zeit + Speicher). Der IN-Filter
+    wird gechunkt, damit das Param-Limit von SQLite (dialekt-portabel) nicht reisst.
+    """
+    if not feature_ids:
+        return {}
+    counts = {}
+    for i in range(0, len(feature_ids), 500):
+        chunk = feature_ids[i:i + 500]
+        rows = (
+            db.session.query(model.feature_id, func.count(model.id))
+            .filter(model.feature_id.in_(chunk))
+            .group_by(model.feature_id)
+            .all()
+        )
+        counts.update(dict(rows))
+    return counts
 
 
 def collection_geojson(features):
@@ -349,9 +378,15 @@ def collection_geojson(features):
     if pids:
         property_map = {p.id: p for p in Property.query.filter(Property.id.in_(pids)).all()}
         owner_map = _owner_names_by_property(pids)
+    fids = [f.id for f in feats]
+    photo_counts = _count_by_feature(FeaturePhoto, fids)
+    maint_counts = _count_by_feature(MaintenanceLog, fids)
     return {
         "type": "FeatureCollection",
-        "features": [feature_to_geojson(f, property_map, owner_map) for f in feats],
+        "features": [
+            feature_to_geojson(f, property_map, owner_map, photo_counts, maint_counts)
+            for f in feats
+        ],
     }
 
 

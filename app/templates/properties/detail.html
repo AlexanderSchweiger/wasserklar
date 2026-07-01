@@ -115,6 +115,7 @@
                    _readings_subtable als auch _row.html runden via |int).
                    Edit-Button pro Zeile oeffnet das Reading-Edit-Modal
                    (wiederverwendet aus meters/index.html). #}
+                <div class="table-responsive">
                 <table class="table table-sm table-borderless mb-0 mt-2">
                   <thead>
                     <tr class="text-muted">
@@ -163,6 +164,7 @@
                     </tr>
                   </tbody>
                 </table>
+                </div>
                 {% else %}
                 {# Noch keine Ablesung — direkter Einstieg zum ersten Stand. #}
                 <div class="mt-2">
@@ -265,6 +267,7 @@
         </div>
       </div>
       <div class="card-body p-0">
+        <div class="table-responsive">
         <table class="table table-hover mb-0">
           <thead>
             <tr>
@@ -323,6 +326,7 @@
             {% endfor %}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
 
@@ -370,6 +374,7 @@
         <h3 class="card-title"><i class="fas fa-exclamation-circle me-2"></i>Offene Posten des aktiven Eigentümers</h3>
       </div>
       <div class="card-body p-0">
+        <div class="table-responsive">
         <table class="table table-hover mb-0">
           <thead>
             <tr>
@@ -422,6 +427,7 @@
             {% endfor %}
           </tbody>
         </table>
+        </div>
       </div>
       {{ mini_pagination(open_items_pag) }}
     </div>
@@ -432,6 +438,7 @@
         <h3 class="card-title"><i class="fas fa-book me-2"></i>Letzte Buchungen des aktiven Eigentümers</h3>
       </div>
       <div class="card-body p-0">
+        <div class="table-responsive">
         <table class="table table-hover mb-0">
           <thead>
             <tr>
@@ -471,6 +478,7 @@
             {% endfor %}
           </tbody>
         </table>
+        </div>
       </div>
       {{ mini_pagination(bookings_pag) }}
     </div>
@@ -482,6 +490,7 @@
         <h3 class="card-title">Rechnungen</h3>
       </div>
       <div class="card-body p-0">
+        <div class="table-responsive">
         <table class="table table-hover table-striped mb-0">
           <thead>
             <tr>
@@ -521,6 +530,7 @@
             {% endfor %}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   </div>
