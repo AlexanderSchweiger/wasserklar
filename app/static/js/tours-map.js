@@ -101,6 +101,19 @@
   // --- Karte + State ---------------------------------------------------------
 
   var map = createMap("tour-map");
+  var mapEl = document.getElementById("tour-map");
+
+  // Karte auf die tatsaechlich verfuegbare Hoehe strecken: vom Oberkant der
+  // Karte bis zum unteren Viewport-Rand. Robuster als eine feste vh-Angabe —
+  // nutzt den Platz aus, egal wie hoch Browser-Chrome/Kopfleiste gerade sind.
+  function fitMapHeight() {
+    if (!mapEl) { return; }
+    var top = mapEl.getBoundingClientRect().top;
+    var h = Math.max(320, Math.round(window.innerHeight - top - 8));
+    mapEl.style.height = h + "px";
+    map.invalidateSize();
+  }
+
   var stopLayer = L.featureGroup().addTo(map);
   var selfMarker = null, selfCircle = null, watchId = null, following = false;
   var lastPosition = null;
@@ -537,8 +550,9 @@
     headerToggle.addEventListener("click", function () {
       var open = cardEl.classList.toggle("tour-header-open");
       headerToggle.setAttribute("aria-expanded", open ? "true" : "false");
-      // Kartenhoehe kann sich aendern -> Kachelraster nachziehen.
-      setTimeout(function () { map.invalidateSize(); }, 60);
+      // Der auf-/zugeklappte Kopf verschiebt die Karten-Oberkante -> Hoehe
+      // neu strecken (invalidateSize inklusive).
+      setTimeout(fitMapHeight, 60);
     });
   }
 
@@ -581,9 +595,14 @@
   showList();
   updateBanner();
   updateProgress();
-  // Sicherheitsnetz: falls der Container beim Init noch nicht final
-  // vermessen war (Fonts/Layout), Kachel-Raster einmal nachziehen.
-  setTimeout(function () { map.invalidateSize(); }, 250);
+  // Hoehe strecken + nachziehen, falls das Layout beim Init noch nicht final
+  // war (Fonts/Chrome). Bei Groessen-/Ausrichtungswechsel neu berechnen.
+  fitMapHeight();
+  setTimeout(fitMapHeight, 250);
+  window.addEventListener("resize", fitMapHeight);
+  window.addEventListener("orientationchange", function () {
+    setTimeout(fitMapHeight, 200);
+  });
   // Standort direkt anwerfen (mobiler Hauptanwendungsfall); scheitert leise,
   // wenn der Nutzer ablehnt — der Folgen-Button fragt dann erneut.
   if (navigator.geolocation && window.isSecureContext) {

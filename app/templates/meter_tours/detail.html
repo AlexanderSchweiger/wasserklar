@@ -29,9 +29,18 @@
   </div>
 
   <div class="card-header d-print-none" id="tour-header">
-    {# Tourname am Handy hier (Desktop zeigt ihn im Seitentitel). #}
-    <div class="d-lg-none w-100 mb-1"><strong>{{ tour.name }}</strong></div>
-    <div class="d-flex align-items-center flex-wrap" style="gap:.4rem">
+    {# Am Handy: Name + Datum in einer Zeile. Status-Badge und Fortschritt
+       stehen schon in der Mobilleiste oben — hier nicht doppeln. #}
+    <div class="d-lg-none w-100 mb-1">
+      <strong>{{ tour.name }}</strong>
+      {% if tour.planned_date %}
+      <span class="text-secondary small ms-1">
+        <i class="fas fa-calendar me-1"></i>{{ tour.planned_date.strftime('%d.%m.%Y') }}{% if tour.time_window %} ({{ tour.time_window }}){% endif %}
+      </span>
+      {% endif %}
+    </div>
+    {# Desktop: Status + Fortschritt + Datum (am Handy in der Mobilleiste). #}
+    <div class="d-none d-lg-flex align-items-center flex-wrap" style="gap:.4rem">
       {% if tour.status == 'planned' %}<span class="badge bg-blue-lt">Geplant</span>
       {% elif tour.status == 'active' %}<span class="badge bg-blue text-white">Unterwegs</span>
       {% elif tour.status == 'done' %}<span class="badge bg-green text-white">Abgeschlossen</span>
