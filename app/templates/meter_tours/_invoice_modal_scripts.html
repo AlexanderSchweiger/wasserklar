@@ -1,0 +1,138 @@
+{# JS fuer das Pauschalen-Rechnungs-Modal (Detail- UND Batch-Seite; in
+   {% raw %}{% block scripts %}{% endraw %} einbinden, Skelett in modals).
+   Ablauf: GET laedt das Formular, POST erzeugt die Entwurfs-Rechnung, danach
+   waehlt der Nutzer im selben Modal den Weg — Entwurf belassen, als versendet
+   markieren (Papier -> Offener Posten) oder direkt per E-Mail schicken
+   (invoices.send_email_ajax; nur bei wants_email angeboten). #}
+<script>
+(function () {
+  var modalEl = document.getElementById('tourInvoiceModal');
+  var form = document.getElementById('tourInvoiceForm');
+  if (!modalEl || !form) { return; }
+  var body = document.getElementById('tourInvoiceModalBody');
+  var footer = document.getElementById('tourInvoiceModalFooter');
+  var CSRF = "{{ csrf_token() }}";
+
+  function spinner() {
+    body.innerHTML = '<div class="text-center text-muted py-4">' +
+      '<div class="spinner-border spinner-border-sm" role="status"></div></div>';
+  }
+
+  window.openTourInvoiceModal = function (url) {
+    form.dataset.actionUrl = url;
+    spinner();
+    footer.style.display = '';
+    if (window.bootstrap) {
+      bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    }
+    fetch(url, { headers: { 'X-Requested-With': 'fetch' } })
+      .then(function (r) { return r.text(); })
+      .then(function (html) { body.innerHTML = html; })
+      .catch(function () {
+        body.innerHTML = '<div class="text-danger p-3">Formular konnte nicht geladen werden.</div>';
+      });
+  };
+
+  function afterDone() {
+    if (window.tourRefresh) { window.tourRefresh(); }
+    else { window.location.reload(); }
+  }
+
+  function showFollowUp(data) {
+    footer.style.display = 'none';
+    var html =
+      '<div class="text-center py-2">' +
+      '<i class="fas fa-check-circle text-success fa-2x mb-2 d-block"></i>' +
+      '<p class="mb-3">Rechnung <strong>' + data.invoice_number + '</strong> wurde als Entwurf erstellt ' +
+      'und dem Kunden zugeordnet.</p>' +
+      '<div class="d-grid gap-2">';
+    if (data.wants_email) {
+      html += '<button type="button" class="btn btn-primary" data-tour-inv="email">' +
+        '<i class="fas fa-envelope me-1"></i>Per E-Mail senden (erstellt Offenen Posten)</button>';
+    }
+    html += '<button type="button" class="btn btn-outline-primary" data-tour-inv="paper">' +
+      '<i class="fas fa-print me-1"></i>Als versendet markieren — Papier/Post (erstellt Offenen Posten)</button>';
+    html += '<button type="button" class="btn btn-outline-secondary" data-tour-inv="draft">' +
+      '<i class="fas fa-save me-1"></i>Als Entwurf belassen (später aus der Rechnungsliste senden)</button>';
+    html += '<a class="btn btn-link" hx-boost="false" href="' + data.detail_url + '">Rechnung öffnen</a>';
+    html += '</div></div>';
+    body.innerHTML = html;
+
+    body.querySelectorAll('[data-tour-inv]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var kind = btn.dataset.tourInv;
+        if (kind === 'draft') {
+          if (window.bootstrap) { bootstrap.Modal.getInstance(modalEl).hide(); }
+          afterDone();
+          return;
+        }
+        btn.disabled = true;
+        var url = kind === 'email' ? data.send_ajax_url : data.set_status_url;
+        var payload = new URLSearchParams();
+        payload.set('csrf_token', CSRF);
+        if (kind === 'paper') { payload.set('status', 'Versendet'); }
+        fetch(url, {
+          method: 'POST',
+          headers: { 'X-CSRFToken': CSRF, 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: payload.toString(),
+        }).then(function (resp) {
+          if (kind === 'email') {
+            return resp.json().then(function (json) {
+              if (!json.ok) { throw new Error(json.error || 'Versand fehlgeschlagen'); }
+              body.innerHTML = '<div class="text-center py-3"><i class="fas fa-envelope-open-text text-success fa-2x mb-2 d-block"></i>' +
+                'Rechnung an <strong>' + (json.email || '') + '</strong> versendet.</div>';
+            });
+          }
+          if (!resp.ok) { throw new Error('Statuswechsel fehlgeschlagen'); }
+          body.innerHTML = '<div class="text-center py-3"><i class="fas fa-check-circle text-success fa-2x mb-2 d-block"></i>' +
+            'Rechnung als versendet markiert — Offener Posten angelegt.</div>';
+        }).then(function () {
+          setTimeout(function () {
+            if (window.bootstrap) {
+              var inst = bootstrap.Modal.getInstance(modalEl);
+              if (inst) { inst.hide(); }
+            }
+            afterDone();
+          }, 1200);
+        }).catch(function (err) {
+          btn.disabled = false;
+          var warn = document.createElement('div');
+          warn.className = 'alert alert-danger mt-2 mb-0';
+          warn.textContent = err.message;
+          body.appendChild(warn);
+        });
+      });
+    });
+  }
+
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var url = form.dataset.actionUrl;
+    if (!url) { return; }
+    var submitBtn = document.getElementById('tourInvoiceSubmit');
+    if (submitBtn) { submitBtn.disabled = true; }
+    var fd = new FormData(form);
+    fd.set('csrf_token', CSRF);
+    fetch(url, { method: 'POST', headers: { 'X-CSRFToken': CSRF }, body: fd })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (submitBtn) { submitBtn.disabled = false; }
+        if (!data.ok) {
+          var warn = document.createElement('div');
+          warn.className = 'alert alert-danger mt-2 mb-0';
+          warn.textContent = data.error || 'Rechnung konnte nicht erstellt werden.';
+          body.appendChild(warn);
+          return;
+        }
+        showFollowUp(data);
+      })
+      .catch(function () {
+        if (submitBtn) { submitBtn.disabled = false; }
+        var warn = document.createElement('div');
+        warn.className = 'alert alert-danger mt-2 mb-0';
+        warn.textContent = 'Rechnung konnte nicht erstellt werden.';
+        body.appendChild(warn);
+      });
+  });
+})();
+</script>

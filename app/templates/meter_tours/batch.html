@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block title %}Nacherfassung – {{ tour.name }}{% endblock %}
+{% block page_title %}<i class="fas fa-tasks me-2"></i> Nacherfassung: {{ tour.name }}{% endblock %}
+
+{% block content %}
+{# Zettel-Druck: das App-Chrome (Sidebar-Menue, Header, Footer, Flashes) darf
+   nicht mitdrucken — nur die Stop-Karten. Bewusst seiten-lokal statt global,
+   damit andere Seiten ihr Druckverhalten behalten. Der Style liegt im
+   content-Block (nicht head_extra), damit er auch nach einer
+   hx-boost-Navigation (Body-Swap laedt den Head nicht neu) vorhanden ist. #}
+<style media="print">
+  aside.navbar, header.navbar, .page-header, footer, .footer,
+  .alert, .navbar-vertical { display: none !important; }
+  .page, .page-wrapper { margin: 0 !important; padding: 0 !important; }
+  .page-body { margin: 0 !important; }
+</style>
+{% set done, pending, skipped = tour.stop_counts() %}
+<div class="card mb-3 d-print-none tour-batch-toolbar">
+  <div class="card-body py-2 d-flex align-items-center flex-wrap" style="gap:.6rem">
+    <span class="text-secondary">
+      Stopps in Routen-Reihenfolge — nach der Tour einfach der Reihe nach abarbeiten.
+      Übersprungene Objekte bleiben markiert.
+    </span>
+    <span class="badge bg-blue-lt ms-auto">{{ done }} / {{ stops|length }} erledigt</span>
+    <a href="{{ url_for('meter_tours.detail', tour_id=tour.id) }}" hx-boost="false"
+       class="btn btn-sm btn-outline-primary">
+      <i class="fas fa-map me-1"></i>Karte
+    </a>
+    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="window.print()"
+            title="Druckt die Stoppliste mit Notizzeilen — als Zettel für unterwegs">
+      <i class="fas fa-print me-1"></i>Zettel drucken
+    </button>
+    {% if tour.status in ('planned', 'active') %}
+    <form method="post" action="{{ url_for('meter_tours.close', tour_id=tour.id) }}" class="d-inline"
+          onsubmit="return confirm('Tour abschließen? Offene Stopps erscheinen wieder in der Liste der fälligen Zähler.');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-sm btn-success">
+        <i class="fas fa-flag-checkered me-1"></i>Tour abschließen
+      </button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+<div class="d-none d-print-block mb-3">
+  <div class="d-flex align-items-start">
+    <div class="me-auto">
+      <h2>Zählertausch-Tour: {{ tour.name }}</h2>
+      <p>
+        {% if tour.planned_date %}{{ tour.planned_date.strftime('%d.%m.%Y') }}{% endif %}
+        {% if tour.time_window %} ({{ tour.time_window }}){% endif %}
+        — {{ stops|length }} Stopps in Reihenfolge
+      </p>
+    </div>
+    {% if qr_svg %}
+    {# QR auf dem Zettel: scannen oeffnet die Tour-Karte direkt am Handy. #}
+    <div class="text-center ms-3">
+      <div class="tour-qr">{{ qr_svg|safe }}</div>
+      <div style="font-size:.7rem">Tour am Handy öffnen</div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{% for stop in stops %}
+{% with stop_data = stop_payloads[stop.id] %}
+{% include "meter_tours/_stop_card.html" %}
+{% endwith %}
+{% else %}
+<div class="card"><div class="card-body text-center text-secondary py-4">Diese Tour hat keine Stopps.</div></div>
+{% endfor %}
+{% endblock %}
+
+{% block modals %}
+{% include "meters/_meter_replace_modal.html" %}
+{% if can_invoice %}
+{% include "meter_tours/_invoice_modal.html" %}
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Status-Wechsel einer Stop-Karte: POST + In-Place-Swap der Karte (der Server
+// rendert _stop_card.html bei HX-Request neu) — kein Full-Reload, Scroll-
+// Position und offene Karten bleiben erhalten.
+function tourBatchStatus(btn) {
+  var status = btn.dataset.status;
+  var reason = '';
+  if (btn.dataset.askReason === '1') {
+    reason = window.prompt('Grund fürs Überspringen (optional):', '') || '';
+  }
+  var body = new URLSearchParams();
+  body.set('csrf_token', '{{ csrf_token() }}');
+  body.set('status', status);
+  if (reason) { body.set('skip_reason', reason); }
+  fetch(btn.dataset.statusUrl, {
+    method: 'POST',
+    headers: {
+      'X-CSRFToken': '{{ csrf_token() }}',
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'HX-Request': 'true',
+    },
+    body: body.toString(),
+  }).then(function (r) { return r.text(); })
+    .then(function (html) {
+      var card = btn.closest('.tour-batch-card');
+      if (card) {
+        card.outerHTML = html;
+        if (window.htmx) { htmx.process(document.getElementById(card.id) || document.body); }
+      }
+    });
+}
+
+// Zaehlertausch aus dem Modal: Stop serverseitig abhaken (Lookup ueber den
+// unique old_meter_id), dann zur getauschten Karte zurueckspringen.
+window.onMeterReplaced = function (e) {
+  var meterId = e && e.detail ? e.detail.meter_id : null;
+  var completeUrls = {{ complete_urls|tojson }};
+  var entry = meterId ? completeUrls[String(meterId)] : null;
+  if (!entry) { window.location.reload(); return; }
+  var body = new URLSearchParams();
+  body.set('csrf_token', '{{ csrf_token() }}');
+  fetch(entry.url, {
+    method: 'POST',
+    headers: { 'X-CSRFToken': '{{ csrf_token() }}',
+               'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body.toString(),
+  }).then(function (r) { return r.json(); })
+    .then(function (d) {
+      // Reload OHNE Query-String — ein noch anhaengendes ?print=1 wuerde
+      // sonst nach jedem Tausch erneut den Druckdialog oeffnen.
+      var target = window.location.pathname + '#stop-card-' + entry.stop_id;
+      if (window.location.search) {
+        window.location.href = target;   // andere URL -> navigiert (Query faellt weg)
+      } else {
+        window.location.hash = 'stop-card-' + entry.stop_id;
+        window.location.reload();
+      }
+    });
+};
+</script>
+{% include "meters/_modal_scripts.html" %}
+{% if can_invoice %}
+{% include "meter_tours/_invoice_modal_scripts.html" %}
+{% endif %}
+{% if request.args.get('print') %}
+<script>
+// ?print=1 (Button „Zettel drucken" auf Tour-Uebersicht/-Liste): Druckdialog
+// direkt oeffnen. readyState-Check, weil nach einer hx-boost-Navigation das
+// load-Event laengst gefeuert hat (Links hierher sind trotzdem hx-boost="false").
+(function () {
+  function triggerPrint() {
+    // Param sofort aus der URL nehmen — sonst druckt jeder spaetere Reload
+    // (z.B. nach einem Zaehlertausch auf dieser Seite) wieder automatisch.
+    if (window.history && history.replaceState) {
+      history.replaceState(null, '', window.location.pathname + window.location.hash);
+    }
+    setTimeout(function () { window.print(); }, 300);
+  }
+  if (document.readyState === 'complete') { triggerPrint(); }
+  else { window.addEventListener('load', triggerPrint, { once: true }); }
+})();
+</script>
+{% endif %}
+{% endblock %}

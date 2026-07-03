@@ -1,0 +1,96 @@
+{# Tabelle der faelligen Zaehlertausche (HTMX-Swap-Ziel #due-table).
+   Auswahl via Checkbox name="due_meter" (value = meter_id); data-geocoded
+   steuert die Koordinaten-Warnung im Tour-Modal. #}
+<div class="table-responsive">
+  <table class="table table-vcenter card-table table-hover">
+    <thead>
+      <tr>
+        <th style="width:2.2rem">
+          <input type="checkbox" class="form-check-input" id="due-select-all"
+                 title="Alle auswählen">
+        </th>
+        <th>Objekt</th>
+        <th>Besitzer</th>
+        <th>Zähler</th>
+        <th>Eichjahr</th>
+        <th>Fällig</th>
+        <th style="width:2.2rem" title="Geocoding-Status"><i class="fas fa-map-marker-alt"></i></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      {% set prop = row.property %}
+      <tr>
+        <td>
+          <input type="checkbox" class="form-check-input" name="due_meter"
+                 value="{{ row.meter.id }}"
+                 data-geocoded="{{ '1' if prop.lat is not none and prop.lng is not none else '0' }}">
+        </td>
+        <td>
+          <a href="{{ url_for('properties.detail', property_id=prop.id) }}">{{ prop.label() }}</a>
+          <div class="text-secondary small">{{ prop.address_display() }}</div>
+        </td>
+        <td>
+          {% for owner in row.owners %}
+          <div>
+            {{ owner.letter_name }}
+            {% if owner.phone %}
+            <a href="tel:{{ owner.phone }}" hx-boost="false" class="ms-1 text-nowrap">
+              <i class="fas fa-phone me-1"></i>{{ owner.phone }}</a>
+            {% endif %}
+            {% if owner.email %}
+            <a href="mailto:{{ owner.email }}" hx-boost="false" class="ms-1 text-nowrap">
+              <i class="fas fa-envelope me-1"></i>{{ owner.email }}</a>
+              {% if not owner.wants_email %}
+              <span class="text-secondary small ms-1" title="Kunde hat „Schriftverkehr per E-Mail“ nicht aktiviert — keine automatischen Mails">
+                (kein E-Mail-Versand)</span>
+              {% endif %}
+            {% endif %}
+          </div>
+          {% else %}
+          <span class="text-secondary">Kein aktueller Eigentümer</span>
+          {% endfor %}
+        </td>
+        <td>{{ row.meter.meter_number }}
+          {% if row.meter.location %}<div class="text-secondary small">{{ row.meter.location }}</div>{% endif %}
+        </td>
+        <td>{{ row.meter.eichjahr }}</td>
+        <td>
+          {% if row.due_year < current_year %}
+          <span class="badge bg-danger text-white" title="Nacheichfrist überschritten">{{ row.due_year }}</span>
+          {% elif row.due_year == current_year %}
+          <span class="badge bg-orange text-white">{{ row.due_year }}</span>
+          {% else %}
+          <span class="badge bg-yellow-lt">{{ row.due_year }}</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if prop.lat is not none and prop.lng is not none %}
+          <i class="fas fa-map-marker-alt text-success" title="Geocodet"></i>
+          {% else %}
+          <i class="fas fa-exclamation-triangle text-warning"
+             title="Keine Koordinaten — unter Liegenschaften → „BEV-Adressen abgleichen“ geocoden. Das Objekt landet sonst ohne Routenposition am Tour-Ende."></i>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="7" class="text-center text-secondary py-4">
+          {% if q %}
+          Keine fälligen Zähler zur Suche „{{ q }}“.
+          {% else %}
+          Keine fälligen Zählertausche bis {{ year }}
+          (Eichjahr + {{ interval }} Jahre Nacheichfrist).
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% if rows %}
+<div class="card-footer text-secondary small">
+  {{ rows|length }} fällige Zähler (Eichjahr + {{ interval }} Jahre ≤ {{ year }}).
+  Zähler in offenen Touren werden {% if show_toured %}mit angezeigt{% else %}ausgeblendet{% endif %}.
+</div>
+{% endif %}

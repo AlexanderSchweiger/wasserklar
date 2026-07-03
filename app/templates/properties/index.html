@@ -48,7 +48,7 @@
           </li>
           <li>
             <button type="button" class="dropdown-item" data-bs-toggle="modal" data-bs-target="#geocodeBevModal">
-              <i class="fas fa-location-crosshairs me-2"></i> BEV-Adressen abgleichen
+              <i class="fas fa-crosshairs me-2"></i> BEV-Adressen abgleichen
             </button>
           </li>
           <li><hr class="dropdown-divider"></li>
@@ -111,7 +111,7 @@
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title" id="geocodeBevModalLabel">
-          <i class="fas fa-location-crosshairs me-2"></i> BEV-Adressen abgleichen
+          <i class="fas fa-crosshairs me-2"></i> BEV-Adressen abgleichen
         </h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
       </div>
@@ -131,7 +131,7 @@
         </div>
         {% else %}
         <div class="alert alert-warning py-2 mb-3">
-          <i class="fas fa-triangle-exclamation me-1"></i>
+          <i class="fas fa-exclamation-triangle me-1"></i>
           Es ist noch <strong>kein BEV-Adressindex</strong> vorhanden. Bitte zuerst
           <code>flask&nbsp;bev-refresh</code> ausführen (im SaaS-Betrieb wird der Index
           automatisch bereitgestellt).
@@ -156,7 +156,7 @@
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="mode" id="geocodeBevMode" value="missing">
           <button type="submit" class="btn btn-primary" {% if not bev_index_info %}disabled{% endif %}>
-            <i class="fas fa-location-crosshairs me-1"></i> Abgleichen
+            <i class="fas fa-crosshairs me-1"></i> Abgleichen
           </button>
         </form>
       </div>

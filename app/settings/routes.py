@@ -15,6 +15,42 @@ from app.invoices.design import INVOICE_DESIGNS, available_designs
 from app.wg import ORG_TYPES
 
 
+# AppSetting-Keys, die das gerenderte Rechnungs-Dokument optisch beeinflussen.
+# Aendert sich einer davon, ist der gecachte PDF-/DOCX-Stand gesperrter
+# Rechnungen veraltet (z.B. neu aktivierter GiroCode, Designwechsel, geaenderte
+# IBAN/Kontaktdaten) und muss beim naechsten Abruf neu gerendert werden.
+_INVOICE_RENDER_KEYS = (
+    'invoice.design', 'invoice.show_payment_qr', 'invoice.show_email_signup',
+    'invoice.print_meter_swap', 'invoice.contact_info',
+    'invoice.contact_info_font_size', 'invoice.sender_address',
+    'wg.name', 'wg.address', 'wg.email', 'wg.phone',
+    'wg.iban', 'wg.bic', 'wg.account_holder',
+    'wg.logo', 'wg.logo_text', 'wg.logo_subtitle',
+)
+
+
+def _invoice_render_signature():
+    """Stabiler Hash aller render-relevanten Einstellungen als Vergleichsschluessel."""
+    import hashlib
+    raw = "\x1f".join((AppSetting.get(k) or "") for k in _INVOICE_RENDER_KEYS)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _invalidate_cached_invoice_documents():
+    """Loescht den PDF-/DOCX-Cache-Zeiger aller gesperrten Rechnungen.
+
+    Nur der DB-Zeiger (``pdf_path``/``doc_path``) wird geleert — die Dateien auf
+    der Platte bleiben liegen (Versionspfade _V2/_V3 erhalten den Audit-Verlauf).
+    Beim naechsten Abruf rendert die Rechnung mit dem aktuellen Design/den
+    aktuellen Einstellungen neu und cached wieder. Entwuerfe cachen ohnehin nie.
+    """
+    from app.models import Invoice
+    Invoice.query.filter(Invoice.status != Invoice.STATUS_DRAFT).update(
+        {Invoice.pdf_path: None, Invoice.doc_path: None},
+        synchronize_session=False,
+    )
+
+
 @bp.route('/', methods=['GET', 'POST'])
 @login_required
 def index():
@@ -123,6 +159,18 @@ def index():
         AppSetting.set('meters.replacement_interval_years', str(interval))
 
         db.session.commit()
+        # Hat sich das Rechnungs-Layout gegenueber dem Stand geaendert, mit dem
+        # die aktuellen Caches erzeugt wurden (z.B. GiroCode aktiviert,
+        # Design/IBAN gewechselt), den Cache gesperrter Rechnungen verwerfen,
+        # damit sie beim naechsten Abruf neu rendern statt den alten Stand
+        # auszuliefern. Die Signatur wird mitgespeichert, sodass auch bereits
+        # vor diesem Feature veraltete Caches beim naechsten Speichern einmalig
+        # aufgefrischt werden (gespeicherte Signatur fehlt dann → Mismatch).
+        current_sig = _invoice_render_signature()
+        if AppSetting.get('invoice.render_cache_signature') != current_sig:
+            _invalidate_cached_invoice_documents()
+            AppSetting.set('invoice.render_cache_signature', current_sig)
+            db.session.commit()
         apply_mail_settings()
         flash('Einstellungen gespeichert.', 'success')
         return redirect(url_for('settings.index'))

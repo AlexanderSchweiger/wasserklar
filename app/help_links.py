@@ -43,6 +43,13 @@ ENDPOINT_TO_DOC = {
     "meters.swap_import_preview":  "csv-import#zaehlertausch",
     "meters.swap_import_result":   "csv-import#zaehlertausch",
 
+    # Zaehlertausch-Touren (Feature-Flag FEATURE_METER_TOURS)
+    "meter_tours.due":             "zaehlertausch-touren",
+    "meter_tours.index":           "zaehlertausch-touren#tour-planen",
+    "meter_tours.detail":          "zaehlertausch-touren#unterwegs",
+    "meter_tours.batch":           "zaehlertausch-touren#zettel-workflow",
+    "meter_tours.notify":          "zaehlertausch-touren#ankuendigung",
+
     # Rechnungen / OP
     "invoices.index":              "rechnungen",
     "invoices.detail":             "rechnungen#status",

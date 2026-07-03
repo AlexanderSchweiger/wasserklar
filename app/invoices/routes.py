@@ -62,42 +62,13 @@ def _resolve_open_item_account_id(invoice, form_account_id=None):
     return form_account_id
 
 
-def _invoice_period_year(invoice):
-    """Leitet das Integer-Jahr fuer einen OpenItem aus der Rechnung ab —
-    aus der Abrechnungsperiode (Enddatum), sonst aus dem Rechnungsdatum.
-
-    ``OpenItem.period_year`` bleibt bewusst eine Jahreszahl (Buchhaltungs-
-    Tag); die Abrechnungsperiode kann ein abweichendes Geschaeftsjahr haben.
-    """
-    if invoice.billing_period is not None:
-        return invoice.billing_period.end_date.year
-    if invoice.date is not None:
-        return invoice.date.year
-    return None
-
-
-def _create_or_update_open_item(invoice, account_id=None):
-    """Erzeugt oder aktualisiert den verknüpften OpenItem wenn eine Rechnung versendet wird."""
-    oi = invoice.open_item
-    if oi is None:
-        oi = OpenItem(
-            customer_id=invoice.customer_id,
-            description=invoice.invoice_number,
-            amount=invoice.total_amount,
-            date=invoice.date,
-            due_date=invoice.due_date,
-            period_year=_invoice_period_year(invoice),
-            status=OpenItem.STATUS_OPEN,
-            invoice_id=invoice.id,
-            account_id=account_id,
-        )
-        db.session.add(oi)
-    else:
-        oi.amount = invoice.total_amount
-        oi.due_date = invoice.due_date
-        oi.period_year = _invoice_period_year(invoice)
-        if account_id is not None:
-            oi.account_id = account_id
+# Nach app/invoices/services.py extrahiert (wiederverwendet von den
+# Zaehlertausch-Touren); Alias-Rückbindung haelt alle bestehenden Aufrufer
+# und Test-Monkeypatches auf die Underscore-Namen stabil.
+from app.invoices.services import (  # noqa: E402
+    invoice_period_year as _invoice_period_year,
+    create_or_update_open_item as _create_or_update_open_item,
+)
 
 
 def _status_response(invoice):

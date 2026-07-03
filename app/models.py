@@ -683,6 +683,101 @@ class MeterReplacement(db.Model):
                 f"new={self.new_meter_id} {self.replacement_date}>")
 
 
+class MeterTour(db.Model):
+    """Zaehlertausch-Tour: buendelt faellige Zaehler (Nacheichfrist) zu einer
+    abfahrbaren Route. Die Stop-Reihenfolge wird serverseitig per
+    Nearest-Neighbour + 2-Opt auf Haversine-Luftlinien berechnet (Startpunkt =
+    ``start_lat/lng``); echte Strassen-Navigation uebernimmt das Navi des
+    Geraets via Deep-Link pro Stopp. Eine geschlossene Tour behaelt offene
+    Stops (Audit) — deren Zaehler erscheinen wieder in der Faelligen-Liste,
+    weil die due-Query nur Zaehler in planned/active-Touren ausschliesst."""
+    __tablename__ = "meter_tours"
+
+    STATUS_PLANNED = "planned"
+    STATUS_ACTIVE = "active"
+    STATUS_DONE = "done"
+    STATUS_CANCELLED = "cancelled"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(200), nullable=False)
+    planned_date = db.Column(db.Date, nullable=True)
+    # Freitext-Zeitfenster ("8-12 Uhr") fuer die Ankuendigungsmail.
+    time_window = db.Column(db.String(100), nullable=True)
+    status = db.Column(db.String(20), nullable=False, default=STATUS_PLANNED,
+                       server_default=db.text("'planned'"))
+    start_lat = db.Column(db.Float, nullable=True)
+    start_lng = db.Column(db.Float, nullable=True)
+    start_address = db.Column(db.String(300), nullable=True)
+    notes = db.Column(db.Text)
+    created_by_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    closed_at = db.Column(db.DateTime, nullable=True)
+
+    stops = db.relationship(
+        "MeterTourStop", backref="tour", order_by="MeterTourStop.position",
+        cascade="all, delete-orphan", lazy="select")
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+
+    def stop_counts(self):
+        """(erledigt, offen, uebersprungen/nicht angetroffen) fuer Fortschritts-UI."""
+        done = sum(1 for s in self.stops if s.status == MeterTourStop.STATUS_DONE)
+        pending = sum(1 for s in self.stops if s.status == MeterTourStop.STATUS_PENDING)
+        skipped = len(self.stops) - done - pending
+        return done, pending, skipped
+
+    def __repr__(self):
+        return f"<MeterTour {self.name} ({self.status})>"
+
+
+class MeterTourStop(db.Model):
+    """Einzelner Halt einer Zaehlertausch-Tour. Koordinaten werden bewusst
+    NICHT gespeichert — immer live aus ``Property.lat/lng`` abgeleitet, damit
+    ein spaeterer BEV-Abgleich un-routbare Stops automatisch heilt.
+    ``property_id`` redundant wie bei ``MeterReplacement`` (Abfragen ohne
+    Join). ``replacement_id`` wird serverseitig ueber den unique
+    ``MeterReplacement.old_meter_id`` aufgeloest, nie vom Client geliefert."""
+    __tablename__ = "meter_tour_stops"
+
+    STATUS_PENDING = "pending"
+    STATUS_DONE = "done"
+    STATUS_SKIPPED = "skipped"
+    STATUS_NOT_HOME = "not_home"
+
+    id = db.Column(db.Integer, primary_key=True)
+    tour_id = db.Column(
+        db.Integer, db.ForeignKey("meter_tours.id", ondelete="CASCADE"),
+        nullable=False, index=True)
+    meter_id = db.Column(
+        db.Integer, db.ForeignKey("water_meters.id"), nullable=False, index=True)
+    property_id = db.Column(
+        db.Integer, db.ForeignKey("properties.id"), nullable=False)
+    position = db.Column(db.Integer, nullable=False)
+    status = db.Column(db.String(20), nullable=False, default=STATUS_PENDING,
+                       server_default=db.text("'pending'"))
+    replacement_id = db.Column(
+        db.Integer, db.ForeignKey("meter_replacements.id", ondelete="SET NULL"),
+        nullable=True)
+    invoice_id = db.Column(
+        db.Integer, db.ForeignKey("invoices.id", ondelete="SET NULL"),
+        nullable=True)
+    notified_at = db.Column(db.DateTime, nullable=True)
+    skip_reason = db.Column(db.String(300), nullable=True)
+    completed_at = db.Column(db.DateTime, nullable=True)
+
+    meter = db.relationship("WaterMeter")
+    property = db.relationship("Property")
+    replacement = db.relationship("MeterReplacement")
+    invoice = db.relationship("Invoice")
+
+    __table_args__ = (
+        db.UniqueConstraint("tour_id", "meter_id", name="uq_tour_stop_meter"),
+    )
+
+    def __repr__(self):
+        return f"<MeterTourStop tour={self.tour_id} #{self.position} ({self.status})>"
+
+
 class ReadingCorrection(db.Model):
     """Korrekturposten aus einer nachgereichten echten Ablesung, die eine
     zuvor *abgerechnete* Schaetzung ersetzt.

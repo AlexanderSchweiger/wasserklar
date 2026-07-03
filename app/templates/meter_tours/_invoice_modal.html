@@ -1,0 +1,31 @@
+{# Modal-Skelett fuer die Zaehlertausch-Pauschale. Body wird per Fetch vom
+   `meter_tours.stop_invoice`-GET geladen (nur mit Rechnungs-Recht eingebunden);
+   Submit + Folgeaktionen (Entwurf/Papier/E-Mail) macht _invoice_modal_scripts.html. #}
+<div class="modal fade" id="tourInvoiceModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="fas fa-file-invoice me-2"></i> Zählertausch abrechnen</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      {# hx-boost="false": der Submit laeuft komplett ueber den fetch-Handler in
+         _invoice_modal_scripts.html. Ohne das Attribut boostet htmx (body
+         hx-boost="true") den Submit zusaetzlich als Navigation auf die
+         aktuelle Seite — der Body-Swap reisst dann das Modal mitsamt der
+         gerade gerenderten Folge-Ansicht (Senden-Optionen) wieder weg. #}
+      <form id="tourInvoiceForm" method="post" hx-boost="false">
+        <div class="modal-body" id="tourInvoiceModalBody">
+          <div class="text-center text-muted py-4">
+            <div class="spinner-border spinner-border-sm" role="status"></div>
+          </div>
+        </div>
+        <div class="modal-footer" id="tourInvoiceModalFooter">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+          <button type="submit" class="btn btn-primary" id="tourInvoiceSubmit">
+            <i class="fas fa-file-invoice me-1"></i> Rechnung erstellen
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>

@@ -2,14 +2,20 @@
 Jahresfilter-Spalten und natuerliche Schluessel fuer den Merge-Modus.
 
 Das ist die einzige Stelle, an der Tabellen aufgezaehlt werden — wer ein
-neues Model hinzufuegt, muss es auch hier eintragen, sonst wird es vom
-Export nicht erfasst.
+neues Model hinzufuegt, muss es entweder hier eintragen (CATEGORIES +
+INSERT_ORDER, ggf. FOREIGN_KEYS/NATURAL_KEYS/YEAR_FILTERS) oder bewusst in
+EXCLUDED_TABLES aufnehmen, sonst wird es vom Export nicht erfasst.
+
+Das erzwingt der Guard-Test
+``tests/integration/test_data_transfer_registry.py`` — er schlaegt fehl,
+sobald eine physische Tabelle weder registriert noch ausgeschlossen ist.
 """
 
 from app.models import (
     Customer, Property, PropertyOwnership, WaterMeter,
     WaterTariff, TaxRate, Account, RealAccount, Project,
     FiscalYear, MeterReadingAccessCode, MeterReading, MeterReplacement,
+    MeterTour, MeterTourStop,
     Invoice, InvoiceItem, BillingRun, BillingPeriod, OpenItem,
     BookingGroup, Booking, Transfer, RealAccountYearBalance,
     DunningPolicy, DunningStage, DunningNotice,
@@ -18,6 +24,12 @@ from app.models import (
     WaterSample, LabResult,
     CustomerWgProfile, PropertyWgProfile, WgFunction,
     Note, ReadingCorrection,
+    Role, RolePermission,
+    BankStatement, BankStatementLine, BankStatementLineAllocation,
+    InvoiceEmailOptInCode, CustomerEmailConsentLog, EmailSuppression,
+    Meeting, MeetingAgendaItem, MeetingInvitation, MeetingDeliveryLog,
+    MeetingAttendance, MeetingResolution, MeetingProtocol,
+    SchriftverkehrDocument,
 )
 
 # Spalten die auf users.id verweisen — werden beim Import auf NULL gesetzt,
@@ -25,6 +37,7 @@ from app.models import (
 NULL_ON_IMPORT_COLS = {
     MeterReading: ["created_by_id"],
     MeterReplacement: ["created_by_id"],
+    MeterTour: ["created_by_id"],
     MeterReadingAccessCode: ["created_by_id"],
     ReadingCorrection: ["created_by_id"],
     BillingRun: ["created_by_id"],
@@ -42,6 +55,13 @@ NULL_ON_IMPORT_COLS = {
     Incident: ["created_by_id"],
     WaterSample: ["created_by_id"],
     Note: ["created_by_id"],
+    BankStatement: ["uploaded_by_id"],
+    InvoiceEmailOptInCode: ["created_by_id"],
+    Meeting: ["created_by_id"],
+    MeetingDeliveryLog: ["user_id"],
+    MeetingResolution: ["created_by_id"],
+    MeetingProtocol: ["created_by_id"],
+    SchriftverkehrDocument: ["created_by_id"],
 }
 
 
@@ -55,12 +75,18 @@ CATEGORIES = {
         NetworkPlan, NetworkFeature, MaintenanceLog, SpringYield, Incident,
         WaterSample, LabResult,
         CustomerWgProfile, PropertyWgProfile, WgFunction,
+        InvoiceEmailOptInCode, CustomerEmailConsentLog,
+        Meeting, MeetingAgendaItem, MeetingInvitation, MeetingDeliveryLog,
+        MeetingAttendance, MeetingResolution, MeetingProtocol,
+        SchriftverkehrDocument,
         Note,
     ],
     "buchungen": [
         MeterReading, MeterReplacement, BillingRun, Invoice, InvoiceItem, OpenItem,
+        MeterTour, MeterTourStop,
         ReadingCorrection,
         BookingGroup, Booking, Transfer, RealAccountYearBalance,
+        BankStatement, BankStatementLine, BankStatementLineAllocation,
         InvoiceCounter, CustomerCounter,
     ],
     "mahnwesen": [
@@ -68,6 +94,8 @@ CATEGORIES = {
     ],
     "einstellungen": [
         AppSetting,
+        Role, RolePermission,
+        EmailSuppression,
     ],
 }
 
@@ -80,17 +108,31 @@ CATEGORIES = {
 #   → wird in zweitem Pass nachgesetzt (siehe services.py).
 # - Booking.storno_of_id (Self-FK) → ebenfalls zweiter Pass.
 INSERT_ORDER = [
+    # Rollen/Rechte zuerst — RolePermission.role_id → Role; sonst FK-frei.
+    Role, RolePermission,
     TaxRate, FiscalYear, Account, RealAccount, Project,
     Customer, Property, PropertyOwnership, WaterMeter,
     CustomerWgProfile, PropertyWgProfile, WgFunction,
+    # Consent/Opt-in: kunden-gebunden → NACH Customer.
+    InvoiceEmailOptInCode, CustomerEmailConsentLog,
     BillingPeriod, MeterReadingAccessCode, WaterTariff, MeterReading,
     MeterReplacement,
     BillingRun, Invoice, InvoiceItem, OpenItem, ReadingCorrection,
+    # Touren NACH MeterReplacement + Invoice (Stop-FKs zeigen auf beide).
+    MeterTour, MeterTourStop,
     BookingGroup, Booking, Transfer, RealAccountYearBalance,
+    # Bankauszug NACH Booking/BookingGroup/Invoice/OpenItem/Account/RealAccount
+    # (BankStatementLine referenziert alle). Line VOR Allocation (FK line_id).
+    BankStatement, BankStatementLine, BankStatementLineAllocation,
     DunningPolicy, DunningStage, DunningNotice,
-    AppSetting, InvoiceCounter, CustomerCounter,
+    AppSetting, EmailSuppression, InvoiceCounter, CustomerCounter,
     NetworkPlan, NetworkFeature, MaintenanceLog, SpringYield, Incident,
     WaterSample, LabResult,   # WaterSample VOR LabResult (FK water_sample_id)
+    # Schriftfuehrung: Meeting-Kinder referenzieren Meeting + Customer.
+    # MeetingAgendaItem VOR MeetingResolution (FK agenda_item_id).
+    Meeting, MeetingAgendaItem, MeetingInvitation, MeetingDeliveryLog,
+    MeetingAttendance, MeetingResolution, MeetingProtocol,
+    SchriftverkehrDocument,
     # Note ans Ende: sein polymorphes entity_id zeigt potenziell auf JEDE der
     # obigen Tabellen (Customer/Property/Invoice/Booking). Beim Voll-Ersatz
     # bleiben IDs erhalten → korrekt. Im Merge-Modus wird entity_id NICHT
@@ -117,6 +159,10 @@ YEAR_FILTERS = {
     InvoiceCounter: "year",
     Incident: ("date_year", "detected_at"),
     WaterSample: ("date_year", "sample_date"),
+    # BankStatementLine per Buchungsdatum; BankStatement (Parent) wird immer
+    # voll exportiert (billig, haelt statement_id-Refs gueltig), Allocation
+    # (Grandchild) kaskadiert ueber die gefilterten Line-IDs (services.py).
+    BankStatementLine: ("date_year", "booking_date"),
 }
 
 
@@ -125,6 +171,8 @@ YEAR_FILTERS = {
 # None bedeutet: kein natuerlicher Schluessel — im Merge-Modus immer Insert
 # mit neuer ID, kein Update existierender Records.
 NATURAL_KEYS = {
+    Role: ("name",),                    # name ist unique
+    RolePermission: ("role_id", "permission_key"),  # Composite-PK (role_id remapped)
     TaxRate: ("rate",),
     FiscalYear: ("year",),
     Account: ("name",),                 # code ist optional, name ist nullable=False
@@ -142,6 +190,8 @@ NATURAL_KEYS = {
     WaterTariff: ("name", "valid_from"),
     MeterReading: ("meter_id", "billing_period_id"),
     MeterReplacement: ("old_meter_id",),  # ein alter Zaehler wird hoechstens einmal ersetzt
+    MeterTour: None,                    # kein natuerlicher Schluessel — immer Insert
+    MeterTourStop: None,                # Kind einer MeterTour — immer Insert
     BillingRun: None,                   # kein natuerlicher Schluessel
     Invoice: ("invoice_number",),
     InvoiceItem: None,
@@ -165,6 +215,27 @@ NATURAL_KEYS = {
     WaterSample: None,                  # je Stelle koennen mehrere Befunde/Tag existieren — immer Insert
     LabResult: None,                    # Kind eines WaterSample — immer Insert
     Note: None,                         # Freitext — kein natuerlicher Schluessel, immer Insert
+    # Bankauszug: Statement per (Konto, Datei-Hash) dedupliziert (uq_stmt_hash) —
+    # sonst wuerde ein Re-Import denselben Auszug doppelt anlegen bzw. den
+    # Unique-Constraint verletzen. Zeilen/Allocations sind Kinder → immer Insert.
+    BankStatement: ("real_account_id", "file_hash"),
+    BankStatementLine: None,
+    BankStatementLineAllocation: None,
+    # DSGVO-Mail: Opt-in 1:1 pro Kunde, Suppression 1:1 pro Adresse (beide unique);
+    # Consent-Log ist append-only → immer Insert.
+    InvoiceEmailOptInCode: ("customer_id",),
+    CustomerEmailConsentLog: None,
+    EmailSuppression: ("email",),
+    # Schriftfuehrung: Sitzung + alle Kinder ohne stabilen natuerlichen
+    # Schluessel → immer Insert (Voll-Replace ist der Regelpfad).
+    Meeting: None,
+    MeetingAgendaItem: None,
+    MeetingInvitation: None,
+    MeetingDeliveryLog: None,
+    MeetingAttendance: None,
+    MeetingResolution: None,
+    MeetingProtocol: None,
+    SchriftverkehrDocument: None,
 }
 
 
@@ -172,7 +243,10 @@ NATURAL_KEYS = {
 # Wird im Merge-Modus zum Remappen genutzt; im Vollersatz unveraendert.
 # Format: {column_name: target_model}
 FOREIGN_KEYS = {
+    RolePermission: {"role_id": Role},
     PropertyOwnership: {"property_id": Property, "customer_id": Customer},
+    InvoiceEmailOptInCode: {"customer_id": Customer},
+    CustomerEmailConsentLog: {"customer_id": Customer},
     CustomerWgProfile: {"customer_id": Customer},
     PropertyWgProfile: {"property_id": Property},
     WgFunction: {"customer_id": Customer},
@@ -182,6 +256,9 @@ FOREIGN_KEYS = {
                    "billing_period_id": BillingPeriod},
     MeterReplacement: {"property_id": Property, "old_meter_id": WaterMeter,
                        "new_meter_id": WaterMeter, "billing_period_id": BillingPeriod},
+    MeterTourStop: {"tour_id": MeterTour, "meter_id": WaterMeter,
+                    "property_id": Property, "replacement_id": MeterReplacement,
+                    "invoice_id": Invoice},
     BillingRun: {"billing_period_id": BillingPeriod},
     Invoice: {"customer_id": Customer, "property_id": Property, "billing_run_id": BillingRun,
               "billing_period_id": BillingPeriod},
@@ -212,6 +289,22 @@ FOREIGN_KEYS = {
     Incident: {"customer_id": Customer, "property_id": Property, "feature_id": NetworkFeature},
     WaterSample: {"feature_id": NetworkFeature},
     LabResult: {"water_sample_id": WaterSample},
+    # Bankauszug. Die matched_*/booking_*-FKs sind optional (nullable): im
+    # Merge werden sie remappt bzw. auf existierende Ziel-Rows gehaengt.
+    BankStatement: {"real_account_id": RealAccount},
+    BankStatementLine: {"statement_id": BankStatement, "matched_invoice_id": Invoice,
+                        "matched_open_item_id": OpenItem, "matched_customer_id": Customer,
+                        "override_account_id": Account, "booking_id": Booking,
+                        "booking_group_id": BookingGroup},
+    BankStatementLineAllocation: {"line_id": BankStatementLine,
+                                  "open_item_id": OpenItem, "account_id": Account},
+    # Schriftfuehrung.
+    MeetingAgendaItem: {"meeting_id": Meeting},
+    MeetingInvitation: {"meeting_id": Meeting, "customer_id": Customer},
+    MeetingDeliveryLog: {"meeting_id": Meeting, "customer_id": Customer},
+    MeetingAttendance: {"meeting_id": Meeting, "customer_id": Customer},
+    MeetingResolution: {"meeting_id": Meeting, "agenda_item_id": MeetingAgendaItem},
+    MeetingProtocol: {"meeting_id": Meeting},
 }
 
 
@@ -235,6 +328,13 @@ EXCLUDED_TABLES = {
     "fiscal_year_reopen_logs",  # Audit-Log mit User-FK; ohne User-Export sinnlos
     "feature_photos",           # Fotos liegen als Dateien im instance-Volume, nicht im JSON-Export
     "incident_photos",          # Fotos liegen als Dateien im instance-Volume; separates FS-Backup noetig (Evidenz!)
+    # --- Bewusst NICHT exportiert (ephemer / SaaS-gespeist / Secrets) ---
+    "email_events",             # polymorpher Zustell-Audit-Trail (subject_id ohne FK); hochvolumig, im SaaS vom Postmark-Webhook neu gespeist. EmailSuppression (die operative Sperrliste) wird dagegen exportiert.
+    "admin_notifications",      # In-App-Hinweise; im SaaS vom Platform-Notification-Stream gespeist, im OSS-Standalone ungenutzt
+    "admin_notification_reads", # Pro-User-Lesestatus (User-FK); ohne User-Export sinnlos
+    "async_jobs",               # ephemere Hintergrund-Job-Queue; Ergebnisdateien liegen transient im instance-Volume
+    "api_keys",                 # nur SHA-256-Hashes; Secrets gehoeren nicht in ein portables Backup, Keys werden neu ausgegeben
+    "hydrant_share_links",      # oeffentliche Freigabe-Tokens (Capability-URLs); aus Sicherheitsgruenden neu erzeugen statt transportieren
 }
 
 

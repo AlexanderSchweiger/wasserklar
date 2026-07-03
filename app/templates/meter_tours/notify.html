@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% block title %}Vorab informieren – {{ tour.name }}{% endblock %}
+{% block page_title %}<i class="fas fa-envelope me-2"></i> Ziele vorab informieren: {{ tour.name }}{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="col-lg-5 col-12">
+    <div class="card mb-3">
+      <div class="card-header"><h3 class="card-title mb-0">Ankündigung</h3></div>
+      <div class="card-body">
+        <form method="post" action="{{ url_for('meter_tours.notify_save_template', tour_id=tour.id) }}" id="notifyTemplateForm">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="mb-3">
+            <label class="form-label">Betreff</label>
+            <input type="text" name="subject" id="notify-subject" class="form-control"
+                   value="{{ subject_template }}">
+          </div>
+          <div class="mb-2">
+            <label class="form-label">Text</label>
+            <textarea name="body" id="notify-body" class="form-control" rows="12">{{ body_template }}</textarea>
+          </div>
+          <div class="form-hint mb-2">
+            Platzhalter: <code>{anrede}</code> <code>{name}</code> <code>{adresse}</code>
+            <code>{objekt}</code> <code>{zaehlernummer}</code> <code>{datum}</code> <code>{zeitfenster}</code>
+            — mehrere Objekte desselben Kunden werden zusammengefasst.
+          </div>
+          <button type="submit" class="btn btn-sm btn-outline-secondary">
+            <i class="fas fa-save me-1"></i>Als Vorlage speichern
+          </button>
+        </form>
+        {% if not tour.planned_date %}
+        <div class="alert alert-warning mt-3 mb-0">
+          <i class="fas fa-exclamation-triangle me-1"></i>
+          Die Tour hat noch kein geplantes Datum — <code>{datum}</code> wird als
+          „(Termin folgt)“ eingesetzt.
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-7 col-12">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title mb-0">Empfänger</h3>
+        <div class="card-options">
+          <a href="{{ url_for('meter_tours.detail', tour_id=tour.id) }}" hx-boost="false"
+             class="btn btn-sm btn-outline-secondary me-1">
+            <i class="fas fa-map me-1"></i>Zur Karte
+          </a>
+          <button type="button" class="btn btn-primary" id="notify-start"
+                  {% if not recipients %}disabled{% endif %}>
+            <i class="fas fa-paper-plane me-1"></i>Ankündigung senden
+          </button>
+        </div>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-vcenter card-table">
+          <thead>
+            <tr>
+              <th>Kunde</th>
+              <th>Objekte in der Tour</th>
+              <th>E-Mail</th>
+              <th class="w-1"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in recipients %}
+            <tr id="notify-row-{{ r.customer.id }}"
+                data-customer-id="{{ r.customer.id }}"
+                data-mailable="{{ '1' if r.customer.wants_email else '0' }}">
+              <td>{{ r.customer.letter_name }}
+                {% if r.customer.phone %}
+                <div class="small"><a href="tel:{{ r.customer.phone }}" hx-boost="false">
+                  <i class="fas fa-phone me-1"></i>{{ r.customer.phone }}</a></div>
+                {% endif %}
+              </td>
+              <td class="text-secondary small">
+                {% for stop in r.stops %}
+                <div>#{{ stop.position }} {{ stop.property.label() }}
+                  {% if stop.notified_at %}
+                  <i class="fas fa-envelope-open-text text-success"
+                     title="Bereits informiert am {{ stop.notified_at.strftime('%d.%m.%Y') }}"></i>
+                  {% endif %}
+                </div>
+                {% endfor %}
+              </td>
+              <td>
+                {% if r.customer.wants_email %}
+                {{ r.customer.email }}
+                {% elif r.customer.email %}
+                <span class="text-secondary" title="Kunde hat „Schriftverkehr per E-Mail“ nicht aktiviert">
+                  {{ r.customer.email }} <span class="small">(nicht aktiviert)</span></span>
+                {% else %}
+                <span class="text-secondary">keine E-Mail — telefonisch informieren</span>
+                {% endif %}
+              </td>
+              <td><span id="notify-icon-{{ r.customer.id }}">
+                {% if not r.customer.wants_email %}<i class="fas fa-minus text-secondary" title="Wird übersprungen"></i>{% endif %}
+              </span></td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4" class="text-center text-secondary py-4">
+              Keine offenen Stopps mit aktuellem Eigentümer.
+            </td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="card-footer text-secondary small" id="notify-msg">
+        Versendet wird nur an Kunden mit aktiviertem „Schriftverkehr per E-Mail“.
+        SMS-Versand ist als eigene Ausbaustufe vorgesehen.
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Serienversand wie beim Rechnungs-Massenversand: eine Anfrage pro Kunde,
+// dazwischen die konfigurierte SMTP-Drossel (0 beim Plattform-Relay).
+(function () {
+  var startBtn = document.getElementById('notify-start');
+  if (!startBtn) { return; }
+  var CSRF = '{{ csrf_token() }}';
+  var SEND_URL = '{{ url_for("meter_tours.notify_send", tour_id=tour.id) }}';
+
+  startBtn.addEventListener('click', async function () {
+    startBtn.disabled = true;
+    var rows = Array.from(document.querySelectorAll('tr[data-customer-id]'));
+    var subject = document.getElementById('notify-subject').value;
+    var body = document.getElementById('notify-body').value;
+    var ok = 0, fail = 0, skipped = 0;
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      var cid = row.dataset.customerId;
+      var icon = document.getElementById('notify-icon-' + cid);
+      if (row.dataset.mailable !== '1') { skipped++; continue; }
+      if (icon) { icon.innerHTML = '<i class="fas fa-spinner fa-spin text-primary"></i>'; }
+      try {
+        var payload = new URLSearchParams();
+        payload.set('csrf_token', CSRF);
+        payload.set('customer_id', cid);
+        payload.set('subject', subject);
+        payload.set('body', body);
+        var resp = await fetch(SEND_URL, {
+          method: 'POST',
+          headers: { 'X-CSRFToken': CSRF, 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: payload.toString(),
+        });
+        var json = await resp.json();
+        if (json.ok) {
+          ok++;
+          if (icon) { icon.innerHTML = '<i class="fas fa-check-circle text-success"></i>'; }
+        } else {
+          fail++;
+          if (icon) {
+            icon.innerHTML = '<i class="fas fa-times-circle text-danger" title="'
+              + (json.error || 'Fehler') + '"></i>';
+          }
+        }
+      } catch (err) {
+        fail++;
+        if (icon) { icon.innerHTML = '<i class="fas fa-times-circle text-danger"></i>'; }
+      }
+      if (i < rows.length - 1) {
+        await new Promise(function (r) { setTimeout(r, {{ bulk_mail_delay_ms }}); });
+      }
+    }
+    var msg = document.getElementById('notify-msg');
+    if (msg) {
+      msg.textContent = 'Fertig: ' + ok + ' versendet'
+        + (fail ? ', ' + fail + ' fehlgeschlagen' : '')
+        + (skipped ? ', ' + skipped + ' übersprungen (kein E-Mail-Versand)' : '') + '.';
+    }
+    startBtn.disabled = false;
+  });
+})();
+</script>
+{% endblock %}

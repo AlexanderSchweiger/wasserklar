@@ -78,7 +78,7 @@
                   onsubmit="return confirm('Alle Änderungen dieser Kopie in den Quellplan übertragen?\n\nNeue Elemente werden hinzugefügt, geänderte aktualisiert und in dieser Kopie gelöschte werden auch im Quellplan entfernt.');">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button type="submit" class="btn btn-sm btn-outline-primary me-1" title="Änderungen in Quellplan übertragen">
-                <i class="fas fa-code-merge"></i>
+                <i class="fas fa-code-branch"></i>
               </button>
             </form>
             {% endif %}

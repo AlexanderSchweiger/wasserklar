@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}{{ tour.name }}{% endblock %}
+{% block page_title %}<i class="fas fa-route me-2"></i> {{ tour.name }}{% endblock %}
+
+{% block head_extra %}
+  {# Leaflet im <head>: Die Seite wird nur ueber hx-boost="false"-Links erreicht
+     (harter Reload), sonst wuerden die head-Skripte nach einem Boost fehlen. #}
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="card" id="tour-card">
+  <div class="card-header d-print-none">
+    <div class="d-flex align-items-center flex-wrap" style="gap:.4rem">
+      {% if tour.status == 'planned' %}<span class="badge bg-blue-lt">Geplant</span>
+      {% elif tour.status == 'active' %}<span class="badge bg-blue text-white">Unterwegs</span>
+      {% elif tour.status == 'done' %}<span class="badge bg-green text-white">Abgeschlossen</span>
+      {% else %}<span class="badge bg-secondary-lt">Abgebrochen</span>{% endif %}
+      <span class="text-secondary" id="tour-progress"></span>
+      {% if tour.planned_date %}
+      <span class="text-secondary small">
+        <i class="fas fa-calendar me-1"></i>{{ tour.planned_date.strftime('%d.%m.%Y') }}
+        {% if tour.time_window %}({{ tour.time_window }}){% endif %}
+      </span>
+      {% endif %}
+    </div>
+    <div class="card-actions btn-list">
+      <button type="button" class="btn btn-sm" id="tour-list-toggle" title="Stoppliste ein-/ausblenden">
+        <i class="fas fa-list me-1"></i>Stopps
+      </button>
+      <button type="button" class="btn btn-sm" id="tour-reorder"
+              title="Offene Stopps ab meinem aktuellen Standort neu sortieren">
+        <i class="fas fa-sync-alt me-1"></i>Neu sortieren
+      </button>
+      <a href="{{ url_for('meter_tours.batch', tour_id=tour.id) }}" class="btn btn-sm"
+         title="Stopps der Reihe nach abarbeiten (Nacherfassung)">
+        <i class="fas fa-tasks me-1"></i>Nacherfassung
+      </a>
+      <a href="{{ url_for('meter_tours.batch', tour_id=tour.id, print=1) }}" hx-boost="false"
+         class="btn btn-sm"
+         title="Stoppliste mit Besitzer, Telefon, Zählernummer und Ausfüllfeldern (alter Ablesestand) drucken">
+        <i class="fas fa-print me-1"></i>Zettel drucken
+      </a>
+      {# Handy-Einstieg: QR nur am Desktop anbieten — am Handy ist man schon da. #}
+      <button type="button" class="btn btn-sm d-none d-lg-inline-flex"
+              data-bs-toggle="modal" data-bs-target="#tourQrModal"
+              title="QR-Code scannen und diese Tour direkt am Handy öffnen">
+        <i class="fas fa-qrcode me-1"></i>Am Handy öffnen
+      </button>
+      <a href="{{ url_for('meter_tours.notify', tour_id=tour.id) }}" class="btn btn-sm"
+         title="Ankündigungsmail an die Ziele">
+        <i class="fas fa-envelope me-1"></i>Vorab informieren
+      </a>
+      {% if tour.status == 'planned' %}
+      <form method="post" action="{{ url_for('meter_tours.start', tour_id=tour.id) }}" class="d-inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-sm btn-primary">
+          <i class="fas fa-play me-1"></i>Tour starten
+        </button>
+      </form>
+      {% elif tour.status == 'active' %}
+      <form method="post" action="{{ url_for('meter_tours.close', tour_id=tour.id) }}" class="d-inline"
+            onsubmit="return confirm('Tour abschließen? Offene Stopps erscheinen wieder in der Liste der fälligen Zähler.');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-sm btn-success">
+          <i class="fas fa-flag-checkered me-1"></i>Abschließen
+        </button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card-body p-0 tour-card-body">
+    <div class="row g-0">
+      <div class="col-lg-8 col-12">
+        <div class="tour-map-wrap">
+          {# hx-boost="false": htmx wuerde sonst die Leaflet-eigenen <a href="#">
+             (Popup-x, Controls) boosten — Klick navigiert statt zu schliessen. #}
+          <div id="tour-map" hx-boost="false"></div>
+          <div class="tour-next-banner" id="tour-next-banner" style="display:none"></div>
+          <button type="button" class="btn btn-icon tour-locate-fab" id="tour-follow"
+                  title="Standort folgen">
+            <i class="fas fa-location-arrow"></i>
+          </button>
+        </div>
+      </div>
+      <div class="col-lg-4 col-12 border-start" id="tour-side">
+        <div class="tour-sheet-handle d-lg-none" title="Schließen"></div>
+        <div id="tour-list-view">
+          <div class="d-flex align-items-center p-2 border-bottom">
+            <strong class="me-auto"><i class="fas fa-list me-1 text-secondary"></i>Stopps</strong>
+          </div>
+          <ul id="tour-stop-list" class="list-group list-group-flush"></ul>
+        </div>
+        <div id="tour-panel" style="display:none"></div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block modals %}
+{% include "meters/_meter_replace_modal.html" %}
+{% if tour_data.can_invoice %}
+{% include "meter_tours/_invoice_modal.html" %}
+{% endif %}
+<div class="modal fade" id="tourQrModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="fas fa-qrcode me-2"></i>Am Handy öffnen</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <div class="modal-body text-center">
+        {% if qr_svg %}
+        <div class="tour-qr mb-2">{{ qr_svg|safe }}</div>
+        {% endif %}
+        <p class="text-secondary small mb-1">Mit der Handy-Kamera scannen — öffnet
+          die Tour-Karte mit Standort und Navigation. Login am Handy erforderlich.</p>
+        <code class="small text-break">{{ tour_url }}</code>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  window.TOUR = {{ tour_data|tojson }};
+  window.TOUR.csrfToken = "{{ csrf_token() }}";
+</script>
+{% include "meters/_modal_scripts.html" %}
+{% if tour_data.can_invoice %}
+{% include "meter_tours/_invoice_modal_scripts.html" %}
+{% endif %}
+<script src="{{ url_for('static', filename='js/tours-map.js') }}"></script>
+{% endblock %}

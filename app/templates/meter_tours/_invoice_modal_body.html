@@ -1,0 +1,67 @@
+{# Formular-Body des Pauschalen-Modals (GET meter_tours.stop_invoice).
+   Vorbefuellt aus den AppSettings meter_tours.fee_*; „Als Standard speichern"
+   schreibt die Werte beim POST zurueck. #}
+{% if already_invoiced %}
+<div class="text-center py-3">
+  <i class="fas fa-info-circle text-primary fa-2x mb-2 d-block"></i>
+  <p class="mb-1">Zu diesem Stopp existiert bereits eine Rechnung.</p>
+  <a href="{{ url_for('invoices.detail', invoice_id=stop.invoice_id) }}" hx-boost="false">
+    Rechnung öffnen</a>
+</div>
+{% else %}
+<div class="mb-2 text-secondary small">
+  <i class="fas fa-home me-1"></i>{{ stop.property.label() }} —
+  Zähler {{ stop.meter.meter_number }}
+</div>
+
+{% if owners|length > 1 %}
+<div class="mb-3">
+  <label class="form-label">Rechnungsempfänger</label>
+  <select name="customer_id" class="form-select">
+    {% for owner in owners %}
+    <option value="{{ owner.id }}">{{ owner.letter_name }}</option>
+    {% endfor %}
+  </select>
+  <div class="form-hint">Das Objekt hat mehrere aktuelle Eigentümer.</div>
+</div>
+{% elif owners %}
+<input type="hidden" name="customer_id" value="{{ owners[0].id }}">
+<div class="mb-3">
+  <label class="form-label">Rechnungsempfänger</label>
+  <div class="form-control-plaintext">{{ owners[0].letter_name }}
+    {% if not owners[0].wants_email %}
+    <span class="text-secondary small">(kein E-Mail-Versand aktiviert)</span>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+<div class="mb-3">
+  <label class="form-label">Bezeichnung</label>
+  <input type="text" name="description" class="form-control"
+         value="{{ defaults.description }}" required>
+</div>
+<div class="row">
+  <div class="col-6 mb-3">
+    <label class="form-label">Betrag (netto, €)</label>
+    <input type="text" name="amount" class="form-control" inputmode="decimal"
+           value="{{ defaults.amount }}" placeholder="z.B. 60,00" required>
+  </div>
+  <div class="col-6 mb-3">
+    <label class="form-label">USt-Satz</label>
+    <select name="tax_rate" class="form-select">
+      <option value="" {% if not defaults.tax_rate %}selected{% endif %}>Keine USt</option>
+      {% for tr in tax_rates %}
+      <option value="{{ tr.rate }}"
+              {% if defaults.tax_rate and tr.rate|float == defaults.tax_rate|float %}selected{% endif %}>
+        {{ tr.rate|de_number }} % {% if tr.label %}({{ tr.label }}){% endif %}
+      </option>
+      {% endfor %}
+    </select>
+  </div>
+</div>
+<label class="form-check">
+  <input type="checkbox" class="form-check-input" name="save_default" value="1">
+  <span class="form-check-label">Als Standard-Pauschale speichern</span>
+</label>
+{% endif %}

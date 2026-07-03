@@ -31,8 +31,10 @@ from sqlalchemy import and_, func, inspect as sa_inspect, or_, text
 
 from app.extensions import db
 from app.models import (
-    AppSetting, Booking, BookingGroup, Customer, CustomerCounter,
+    AppSetting, BankStatementLine, BankStatementLineAllocation,
+    Booking, BookingGroup, Customer, CustomerCounter,
     DunningNotice, FiscalYear, Invoice, InvoiceCounter, InvoiceItem,
+    RolePermission,
 )
 from app.data_transfer.registry import (
     CATEGORIES, INSERT_ORDER, YEAR_FILTERS, NATURAL_KEYS, FOREIGN_KEYS,
@@ -134,8 +136,21 @@ def _filtered_booking_group_ids(years: list[int]) -> set:
     return {r[0] for r in sub.all()}
 
 
+def _filtered_bank_line_ids(years: list[int]) -> set | None:
+    """IDs aller BankStatementLines, die der Jahresfilter (Buchungsdatum)
+    behaelt — fuer die FK-Kaskade auf BankStatementLineAllocation, die selbst
+    kein Datum traegt und sonst auf gefilterte Zeilen zeigen wuerde."""
+    if not years:
+        return None
+    q = db.session.query(BankStatementLine.id).filter(
+        func.extract("year", BankStatementLine.booking_date).in_(years),
+    )
+    return {r[0] for r in q.all()}
+
+
 def _build_query_filtered(model, years: list[int], invoice_ids: set | None,
-                          booking_group_ids: set | None, actual_cols: set):
+                          booking_group_ids: set | None, bank_line_ids: set | None,
+                          actual_cols: set):
     """Wie _build_query, aber selektiert nur die Spalten, die in der DB
     tatsaechlich existieren (toleriert Schema-Drift in alten DBs).
 
@@ -160,6 +175,8 @@ def _build_query_filtered(model, years: list[int], invoice_ids: set | None,
         q = q.filter(DunningNotice.invoice_id.in_(invoice_ids or [-1]))
     elif model is BookingGroup and booking_group_ids is not None:
         q = q.filter(BookingGroup.id.in_(booking_group_ids or [-1]))
+    elif model is BankStatementLineAllocation and bank_line_ids is not None:
+        q = q.filter(BankStatementLineAllocation.line_id.in_(bank_line_ids or [-1]))
 
     return q
 
@@ -221,6 +238,10 @@ def export_to_zip(selection: dict, fileobj, *, exported_by: str = "system") -> d
                          if (years and BookingGroup in models
                              and Booking.__tablename__ in existing_tables_pre)
                          else None)
+    bank_line_ids = (_filtered_bank_line_ids(years)
+                     if (years and BankStatementLineAllocation in models
+                         and BankStatementLine.__tablename__ in existing_tables_pre)
+                     else None)
 
     table_meta = []
     pdf_files = []  # list of (zip_path, source_path)
@@ -243,7 +264,8 @@ def export_to_zip(selection: dict, fileobj, *, exported_by: str = "system") -> d
             # das Model — ORM-Query mit allen Modell-Columns wuerde scheitern.
             actual_cols = {c["name"] for c in insp.get_columns(tname, schema=schema)}
             q = _build_query_filtered(
-                model, years, invoice_ids, booking_group_ids, actual_cols,
+                model, years, invoice_ids, booking_group_ids, bank_line_ids,
+                actual_cols,
             )
             skip_filter = appsetting_skip_filter if model is AppSetting else None
             records = _serialize_rows(model, q, actual_cols, skip_filter)
@@ -656,7 +678,12 @@ def _insert_merge(model, records: list, id_map: dict, update_existing: bool, sta
     stats[model.__tablename__] = {"inserted": inserted, "updated": updated, "skipped": skipped}
 
 
-_NATURAL_PK_MODELS = {FiscalYear, AppSetting, InvoiceCounter, CustomerCounter}
+# RolePermission hat einen Composite-PK (role_id, permission_key) OHNE Surrogate-
+# ID — beide Spalten muessen beim Merge-Insert erhalten bleiben (role_id ist
+# vorher schon FK-remappt). Wuerde man sie wie einen Auto-Increment-PK
+# strippen, schluege der NOT-NULL-Insert fehl.
+_NATURAL_PK_MODELS = {FiscalYear, AppSetting, InvoiceCounter, CustomerCounter,
+                      RolePermission}
 
 
 def _has_natural_pk(model) -> bool:

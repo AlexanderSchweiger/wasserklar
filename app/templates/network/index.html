@@ -29,7 +29,7 @@
       {% if plan %}<span class="badge {{ vocab.plan_status_badge(plan.status) }}">{{ vocab.plan_status_label(plan.status) }}</span>{% endif %}
       {% if unassigned_count %}
       <span class="badge bg-pink text-white" title="Hausanschlüsse ohne zugeordnete Liegenschaft – auf der Karte grell markiert">
-        <i class="fas fa-triangle-exclamation me-1"></i>{{ unassigned_count }} ohne Liegenschaft
+        <i class="fas fa-exclamation-triangle me-1"></i>{{ unassigned_count }} ohne Liegenschaft
       </span>
       {% endif %}
       {% if plan %}

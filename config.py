@@ -89,6 +89,17 @@ class Config:
         os.environ.get("FEATURE_API_ENABLED", "false").lower() == "true"
     )
 
+    # Zaehlertausch-Touren (faellige Tausche nach Nacheichfrist buendeln und als
+    # mobile Route mit Karte/Navigation abfahren, optional Pauschale abrechnen).
+    # Bewusst ein SaaS-only-Komfortfeature: im OSS-Standalone defaultet es AUS
+    # (env-ueberschreibbar). Der SaaS-Layer schaltet das Flag in
+    # register_saas_extensions fuer ALLE Tenants an (Basis + Pro, kein
+    # Plan-Gate — Muster wie FEATURE_HAUSANSCHLUSS_AUTOASSIGN). Steuert den
+    # Nav-Eintrag und alle /meters/tours-Routen (404, wenn aus).
+    FEATURE_METER_TOURS = (
+        os.environ.get("FEATURE_METER_TOURS", "false").lower() == "true"
+    )
+
     # Obergrenze fuer Massendruck/-export von Dokumenten pro Durchgang.
     # Schuetzt vor Speicher-/CPU-Last und Timeouts: WeasyPrint rendert jedes
     # Dokument einzeln in den RAM. Wird die Auswahl groesser, bietet die UI

@@ -52,7 +52,7 @@
   function statusColor(props) { return STATUS_COLOR[props.status] || "#868e96"; }
 
   function incidentIcon(props) {
-    var fa = props.type_icon || "fa-triangle-exclamation";
+    var fa = props.type_icon || "fa-exclamation-triangle";
     return L.divIcon({
       className: "incident-marker-wrap",
       html: '<span class="incident-marker" style="background:' + statusColor(props) + ";border-color:" +

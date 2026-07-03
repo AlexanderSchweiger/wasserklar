@@ -1,0 +1,220 @@
+{% extends "base.html" %}
+{% block title %}Zählertausch-Touren{% endblock %}
+{% block page_title %}<i class="fas fa-route me-2"></i> Zählertausch-Touren{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="card-header">
+    <div class="filter-bar">
+      <div class="input-group input-group-sm" style="width:280px">
+        <input type="search" name="q" value="{{ q }}" class="form-control"
+          placeholder="Zählernr., Objekt, Besitzer…"
+          hx-get="{{ url_for('meter_tours.due') }}"
+          hx-trigger="input changed delay:300ms"
+          hx-target="#due-table"
+          hx-include="[name='q'],[name='year'],[name='show_toured']">
+        <span class="input-group-text"><i class="fas fa-search"></i></span>
+      </div>
+      <div class="input-group input-group-sm ms-2" style="width:170px"
+           title="Zeigt Zähler, deren Nacheichfrist bis zu diesem Jahr abläuft">
+        <span class="input-group-text">Fällig bis</span>
+        <input type="number" name="year" value="{{ year }}" min="2000" max="2100"
+          class="form-control"
+          hx-get="{{ url_for('meter_tours.due') }}"
+          hx-trigger="input changed delay:300ms"
+          hx-target="#due-table"
+          hx-include="[name='q'],[name='year'],[name='show_toured']">
+      </div>
+      <div class="form-check form-switch ms-3 mb-0">
+        <input type="checkbox" class="form-check-input" id="show_toured"
+          name="show_toured" value="1" {{ 'checked' if show_toured }}
+          hx-get="{{ url_for('meter_tours.due') }}"
+          hx-trigger="change"
+          hx-target="#due-table"
+          hx-include="[name='q'],[name='year'],[name='show_toured']">
+        <label class="form-check-label" for="show_toured">Bereits verplante anzeigen</label>
+      </div>
+      <div class="ms-auto d-flex gap-2 align-items-center">
+        <form method="post" action="{{ url_for('meter_tours.set_interval') }}"
+              class="d-flex align-items-center" title="Nacheichfrist in Jahren (Österreich: 5 Jahre für Kaltwasserzähler)">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <span class="text-secondary small me-1">Eichfrist</span>
+          <input type="number" name="interval" value="{{ interval }}" min="1" max="30"
+                 class="form-control form-control-sm" style="width:4.2rem">
+          <span class="text-secondary small mx-1">Jahre</span>
+          <button type="submit" class="btn btn-sm btn-outline-secondary">
+            <i class="fas fa-check"></i>
+          </button>
+        </form>
+      </div>
+    </div>
+    <div class="card-options">
+      <a href="{{ url_for('meter_tours.index') }}" class="btn btn-outline-secondary">
+        <i class="fas fa-list me-1"></i> Alle Touren
+        {% if open_tours %}<span class="badge bg-blue-lt ms-1">{{ open_tours|length }} offen</span>{% endif %}
+      </a>
+      <button type="button" class="btn btn-primary ms-1" id="tour-create-btn" disabled
+              title="Zähler auswählen, dann Tour starten">
+        <i class="fas fa-route me-1"></i> Tour starten
+      </button>
+    </div>
+  </div>
+  <div id="due-table">
+    {% include "meter_tours/_due_table.html" %}
+  </div>
+</div>
+{% endblock %}
+
+{% block modals %}
+<div class="modal fade" id="tourCreateModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      {# hx-boost="false": der Redirect fuehrt auf die Karten-Seite, die
+         Leaflet im head_extra laedt — ein geboosteter Body-Swap wuerde den
+         Head nicht mitladen und die Karte bliebe weiss. #}
+      <form method="post" action="{{ url_for('meter_tours.create') }}" id="tourCreateForm" hx-boost="false">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="fas fa-route me-2"></i>Tour starten</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+        </div>
+        <div class="modal-body">
+          <div id="tour-create-meters"></div>
+          <div class="mb-2">
+            <span id="tour-create-count" class="badge bg-blue text-white"></span>
+            <span id="tour-create-geo-warn" class="text-warning small ms-1" style="display:none">
+              <i class="fas fa-exclamation-triangle me-1"></i>
+              <span id="tour-create-geo-warn-text"></span> — diese Objekte werden ans Ende der Tour gehängt.
+            </span>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Name</label>
+            <input type="text" name="name" class="form-control" placeholder="z.B. Tausch-Tour Oberdorf">
+          </div>
+          <div class="row">
+            <div class="col-6 mb-3">
+              <label class="form-label">Geplantes Datum</label>
+              <input type="date" name="planned_date" class="form-control">
+            </div>
+            <div class="col-6 mb-3">
+              <label class="form-label">Zeitfenster</label>
+              <input type="text" name="time_window" class="form-control" placeholder="z.B. 8–12 Uhr">
+            </div>
+          </div>
+          <div class="mb-2">
+            <label class="form-label">Startpunkt</label>
+            <input type="text" name="start_address" class="form-control" placeholder="Adresse / Beschreibung (optional)">
+          </div>
+          <div class="d-flex align-items-center mb-1" style="gap:.5rem">
+            <button type="button" class="btn btn-sm btn-outline-primary" id="tour-create-locate">
+              <i class="fas fa-location-arrow me-1"></i>Meinen Standort verwenden
+            </button>
+            <span class="text-secondary small" id="tour-create-locate-state"></span>
+          </div>
+          <input type="hidden" name="start_lat" id="tour-create-lat">
+          <input type="hidden" name="start_lng" id="tour-create-lng">
+          <div class="form-hint">Ohne Startpunkt wird die Route ab dem ersten Objekt geplant.
+            Die Reihenfolge ist eine Luftlinien-Optimierung; navigiert wird pro Stopp mit dem Navi des Geräts.</div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+          <button type="submit" class="btn btn-primary"><i class="fas fa-route me-1"></i>Tour anlegen</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var createBtn = document.getElementById('tour-create-btn');
+
+  function selectedBoxes() {
+    return Array.from(document.querySelectorAll('#due-table input[name="due_meter"]:checked'));
+  }
+  function updateCreateBtn() {
+    if (createBtn) { createBtn.disabled = selectedBoxes().length === 0; }
+  }
+  // Delegiert, damit HTMX-Table-Swaps keine Re-Initialisierung brauchen.
+  document.addEventListener('change', function (e) {
+    if (e.target && (e.target.name === 'due_meter' || e.target.id === 'due-select-all')) {
+      if (e.target.id === 'due-select-all') {
+        document.querySelectorAll('#due-table input[name="due_meter"]').forEach(function (cb) {
+          cb.checked = e.target.checked;
+        });
+      }
+      updateCreateBtn();
+    }
+  });
+  document.addEventListener('htmx:afterSwap', function (e) {
+    if (e.target && e.target.id === 'due-table') { updateCreateBtn(); }
+  });
+
+  if (createBtn) {
+    createBtn.addEventListener('click', function () {
+      var boxes = selectedBoxes();
+      if (!boxes.length) { return; }
+      var holder = document.getElementById('tour-create-meters');
+      holder.innerHTML = '';
+      var withoutGeo = 0;
+      boxes.forEach(function (cb) {
+        var input = document.createElement('input');
+        input.type = 'hidden'; input.name = 'meter_ids'; input.value = cb.value;
+        holder.appendChild(input);
+        if (cb.dataset.geocoded !== '1') { withoutGeo++; }
+      });
+      document.getElementById('tour-create-count').textContent =
+        boxes.length + ' Zähler ausgewählt';
+      var warn = document.getElementById('tour-create-geo-warn');
+      if (withoutGeo > 0) {
+        document.getElementById('tour-create-geo-warn-text').textContent =
+          withoutGeo + ' von ' + boxes.length + ' Objekten ohne Koordinaten';
+        warn.style.display = '';
+      } else {
+        warn.style.display = 'none';
+      }
+      if (window.bootstrap) {
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('tourCreateModal')).show();
+      }
+    });
+  }
+
+  // Zurueck-Navigation nach dem Anlegen: der Browser stellt die Seite aus dem
+  // Back-Forward-Cache wieder her — mitsamt dem beim Absenden noch offenen
+  // Modal + Backdrop. Beim bfcache-Restore (pageshow mit persisted) daher
+  // schliessen und Reste aufraeumen.
+  window.addEventListener('pageshow', function (e) {
+    if (!e.persisted) { return; }
+    var modalEl = document.getElementById('tourCreateModal');
+    if (window.bootstrap && modalEl) {
+      var inst = bootstrap.Modal.getInstance(modalEl);
+      if (inst) { inst.hide(); }
+    }
+    document.querySelectorAll('.modal-backdrop').forEach(function (el) { el.remove(); });
+    document.body.classList.remove('modal-open');
+    document.body.style.removeProperty('overflow');
+    document.body.style.removeProperty('padding-right');
+  });
+
+  var locateBtn = document.getElementById('tour-create-locate');
+  if (locateBtn) {
+    locateBtn.addEventListener('click', function () {
+      var state = document.getElementById('tour-create-locate-state');
+      if (!navigator.geolocation) {
+        state.textContent = 'Standort nicht unterstützt.';
+        return;
+      }
+      state.textContent = 'Ermittle Standort…';
+      navigator.geolocation.getCurrentPosition(function (pos) {
+        document.getElementById('tour-create-lat').value = pos.coords.latitude;
+        document.getElementById('tour-create-lng').value = pos.coords.longitude;
+        state.innerHTML = '<i class="fas fa-check text-success me-1"></i>Standort übernommen';
+      }, function (err) {
+        state.textContent = 'Standort nicht verfügbar (' + err.message + ') — Hinweis: braucht HTTPS oder localhost.';
+      }, { enableHighAccuracy: true, timeout: 15000 });
+    });
+  }
+})();
+</script>
+{% endblock %}

@@ -213,7 +213,7 @@
           <p class="text-muted small mb-0">Bei vielen Dokumenten kann dies einige Minuten dauern.<br>Der Download startet automatisch.</p>
         </div>
         <div id="bulkDownloadError" class="d-none">
-          <i class="fas fa-triangle-exclamation text-danger mb-3" style="font-size:2rem"></i>
+          <i class="fas fa-exclamation-triangle text-danger mb-3" style="font-size:2rem"></i>
           <p class="mb-0" id="bulkDownloadErrorMsg"></p>
         </div>
       </div>
@@ -244,7 +244,7 @@
           <input type="date" class="form-control" id="setDateInput" oninput="checkSetDateFuture()">
         </div>
         <div class="alert alert-warning d-none mb-0" id="setDateFutureWarning">
-          <i class="fas fa-triangle-exclamation me-1"></i>
+          <i class="fas fa-exclamation-triangle me-1"></i>
           Das gewählte Datum liegt in der Zukunft.
         </div>
       </div>
@@ -578,7 +578,7 @@ async function bulkDownloadBatch(url, ids, from, to, btn) {
     btn.disabled = false;
     btn.classList.remove('btn-primary');
     btn.classList.add('btn-danger');
-    btn.innerHTML = '<i class="fas fa-rotate-right me-1"></i> Erneut versuchen';
+    btn.innerHTML = '<i class="fas fa-redo me-1"></i> Erneut versuchen';
   }
 }
 

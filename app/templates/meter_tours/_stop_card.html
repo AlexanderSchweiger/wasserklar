@@ -1,0 +1,130 @@
+{# Stop-Karte fuer den Zettel-Workflow (batch.html). Wird nach einem
+   Status-POST (HX-Request) vom Server neu gerendert und in-place getauscht —
+   kein Full-Reload, die Position in der Liste bleibt erhalten.
+   Erwartet: tour, stop, stop_data (Payload aus routes._stop_payload),
+   can_invoice. #}
+<div class="card mb-2 tour-batch-card" id="stop-card-{{ stop.id }}">
+  <div class="card-body py-3">
+    <div class="d-flex align-items-start flex-wrap" style="gap:.6rem">
+      <span class="tour-marker tour-marker-inline mt-1" style="background:
+        {%- if stop.status == 'done' %}#2b8a3e
+        {%- elif stop.status == 'skipped' %}#868e96
+        {%- elif stop.status == 'not_home' %}#f76707
+        {%- else %}#206bc4{% endif %}">{{ stop.position }}</span>
+      <div class="me-auto">
+        {# ── Bildschirm-Kopf (im Druck ausgeblendet) ─────────────────── #}
+        <div class="d-print-none">
+          <div>
+            <strong>{{ stop.property.label() if stop.property else '?' }}</strong>
+            {% if stop.status == 'done' %}<span class="badge bg-green text-white ms-1">Erledigt</span>
+            {% elif stop.status == 'skipped' %}<span class="badge bg-secondary-lt ms-1">Übersprungen</span>
+            {% elif stop.status == 'not_home' %}<span class="badge bg-orange text-white ms-1">Nicht angetroffen</span>
+            {% endif %}
+            {% if stop.notified_at %}
+            <i class="fas fa-envelope-open-text text-success ms-1" title="Vorab informiert am {{ stop.notified_at.strftime('%d.%m.%Y') }}"></i>
+            {% endif %}
+          </div>
+          <div class="text-secondary small">{{ stop.property.address_display() if stop.property else '' }}</div>
+          <div class="small">
+            <i class="fas fa-tachometer-alt me-1 text-secondary"></i>Zähler
+            <strong>{{ stop.meter.meter_number if stop.meter else '?' }}</strong>
+            {% if stop.meter and stop.meter.location %}<span class="text-secondary">({{ stop.meter.location }})</span>{% endif %}
+            {% if stop.replacement and stop.replacement.new_meter %}
+            <span class="text-success ms-1">→ {{ stop.replacement.new_meter.meter_number }}</span>
+            {% endif %}
+          </div>
+          {% for owner in stop_data.owners %}
+          <div class="small tour-owner">
+            {{ owner.name }}
+            {% if owner.phone %}<a href="tel:{{ owner.phone }}" hx-boost="false" class="ms-1">
+              <i class="fas fa-phone me-1"></i>{{ owner.phone }}</a>{% endif %}
+            {% if owner.email %}<a href="mailto:{{ owner.email }}" hx-boost="false" class="ms-1">
+              <i class="fas fa-envelope me-1"></i>{{ owner.email }}</a>{% endif %}
+          </div>
+          {% endfor %}
+        </div>
+        {# ── Druck-Kopf (kompakt): Adresse + Besitzer in Zeile 1, Zähler
+              darunter; Kontakt steht rechts (eigener Block unten). ────── #}
+        <div class="d-none d-print-block">
+          <div>
+            <strong>{{ stop.property.address_display() if stop.property else '?' }}</strong>
+            {%- if stop_data.owners %} — {{ stop_data.owners|map(attribute='name')|join(', ') }}{% endif %}
+            {% if stop.status == 'skipped' %} <em>(übersprungen)</em>
+            {% elif stop.status == 'not_home' %} <em>(nicht angetroffen)</em>
+            {% elif stop.status == 'done' %} <em>(erledigt)</em>{% endif %}
+          </div>
+          <div class="small">Zähler <strong>{{ stop.meter.meter_number if stop.meter else '?' }}</strong>
+            {%- if stop.meter and stop.meter.location %} ({{ stop.meter.location }}){% endif %}
+            {%- if stop.replacement and stop.replacement.new_meter %} → {{ stop.replacement.new_meter.meter_number }}{% endif %}
+          </div>
+        </div>
+        {% if stop.skip_reason %}
+        <div class="text-secondary small">Grund: {{ stop.skip_reason }}</div>
+        {% endif %}
+        {% if stop.status != 'done' %}
+        {# Ausfuell-Felder nur im Ausdruck (Zettel fuer unterwegs). #}
+        <div class="tour-batch-print-field">
+          Endstand alt (m³): <span class="tour-blank"></span>&emsp;
+          Neue Zähler-Nr.: <span class="tour-blank"></span>
+        </div>
+        <div class="tour-batch-print-field">
+          Anfangsstand neu (m³): <span class="tour-blank" style="min-width:6rem"></span>&emsp;
+          Eichjahr neu: <span class="tour-blank" style="min-width:4rem"></span>&emsp;
+          Datum: <span class="tour-blank" style="min-width:6rem"></span>
+        </div>
+        <div class="tour-batch-print-field">
+          Notizen: <span class="tour-blank" style="min-width:75%"></span>
+        </div>
+        {% endif %}
+      </div>
+      {# Druck: Kontakt des Besitzers rechts (am Bildschirm stehen hier die Buttons). #}
+      <div class="d-none d-print-block text-end small tour-batch-print-contact">
+        {% for owner in stop_data.owners %}
+        {% if owner.phone %}<div><i class="fas fa-phone me-1"></i>{{ owner.phone }}</div>{% endif %}
+        {% if owner.email %}<div><i class="fas fa-envelope me-1"></i>{{ owner.email }}</div>{% endif %}
+        {% endfor %}
+      </div>
+      <div class="btn-list tour-batch-actions">
+        {% if stop.status in ('pending', 'not_home') %}
+        <button type="button" class="btn btn-sm btn-danger"
+                data-url="{{ stop_data.replace_url }}"
+                onclick="openReplaceModal(this)">
+          <i class="fas fa-exchange-alt me-1"></i>Tauschen
+        </button>
+        {% endif %}
+        {% if stop.status == 'pending' %}
+        <button type="button" class="btn btn-sm btn-outline-secondary"
+                data-status-url="{{ stop_data.status_url }}" data-status="skipped" data-ask-reason="1"
+                onclick="tourBatchStatus(this)">
+          <i class="fas fa-forward me-1"></i>Überspringen
+        </button>
+        <button type="button" class="btn btn-sm btn-outline-warning"
+                data-status-url="{{ stop_data.status_url }}" data-status="not_home"
+                onclick="tourBatchStatus(this)">
+          <i class="fas fa-user-slash me-1"></i>Nicht angetroffen
+        </button>
+        {% elif stop.status in ('skipped', 'not_home') %}
+        <button type="button" class="btn btn-sm btn-outline-secondary"
+                data-status-url="{{ stop_data.status_url }}" data-status="pending"
+                onclick="tourBatchStatus(this)">
+          <i class="fas fa-undo me-1"></i>Wieder öffnen
+        </button>
+        {% endif %}
+        {% if stop.status == 'done' and can_invoice %}
+          {% if stop.invoice_id %}
+          <a href="{{ url_for('invoices.detail', invoice_id=stop.invoice_id) }}"
+             class="btn btn-sm btn-outline-success">
+            <i class="fas fa-file-invoice me-1"></i>Rechnung öffnen
+          </a>
+          {% else %}
+          <button type="button" class="btn btn-sm btn-outline-success"
+                  data-invoice-url="{{ stop_data.invoice_url }}"
+                  onclick="openTourInvoiceModal(this.dataset.invoiceUrl)">
+            <i class="fas fa-file-invoice me-1"></i>Rechnung erstellen
+          </button>
+          {% endif %}
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>

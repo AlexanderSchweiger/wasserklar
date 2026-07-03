@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Zählertausch-Touren{% endblock %}
+{% block page_title %}<i class="fas fa-route me-2"></i> Zählertausch-Touren{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="card-header">
+    <h3 class="card-title mb-0">Alle Touren</h3>
+    <div class="card-options">
+      <a href="{{ url_for('meter_tours.due') }}" class="btn btn-primary">
+        <i class="fas fa-plus me-1"></i> Neue Tour (fällige Zähler)
+      </a>
+    </div>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table table-hover">
+      <thead>
+        <tr>
+          <th>Tour</th>
+          <th>Datum</th>
+          <th>Status</th>
+          <th>Fortschritt</th>
+          <th>Startpunkt</th>
+          <th class="w-1"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for tour in tours %}
+        {% set done, pending, skipped = tour.stop_counts() %}
+        <tr>
+          <td>
+            <a href="{{ url_for('meter_tours.detail', tour_id=tour.id) }}" hx-boost="false">{{ tour.name }}</a>
+            {% if tour.time_window %}<div class="text-secondary small">{{ tour.time_window }}</div>{% endif %}
+          </td>
+          <td>{{ tour.planned_date.strftime('%d.%m.%Y') if tour.planned_date else '—' }}</td>
+          <td>
+            {% if tour.status == 'planned' %}<span class="badge bg-blue-lt">Geplant</span>
+            {% elif tour.status == 'active' %}<span class="badge bg-blue text-white">Unterwegs</span>
+            {% elif tour.status == 'done' %}<span class="badge bg-green text-white">Abgeschlossen</span>
+            {% else %}<span class="badge bg-secondary-lt">Abgebrochen</span>{% endif %}
+          </td>
+          <td>
+            {{ done }} / {{ tour.stops|length }} erledigt
+            {% if skipped %}<span class="text-secondary small">({{ skipped }} übersprungen)</span>{% endif %}
+          </td>
+          <td class="text-secondary">{{ tour.start_address or '—' }}</td>
+          <td>
+            <div class="btn-list flex-nowrap">
+              <a href="{{ url_for('meter_tours.detail', tour_id=tour.id) }}" hx-boost="false"
+                 class="btn btn-sm btn-outline-primary" title="Karte">
+                <i class="fas fa-map"></i>
+              </a>
+              <a href="{{ url_for('meter_tours.batch', tour_id=tour.id) }}"
+                 class="btn btn-sm btn-outline-secondary" title="Nacherfassung (Zettel-Workflow)">
+                <i class="fas fa-tasks"></i>
+              </a>
+              <a href="{{ url_for('meter_tours.batch', tour_id=tour.id, print=1) }}" hx-boost="false"
+                 class="btn btn-sm btn-outline-secondary" title="Zettel drucken (Stoppliste mit Ausfüllfeldern)">
+                <i class="fas fa-print"></i>
+              </a>
+              {% if tour.status in ('planned', 'cancelled') %}
+              <form method="post" action="{{ url_for('meter_tours.delete', tour_id=tour.id) }}"
+                    onsubmit="return confirm('Tour „{{ tour.name }}“ wirklich löschen?');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-sm btn-outline-danger" title="Löschen">
+                  <i class="fas fa-trash"></i>
+                </button>
+              </form>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="6" class="text-center text-secondary py-4">
+            Noch keine Touren. Unter <a href="{{ url_for('meter_tours.due') }}">Fällige Zähler</a>
+            Zähler auswählen und eine Tour starten.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

@@ -609,3 +609,108 @@ tr.overdue { background-color: #fff3cd !important; }
   .technik-draw-bar .technik-add { padding-top: .4rem; padding-bottom: .4rem; }
   .technik-list-item { display: flex; align-items: center; flex-wrap: wrap; }
 }
+
+/* ==========================================================================
+   Zaehlertausch-Touren (meter_tours) — Karte, Marker, Mobile-Bottom-Sheet.
+   Eigene tour-*-Klassen (keine #technik-card-Selektoren mitnutzen), Muster
+   analog zum Leitungsnetz oben.
+   ========================================================================== */
+.tour-map-wrap { position: relative; }
+#tour-map { height: 68vh; min-height: 420px; }
+
+/* Nummerierte Stop-Marker (divIcon) + Inline-Variante in Liste/Panel. */
+.tour-marker-wrap { background: transparent; border: 0; }
+.tour-marker {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 50%;
+  color: #fff; font-weight: 600; font-size: .85rem;
+  border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, .35);
+}
+.tour-marker-inline { width: 1.6rem; height: 1.6rem; font-size: .75rem; flex: 0 0 auto; }
+.tour-marker-start { background: #d6336c; }
+
+/* Floating-Buttons unten rechts auf der Karte (Folgen/Standort). */
+.tour-locate-fab {
+  position: absolute; right: .75rem; bottom: 1.75rem; z-index: 1000;
+  width: 2.75rem; height: 2.75rem; border-radius: 50%;
+  background: #fff; color: #206bc4; border: 1px solid rgba(0, 0, 0, .15);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, .3);
+}
+.tour-locate-fab:hover { background: #f1f5f9; color: #1c6bc4; }
+.tour-locate-fab.active { background: #206bc4; color: #fff; }
+
+/* Naechster-Halt-Banner ueber der Karte (Klick springt zum Stop). */
+.tour-next-banner {
+  position: absolute; left: .75rem; right: 3.9rem; top: .75rem; z-index: 1000;
+  background: #fff; border: 1px solid rgba(0, 0, 0, .15); border-radius: 8px;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, .25); padding: .45rem .7rem;
+  font-size: .9rem; cursor: pointer;
+}
+
+.tour-stop-item { cursor: pointer; }
+.tour-stop-item.active-stop { background: #eef4fb; }
+.tour-owner a { white-space: nowrap; }
+
+/* Mobile (< lg): rechte Spalte als Bottom-Sheet ueber der Karte. */
+.tour-sheet-handle { display: none; }
+@media (max-width: 991.98px) {
+  #tour-map { height: 62vh; min-height: 0; }
+  .tour-card-body { position: relative; overflow: hidden; }
+  #tour-side {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 1200;
+    max-height: 72%; overflow-y: auto; background: #fff;
+    border-top: 1px solid var(--tblr-border-color, #dee2e6);
+    border-top-left-radius: 14px; border-top-right-radius: 14px;
+    box-shadow: 0 -2px 14px rgba(0, 0, 0, .18);
+    transform: translateY(100%); transition: transform .25s ease;
+  }
+  #tour-side .border-start { border-left: 0 !important; }
+  #tour-card.tour-sheet-open #tour-side { transform: translateY(0); }
+  #tour-card.tour-sheet-open .tour-locate-fab { display: none; }
+  .tour-sheet-handle {
+    display: block; height: 1.5rem; cursor: pointer; position: sticky; top: 0;
+    background: #fff; border-top-left-radius: 14px; border-top-right-radius: 14px; z-index: 1;
+  }
+  .tour-sheet-handle::before {
+    content: ""; display: block; width: 2.5rem; height: .25rem; margin: .5rem auto 0;
+    background: #ced4da; border-radius: 999px;
+  }
+}
+
+/* Zettel-Workflow: druckfreundliche Stop-Liste (Backup fuer unterwegs).
+   App-Chrome (Sidebar/Header/Footer) versteckt der print-Style in
+   batch.html — hier nur die Karten-Optik. Kompakt gehalten, damit
+   moeglichst viele Stopps auf eine Seite passen. */
+@media print {
+  .tour-batch-actions, .tour-batch-toolbar { display: none !important; }
+  .tour-batch-card {
+    break-inside: avoid; border: 1px solid #999 !important;
+    margin-bottom: .3rem !important;
+  }
+  .tour-batch-card .card-body {
+    padding: .35rem .6rem !important;
+  }
+  .tour-batch-card .tour-marker-inline {
+    width: 1.25rem; height: 1.25rem; font-size: .7rem; margin-top: .1rem;
+  }
+  .tour-batch-print-contact { font-size: .8rem; }
+}
+
+/* Umsortier-Pfeile in der Tour-Stoppliste (kompakt, uebereinander). */
+.tour-move-btns { display: inline-flex; }
+.tour-move-btns .btn { width: 1.6rem; height: 1.3rem; padding: 0; }
+
+/* Zettel-Druck: beschriftete Ausfuell-Felder nur im Ausdruck. */
+.tour-batch-print-field { display: none; }
+@media print {
+  .tour-batch-print-field {
+    display: block; margin-top: .25rem; font-size: .85rem;
+  }
+  .tour-batch-print-field .tour-blank {
+    display: inline-block; min-width: 9rem; border-bottom: 1px dotted #666;
+  }
+}
+
+/* Tour-QR (Handy-Einstieg): im Dialog gross, am Zettel kompakt. */
+.tour-qr svg { width: 9rem; height: 9rem; }
+@media print { .tour-qr svg { width: 2.6cm; height: 2.6cm; } }

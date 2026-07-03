@@ -13,10 +13,10 @@ Badge-Klassen folgen der Tabler-Konvention: prominente Status solid +
 INCIDENT_TYPES = {
     "rohrbruch":     {"label": "Rohrbruch",          "icon": "fa-bolt",                 "color": "#c92a2a", "desc": "Bruch einer Leitung mit Wasseraustritt."},
     "undichtheit":   {"label": "Undichtheit / Leck", "icon": "fa-tint",                 "color": "#e8590c", "desc": "Schleichende Undichtheit, Muffen-/Verbindungsleck."},
-    "druckverlust":  {"label": "Druckverlust",       "icon": "fa-gauge-high",           "color": "#f59f00", "desc": "Druckabfall im Netz ohne sichtbaren Austritt."},
+    "druckverlust":  {"label": "Druckverlust",       "icon": "fa-tachometer-alt",           "color": "#f59f00", "desc": "Druckabfall im Netz ohne sichtbaren Austritt."},
     "verschmutzung": {"label": "Verschmutzung",      "icon": "fa-biohazard",            "color": "#7048e8", "desc": "Trinkwasser-Verunreinigung / Trübung / Befund."},
     "ausfall":       {"label": "Versorgungsausfall", "icon": "fa-power-off",            "color": "#343a40", "desc": "Ausfall der Versorgung (Pumpe, Stromausfall, Speicher leer)."},
-    "sonstiges":     {"label": "Sonstiges",          "icon": "fa-triangle-exclamation", "color": "#868e96", "desc": "Sonstige Störung ohne eigene Kategorie."},
+    "sonstiges":     {"label": "Sonstiges",          "icon": "fa-exclamation-triangle", "color": "#868e96", "desc": "Sonstige Störung ohne eigene Kategorie."},
 }
 
 # Ursachenkategorie: key -> {label, icon}
@@ -26,8 +26,8 @@ CAUSES = {
     "korrosion":         {"label": "Korrosion",                   "icon": "fa-bacterium"},
     "erddruck":          {"label": "Erddruck / Setzung",          "icon": "fa-mountain"},
     "fremdeinwirkung":   {"label": "Fremdeinwirkung (Bagger)",    "icon": "fa-truck-monster"},
-    "ueberdruck":        {"label": "Überdruck / Druckstoß",       "icon": "fa-gauge-high"},
-    "montagefehler":     {"label": "Montage-/Einbaufehler",       "icon": "fa-screwdriver-wrench"},
+    "ueberdruck":        {"label": "Überdruck / Druckstoß",       "icon": "fa-tachometer-alt"},
+    "montagefehler":     {"label": "Montage-/Einbaufehler",       "icon": "fa-tools"},
     "unbekannt":         {"label": "Unbekannt",                   "icon": "fa-question"},
 }
 
@@ -48,7 +48,7 @@ SEVERITIES = {
 
 
 def type_label(key):     return INCIDENT_TYPES.get(key, {}).get("label", key)
-def type_icon(key):      return INCIDENT_TYPES.get(key, {}).get("icon", "fa-triangle-exclamation")
+def type_icon(key):      return INCIDENT_TYPES.get(key, {}).get("icon", "fa-exclamation-triangle")
 def type_color(key):     return INCIDENT_TYPES.get(key, {}).get("color", "#868e96")
 def cause_label(key):    return CAUSES.get(key, {}).get("label", key) if key else ""
 def status_label(key):   return STATUSES.get(key, {}).get("label", key)
