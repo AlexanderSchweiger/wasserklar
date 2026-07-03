@@ -11,7 +11,26 @@
 
 {% block content %}
 <div class="card" id="tour-card">
-  <div class="card-header d-print-none">
+  {# Mobile-Kompaktleiste: einzige immer sichtbare Kopfzeile am Handy. Der
+     Menue-Button klappt den vollen Kopf (#tour-header) auf/zu. #}
+  <div class="tour-mobilebar d-lg-none d-print-none">
+    <button type="button" class="btn btn-sm" id="tour-header-toggle" aria-expanded="false"
+            title="Tour-Aktionen ein-/ausblenden">
+      <i class="fas fa-sliders-h me-1"></i>Menü
+    </button>
+    <button type="button" class="btn btn-sm" data-tour-list-toggle title="Stoppliste">
+      <i class="fas fa-list me-1"></i>Stopps
+    </button>
+    {% if tour.status == 'planned' %}<span class="badge bg-blue-lt">Geplant</span>
+    {% elif tour.status == 'active' %}<span class="badge bg-blue text-white">Unterwegs</span>
+    {% elif tour.status == 'done' %}<span class="badge bg-green text-white">Abgeschlossen</span>
+    {% else %}<span class="badge bg-secondary-lt">Abgebrochen</span>{% endif %}
+    <span class="text-secondary small ms-auto" id="tour-progress-mobile"></span>
+  </div>
+
+  <div class="card-header d-print-none" id="tour-header">
+    {# Tourname am Handy hier (Desktop zeigt ihn im Seitentitel). #}
+    <div class="d-lg-none w-100 mb-1"><strong>{{ tour.name }}</strong></div>
     <div class="d-flex align-items-center flex-wrap" style="gap:.4rem">
       {% if tour.status == 'planned' %}<span class="badge bg-blue-lt">Geplant</span>
       {% elif tour.status == 'active' %}<span class="badge bg-blue text-white">Unterwegs</span>
@@ -26,7 +45,7 @@
       {% endif %}
     </div>
     <div class="card-actions btn-list">
-      <button type="button" class="btn btn-sm" id="tour-list-toggle" title="Stoppliste ein-/ausblenden">
+      <button type="button" class="btn btn-sm" data-tour-list-toggle title="Stoppliste ein-/ausblenden">
         <i class="fas fa-list me-1"></i>Stopps
       </button>
       <button type="button" class="btn btn-sm" id="tour-reorder"
@@ -90,6 +109,10 @@
         <div id="tour-list-view">
           <div class="d-flex align-items-center p-2 border-bottom">
             <strong class="me-auto"><i class="fas fa-list me-1 text-secondary"></i>Stopps</strong>
+            <button type="button" class="btn btn-sm btn-icon btn-ghost-secondary d-lg-none"
+                    id="tour-list-close" title="Stopps schließen">
+              <i class="fas fa-times"></i>
+            </button>
           </div>
           <ul id="tour-stop-list" class="list-group list-group-flush"></ul>
         </div>

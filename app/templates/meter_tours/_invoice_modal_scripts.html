@@ -40,20 +40,25 @@
 
   function showFollowUp(data) {
     footer.style.display = 'none';
+    // Kurze Button-Beschriftungen; die Erklaerung steht als gedaempfte Zeile
+    // darunter (nicht im Button), damit am Handy nichts aus dem Button laeuft.
     var html =
       '<div class="text-center py-2">' +
       '<i class="fas fa-check-circle text-success fa-2x mb-2 d-block"></i>' +
       '<p class="mb-3">Rechnung <strong>' + data.invoice_number + '</strong> wurde als Entwurf erstellt ' +
       'und dem Kunden zugeordnet.</p>' +
-      '<div class="d-grid gap-2">';
+      '<div class="d-grid gap-1 text-start">';
     if (data.wants_email) {
       html += '<button type="button" class="btn btn-primary" data-tour-inv="email">' +
-        '<i class="fas fa-envelope me-1"></i>Per E-Mail senden (erstellt Offenen Posten)</button>';
+        '<i class="fas fa-envelope me-1"></i>Per E-Mail senden</button>' +
+        '<div class="form-hint small mb-2">Verschickt das PDF und legt einen Offenen Posten an.</div>';
     }
     html += '<button type="button" class="btn btn-outline-primary" data-tour-inv="paper">' +
-      '<i class="fas fa-print me-1"></i>Als versendet markieren — Papier/Post (erstellt Offenen Posten)</button>';
+      '<i class="fas fa-print me-1"></i>Als versendet markieren</button>' +
+      '<div class="form-hint small mb-2">Für Papier/Post — legt einen Offenen Posten an.</div>';
     html += '<button type="button" class="btn btn-outline-secondary" data-tour-inv="draft">' +
-      '<i class="fas fa-save me-1"></i>Als Entwurf belassen (später aus der Rechnungsliste senden)</button>';
+      '<i class="fas fa-save me-1"></i>Als Entwurf belassen</button>' +
+      '<div class="form-hint small mb-2">Kann später aus der Rechnungsliste versendet werden.</div>';
     html += '<a class="btn btn-link" hx-boost="false" href="' + data.detail_url + '">Rechnung öffnen</a>';
     html += '</div></div>';
     body.innerHTML = html;

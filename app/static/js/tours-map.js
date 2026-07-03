@@ -392,7 +392,19 @@
     if (!status) { return; }
     postForm(stop.status_url, { status: status, skip_reason: reason })
       .then(function () { return refresh(); })
-      .then(function () { selectStop(stop.id); });
+      .then(function () {
+        if (status === "pending") {
+          // Wieder geoeffnet -> Detail mit aktualisierten Aktionen zeigen.
+          selectStop(stop.id);
+        } else {
+          // Uebersprungen / nicht angetroffen: Stop faellt aus der Route —
+          // Panel schliessen, damit er nicht weiter als aktuelles Ziel im
+          // Fokus steht. Der "Naechster Halt"-Vorschlag (updateBanner) zaehlt
+          // ohnehin nur pending-Stops, blendet ihn also ebenfalls aus.
+          showList();
+          consumePanelState();
+        }
+      });
   }
 
   // --- Refresh (nach Tausch / Statuswechsel) ---------------------------------
@@ -413,10 +425,12 @@
   window.tourRefresh = refresh;
 
   function updateProgress() {
-    var el = document.getElementById("tour-progress");
-    if (!el) { return; }
     var done = stopsByStatus("done").length;
-    el.textContent = done + " / " + TOUR.stops.length + " erledigt";
+    var text = done + " / " + TOUR.stops.length + " erledigt";
+    var el = document.getElementById("tour-progress");
+    if (el) { el.textContent = text; }
+    var elMobile = document.getElementById("tour-progress-mobile");
+    if (elMobile) { elMobile.textContent = text; }
   }
 
   // --- Eigener Standort + Naechster-Halt-Vorschlag ---------------------------
@@ -499,12 +513,32 @@
       consumePanelState();
     });
   }
-  var listToggle = document.getElementById("tour-list-toggle");
-  if (listToggle) {
-    listToggle.addEventListener("click", function () {
+  // Stoppliste ein-/ausblenden — Button existiert doppelt (Kopf + Mobilleiste).
+  document.querySelectorAll("[data-tour-list-toggle]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
       showList();
       setSheet(!cardEl.classList.contains("tour-sheet-open"));
       consumePanelState();
+    });
+  });
+
+  // X in der Stoppliste (Mobile): Sheet schliessen.
+  var listClose = document.getElementById("tour-list-close");
+  if (listClose) {
+    listClose.addEventListener("click", function () {
+      setSheet(false);
+      consumePanelState();
+    });
+  }
+
+  // Mobile-Kopf auf-/zuklappen (Tourname, Aktionen, Status).
+  var headerToggle = document.getElementById("tour-header-toggle");
+  if (headerToggle && cardEl) {
+    headerToggle.addEventListener("click", function () {
+      var open = cardEl.classList.toggle("tour-header-open");
+      headerToggle.setAttribute("aria-expanded", open ? "true" : "false");
+      // Kartenhoehe kann sich aendern -> Kachelraster nachziehen.
+      setTimeout(function () { map.invalidateSize(); }, 60);
     });
   }
 

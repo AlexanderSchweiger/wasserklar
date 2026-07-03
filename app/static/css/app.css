@@ -651,11 +651,29 @@ tr.overdue { background-color: #fff3cd !important; }
 .tour-stop-item.active-stop { background: #eef4fb; }
 .tour-owner a { white-space: nowrap; }
 
+/* Mobile-Kompaktleiste: einzige immer sichtbare Kopfzeile am Handy — klappt
+   den vollen Tour-Kopf (Name, Aktionen, Status) per Button auf. Am Desktop
+   ausgeblendet (d-lg-none), dort ist der Kopf ohnehin immer offen. */
+.tour-mobilebar {
+  display: flex; align-items: center; gap: .4rem; flex-wrap: wrap;
+  padding: .4rem .6rem; border-bottom: 1px solid var(--tblr-border-color, #dee2e6);
+}
+
 /* Mobile (< lg): rechte Spalte als Bottom-Sheet ueber der Karte. */
 .tour-sheet-handle { display: none; }
 @media (max-width: 991.98px) {
   #tour-map { height: 62vh; min-height: 0; }
   .tour-card-body { position: relative; overflow: hidden; }
+  /* Tour-Kopf am Handy standardmaessig eingeklappt — spart Platz, die Karte
+     bekommt den Grossteil des Schirms. Der Menue-Button (#tour-header-toggle)
+     klappt ihn auf. */
+  #tour-header { display: none; }
+  #tour-card.tour-header-open #tour-header { display: block; }
+  /* Globales Seiten-Chrome (grosser Seitentitel + Flash-Meldungen wie
+     „Tour gestartet") am Handy fuer diese Seite ausblenden — der Tourname
+     steht im aufklappbaren Kopf. :has() scopt es auf die Tour-Detailseite. */
+  .page-wrapper:has(#tour-card) .page-header,
+  .page-wrapper:has(#tour-card) .page-body > .container-fluid > .alert { display: none; }
   #tour-side {
     position: absolute; left: 0; right: 0; bottom: 0; z-index: 1200;
     max-height: 72%; overflow-y: auto; background: #fff;
