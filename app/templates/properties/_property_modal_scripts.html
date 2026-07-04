@@ -1,55 +1,21 @@
-{# JS fuer den Property-Edit-Modal.
-   Per Inkludieren im {% block scripts %} der jeweiligen Seite verfuegbar
-   machen — erwartet, dass _property_edit_modal.html in {% block modals %}
-   eingebunden ist.
+{# JS fuer den Property-Anlage-/Edit-Modal — nutzt den geteilten
+   setupEditModal-Helfer (_modal_edit_helpers.html), identisch zum
+   Kontakt-Modal. Per Inkludieren im {% block scripts %} der jeweiligen Seite
+   verfuegbar machen — erwartet, dass _property_edit_modal.html in
+   {% block modals %} eingebunden ist.
 
    Nach erfolgreichem Speichern wird window.location.reload() aufgerufen
    (Default), sofern kein window.onPropertyEdited-Handler gesetzt ist.
 #}
+{% include "_modal_edit_helpers.html" %}
 <script>
-(function () {
-  var form = document.getElementById('propertyEditForm');
-  if (!form) { return; }
-
-  window.openPropertyEditModal = function (btn) {
-    var url = btn.dataset.url;
-    form.dataset.actionUrl = url;
-    document.getElementById('propertyEditModalBody').innerHTML =
-      '<div class="text-center text-muted py-4">' +
-      '<div class="spinner-border spinner-border-sm" role="status"></div></div>';
-    bootstrap.Modal.getOrCreateInstance(document.getElementById('propertyEditModal')).show();
-    htmx.ajax('GET', url, {
-      target: '#propertyEditModalBody',
-      swap: 'innerHTML',
-      headers: {'X-From-Modal': '1'},
-    });
-  };
-
-  form.addEventListener('submit', function (e) {
-    e.preventDefault();
-    var url = this.dataset.actionUrl;
-    if (!url) { return; }
-    var values = {};
-    new FormData(this).forEach(function (v, k) { values[k] = v; });
-    htmx.ajax('POST', url, {
-      target: '#propertyEditModalBody',
-      swap: 'innerHTML',
-      values: values,
-      headers: {'X-From-Modal': '1'},
-    });
-  });
-
-  document.addEventListener('closePropertyEditModal', function () {
-    var el = document.getElementById('propertyEditModal');
-    if (!el) { return; }
-    var modal = bootstrap.Modal.getInstance(el);
-    if (modal) { modal.hide(); }
-  });
-
-  document.addEventListener('propertyEdited', function (e) {
-    var fn = window.onPropertyEdited;
-    if (typeof fn === 'function') { fn(e); }
-    else { window.location.reload(); }
-  });
-})();
+setupEditModal({
+  formId: 'propertyEditForm',
+  bodyId: 'propertyEditModalBody',
+  modalId: 'propertyEditModal',
+  openFn: 'openPropertyEditModal',
+  closeEvent: 'closePropertyEditModal',
+  savedEvent: 'propertyEdited',
+  savedHandler: 'onPropertyEdited',
+});
 </script>

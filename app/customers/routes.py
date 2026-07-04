@@ -164,19 +164,32 @@ def index():
 @bp.route("/new", methods=["GET", "POST"])
 @login_required
 def new():
+    # Neuanlage laeuft wahlweise als Vollseite (form.html) oder im Modal: der
+    # X-From-Modal-Header steuert GET (Body-Fragment statt Vollseite) und jede
+    # Fehler-/Dubletten-Antwort (Body-Fragment statt Flash+Redirect) — analog
+    # zu edit().
+    is_modal = bool(request.headers.get("X-From-Modal"))
+
+    def _fail(message):
+        if is_modal:
+            return render_template(
+                "customers/_customer_edit_form_body.html",
+                customer=None, form_data=request.form, error=message,
+            )
+        flash(message, "danger")
+        return _render_new_form(request.form)
+
     if request.method == "POST":
         # 1) Pflichtfeld-Validierung (Nachname bzw. Firmenname)
         name_err = _validate_name_fields(request.form)
         if name_err:
-            flash(name_err, "danger")
-            return _render_new_form(request.form)
+            return _fail(name_err)
 
         # 2) Mindestens ein Kontakttyp
         is_customer = request.form.get("is_customer") == "1"
         is_supplier = request.form.get("is_supplier") == "1"
         if not (is_customer or is_supplier):
-            flash("Bitte mindestens einen Kontakttyp wählen (Kunde oder Lieferant).", "danger")
-            return _render_new_form(request.form)
+            return _fail("Bitte mindestens einen Kontakttyp wählen (Kunde oder Lieferant).")
 
         # 3) Dubletten-Gate (außer der Nutzer hat "trotzdem anlegen" bestätigt).
         # Dubletten-Suche ueber alle Kontakttypen (auch Lieferanten), damit
@@ -190,32 +203,43 @@ def new():
                 ort=request.form.get("ort", ""),
             )
             if similar:
-                return render_template(
-                    "customers/_duplicate_warning.html",
-                    similar=similar,
-                    form_data=request.form,
+                template = (
+                    "customers/_duplicate_warning_modal_body.html" if is_modal
+                    else "customers/_duplicate_warning.html"
                 )
+                return render_template(template, similar=similar, form_data=request.form)
 
         # 4) Anlage
         c = Customer()
         nr_error = _apply_customer_fields(c, request.form, is_new=True)
         if nr_error:
-            flash(nr_error, "danger")
-            return _render_new_form(request.form)
+            return _fail(nr_error)
         db.session.add(c)
         try:
             db.session.commit()
         except IntegrityError:
             db.session.rollback()
-            flash(
+            return _fail(
                 "Die Kundennummer wurde gerade von einem anderen Vorgang vergeben. "
-                "Bitte erneut speichern.",
-                "danger",
+                "Bitte erneut speichern."
             )
-            return _render_new_form(request.form)
+
+        if is_modal:
+            resp = make_response("", 204)
+            resp.headers["HX-Trigger"] = json.dumps({
+                "closeCustomerEditModal": True,
+                "customerEdited": {"customer_id": c.id, "created": True},
+            })
+            return resp
         flash(f"Kontakt '{c.name}' angelegt.", "success")
         return redirect(url_for("customers.index"))
+
     suggested_nr = next_customer_number(peek=True)
+    if is_modal:
+        return render_template(
+            "customers/_customer_edit_form_body.html",
+            customer=None, form_data=None, suggested_nr=suggested_nr,
+        )
     return _render_new_form(form_data=None, suggested_nr=suggested_nr)
 
 

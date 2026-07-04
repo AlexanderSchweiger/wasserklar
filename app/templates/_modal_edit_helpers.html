@@ -1,8 +1,8 @@
-{# Generischer Edit-Modal-Helfer (DRY fuer Kontakt-, Buchungsjahr-,
-   Abrechnungsperioden-Modal). Body wird per HTMX-GET (X-From-Modal) geladen;
-   das Formular submittet nativ via htmx (hx-post wird beim Oeffnen dynamisch
-   gesetzt) — dadurch funktionieren Mehrfach-Checkboxen, und HX-Trigger-
-   Antworten (204) werden von htmx selbst verarbeitet.
+{# Generischer Edit-Modal-Helfer (DRY fuer Kontakt-, Liegenschafts-,
+   Buchungsjahr-, Abrechnungsperioden-Modal). Body wird per HTMX-GET
+   (X-From-Modal) geladen; das Formular submittet nativ via htmx (hx-post wird
+   beim Oeffnen dynamisch gesetzt) — dadurch funktionieren Mehrfach-Checkboxen,
+   und HX-Trigger-Antworten (204) werden von htmx selbst verarbeitet.
 
    setupEditModal({
      formId, bodyId, modalId,          // DOM-IDs des Skeletts
@@ -10,6 +10,12 @@
      closeEvent, savedEvent,           // HX-Trigger-Event-Namen vom Server
      savedHandler                      // optional: Name einer window-Funktion; sonst reload
    })
+
+   Modale, die denselben Dialog fuer Neuanlage UND Bearbeitung nutzen, koennen
+   den aufrufenden Button mit data-modal-title="Neue Liegenschaft" versehen —
+   der Titel-Text (Element mit [data-modal-title-text] im Modal-Header) wird
+   dann beim Oeffnen aktualisiert. Buttons ohne dieses Attribut aendern den
+   Titel nicht (bestehende reine Edit-Modale bleiben unberuehrt).
 #}
 <script>
 window.setupEditModal = function (opts) {
@@ -25,10 +31,15 @@ window.setupEditModal = function (opts) {
     form.setAttribute('hx-target', bodySel);
     form.setAttribute('hx-swap', 'innerHTML');
     if (window.htmx) { htmx.process(form); }
+    var modalEl = document.getElementById(opts.modalId);
+    if (modalEl && btn.dataset.modalTitle) {
+      var titleEl = modalEl.querySelector('[data-modal-title-text]');
+      if (titleEl) { titleEl.textContent = btn.dataset.modalTitle; }
+    }
     document.getElementById(opts.bodyId).innerHTML =
       '<div class="text-center text-muted py-4">' +
       '<div class="spinner-border spinner-border-sm" role="status"></div></div>';
-    bootstrap.Modal.getOrCreateInstance(document.getElementById(opts.modalId)).show();
+    bootstrap.Modal.getOrCreateInstance(modalEl).show();
     if (window.htmx) {
       htmx.ajax('GET', url, {target: bodySel, swap: 'innerHTML', headers: {'X-From-Modal': '1'}});
     }

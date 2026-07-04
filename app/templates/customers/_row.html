@@ -68,6 +68,7 @@
     {{ note_pin('customer', c.id, notes_by_entity.get(c.id, []) if notes_by_entity is defined else none) }}
     <button type="button"
        data-url="{{ url_for('customers.edit', customer_id=c.id) }}"
+       data-modal-title="Kontakt bearbeiten"
        onclick="openCustomerEditModal(this)"
        class="btn btn-sm btn-outline-secondary me-1" title="Bearbeiten">
       <i class="fas fa-edit"></i>

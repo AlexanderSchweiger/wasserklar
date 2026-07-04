@@ -641,7 +641,10 @@ tr.overdue { background-color: #fff3cd !important; }
 
 /* Naechster-Halt-Banner ueber der Karte (Klick springt zum Stop). */
 .tour-next-banner {
-  position: absolute; left: .75rem; right: 3.9rem; top: .75rem; z-index: 1000;
+  /* z-index unter Leafets Control-Container (1000), sonst legt sich der
+     Banner ueber die aufgeklappte Layer-Auswahl (Reported Bug: Auswahl
+     erscheint "dahinter" statt davor). */
+  position: absolute; left: 3.4rem; right: 3.9rem; top: .75rem; z-index: 400;
   background: #fff; border: 1px solid rgba(0, 0, 0, .15); border-radius: 8px;
   box-shadow: 0 1px 6px rgba(0, 0, 0, .25); padding: .45rem .7rem;
   font-size: .9rem; cursor: pointer;
@@ -667,7 +670,7 @@ tr.overdue { background-color: #fff3cd !important; }
   /* Tour-Kopf am Handy standardmaessig eingeklappt — spart Platz, die Karte
      bekommt den Grossteil des Schirms. Der Menue-Button (#tour-header-toggle)
      klappt ihn auf. */
-  #tour-header { display: none; }
+  #tour-header { display: none; padding-top: .5rem; }
   #tour-card.tour-header-open #tour-header { display: block; }
   /* Globales Seiten-Chrome (grosser Seitentitel + Flash-Meldungen wie
      „Tour gestartet") am Handy fuer diese Seite ausblenden — der Tourname

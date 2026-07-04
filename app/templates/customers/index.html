@@ -82,9 +82,12 @@
       <a href="{{ url_for('customers.import_upload') }}" class="btn btn-outline-secondary">
         <i class="fas fa-file-import me-1"></i> Importieren
       </a>
-      <a href="{{ url_for('customers.new') }}" class="btn btn-primary">
+      <button type="button" class="btn btn-primary"
+         data-url="{{ url_for('customers.new') }}"
+         data-modal-title="Neuer Kontakt"
+         onclick="openCustomerEditModal(this)">
         <i class="fas fa-plus me-1"></i> Neuer Kontakt
-      </a>
+      </button>
       <div class="dropdown">
         <button class="btn btn-outline-secondary" type="button" data-bs-toggle="dropdown" aria-expanded="false">
           <i class="fas fa-ellipsis-h"></i>
@@ -152,7 +155,17 @@
 // Pagination verlieren wuerde. Faellt defensiv auf Reload zurueck, wenn die
 // Zeile (noch) nicht im DOM ist oder HTMX fehlt.
 window.onCustomerEdited = function (e) {
-  var id = e.detail && e.detail.customer_id;
+  var detail = e.detail || {};
+  // Neuanlage: es gibt noch keine Zeile zum Tauschen — stattdessen die
+  // ganze Tabelle (mit aktuellen Filtern/Sort/Pagination der URL) neu laden.
+  if (detail.created) {
+    if (!window.htmx) { window.location.reload(); return; }
+    htmx.ajax('GET', window.location.pathname + window.location.search, {
+      target: '#customer-table', swap: 'innerHTML',
+    });
+    return;
+  }
+  var id = detail.customer_id;
   var rowEl = id ? document.getElementById('customer-row-' + id) : null;
   if (!rowEl || !window.htmx) { window.location.reload(); return; }
   // Aktuelle Listen-Filter mitsenden, damit das Loeschen-„next" der frisch

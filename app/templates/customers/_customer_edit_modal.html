@@ -1,13 +1,16 @@
-{# Modal-Skelett fuer den Kontakt-Edit. Body wird per HTMX vom
-   `customers.edit`-Endpoint (X-From-Modal-GET) geladen; Submit laeuft nativ
-   ueber htmx (hx-post dynamisch) → 204 + HX-Trigger (closeCustomerEditModal
-   + customerEdited) bzw. Body-Fragment mit Inline-Alert bei Validierungsfehler. #}
+{# Modal-Skelett fuer Kontakt anlegen/bearbeiten. Body wird per HTMX vom
+   `customers.new`- bzw. `customers.edit`-Endpoint (X-From-Modal-GET) geladen;
+   Submit laeuft nativ ueber htmx (hx-post dynamisch) → 204 + HX-Trigger
+   (closeCustomerEditModal + customerEdited) bzw. Body-Fragment mit
+   Inline-Alert bei Validierungsfehler/Dubletten-Warnung. Titel wird per JS
+   aus data-modal-title des aufrufenden Buttons gesetzt (z.B. "Neuer Kontakt"
+   vs. "Kontakt bearbeiten"). #}
 <div class="modal fade" id="customerEditModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title">
-          <i class="fas fa-user-edit me-2"></i> Kontakt bearbeiten
+          <i class="fas fa-user-edit me-2"></i> <span data-modal-title-text>Kontakt bearbeiten</span>
         </h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
       </div>

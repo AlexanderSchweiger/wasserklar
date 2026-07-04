@@ -1,16 +1,18 @@
-{# Modal-Skelett fuer den Property-Edit. Body wird per HTMX vom
-   `properties.edit`-Endpoint (X-From-Modal-GET) geladen, Submit per
-   HTMX-POST → 204 + HX-Trigger (closePropertyEditModal + propertyEdited). #}
+{# Modal-Skelett fuer Liegenschaft anlegen/bearbeiten. Body wird per HTMX vom
+   `properties.new`- bzw. `properties.edit`-Endpoint (X-From-Modal-GET)
+   geladen, Submit per HTMX-POST → 204 + HX-Trigger (closePropertyEditModal +
+   propertyEdited). Titel wird per JS aus data-modal-title des aufrufenden
+   Buttons gesetzt (z.B. "Neue Liegenschaft" vs. "Liegenschaft bearbeiten"). #}
 <div class="modal fade" id="propertyEditModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title">
-          <i class="fas fa-home me-2"></i> Liegenschaft bearbeiten
+          <i class="fas fa-home me-2"></i> <span data-modal-title-text>Liegenschaft bearbeiten</span>
         </h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
       </div>
-      <form id="propertyEditForm" method="post">
+      <form id="propertyEditForm" method="post" hx-headers='{"X-From-Modal": "1"}'>
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="modal-body" id="propertyEditModalBody">
           <div class="text-center text-muted py-4">

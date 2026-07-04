@@ -331,8 +331,6 @@
       (STATUS_COLORS[stop.status] || "#206bc4") + '">' + stop.position + "</span>" +
       "<strong class=\"me-auto\">" + escapeHtml(stop.property_label) + "</strong>" +
       statusBadge(stop) +
-      '<button type="button" class="btn btn-sm btn-icon btn-ghost-secondary" data-tour-action="back" title="Zur Liste">' +
-      '<i class="fas fa-times"></i></button>' +
       "</div>" +
       '<div class="text-secondary mb-1"><i class="fas fa-map-marker-alt me-1"></i>' +
       escapeHtml(stop.address) + "</div>" +

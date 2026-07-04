@@ -238,12 +238,24 @@ def bulk_set_address():
 @bp.route("/new", methods=["GET", "POST"])
 @login_required
 def new():
+    is_modal = bool(request.headers.get("X-From-Modal"))
+
     if request.method == "POST":
         prop = _property_from_form(Property())
         db.session.add(prop)
         db.session.commit()
+        if is_modal:
+            resp = make_response("", 204)
+            resp.headers["HX-Trigger"] = json.dumps({
+                "closePropertyEditModal": True,
+                "propertyEdited": {"property_id": prop.id, "created": True},
+            })
+            return resp
         flash(f"Objekt '{prop.label()}' angelegt.", "success")
         return redirect(url_for("properties.index"))
+
+    if is_modal:
+        return render_template("properties/_property_edit_form_body.html", property=Property())
     return render_template("properties/form.html", property=None)
 
 
