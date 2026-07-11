@@ -118,6 +118,13 @@
                  class="btn btn-sm btn-ghost-secondary" hx-boost="false">
                 <i class="fas fa-history me-1"></i>Alle {{ s.count }} Befunde
               </a>
+              {% if s.latest_status == 'alarm' and current_user.has_permission('circulars') %}
+              <a href="{{ url_for('circulars.index', new='1', water_sample_id=s.latest.id) }}"
+                 class="btn btn-sm btn-danger" hx-boost="false"
+                 title="Aus diesem Alarm-Befund eine Abkochempfehlung erstellen">
+                <i class="fas fa-bullhorn me-1"></i>Abkochempfehlung
+              </a>
+              {% endif %}
             </div>
             {% else %}
             <div class="text-secondary small">

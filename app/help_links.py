@@ -98,6 +98,13 @@ ENDPOINT_TO_DOC = {
     "incidents.map_view":          "stoerungsjournal#karte",
     "incidents.print_view":        "stoerungsjournal#bericht",
 
+    # Rundschreiben & Notfall-Kommunikation
+    "circulars.index":             "rundschreiben",
+    "circulars.detail":            "rundschreiben",
+    "circulars.recipients":        "rundschreiben#empfaenger",
+    "circulars.map_select":        "rundschreiben#netzbereich",
+    "circulars.send":              "rundschreiben#versand",
+
     # Projekte
     "projects.index":              "projekte",
 

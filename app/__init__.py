@@ -98,6 +98,9 @@ def create_app(config_name=None):
     from app.schriftfuehrung import bp as schriftfuehrung_bp
     app.register_blueprint(schriftfuehrung_bp)
 
+    from app.circulars import bp as circulars_bp
+    app.register_blueprint(circulars_bp)
+
     from app.notes import bp as notes_bp
     app.register_blueprint(notes_bp)
 

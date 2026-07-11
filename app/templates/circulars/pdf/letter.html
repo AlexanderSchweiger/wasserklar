@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<style>
+  /* Briefkopf + Adressblock bewusst identisch zum Rechnungs-PDF
+     (invoices/pdf_template.html) — gleiche Klassen, gleiche design-Variablen. */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: {{ design.font_family }};
+    font-size: 11pt;
+    color: {{ design.text_color }};
+  }
+  .header { display: flex; justify-content: space-between; margin-bottom: 2cm; }
+  .invoice-logo { max-height: 60px; max-width: 220px; margin-bottom: 6px; }
+  .brand-wordmark .bw-name {
+    font-size: 15pt; font-weight: bold; line-height: 1.1;
+    color: {{ design.heading_color }};
+  }
+  .brand-wordmark .bw-sub {
+    font-size: 8pt; letter-spacing: 0.15em; text-transform: uppercase;
+    margin-top: 3px; color: {{ design.muted_color }};
+  }
+  .contact-info { color: {{ design.accent_color }}; line-height: 1.15; }
+  .recipient { margin-top: 0.3cm; }
+  .sender-return {
+    font-size: 7pt;
+    color: {{ design.muted_color }};
+    line-height: 1.2;
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    border-bottom: 0.5pt solid {{ design.border_color }};
+    padding-bottom: 3px;
+  }
+  h1 {
+    font-size: 18pt;
+    margin: 1cm 0 0.6cm 0;
+    clear: both;
+    color: {{ design.heading_color }};
+  }
+  .body-text { white-space: pre-line; line-height: 1.5; }
+  .closing { margin-top: 0.8cm; }
+  .footer {
+    margin-top: 2cm;
+    font-size: 9pt;
+    color: {{ design.muted_color }};
+    border-top: 1px solid {{ design.border_color }};
+    padding-top: 0.5cm;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    {% if wg.logo %}<img class="invoice-logo" src="{{ wg.logo }}" alt="{{ wg.name }}">
+    {% elif wg.logo_text %}
+    <div class="brand-wordmark">
+      <div class="bw-name">{{ wg.logo_text }}</div>
+      {% if wg.logo_subtitle %}<div class="bw-sub">{{ wg.logo_subtitle }}</div>{% endif %}
+    </div>
+    {% endif %}
+  </div>
+  <div class="contact-info">
+    {% if contact_info %}<div style="font-size:{{ contact_info_font_size | default(10) }}pt">{{ contact_info | safe }}</div>{% endif %}
+  </div>
+</div>
+
+<div class="recipient">
+  {% if invoice_sender_address %}<div class="sender-return">{{ invoice_sender_address | e }}</div>{% endif %}
+  {{ customer.letter_name }}<br>
+  {% set street = [customer.strasse, customer.hausnummer] | select | join(' ') %}
+  {% set city = [customer.plz, customer.ort] | select | join(' ') %}
+  {% if street %}{{ street }}<br>{% endif %}
+  {% if city %}{{ city }}<br>{% endif %}
+  {% if customer.land and customer.land != 'Österreich' %}{{ customer.land }}<br>{% endif %}
+</div>
+
+<h1>{{ subject }}</h1>
+
+<div class="body-text">{{ body_text }}</div>
+
+{% if wg.name %}<p class="closing">{{ wg.name }}</p>{% endif %}
+
+<div class="footer">
+  {{ wg.name }}
+  {% if wg.address %} &mdash; {{ wg.address | replace('\n', ' | ') | replace('\\n', ' | ') }}{% endif %}
+  {% if wg.email %} &mdash; {{ wg.email }}{% endif %}
+</div>
+
+</body>
+</html>

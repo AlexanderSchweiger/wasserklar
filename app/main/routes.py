@@ -4,7 +4,7 @@ from sqlalchemy import extract, func, case
 from app.main import bp
 from app.extensions import db
 from app.models import (Invoice, Booking, WaterMeter, MeterReading, Property,
-                        BillingPeriod, DunningPolicy, DunningNotice)
+                        BillingPeriod, DunningPolicy, DunningNotice, Circular)
 from app.accounting import services as acc_svc
 from app.dunning import services as dunning_svc
 from app.network import services as technik_svc
@@ -126,6 +126,23 @@ def dashboard():
         row["type_label"] = technik_vocab.feature_type_label(row["feature"].feature_type)
         row["kind_label"] = technik_vocab.maintenance_kind_label(row["log"].kind)
 
+    # Aktive Abkochempfehlungen: versendete boil_water-Rundschreiben ohne bereits
+    # versendete Entwarnung (all_clear-Nachfolger). Billige Query (sehr wenige
+    # Notfälle) — Muster wie die technik_inspections_due-Erinnerung.
+    active_advisories = []
+    sent_boil = (
+        Circular.query
+        .filter(Circular.kind == Circular.KIND_BOIL_WATER,
+                Circular.status == Circular.STATUS_SENT)
+        .order_by(Circular.sent_at.desc())
+        .all()
+    )
+    for c in sent_boil:
+        cleared = any(s.kind == Circular.KIND_ALL_CLEAR and s.status == Circular.STATUS_SENT
+                      for s in c.successors)
+        if not cleared:
+            active_advisories.append(c)
+
     # Saldo laufendes Jahr (Stornopaare werden über den Service ausgeschlossen)
     _, _, year_income, year_expense, year_balance = acc_svc.year_income_expense(current_year)
 
@@ -154,6 +171,7 @@ def dashboard():
         meters_to_swap=meters_to_swap,
         meter_interval=interval,
         technik_inspections_due=technik_inspections_due,
+        active_advisories=active_advisories,
         year_income=year_income,
         year_expense=year_expense,
         year_balance=year_balance,

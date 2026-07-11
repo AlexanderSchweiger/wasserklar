@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% block title %}{{ circular.subject or 'Rundschreiben' }}{% endblock %}
+{% block page_title %}<i class="fas {{ circ_kind_icons.get(circular.kind, 'fa-bullhorn') }} me-2"></i> {{ circular.subject or 'Rundschreiben' }}{% endblock %}
+{% block content %}
+<div class="mb-3">
+  <a href="{{ url_for('circulars.index') }}" class="text-muted"><i class="fas fa-arrow-left me-1"></i>Alle Rundschreiben</a>
+</div>
+
+{% if circular.is_emergency %}
+<div class="alert alert-important alert-danger" role="alert">
+  <i class="fas fa-exclamation-triangle me-1"></i>
+  <strong>Notfall-Rundschreiben.</strong> Beim Versand per E-Mail werden – zum Schutz der Versorgung/Gesundheit –
+  <strong>alle</strong> Kontakte mit E-Mail-Adresse erreicht, auch ohne ausdrückliche Einwilligung
+  (Art. 6 Abs. 1 lit. d DSGVO). Gesperrte Adressen (Bounces) bleiben ausgenommen.
+</div>
+{% endif %}
+
+<div class="row g-3">
+  <div class="col-lg-8">
+    <div class="card">
+      <div class="card-header d-flex align-items-center" style="gap:.5rem">
+        <span class="badge {{ circ_kind_badges.get(circular.kind, 'bg-blue-lt') }}">{{ circ_kind_labels.get(circular.kind, circular.kind) }}</span>
+        <span class="badge {{ circ_status_badges.get(circular.status, 'bg-secondary-lt') }}">{{ circ_status_labels.get(circular.status, circular.status) }}</span>
+        {% if circular.sent_at %}<span class="text-muted small">versendet {{ circular.sent_at.strftime('%d.%m.%Y %H:%M') }}</span>{% endif %}
+      </div>
+      <div class="card-body">
+        <div class="mb-2 text-muted small">Betreff</div>
+        <div class="fw-bold mb-3">{{ circular.subject }}</div>
+        <div class="mb-2 text-muted small">Text (Platzhalter {anrede}/{name} werden je Empfänger ersetzt)</div>
+        <div style="white-space: pre-line">{{ circular.body }}</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="card">
+      <div class="card-body">
+        <div class="d-flex justify-content-between"><span class="text-muted">Empfänger</span><strong>{{ recipients | length }}</strong></div>
+        <div class="d-flex justify-content-between"><span class="text-muted">per E-Mail versendet</span><strong>{{ n_email }}</strong></div>
+        <div class="d-flex justify-content-between"><span class="text-muted">per Post gedruckt</span><strong>{{ n_post }}</strong></div>
+        {% if circular.water_sample_id %}
+        <div class="mt-2 small"><i class="fas fa-vial me-1 text-muted"></i>aus Wasserproben-Alarm erstellt</div>
+        {% endif %}
+        {% if circular.incident_id %}
+        <div class="mt-2 small"><i class="fas fa-exclamation-triangle me-1 text-muted"></i>aus Störungsjournal erstellt</div>
+        {% endif %}
+        {% if circular.predecessor %}
+        <div class="mt-2 small"><i class="fas fa-link me-1 text-muted"></i>Entwarnung zu
+          <a href="{{ url_for('circulars.detail', circular_id=circular.predecessor.id) }}">Rundschreiben #{{ circular.predecessor.id }}</a></div>
+        {% endif %}
+      </div>
+      <div class="card-footer">
+        <div class="btn-list">
+          <a href="{{ url_for('circulars.recipients', circular_id=circular.id) }}" class="btn btn-primary w-100">
+            <i class="fas fa-users me-1"></i> Empfänger auswählen
+          </a>
+          <a href="{{ url_for('circulars.send', circular_id=circular.id) }}" class="btn w-100">
+            <i class="fas fa-paper-plane me-1"></i> Versenden
+          </a>
+          <a href="{{ url_for('circulars.preview', circular_id=circular.id) }}" target="_blank" class="btn w-100">
+            <i class="fas fa-file-pdf me-1"></i> Brief-Vorschau
+          </a>
+          {% if circular.kind == 'boil_water' and circular.status == 'sent' and not has_all_clear %}
+          <a href="{{ url_for('circulars.index', new='1', predecessor_id=circular.id) }}" class="btn btn-success w-100">
+            <i class="fas fa-check-circle me-1"></i> Entwarnung erstellen
+          </a>
+          {% endif %}
+          {% if circular.can_edit %}
+          <button class="btn w-100" data-bs-toggle="modal" data-bs-target="#circularEditModal">
+            <i class="fas fa-pen me-1"></i> Bearbeiten
+          </button>
+          <form method="post" action="{{ url_for('circulars.delete', circular_id=circular.id) }}"
+                onsubmit="return confirm('Rundschreiben wirklich löschen?');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-outline-danger w-100"><i class="fas fa-trash me-1"></i> Löschen</button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if logs %}
+<div class="card mt-3">
+  <div class="card-header"><h3 class="card-title">Zustell-Verlauf</h3></div>
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table">
+      <thead><tr><th>Zeitpunkt</th><th>Empfänger</th><th>Art</th><th>Aktion</th></tr></thead>
+      <tbody>
+        {% for log in logs %}
+        <tr>
+          <td class="text-muted">{{ log.occurred_at.strftime('%d.%m.%Y %H:%M') }}</td>
+          <td>{{ log.recipient_name or '—' }}{% if log.recipient_email %}<div class="small text-muted">{{ log.recipient_email }}</div>{% endif %}</td>
+          <td><span class="badge bg-secondary-lt">{{ circ_method_labels.get(log.method, log.method) }}</span></td>
+          <td>{{ circ_action_labels.get(log.action, log.action) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block modals %}
+{% if circular.can_edit %}
+<div class="modal fade" id="circularEditModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <form method="post" action="{{ url_for('circulars.edit', circular_id=circular.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="fas fa-pen me-2"></i>Rundschreiben bearbeiten</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label required">Art</label>
+            <select name="kind" class="form-select" required>
+              {% for k, l in circ_kind_labels.items() %}
+              <option value="{{ k }}" {% if circular.kind == k %}selected{% endif %}>{{ l }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label required">Betreff</label>
+            <input type="text" name="subject" class="form-control" maxlength="200" value="{{ circular.subject }}" required>
+          </div>
+          <div class="mb-1">
+            <label class="form-label required">Text</label>
+            <textarea name="body" class="form-control" rows="16" required>{{ circular.body }}</textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">Abbrechen</button>
+          <button type="submit" class="btn btn-primary"><i class="fas fa-save me-1"></i> Speichern</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

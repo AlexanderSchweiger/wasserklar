@@ -17,7 +17,12 @@
   </a>
   <span class="badge {{ vocab.status_badge(inc.status) }}">{{ vocab.status_label(inc.status) }}</span>
   <span class="badge {{ vocab.severity_badge(inc.severity) }}">{{ vocab.severity_label(inc.severity) }}</span>
-  <div class="ms-auto">
+  <div class="ms-auto btn-list">
+    {% if current_user.has_permission('circulars') %}
+    <a href="{{ url_for('circulars.index', new='1', incident_id=inc.id) }}" class="btn btn-outline-primary" hx-boost="false">
+      <i class="fas fa-bullhorn me-1"></i> Rundschreiben erstellen
+    </a>
+    {% endif %}
     <button type="button" class="btn btn-primary"
             data-url="{{ url_for('incidents.edit', incident_id=inc.id) }}" onclick="openIncidentEditModal(this)">
       <i class="fas fa-edit me-1"></i> Bearbeiten

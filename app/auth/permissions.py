@@ -18,6 +18,7 @@ PERM_AUSWERTUNGEN = "auswertungen"
 PERM_NETWORK = "network"
 PERM_INCIDENTS = "incidents"
 PERM_SCHRIFTFUEHRUNG = "schriftfuehrung"
+PERM_CIRCULARS = "circulars"
 PERM_VERWALTUNG = "verwaltung"
 
 ALL_PERMISSIONS = [
@@ -30,6 +31,7 @@ ALL_PERMISSIONS = [
     (PERM_NETWORK, "Leitungsnetz", "Wasserleitungsplan, Anlagen, Wartung & Prüfung"),
     (PERM_INCIDENTS, "Störungsjournal", "Störungen, Rohrbrüche, Reparaturen & Jahresbericht"),
     (PERM_SCHRIFTFUEHRUNG, "Schriftführung", "Vorstandssitzungen, Hauptversammlungen, Beschlüsse, Schriftverkehr"),
+    (PERM_CIRCULARS, "Rundschreiben", "Rundschreiben & Notfall-Kommunikation, Abkochempfehlung, Abschaltungs-Infos"),
     (PERM_VERWALTUNG, "Verwaltung", "Benutzer, Rollen, Einstellungen, Daten-Export/Import"),
 ]
 

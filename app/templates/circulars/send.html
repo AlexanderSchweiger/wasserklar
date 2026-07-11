@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% block title %}Rundschreiben versenden{% endblock %}
+{% block page_title %}
+<a href="{{ url_for('circulars.detail', circular_id=circular.id) }}" class="text-secondary me-2"><i class="fas fa-arrow-left"></i></a>
+Rundschreiben versenden
+{% endblock %}
+{% block content %}
+{% if circular.is_emergency %}
+<div class="alert alert-important alert-danger" role="alert">
+  <i class="fas fa-exclamation-triangle me-1"></i>
+  <strong>Notfall-Versand.</strong> Die E-Mails gehen an alle ausgewählten Kontakte mit E-Mail-Adresse —
+  auch ohne ausdrückliche Einwilligung (Rechtsgrundlage Art. 6 Abs. 1 lit. d DSGVO, Schutz lebenswichtiger
+  Interessen / Versorgungsauftrag). Gesperrte Adressen (Bounces/Beschwerden) werden nicht angeschrieben.
+</div>
+{% endif %}
+
+<div class="card mb-3">
+  <div class="card-body">
+    <div class="d-flex flex-wrap align-items-center" style="gap:.75rem">
+      <div>
+        <h3 class="card-title mb-0">{{ circular.subject }}</h3>
+        <div class="text-secondary small">
+          <span class="badge {{ circ_kind_badges.get(circular.kind, 'bg-blue-lt') }}">{{ circ_kind_labels.get(circular.kind, circular.kind) }}</span>
+        </div>
+      </div>
+      <div class="ms-auto btn-list">
+        <button type="button" class="btn btn-primary" id="openEmailModalBtn" {% if not mail_rows %}disabled{% endif %}>
+          <i class="fas fa-paper-plane me-1"></i> Per E-Mail senden
+          <span class="badge bg-white text-primary ms-1">{{ mail_rows | length }}</span>
+        </button>
+        <form method="post" action="{{ url_for('circulars.print_merged', circular_id=circular.id) }}" class="d-inline" hx-boost="false">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn" {% if not post_rows %}disabled{% endif %}>
+            <i class="fas fa-print me-1"></i> Post-Brief drucken
+            <span class="badge bg-secondary-lt ms-1">{{ post_rows | length }}</span>
+          </button>
+        </form>
+      </div>
+    </div>
+    <div class="text-secondary small mt-2">
+      <a href="{{ url_for('circulars.recipients', circular_id=circular.id) }}">Empfänger anpassen</a> ·
+      <a href="{{ url_for('circulars.preview', circular_id=circular.id) }}" target="_blank">Brief-Vorschau</a>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header"><h3 class="card-title"><i class="fas fa-envelope me-1 text-muted"></i> E-Mail ({{ mail_rows | length }})</h3></div>
+      <div class="table-responsive" style="max-height:45vh; overflow-y:auto">
+        <table class="table table-sm table-vcenter card-table">
+          <tbody>
+            {% for r in mail_rows %}
+            <tr>
+              <td>{{ r.customer.letter_name }}<div class="small text-muted">{{ r.customer.email }}</div></td>
+              <td class="text-end">
+                {% if r.eligibility.bypass %}<span class="badge bg-orange-lt">Notfall</span>{% endif %}
+                {% if r.recipient.email_sent_at %}<span class="badge bg-success-lt">gesendet</span>{% endif %}
+              </td>
+            </tr>
+            {% else %}
+            <tr><td class="text-muted text-center py-3">Keine E-Mail-Empfänger.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header"><h3 class="card-title"><i class="fas fa-print me-1 text-muted"></i> Post ({{ post_rows | length }})</h3></div>
+      <div class="table-responsive" style="max-height:45vh; overflow-y:auto">
+        <table class="table table-sm table-vcenter card-table">
+          <tbody>
+            {% for r in post_rows %}
+            <tr>
+              <td>{{ r.customer.letter_name }}<div class="small text-muted">{{ r.customer.address_display() or 'keine Anschrift' }}</div></td>
+              <td class="text-end">{% if r.recipient.post_sent_at %}<span class="badge bg-success-lt">gedruckt</span>{% endif %}</td>
+            </tr>
+            {% else %}
+            <tr><td class="text-muted text-center py-3">Keine Post-Empfänger.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% if blocked_rows %}
+    <div class="alert alert-warning mt-2 mb-0">
+      <i class="fas fa-info-circle me-1"></i>
+      {{ blocked_rows | length }} als „E-Mail“ markierte Empfänger können nicht per E-Mail erreicht werden
+      (gesperrt oder keine Einwilligung/Adresse) — bitte auf „Post“ umstellen.
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block modals %}
+<div class="modal fade" id="emailModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="fas fa-paper-plane me-2"></i>Rundschreiben per E-Mail senden</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-secondary">{{ mail_rows | length }} Empfänger erhalten das Rundschreiben per E-Mail.</p>
+        <div class="table-responsive" style="max-height:50vh; overflow-y:auto">
+          <table class="table table-sm table-vcenter">
+            <thead><tr><th>Name</th><th>E-Mail</th><th class="w-1">Status</th></tr></thead>
+            <tbody id="email-rows">
+              {% for r in mail_rows %}
+              <tr id="em-row-{{ r.customer.id }}">
+                <td>{{ r.customer.letter_name }}</td>
+                <td>{{ r.customer.email }}</td>
+                <td><i class="fas fa-clock text-muted" id="em-icon-{{ r.customer.id }}"></i></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer justify-content-between">
+        <div class="form-check">
+          <input type="checkbox" class="form-check-input" id="email-testmode">
+          <label class="form-check-label text-warning" for="email-testmode">
+            <i class="fas fa-flask me-1"></i> Testmodus (an die eigene Adresse)
+          </label>
+        </div>
+        <div>
+          <a href="{{ url_for('circulars.detail', circular_id=circular.id) }}" class="btn btn-link d-none" id="email-done-btn">Zum Rundschreiben</a>
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+          <button type="button" class="btn btn-primary ms-2" id="email-start-btn">
+            <i class="fas fa-paper-plane me-1"></i> Senden starten
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<input type="hidden" id="circ-csrf" value="{{ csrf_token() }}">
+<script>
+(function () {
+  const ajaxUrl = "{{ url_for('circulars.send_email_ajax', circular_id=circular.id) }}";
+  const openBtn = document.getElementById('openEmailModalBtn');
+  if (!openBtn) return;
+
+  openBtn.addEventListener('click', function () {
+    if (window.bootstrap) {
+      bootstrap.Modal.getOrCreateInstance(document.getElementById('emailModal')).show();
+    }
+  });
+
+  async function startEmailSend() {
+    const startBtn = document.getElementById('email-start-btn');
+    startBtn.disabled = true;
+    const csrf = document.getElementById('circ-csrf').value;
+    const testMode = document.getElementById('email-testmode').checked;
+    const rows = Array.from(document.querySelectorAll('#email-rows tr[id^="em-row-"]'))
+      .map(tr => tr.id.replace('em-row-', ''));
+    for (let i = 0; i < rows.length; i++) {
+      const cid = rows[i];
+      const icon = document.getElementById('em-icon-' + cid);
+      if (icon) icon.className = 'fas fa-spinner fa-spin text-primary';
+      try {
+        let body = 'csrf_token=' + encodeURIComponent(csrf) + '&customer_id=' + encodeURIComponent(cid);
+        if (testMode) body += '&test_mode=1';
+        const resp = await fetch(ajaxUrl, {
+          method: 'POST',
+          headers: { 'X-CSRFToken': csrf, 'Content-Type': 'application/x-www-form-urlencoded' },
+          body,
+        });
+        const json = await resp.json();
+        if (json.ok) {
+          icon.className = json.test_mode ? 'fas fa-check-circle text-warning' : 'fas fa-check-circle text-success';
+          icon.title = json.test_mode ? ('Testmail an ' + json.email) : ('Gesendet an ' + json.email);
+        } else {
+          const td = icon.closest('td');
+          if (td) td.innerHTML = '<i class="fas fa-times-circle text-danger me-1"></i><small class="text-danger">' + (json.error || 'Fehler') + '</small>';
+        }
+      } catch (err) {
+        if (icon) { icon.className = 'fas fa-times-circle text-danger'; icon.title = 'Netzwerkfehler'; }
+      }
+      if (i < rows.length - 1) {
+        await new Promise(r => setTimeout(r, {{ bulk_mail_delay_ms }}));  // 0 = Relay (Vollgas), sonst SMTP-Drossel
+      }
+    }
+    document.getElementById('email-done-btn').classList.remove('d-none');
+  }
+  document.getElementById('email-start-btn').addEventListener('click', startEmailSend);
+})();
+</script>
+{% endblock %}

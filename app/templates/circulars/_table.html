@@ -1,0 +1,35 @@
+<div class="table-responsive">
+  <table class="table table-vcenter card-table">
+    <thead>
+      <tr>
+        <th>Betreff</th>
+        <th>Art</th>
+        <th>Status</th>
+        <th class="text-center">Empfänger</th>
+        <th>Erstellt</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in circulars %}
+      <tr>
+        <td>
+          <a href="{{ url_for('circulars.detail', circular_id=c.id) }}" class="text-reset">
+            <i class="fas {{ circ_kind_icons.get(c.kind, 'fa-bullhorn') }} me-1 text-muted"></i>
+            {{ c.subject or '(ohne Betreff)' }}
+          </a>
+        </td>
+        <td><span class="badge {{ circ_kind_badges.get(c.kind, 'bg-blue-lt') }}">{{ circ_kind_labels.get(c.kind, c.kind) }}</span></td>
+        <td><span class="badge {{ circ_status_badges.get(c.status, 'bg-secondary-lt') }}">{{ circ_status_labels.get(c.status, c.status) }}</span></td>
+        <td class="text-center">{{ c.recipients | length }}</td>
+        <td class="text-muted">{{ c.created_at.strftime('%d.%m.%Y') if c.created_at else '—' }}</td>
+        <td class="text-end">
+          <a href="{{ url_for('circulars.detail', circular_id=c.id) }}" class="btn btn-sm">Öffnen</a>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="text-center text-muted py-4">Noch keine Rundschreiben angelegt.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

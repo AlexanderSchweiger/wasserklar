@@ -8,7 +8,8 @@ Design: **Tabler 1.0.0** (Bootstrap 5 + Font Awesome)
 - **Stammdaten & Abrechnung** — Kunden-/Objektverwaltung, Zähler & Ablesungen (Haupt-/Subzähler, Zählertausch, CSV/Excel-Import, geschätzte Stände), Abrechnungsperioden, Tarife, Einzel- & Massen-Rechnungslauf (PDF, E-Mail), Mahnwesen
 - **Buchhaltung** — Konten & Buchungen, Offene Posten, Projekte/Kostenstellen, Bankauszug-Import (CAMT/MT940), EÜR, Jahresbericht, USt-Voranmeldung
 - **Betrieb & Technik** — Leitungsnetz-Karte (Hydranten, Schieber, Quellen …), Quellschüttungs-Monitoring, Wasserproben/TWV-Beprobung, Störungs-/Rohrbruch-Journal
-- **Organisation** — Rollen- & Rechte-System (10 Bereiche), Schriftführung (Sitzungen/Protokolle/Beschlüsse, WG-Modus), Betriebsmodus Wassergenossenschaft/Versorger, Voll-Export/Import
+- **Kommunikation** — Rundschreiben & Notfall-Info (Abkochempfehlung mit Anbindung an den Wasserproben-Alarm, Abschaltungs-Infos bei Rohrbruch/Reparatur), Versand per E-Mail oder Post, Netzbereich-Auswahl auf der Karte
+- **Organisation** — Rollen- & Rechte-System (11 Bereiche), Schriftführung (Sitzungen/Protokolle/Beschlüsse, WG-Modus), Betriebsmodus Wassergenossenschaft/Versorger, Voll-Export/Import
 
 ---
 

@@ -1,0 +1,236 @@
+{% extends "base.html" %}
+{% block title %}Empfänger — Rundschreiben{% endblock %}
+{% block page_title %}<i class="fas fa-users me-2"></i> Empfänger auswählen{% endblock %}
+{% block content %}
+<div class="mb-3">
+  <a href="{{ url_for('circulars.detail', circular_id=circular.id) }}" class="text-muted"><i class="fas fa-arrow-left me-1"></i>Zurück zum Rundschreiben</a>
+</div>
+
+{% if circular.is_emergency %}
+<div class="alert alert-warning" role="alert">
+  <i class="fas fa-exclamation-triangle me-1"></i>
+  Notfall-Rundschreiben: E-Mails gehen an <strong>alle</strong> Kontakte mit E-Mail-Adresse, auch ohne
+  Einwilligung (Art. 6 Abs. 1 lit. d DSGVO). Gesperrte Adressen bleiben ausgenommen.
+</div>
+{% endif %}
+
+<form method="post" action="{{ url_for('circulars.recipients', circular_id=circular.id) }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="card">
+    <div class="card-header d-flex align-items-center flex-wrap" style="gap:.5rem">
+      <h3 class="card-title mb-0">
+        <span id="circ-visible-count">{{ rows | length }}</span> von {{ rows | length }} Kontakten
+        · <span id="circ-selected-count">0</span> ausgewählt
+      </h3>
+      <div class="ms-auto btn-list">
+        <a href="{{ url_for('circulars.map_select', circular_id=circular.id) }}" class="btn btn-sm" hx-boost="false">
+          <i class="fas fa-map-marked-alt me-1"></i> Auf Karte (Netzbereich)
+        </a>
+        <button type="button" class="btn btn-sm" onclick="circSelectAll(true)">Alle</button>
+        <button type="button" class="btn btn-sm" onclick="circSelectAll(false)">Keine</button>
+        <button type="submit" class="btn btn-sm btn-primary"><i class="fas fa-paper-plane me-1"></i> Speichern &amp; zum Versand</button>
+      </div>
+    </div>
+    <div class="card-body border-bottom py-2">
+      <div class="row g-2">
+        <div class="col-12 col-md">
+          <input type="search" id="circ-filter-name" class="form-control form-control-sm"
+                 placeholder="Nach Name / E-Mail filtern…" autocomplete="off">
+        </div>
+        <div class="col-12 col-md">
+          <input type="search" id="circ-filter-address" class="form-control form-control-sm"
+                 placeholder="Nach Anschrift filtern…" autocomplete="off">
+        </div>
+        <div class="col-12 col-md-auto">
+          <select id="circ-filter-type" class="form-select form-select-sm">
+            <option value="">Alle Kontaktarten</option>
+            <option value="supplier">Lieferant</option>
+            <option value="member">{{ 'Mitglied' if is_wg else 'Kunde' }}</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-vcenter card-table">
+        <thead>
+          <tr>
+            <th style="width:2rem">
+              <input class="form-check-input m-0" type="checkbox" id="circ-check-all"
+                     title="Alle gefilterten aus-/abwählen">
+            </th>
+            <th class="circ-sortable" data-sort-key="name" role="button" style="cursor:pointer;user-select:none">Kontakt <i class="fas fa-sort text-muted ms-1"></i></th>
+            <th style="width:10rem">Typ</th>
+            <th class="circ-sortable" data-sort-key="address" role="button" style="cursor:pointer;user-select:none">Anschrift <i class="fas fa-sort text-muted ms-1"></i></th>
+            <th style="width:9rem">Versand</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          {% set c = row.customer %}
+          {% set e = row.eligibility %}
+          <tr class="circ-row"
+              data-name="{{ (c.letter_name ~ ' ' ~ c.name ~ ' ' ~ (c.email or '')) | lower }}"
+              data-sort-name="{{ c.letter_name | lower }}"
+              data-address="{{ (c.address_display() or '') | lower }}"
+              data-type="{% if c.is_supplier %}supplier {% endif %}{% if c.is_customer %}member {% endif %}">
+            <td>
+              <input class="form-check-input m-0 circ-check" type="checkbox" name="recipient_ids"
+                     value="{{ c.id }}" {% if row.selected %}checked{% endif %}>
+            </td>
+            <td>
+              {{ c.letter_name }}
+              {% if c.email %}<div class="small text-muted">{{ c.email }}</div>{% endif %}
+            </td>
+            <td>
+              {% if c.is_supplier %}<span class="badge bg-info text-white"><i class="fas fa-truck me-1"></i>Lieferant</span>{% endif %}
+              {% if c.is_customer %}<span class="badge bg-primary text-white"><i class="fas fa-user me-1"></i>{{ 'Mitglied' if is_wg else 'Kunde' }}</span>{% endif %}
+              {% if not c.is_supplier and not c.is_customer %}<span class="text-muted">—</span>{% endif %}
+            </td>
+            <td class="text-muted small">
+              {{ c.address_display() or '—' }}
+              {% if e.suppressed %}<span class="badge bg-danger text-white ms-1">E-Mail gesperrt</span>
+              {% elif e.bypass %}<span class="badge bg-orange-lt ms-1">ohne Einwilligung – Notfall</span>
+              {% elif not e.can_email and c.email %}<span class="badge bg-secondary-lt ms-1">keine E-Mail-Einwilligung</span>
+              {% elif not c.email %}<span class="badge bg-secondary-lt ms-1">keine E-Mail</span>{% endif %}
+            </td>
+            <td>
+              <select name="method_{{ c.id }}" class="form-select form-select-sm">
+                <option value="email" {% if row.method == 'email' %}selected{% endif %} {% if not e.can_email %}disabled{% endif %}>E-Mail</option>
+                <option value="post" {% if row.method == 'post' %}selected{% endif %}>Post</option>
+              </select>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="card-footer d-flex">
+      <a href="{{ url_for('circulars.detail', circular_id=circular.id) }}" class="btn btn-link link-secondary">Abbrechen</a>
+      <button type="submit" class="btn btn-primary ms-auto"><i class="fas fa-paper-plane me-1"></i> Speichern & zum Versand</button>
+    </div>
+  </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function () {
+    var nameF = document.getElementById('circ-filter-name');
+    var addrF = document.getElementById('circ-filter-address');
+    var typeF = document.getElementById('circ-filter-type');
+    var sortHeaders = Array.prototype.slice.call(document.querySelectorAll('.circ-sortable'));
+    var sortState = { key: null, dir: 1 };
+    var checkAll = document.getElementById('circ-check-all');
+    var countEl = document.getElementById('circ-visible-count');
+    var selCountEl = document.getElementById('circ-selected-count');
+    var rows = Array.prototype.slice.call(document.querySelectorAll('tr.circ-row'));
+
+    function visibleRows() {
+      return rows.filter(function (r) { return r.style.display !== 'none'; });
+    }
+
+    // Zählt ALLE ausgewählten Empfänger (auch aktuell ausgeblendete).
+    function updateSelectedCount() {
+      if (!selCountEl) { return; }
+      var total = rows.filter(function (r) {
+        var cb = r.querySelector('.circ-check');
+        return cb && cb.checked;
+      }).length;
+      selCountEl.textContent = total;
+    }
+
+    // Blendet Zeilen ein/aus, die Namen-, Anschrift- UND Kontaktart-Filter erfüllen.
+    function applyFilter() {
+      var n = ((nameF && nameF.value) || '').trim().toLowerCase();
+      var a = ((addrF && addrF.value) || '').trim().toLowerCase();
+      var t = (typeF && typeF.value) || '';
+      var shown = 0;
+      rows.forEach(function (r) {
+        var okName = !n || (r.dataset.name || '').indexOf(n) !== -1;
+        var okAddr = !a || (r.dataset.address || '').indexOf(a) !== -1;
+        var okType = !t || (r.dataset.type || '').indexOf(t) !== -1;
+        var show = okName && okAddr && okType;
+        r.style.display = show ? '' : 'none';
+        if (show) { shown++; }
+      });
+      if (countEl) { countEl.textContent = shown; }
+      syncCheckAll();
+      updateSelectedCount();
+    }
+
+    // Sortiert die Zeilen nach Kontakt (Name) oder Anschrift; Klick toggelt
+    // auf-/absteigend. Die DOM-Knoten werden umgehängt, ihr Zustand
+    // (Checkbox, Versandart) bleibt dabei erhalten.
+    function sortBy(key) {
+      if (sortState.key === key) { sortState.dir = -sortState.dir; }
+      else { sortState.key = key; sortState.dir = 1; }
+      var attr = key === 'address' ? 'address' : 'sortName';
+      var tbody = rows.length ? rows[0].parentNode : null;
+      if (!tbody) { return; }
+      rows.slice().sort(function (a, b) {
+        return sortState.dir * (a.dataset[attr] || '').localeCompare(b.dataset[attr] || '', 'de');
+      }).forEach(function (r) { tbody.appendChild(r); });
+      updateSortIcons();
+    }
+
+    function updateSortIcons() {
+      sortHeaders.forEach(function (th) {
+        var icon = th.querySelector('i');
+        if (!icon) { return; }
+        if (th.dataset.sortKey === sortState.key) {
+          icon.className = sortState.dir === 1 ? 'fas fa-sort-up ms-1' : 'fas fa-sort-down ms-1';
+        } else {
+          icon.className = 'fas fa-sort text-muted ms-1';
+        }
+      });
+    }
+
+    // Master-Checkbox spiegelt den Auswahlzustand der SICHTBAREN Zeilen wider.
+    function syncCheckAll() {
+      if (!checkAll) { return; }
+      var boxes = visibleRows()
+        .map(function (r) { return r.querySelector('.circ-check'); })
+        .filter(Boolean);
+      var checked = boxes.filter(function (b) { return b.checked; }).length;
+      checkAll.disabled = boxes.length === 0;
+      checkAll.checked = boxes.length > 0 && checked === boxes.length;
+      checkAll.indeterminate = checked > 0 && checked < boxes.length;
+    }
+
+    if (nameF) { nameF.addEventListener('input', applyFilter); }
+    if (addrF) { addrF.addEventListener('input', applyFilter); }
+    if (typeF) { typeF.addEventListener('change', applyFilter); }
+    sortHeaders.forEach(function (th) {
+      th.addEventListener('click', function () { sortBy(th.dataset.sortKey); });
+    });
+    if (checkAll) {
+      checkAll.addEventListener('change', function () {
+        visibleRows().forEach(function (r) {
+          var cb = r.querySelector('.circ-check');
+          if (cb) { cb.checked = checkAll.checked; }
+        });
+        checkAll.indeterminate = false;
+        updateSelectedCount();
+      });
+    }
+    rows.forEach(function (r) {
+      var cb = r.querySelector('.circ-check');
+      if (cb) {
+        cb.addEventListener('change', function () { syncCheckAll(); updateSelectedCount(); });
+      }
+    });
+
+    // Alle/Keine-Buttons wirken nur auf die gerade gefilterten (sichtbaren) Zeilen.
+    window.circSelectAll = function (on) {
+      visibleRows().forEach(function (r) {
+        var cb = r.querySelector('.circ-check');
+        if (cb) { cb.checked = on; }
+      });
+      syncCheckAll();
+      updateSelectedCount();
+    };
+
+    applyFilter();
+  })();
+</script>
+{% endblock %}

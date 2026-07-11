@@ -3226,3 +3226,183 @@ class Note(db.Model):
 
     def __repr__(self):
         return f"<Note #{self.id} {self.entity_type}:{self.entity_id} pinned={self.pinned}>"
+
+
+# ---------------------------------------------------------------------------
+# Rundschreiben & Notfall-Kommunikation (Abkochempfehlung / Abschaltungs-Info)
+# ---------------------------------------------------------------------------
+
+class Circular(db.Model):
+    """Ein Rundschreiben an die Mitglieder — normale Mitteilung oder Notfall
+    (Abkochempfehlung, Wasserabschaltung).
+
+    Strukturell wie eine Sitzungseinladung (Empfaenger je Zeile, Versand per
+    E-Mail oder Post, Zustell-Log), aber ohne Sitzungsbezug und fuer beide
+    Mandant-Typen. Der ``body`` ist bewusst **Plaintext** mit
+    Empfaenger-Platzhaltern (``{anrede}``/``{name}``): identisch fuer Mail und
+    Brief-PDF (``white-space: pre-line``), und der Notfall-Mailpfad haengt nicht
+    an WeasyPrint. Ereignis-Details (Datum, Gebiet, Messwerte) werden beim
+    Erstellen als konkreter Text eingesetzt, nicht zur Versandzeit.
+
+    Notfall-Arten (``EMERGENCY_KINDS``) umgehen das E-Mail-Einwilligungs-Gate
+    (``Customer.wants_email``): bei einer Abkochempfehlung zaehlt der
+    Versorgungsauftrag/Gesundheitsschutz (DSGVO Art. 6 Abs. 1 lit. d) — die
+    Sperrliste (``EmailSuppression``) bleibt aber IMMER wirksam.
+    """
+    __tablename__ = "circulars"
+
+    KIND_BOIL_WATER = "boil_water"          # Abkochempfehlung
+    KIND_ALL_CLEAR = "all_clear"            # Entwarnung
+    KIND_PLANNED_OUTAGE = "planned_outage"  # Geplante Abschaltung/Reparatur
+    KIND_OUTAGE = "outage"                  # Rohrbruch/Stoerung (akuter Ausfall)
+    KIND_GENERAL = "general"                # Freies Rundschreiben
+    KINDS = (KIND_BOIL_WATER, KIND_ALL_CLEAR, KIND_PLANNED_OUTAGE,
+             KIND_OUTAGE, KIND_GENERAL)
+
+    # Arten, die das E-Mail-Einwilligungs-Gate umgehen (nur E-Mail-Adresse noetig).
+    EMERGENCY_KINDS = frozenset({KIND_BOIL_WATER, KIND_ALL_CLEAR, KIND_OUTAGE})
+
+    STATUS_DRAFT = "draft"     # Entwurf (bearbeitbar/loeschbar)
+    STATUS_SENT = "sent"       # mind. einmal versendet/gedruckt
+    STATUSES = (STATUS_DRAFT, STATUS_SENT)
+
+    id = db.Column(db.Integer, primary_key=True)
+    kind = db.Column(db.String(20), nullable=False, index=True)
+    subject = db.Column(db.String(200), nullable=False)   # Mail-Betreff = Brief-Ueberschrift
+    body = db.Column(db.Text, nullable=False)             # Plaintext mit {anrede}/{name}
+    status = db.Column(db.String(20), nullable=False, default=STATUS_DRAFT,
+                       server_default=db.text("'draft'"))
+    sent_at = db.Column(db.DateTime, nullable=True)
+
+    # Quell-/Bezugs-Datensaetze (alle optional).
+    water_sample_id = db.Column(
+        db.Integer, db.ForeignKey("water_samples.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )
+    incident_id = db.Column(
+        db.Integer, db.ForeignKey("incidents.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )
+    # Entwarnung -> zugehoerige Abkochempfehlung (Empfaengerkreis geerbt).
+    predecessor_id = db.Column(
+        db.Integer, db.ForeignKey("circulars.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"),
+                              nullable=True)
+
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+    water_sample = db.relationship("WaterSample", foreign_keys=[water_sample_id])
+    incident = db.relationship("Incident", foreign_keys=[incident_id])
+    predecessor = db.relationship("Circular", remote_side=[id],
+                                  foreign_keys=[predecessor_id],
+                                  backref="successors")
+    recipients = db.relationship(
+        "CircularRecipient", backref="circular", lazy="select",
+        cascade="all, delete-orphan",
+    )
+    delivery_logs = db.relationship(
+        "CircularDeliveryLog", backref="circular", lazy="select",
+        cascade="all, delete-orphan",
+        order_by="CircularDeliveryLog.occurred_at.desc()",
+    )
+
+    @property
+    def is_emergency(self):
+        return self.kind in self.EMERGENCY_KINDS
+
+    @property
+    def can_edit(self):
+        """Nur solange Entwurf — nach dem ersten Versand eingefroren (Beleg)."""
+        return self.status == self.STATUS_DRAFT
+
+    def __repr__(self):
+        return f"<Circular #{self.id} {self.kind} {self.status}>"
+
+
+class CircularRecipient(EmailTrackableMixin, db.Model):
+    """Empfaenger-Zeile eines Rundschreibens (je Kontakt genau eine).
+
+    Erbt die E-Mail-Tracking-Felder (Versand-/Zustellstatus, Postmark-Webhook)
+    wie ``MeetingInvitation``. ``delivery_method`` haelt fest, wie dieser
+    Empfaenger informiert wird.
+    """
+    __tablename__ = "circular_recipients"
+
+    EMAIL_SUBJECT_TYPE = "circular"
+
+    METHOD_EMAIL = "email"
+    METHOD_POST = "post"
+    METHOD_NONE = "none"
+
+    id = db.Column(db.Integer, primary_key=True)
+    circular_id = db.Column(db.Integer, db.ForeignKey("circulars.id", ondelete="CASCADE"),
+                            nullable=False, index=True)
+    customer_id = db.Column(db.Integer, db.ForeignKey("customers.id", ondelete="CASCADE"),
+                            nullable=False, index=True)
+    delivery_method = db.Column(db.String(10), nullable=True)   # email | post | none
+    post_sent_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    # E-Mail-Tracking-Spalten kommen aus EmailTrackableMixin.
+
+    customer = db.relationship("Customer", foreign_keys=[customer_id])
+    email_events = db.relationship(
+        "EmailEvent",
+        primaryjoin=(
+            "and_(foreign(EmailEvent.subject_id) == CircularRecipient.id, "
+            "EmailEvent.subject_type == 'circular')"
+        ),
+        order_by="(EmailEvent.occurred_at.desc(), EmailEvent.id.desc())",
+        viewonly=True,
+        lazy="select",
+    )
+
+    __table_args__ = (
+        db.UniqueConstraint("circular_id", "customer_id", name="uq_circular_recipient"),
+    )
+
+    def __repr__(self):
+        return f"<CircularRecipient c={self.circular_id} cust={self.customer_id}>"
+
+
+class CircularDeliveryLog(db.Model):
+    """History, wer wie und wann zu einem Rundschreiben informiert wurde
+    (inkl. erneuter Versaende, Post-Druck und Test-Mails). Spiegel von
+    ``MeetingDeliveryLog`` — DSGVO-Nachweis, gerade fuer den Notfall-Versand
+    ohne Einwilligung."""
+    __tablename__ = "circular_delivery_logs"
+
+    METHOD_EMAIL = "email"
+    METHOD_POST = "post"
+
+    ACTION_SENT = "sent"
+    ACTION_RESENT = "resent"
+    ACTION_PRINTED = "printed"
+    ACTION_TEST = "test"
+
+    id = db.Column(db.Integer, primary_key=True)
+    circular_id = db.Column(db.Integer, db.ForeignKey("circulars.id", ondelete="CASCADE"),
+                            nullable=False, index=True)
+    customer_id = db.Column(db.Integer, db.ForeignKey("customers.id", ondelete="SET NULL"),
+                            nullable=True)
+    recipient_name = db.Column(db.String(200), nullable=True)    # Snapshot
+    recipient_email = db.Column(db.String(255), nullable=True)   # Snapshot
+    method = db.Column(db.String(10), nullable=False)            # email | post
+    action = db.Column(db.String(20), nullable=False)            # sent | resent | printed | test
+    occurred_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"),
+                        nullable=True)
+    note = db.Column(db.String(255), nullable=True)
+
+    user = db.relationship("User", foreign_keys=[user_id])
+
+    def __repr__(self):
+        return f"<CircularDeliveryLog c={self.circular_id} {self.method}/{self.action}>"
+
+
+# E-Mail-Subjekt-Registry: spaete Registrierung (analog DunningNotice), weil
+# CircularRecipient erst hier definiert ist.
+EMAIL_SUBJECT_MODELS[CircularRecipient.EMAIL_SUBJECT_TYPE] = CircularRecipient

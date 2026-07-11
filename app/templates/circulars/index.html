@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}Rundschreiben{% endblock %}
+{% block page_title %}<i class="fas fa-bullhorn me-2"></i> Rundschreiben & Notfall-Info{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="card-header d-flex align-items-center flex-wrap" style="gap:.5rem">
+    <select name="status" class="form-select form-select-sm" style="width:170px"
+      hx-get="{{ url_for('circulars.index') }}" hx-trigger="change" hx-target="#circ-table"
+      hx-include="[name='status'],[name='kind']">
+      <option value="">Alle Status</option>
+      {% for k, l in circ_status_labels.items() %}
+      <option value="{{ k }}" {% if k == status_filter %}selected{% endif %}>{{ l }}</option>
+      {% endfor %}
+    </select>
+    <select name="kind" class="form-select form-select-sm" style="width:190px"
+      hx-get="{{ url_for('circulars.index') }}" hx-trigger="change" hx-target="#circ-table"
+      hx-include="[name='status'],[name='kind']">
+      <option value="">Alle Arten</option>
+      {% for k, l in kinds.items() %}
+      <option value="{{ k }}" {% if k == kind_filter %}selected{% endif %}>{{ l }}</option>
+      {% endfor %}
+    </select>
+    <div class="ms-auto">
+      <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#circularCreateModal">
+        <i class="fas fa-plus me-1"></i> Neues Rundschreiben
+      </button>
+    </div>
+  </div>
+  <div id="circ-table">
+    {% include "circulars/_table.html" %}
+  </div>
+</div>
+{% endblock %}
+
+{% block modals %}
+<div class="modal fade" id="circularCreateModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <form method="post" action="{{ url_for('circulars.new') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="water_sample_id" value="{{ prefill.water_sample_id if prefill and prefill.water_sample_id else '' }}">
+        <input type="hidden" name="incident_id" value="{{ prefill.incident_id if prefill and prefill.incident_id else '' }}">
+        <input type="hidden" name="predecessor_id" value="{{ prefill.predecessor_id if prefill and prefill.predecessor_id else '' }}">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="fas fa-bullhorn me-2"></i>Neues Rundschreiben</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label">Vorlage</label>
+            <select class="form-select" id="circ-template-select">
+              <option value="">— Vorlage wählen (füllt Betreff & Text) —</option>
+              {% for t in templates %}
+              <option value="{{ t.key }}">{{ t.label }}</option>
+              {% endfor %}
+            </select>
+            <div class="form-hint">Die Vorlage füllt Betreff und Text vor. Passe den Text danach an; in eckigen
+              Klammern <code>[…]</code> stehende Lücken bitte ersetzen. <code>{anrede}</code> und <code>{name}</code>
+              werden je Empfänger automatisch eingesetzt.</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label required">Art</label>
+            <select name="kind" id="circ-kind" class="form-select" required>
+              {% for k, l in kinds.items() %}
+              <option value="{{ k }}" {% if prefill and prefill.kind == k %}selected{% endif %}>{{ l }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label required">Betreff</label>
+            <input type="text" name="subject" id="circ-subject" class="form-control" maxlength="200"
+              value="{{ prefill.subject if prefill else '' }}" required>
+          </div>
+          <div class="mb-1">
+            <label class="form-label required">Text</label>
+            <textarea name="body" id="circ-body" class="form-control" rows="14" required>{{ prefill.body if prefill else '' }}</textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">Abbrechen</button>
+          <button type="submit" class="btn btn-primary"><i class="fas fa-arrow-right me-1"></i> Weiter zu den Empfängern</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function () {
+    var TEMPLATES = {{ templates | tojson }};
+    var byKey = {};
+    TEMPLATES.forEach(function (t) { byKey[t.key] = t; });
+
+    var sel = document.getElementById('circ-template-select');
+    var kind = document.getElementById('circ-kind');
+    var subject = document.getElementById('circ-subject');
+    var body = document.getElementById('circ-body');
+
+    if (sel) {
+      sel.addEventListener('change', function () {
+        var t = byKey[sel.value];
+        if (!t) return;
+        if (kind) kind.value = t.kind;
+        subject.value = t.subject;
+        body.value = t.body;
+      });
+    }
+
+    {% if open_modal %}
+    document.addEventListener('DOMContentLoaded', function () {
+      if (window.bootstrap) {
+        var el = document.getElementById('circularCreateModal');
+        if (el) new bootstrap.Modal(el).show();
+      }
+    });
+    {% endif %}
+  })();
+</script>
+{% endblock %}

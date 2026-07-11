@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+{% block title %}Netzbereich wählen — Rundschreiben{% endblock %}
+{% block page_title %}<i class="fas fa-map-marked-alt me-2"></i> Betroffenen Netzbereich wählen{% endblock %}
+
+{% block head_extra %}
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.18.3/dist/leaflet-geoman.css" />
+  <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script defer src="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.18.3/dist/leaflet-geoman.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+  <a href="{{ url_for('circulars.recipients', circular_id=circular.id) }}" class="text-muted" hx-boost="false"><i class="fas fa-arrow-left me-1"></i>Zurück zur Empfängerliste</a>
+</div>
+
+<div class="alert alert-info">
+  <i class="fas fa-info-circle me-1"></i>
+  Ziehe mit dem Rechteck- oder Polygon-Werkzeug (oben links) einen Bereich auf — alle Liegenschaften darin werden
+  ausgewählt. Einzelne Punkte kannst du zusätzlich per Klick an- oder abwählen. „Übernehmen“ fügt die Eigentümer
+  zur Empfängerliste hinzu.
+</div>
+
+<div class="card">
+  <div class="card-header d-flex align-items-center flex-wrap" style="gap:.5rem">
+    <span id="circ-map-count" class="badge bg-blue-lt">0 Liegenschaften · 0 Eigentümer</span>
+    {% if plans %}
+    <div class="dropdown">
+      <button class="btn btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside">
+        <i class="fas fa-layer-group me-1"></i> Pläne
+      </button>
+      <div class="dropdown-menu p-2" style="min-width:240px">
+        <div class="text-muted small mb-1">Leitungen im Hintergrund anzeigen</div>
+        {% for plan in plans %}
+        <label class="form-check">
+          <input class="form-check-input circ-plan-toggle" type="checkbox" value="{{ plan.id }}"
+                 {% if default_plan and plan.id == default_plan.id %}checked{% endif %}>
+          <span class="form-check-label">{{ plan.name }}{% if default_plan and plan.id == default_plan.id %} <span class="text-muted">(Standard)</span>{% endif %}</span>
+        </label>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+    <div class="ms-auto btn-list">
+      <button type="button" class="btn btn-sm" id="circ-map-clear">Auswahl leeren</button>
+      <form method="post" action="{{ url_for('circulars.recipients_from_map', circular_id=circular.id) }}" id="circ-map-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div id="circ-map-inputs"></div>
+        <button type="submit" class="btn btn-sm btn-primary" id="circ-map-submit" disabled>
+          <i class="fas fa-check me-1"></i> Übernehmen
+        </button>
+      </form>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <div id="circ-map" hx-boost="false" style="height:70vh; min-height:420px;"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function () {
+    var CENTER = {{ center | tojson }};
+    var DATA_URL = {{ url_for('circulars.map_data', circular_id=circular.id) | tojson }};
+    var LINES_URL = {{ url_for('circulars.map_lines', circular_id=circular.id) | tojson }};
+
+    function pointInRing(lat, lng, ring) {
+      // Ray-casting; ring = [[lng,lat], ...] (GeoJSON-Reihenfolge).
+      var inside = false;
+      for (var i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        var xi = ring[i][0], yi = ring[i][1];
+        var xj = ring[j][0], yj = ring[j][1];
+        var intersect = ((yi > lat) !== (yj > lat)) &&
+          (lng < (xj - xi) * (lat - yi) / ((yj - yi) || 1e-12) + xi);
+        if (intersect) inside = !inside;
+      }
+      return inside;
+    }
+
+    function init() {
+      if (!window.L) return;
+      var map = L.map('circ-map', { center: CENTER || [47.59, 14.14], zoom: CENTER ? 15 : 7 });
+      L.tileLayer(
+        "https://mapsneu.wien.gv.at/basemap/geolandbasemap/normal/google3857/{z}/{y}/{x}.png",
+        { maxZoom: 19, subdomains: ["", "1", "2", "3", "4"],
+          attribution: 'Datenquelle: <a href="https://www.basemap.at" target="_blank" rel="noopener">basemap.at</a>' }
+      ).addTo(map);
+
+      var selected = {};    // property_id -> target
+      var markers = {};     // property_id -> marker
+      var targets = [];
+      var lineLayers = {};  // plan_id -> L.GeoJSON
+
+      function lineStyle(feature) {
+        var color = (feature.properties && feature.properties.color) || "#868e96";
+        return { color: color, weight: 3, opacity: 0.55 };
+      }
+
+      function loadPlanLines(pid) {
+        if (lineLayers[pid]) return;
+        fetch(LINES_URL + "?plan=" + pid, { headers: { "X-Requested-With": "XMLHttpRequest" } })
+          .then(function (r) { return r.json(); })
+          .then(function (gj) {
+            var layer = L.geoJSON(gj, { style: lineStyle, interactive: false }).addTo(map);
+            layer.bringToBack();
+            lineLayers[pid] = layer;
+          });
+      }
+
+      function removePlanLines(pid) {
+        if (lineLayers[pid]) {
+          map.removeLayer(lineLayers[pid]);
+          delete lineLayers[pid];
+        }
+      }
+
+      document.querySelectorAll(".circ-plan-toggle").forEach(function (cb) {
+        if (cb.checked) loadPlanLines(cb.value);
+        cb.addEventListener("change", function () {
+          if (cb.checked) loadPlanLines(cb.value); else removePlanLines(cb.value);
+        });
+      });
+
+      function styleFor(pid) {
+        return selected[pid]
+          ? { radius: 8, color: "#1c7ed6", fillColor: "#1c7ed6", fillOpacity: 0.85, weight: 2 }
+          : { radius: 6, color: "#666", fillColor: "#adb5bd", fillOpacity: 0.7, weight: 1 };
+      }
+
+      function refresh() {
+        var pids = Object.keys(selected);
+        var owners = 0;
+        pids.forEach(function (pid) { owners += selected[pid].owners.length; });
+        document.getElementById('circ-map-count').textContent =
+          pids.length + ' Liegenschaften · ' + owners + ' Eigentümer';
+        var box = document.getElementById('circ-map-inputs');
+        box.innerHTML = '';
+        pids.forEach(function (pid) {
+          var inp = document.createElement('input');
+          inp.type = 'hidden'; inp.name = 'property_ids'; inp.value = pid;
+          box.appendChild(inp);
+        });
+        document.getElementById('circ-map-submit').disabled = pids.length === 0;
+      }
+
+      function toggle(t) {
+        if (selected[t.property_id]) delete selected[t.property_id];
+        else selected[t.property_id] = t;
+        markers[t.property_id].setStyle(styleFor(t.property_id));
+        refresh();
+      }
+
+      function selectWithinLayer(layer) {
+        var gj = layer.toGeoJSON();
+        var geom = gj.geometry;
+        var rings = geom.type === 'Polygon' ? geom.coordinates
+          : (geom.type === 'MultiPolygon' ? [].concat.apply([], geom.coordinates) : []);
+        targets.forEach(function (t) {
+          var hit = rings.some(function (ring) { return pointInRing(t.lat, t.lng, ring); });
+          if (hit && !selected[t.property_id]) {
+            selected[t.property_id] = t;
+            markers[t.property_id].setStyle(styleFor(t.property_id));
+          }
+        });
+        refresh();
+      }
+
+      fetch(DATA_URL, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          targets = data.targets || [];
+          var bounds = [];
+          targets.forEach(function (t) {
+            var m = L.circleMarker([t.lat, t.lng], styleFor(t.property_id)).addTo(map);
+            var names = t.owners.map(function (o) { return o.name; }).join(', ');
+            m.bindTooltip(t.label + (names ? ' — ' + names : ''));
+            m.on('click', function () { toggle(t); });
+            markers[t.property_id] = m;
+            bounds.push([t.lat, t.lng]);
+          });
+          if (!CENTER && bounds.length) map.fitBounds(bounds, { padding: [30, 30] });
+        });
+
+      // Zeichen-Werkzeuge (nur Rechteck + Polygon) via leaflet-geoman.
+      if (map.pm) {
+        map.pm.addControls({
+          position: 'topleft',
+          drawMarker: false, drawCircle: false, drawCircleMarker: false,
+          drawPolyline: false, drawText: false, drawRectangle: true, drawPolygon: true,
+          editMode: false, dragMode: false, cutPolygon: false, removalMode: true, rotateMode: false,
+        });
+        map.on('pm:create', function (e) {
+          selectWithinLayer(e.layer);
+          // Das gezeichnete Polygon bleibt als visuelle Markierung liegen.
+        });
+      }
+
+      document.getElementById('circ-map-clear').addEventListener('click', function () {
+        Object.keys(selected).forEach(function (pid) {
+          delete selected[pid];
+          if (markers[pid]) markers[pid].setStyle(styleFor(pid));
+        });
+        refresh();
+      });
+    }
+
+    document.addEventListener('DOMContentLoaded', init);
+  })();
+</script>
+{% endblock %}

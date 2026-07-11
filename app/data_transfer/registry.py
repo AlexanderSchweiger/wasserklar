@@ -30,6 +30,7 @@ from app.models import (
     Meeting, MeetingAgendaItem, MeetingInvitation, MeetingDeliveryLog,
     MeetingAttendance, MeetingResolution, MeetingProtocol,
     SchriftverkehrDocument,
+    Circular, CircularRecipient, CircularDeliveryLog,
 )
 
 # Spalten die auf users.id verweisen — werden beim Import auf NULL gesetzt,
@@ -62,6 +63,8 @@ NULL_ON_IMPORT_COLS = {
     MeetingResolution: ["created_by_id"],
     MeetingProtocol: ["created_by_id"],
     SchriftverkehrDocument: ["created_by_id"],
+    Circular: ["created_by_id"],
+    CircularDeliveryLog: ["user_id"],
 }
 
 
@@ -79,6 +82,7 @@ CATEGORIES = {
         Meeting, MeetingAgendaItem, MeetingInvitation, MeetingDeliveryLog,
         MeetingAttendance, MeetingResolution, MeetingProtocol,
         SchriftverkehrDocument,
+        Circular, CircularRecipient, CircularDeliveryLog,
         Note,
     ],
     "buchungen": [
@@ -133,6 +137,9 @@ INSERT_ORDER = [
     Meeting, MeetingAgendaItem, MeetingInvitation, MeetingDeliveryLog,
     MeetingAttendance, MeetingResolution, MeetingProtocol,
     SchriftverkehrDocument,
+    # Rundschreiben: Circular referenziert WaterSample/Incident (beide oben) +
+    # Self-FK predecessor_id (zweiter Pass). Kinder referenzieren Circular + Customer.
+    Circular, CircularRecipient, CircularDeliveryLog,
     # Note ans Ende: sein polymorphes entity_id zeigt potenziell auf JEDE der
     # obigen Tabellen (Customer/Property/Invoice/Booking). Beim Voll-Ersatz
     # bleiben IDs erhalten → korrekt. Im Merge-Modus wird entity_id NICHT
@@ -236,6 +243,10 @@ NATURAL_KEYS = {
     MeetingResolution: None,
     MeetingProtocol: None,
     SchriftverkehrDocument: None,
+    # Rundschreiben: kein stabiler natuerlicher Schluessel → immer Insert.
+    Circular: None,
+    CircularRecipient: None,
+    CircularDeliveryLog: None,
 }
 
 
@@ -305,6 +316,11 @@ FOREIGN_KEYS = {
     MeetingAttendance: {"meeting_id": Meeting, "customer_id": Customer},
     MeetingResolution: {"meeting_id": Meeting, "agenda_item_id": MeetingAgendaItem},
     MeetingProtocol: {"meeting_id": Meeting},
+    # Rundschreiben.
+    Circular: {"water_sample_id": WaterSample, "incident_id": Incident,
+               "predecessor_id": Circular},  # predecessor_id: Self-FK, zweiter Pass
+    CircularRecipient: {"circular_id": Circular, "customer_id": Customer},
+    CircularDeliveryLog: {"circular_id": Circular, "customer_id": Customer},
 }
 
 
@@ -316,6 +332,7 @@ DEFERRED_FK_UPDATES = {
     InvoiceItem: ["dunning_notice_id", "reading_correction_id"],
     NetworkPlan: ["source_plan_id"],         # Self-FK
     NetworkFeature: ["source_feature_id"],   # Self-FK
+    Circular: ["predecessor_id"],            # Self-FK (Entwarnung → Abkochempfehlung)
 }
 
 

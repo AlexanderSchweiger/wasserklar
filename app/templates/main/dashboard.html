@@ -7,6 +7,21 @@
 {# ── Mandant-weite Notizzettel ──────────────────────────────────────────── #}
 {{ note_panel('tenant', none) }}
 
+{# ── Aktive Abkochempfehlung (Notfall-Banner) ───────────────────────────── #}
+{% if active_advisories and current_user.has_permission('circulars') %}
+<div class="alert alert-important alert-danger d-flex align-items-center" role="alert">
+  <i class="fas fa-exclamation-triangle fa-lg me-2"></i>
+  <div class="flex-fill">
+    <strong>Aktive Abkochempfehlung.</strong>
+    {% for a in active_advisories %}
+    <a href="{{ url_for('circulars.detail', circular_id=a.id) }}" class="alert-link">{{ a.subject }}</a>
+    (seit {{ a.sent_at.strftime('%d.%m.%Y') if a.sent_at else '—' }}){% if not loop.last %}, {% endif %}
+    {% endfor %}
+    — sobald die Befunde wieder einwandfrei sind, bitte eine Entwarnung versenden.
+  </div>
+</div>
+{% endif %}
+
 {# ── Stat-Kacheln ───────────────────────────────────────────────────────── #}
 <div class="row row-cards mb-3">
 
