@@ -488,8 +488,16 @@ def generate():
             key=lambda kv: _billing_run_sort_key(kv[1], sort_order),
         )
 
+        # Unterjaehrige Schlussrechnungen (Eigentuemerwechsel) je Objekt:
+        # deren bereits verrechnete Mengen/Gebuehren-Tage werden unten vom
+        # Jahresverbrauch des Nachbesitzers abgezogen.
+        from app.owner_change.services import deductions_for_property
+
         created = 0
         skipped = 0
+        # Objekte, bei denen die Schlussrechnung die Jahresmenge uebersteigt
+        # (Rest auf 0 gekappt) — Sammel-Warnung nach dem Lauf.
+        clamp_warnings = []
         # Pro Kunde nur EINE Rechnung im Lauf mit offenen Schaetz-Korrekturen
         # belasten/gutschreiben (ein Kunde kann mehrere Objekte haben).
         customers_corrected = set()
@@ -500,13 +508,19 @@ def generate():
                 skipped += 1
                 continue
 
-            # Bereits vorhanden?
-            exists = Invoice.query.filter_by(
-                property_id=prop.id, billing_period_id=period.id
+            # Bereits vorhanden? Nur regulaere (standard) Rechnungen blockieren
+            # den Lauf — eine Schlussrechnung (final_settlement) tut das nicht.
+            exists = Invoice.query.filter(
+                Invoice.property_id == prop.id,
+                Invoice.billing_period_id == period.id,
+                Invoice.invoice_kind == Invoice.KIND_STANDARD,
             ).first()
             if exists:
                 skipped += 1
                 continue
+
+            # Abzuege aus unterjaehrigen Schlussrechnungen dieses Objekts.
+            ded = deductions_for_property(prop.id, period.id)
 
             customer = db.session.get(Customer, ownership.customer_id)
 
@@ -531,6 +545,7 @@ def generate():
                 property_id=prop.id,
                 billing_run_id=billing_run.id,
                 billing_period_id=period.id,
+                invoice_kind=Invoice.KIND_STANDARD,
                 date=date.today(),
                 due_date=date.today() + timedelta(days=due_days),
                 status=Invoice.STATUS_DRAFT,
@@ -551,10 +566,22 @@ def generate():
                 getattr(r, "is_estimated", False) for r in prop_readings
             )
 
+            # Bereits per Schlussrechnung verrechnete Mengen (Eigentuemer-
+            # wechsel) abziehen; Rest nie negativ (auf 0 kappen + Warnung).
+            ded_by_meter = ded["by_meter"] if ded else {}
+            ded_total = ded["total"] if ded else Decimal("0")
+            ded_numbers = ded["invoice_numbers"] if ded else []
+
             if is_replacement and print_meter_swap:
                 # Separate Zeile je Zähler
                 for reading in prop_readings:
                     consumption = reading.consumption or Decimal("0")
+                    deducted = ded_by_meter.get(reading.meter_id, Decimal("0"))
+                    if deducted > 0:
+                        consumption = consumption - deducted
+                        if consumption < 0:
+                            clamp_warnings.append(prop.label())
+                            consumption = Decimal("0")
                     meter = reading.meter
                     if meter.installed_to:
                         date_hint = f"ausgebaut {meter.installed_to.strftime('%d.%m.%Y')}"
@@ -563,9 +590,12 @@ def generate():
                         date_hint = f"eingebaut {meter.installed_from.strftime('%d.%m.%Y')}"
                     else:
                         date_hint = "ganzer Zeitraum"
+                    ded_suffix = (
+                        f", abzügl. {deducted.quantize(Decimal('1'))} m³ lt. Schlussrechnung"
+                        if deducted > 0 else "")
                     desc = (
                         f"Wasserverbrauch {period.name} – Zähler {meter.meter_number}"
-                        f" ({date_hint}, {consumption} m³)"
+                        f" ({date_hint}, {consumption} m³{ded_suffix})"
                     )
                     amount = (consumption * tariff.price_per_m3).quantize(Decimal("0.01"))
                     db.session.add(InvoiceItem(
@@ -580,17 +610,28 @@ def generate():
                     ))
             else:
                 # Eine Zeile mit Gesamtverbrauch (Standard)
+                net_consumption = total_consumption
+                if ded_total > 0:
+                    net_consumption = total_consumption - ded_total
+                    if net_consumption < 0:
+                        clamp_warnings.append(prop.label())
+                        net_consumption = Decimal("0")
                 price_str = str(tariff.price_per_m3).replace(".", ",")
                 desc = (
                     f"Wasserverbrauch {period.name}"
-                    f" ({total_consumption.quantize(Decimal('1'))} m³"
+                    f" ({net_consumption.quantize(Decimal('1'))} m³"
                     f" × {price_str} €/m³)"
                 )
-                amount = (total_consumption * tariff.price_per_m3).quantize(Decimal("0.01"))
+                if ded_total > 0:
+                    nums = ", ".join(ded_numbers)
+                    ref = f" (Schlussrechnung {nums})" if nums else ""
+                    desc += (f" – abzüglich {ded_total.quantize(Decimal('1'))} m³"
+                             f" bereits verrechnet{ref}")
+                amount = (net_consumption * tariff.price_per_m3).quantize(Decimal("0.01"))
                 db.session.add(InvoiceItem(
                     invoice_id=inv.id,
                     description=desc,
-                    quantity=total_consumption,
+                    quantity=net_consumption,
                     unit="m³",
                     unit_price=tariff.price_per_m3,
                     amount=amount,
@@ -598,27 +639,44 @@ def generate():
                     is_estimated=is_any_estimated,
                 ))
 
+            # Gebuehren-Aufteilung bei pro-rata-Schlussrechnung: den bereits
+            # dem Altbesitzer verrechneten Tage-Anteil dem Nachbesitzer kuerzen.
+            fee_days = ded["fee_days"] if ded else 0
+            period_days = (period.end_date - period.start_date).days + 1
+
+            def _fee_line(label, fee):
+                """(Beschreibung, Betrag) fuer eine Gebuehrenposition — anteilig
+                gekuerzt, wenn eine pro-rata-Schlussrechnung Tage verrechnet hat."""
+                if fee_days > 0 and period_days > 0:
+                    remaining = max(period_days - fee_days, 0)
+                    amt = (Decimal(str(fee)) * Decimal(remaining)
+                           / Decimal(period_days)).quantize(Decimal("0.01"))
+                    return f"{label} (anteilig {remaining}/{period_days} Tage)", amt
+                return label, fee
+
             # Grundgebühr (nur wenn explizit hinterlegt, auch 0 erzeugt eine Position)
             if effective_base_fee is not None:
+                base_desc, base_amount = _fee_line(base_fee_label, effective_base_fee)
                 db.session.add(InvoiceItem(
                     invoice_id=inv.id,
-                    description=base_fee_label,
+                    description=base_desc,
                     quantity=1,
                     unit="Pauschal",
-                    unit_price=effective_base_fee,
-                    amount=effective_base_fee,
+                    unit_price=base_amount,
+                    amount=base_amount,
                     tax_rate=water_tax,
                 ))
 
             # Zusatzgebühr (nur wenn explizit hinterlegt, auch 0 erzeugt eine Position)
             if effective_additional_fee is not None:
+                add_desc, add_amount = _fee_line(additional_fee_label, effective_additional_fee)
                 db.session.add(InvoiceItem(
                     invoice_id=inv.id,
-                    description=additional_fee_label,
+                    description=add_desc,
                     quantity=1,
                     unit="Pauschal",
-                    unit_price=effective_additional_fee,
-                    amount=effective_additional_fee,
+                    unit_price=add_amount,
+                    amount=add_amount,
                     tax_rate=water_tax,
                 ))
 
@@ -654,6 +712,12 @@ def generate():
             flash(f"Fehler beim Rechnungslauf – alle Änderungen wurden zurückgesetzt: {e}", "danger")
             return redirect(url_for("invoices.generate"))
         flash(f"{created} Rechnungen erstellt, {skipped} übersprungen.", "success")
+        if clamp_warnings:
+            objs = ", ".join(dict.fromkeys(clamp_warnings))
+            flash(
+                f"Bei folgenden Objekten übersteigt die Schlussrechnung den "
+                f"Jahresverbrauch (Rest auf 0 gekappt) – bitte eine Gutschrift "
+                f"an den Altbesitzer manuell prüfen: {objs}.", "warning")
         return redirect(url_for("invoices.billing_run_detail", run_id=billing_run.id))
 
     return render_template(
@@ -1370,6 +1434,14 @@ def delete(invoice_id):
         # Schätz-Korrekturen rückabwickeln (verrechnete zurückgeben, aus der
         # Kappung erzeugte entfernen) BEVOR die Rechnung verschwindet.
         reverse_corrections_for_invoice(invoice)
+        # Verweis eines Eigentuemerwechsels auf diese (Schluss-)Rechnung lösen —
+        # SQLite feuert das FK-``SET NULL`` nicht; ohne das bliebe ein toter
+        # Verweis, den der Deduktions-Join (Status-Filter) zwar ignoriert, aber
+        # der die Detailanzeige verfälscht.
+        from app.models import OwnerChange
+        OwnerChange.query.filter_by(settlement_invoice_id=invoice.id).update(
+            {"settlement_invoice_id": None, "fee_days_billed": None},
+            synchronize_session=False)
         # Verknüpften Offenen Posten entfernen (bei Entwürfen normalerweise keiner).
         if invoice.open_item is not None:
             db.session.delete(invoice.open_item)

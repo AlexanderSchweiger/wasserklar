@@ -50,6 +50,14 @@ ENDPOINT_TO_DOC = {
     "meter_tours.batch":           "zaehlertausch-touren#zettel-workflow",
     "meter_tours.notify":          "zaehlertausch-touren#ankuendigung",
 
+    # Eigentuemerwechsel-Workflow
+    "owner_change.start":          "eigentuemerwechsel",
+    "owner_change.meters":         "eigentuemerwechsel#zaehlerstaende",
+    "owner_change.member":         "eigentuemerwechsel#mitgliedschaft",
+    "owner_change.settlement":     "eigentuemerwechsel#schlussrechnung",
+    "owner_change.confirm":        "eigentuemerwechsel#bestaetigung",
+    "owner_change.result":         "eigentuemerwechsel",
+
     # Rechnungen / OP
     "invoices.index":              "rechnungen",
     "invoices.detail":             "rechnungen#status",

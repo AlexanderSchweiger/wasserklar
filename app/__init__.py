@@ -59,6 +59,9 @@ def create_app(config_name=None):
     from app.meter_tours import bp as meter_tours_bp
     app.register_blueprint(meter_tours_bp)
 
+    from app.owner_change import bp as owner_change_bp
+    app.register_blueprint(owner_change_bp)
+
     from app.periods import bp as periods_bp
     app.register_blueprint(periods_bp)
 

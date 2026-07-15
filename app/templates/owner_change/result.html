@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Eigentümerwechsel durchgeführt{% endblock %}
+{% block page_title %}<i class="fas fa-check-circle text-success me-2"></i> Eigentümerwechsel durchgeführt{% endblock %}
+{% block content %}
+
+<div class="card mb-3">
+  <div class="card-body">
+    <p>Der Eigentümerwechsel für <strong>{{ property.label() }}</strong> zum
+      <strong>{{ change.change_date.strftime('%d.%m.%Y') }}</strong> wurde durchgeführt.</p>
+
+    <dl class="row mb-0">
+      <dt class="col-md-3">Neue Eigentümer</dt>
+      <dd class="col-md-9">
+        {% for c in new_owners %}
+        <a href="{{ url_for('customers.detail', customer_id=c.id) }}" class="badge bg-green-lt me-1">{{ c.name }}</a>
+        {% endfor %}
+      </dd>
+      {% if settlement %}
+      <dt class="col-md-3">Schlussrechnung</dt>
+      <dd class="col-md-9">
+        <a href="{{ url_for('invoices.detail', invoice_id=settlement.id) }}">{{ settlement.invoice_number }}</a>
+        (Entwurf, {{ settlement.total_amount | de_number }} €) — noch versenden.
+      </dd>
+      {% endif %}
+    </dl>
+  </div>
+</div>
+
+<div class="alert alert-info">
+  Der nächste Rechnungslauf verrechnet dem neuen Eigentümer
+  {% if settlement %}nur den <strong>Restverbrauch</strong> ab dem Stichtag{% else %}den <strong>vollen</strong> Periodenverbrauch{% endif %}.
+</div>
+
+<div class="d-flex">
+  <a href="{{ url_for('properties.detail', property_id=property.id) }}" class="btn btn-primary">Zum Objekt</a>
+  {% if settlement %}
+  <a href="{{ url_for('invoices.detail', invoice_id=settlement.id) }}" class="btn btn-outline-secondary ms-2">Zur Schlussrechnung</a>
+  {% endif %}
+</div>
+{% endblock %}

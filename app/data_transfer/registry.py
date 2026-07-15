@@ -15,7 +15,7 @@ from app.models import (
     Customer, Property, PropertyOwnership, WaterMeter,
     WaterTariff, TaxRate, Account, RealAccount, Project,
     FiscalYear, MeterReadingAccessCode, MeterReading, MeterReplacement,
-    MeterTour, MeterTourStop,
+    MeterTour, MeterTourStop, OwnerChange, OwnerChangeMeterValue,
     Invoice, InvoiceItem, BillingRun, BillingPeriod, OpenItem,
     BookingGroup, Booking, Transfer, RealAccountYearBalance,
     DunningPolicy, DunningStage, DunningNotice,
@@ -39,6 +39,7 @@ NULL_ON_IMPORT_COLS = {
     MeterReading: ["created_by_id"],
     MeterReplacement: ["created_by_id"],
     MeterTour: ["created_by_id"],
+    OwnerChange: ["created_by_id"],
     MeterReadingAccessCode: ["created_by_id"],
     ReadingCorrection: ["created_by_id"],
     BillingRun: ["created_by_id"],
@@ -88,6 +89,7 @@ CATEGORIES = {
     "buchungen": [
         MeterReading, MeterReplacement, BillingRun, Invoice, InvoiceItem, OpenItem,
         MeterTour, MeterTourStop,
+        OwnerChange, OwnerChangeMeterValue,
         ReadingCorrection,
         BookingGroup, Booking, Transfer, RealAccountYearBalance,
         BankStatement, BankStatementLine, BankStatementLineAllocation,
@@ -122,6 +124,9 @@ INSERT_ORDER = [
     BillingPeriod, MeterReadingAccessCode, WaterTariff, MeterReading,
     MeterReplacement,
     BillingRun, Invoice, InvoiceItem, OpenItem, ReadingCorrection,
+    # Eigentuemerwechsel NACH Invoice (settlement_invoice_id) + WaterMeter/
+    # BillingPeriod. Meter-Value-Kind NACH OwnerChange.
+    OwnerChange, OwnerChangeMeterValue,
     # Touren NACH MeterReplacement + Invoice (Stop-FKs zeigen auf beide).
     MeterTour, MeterTourStop,
     BookingGroup, Booking, Transfer, RealAccountYearBalance,
@@ -156,6 +161,7 @@ INSERT_ORDER = [
 YEAR_FILTERS = {
     MeterReading: ("date_year", "reading_date"),
     MeterReplacement: ("date_year", "replacement_date"),
+    OwnerChange: ("date_year", "change_date"),
     BillingRun: ("date_year", "created_at"),
     Invoice: ("date_year", "date"),
     OpenItem: "period_year",
@@ -199,6 +205,8 @@ NATURAL_KEYS = {
     MeterReplacement: ("old_meter_id",),  # ein alter Zaehler wird hoechstens einmal ersetzt
     MeterTour: None,                    # kein natuerlicher Schluessel — immer Insert
     MeterTourStop: None,                # Kind einer MeterTour — immer Insert
+    OwnerChange: None,                  # Event ohne stabilen natuerlichen Schluessel — immer Insert
+    OwnerChangeMeterValue: None,        # Kind eines OwnerChange — immer Insert
     BillingRun: None,                   # kein natuerlicher Schluessel
     Invoice: ("invoice_number",),
     InvoiceItem: None,
@@ -270,6 +278,9 @@ FOREIGN_KEYS = {
     MeterTourStop: {"tour_id": MeterTour, "meter_id": WaterMeter,
                     "property_id": Property, "replacement_id": MeterReplacement,
                     "invoice_id": Invoice},
+    OwnerChange: {"property_id": Property, "billing_period_id": BillingPeriod,
+                  "settlement_invoice_id": Invoice},
+    OwnerChangeMeterValue: {"owner_change_id": OwnerChange, "meter_id": WaterMeter},
     BillingRun: {"billing_period_id": BillingPeriod},
     Invoice: {"customer_id": Customer, "property_id": Property, "billing_run_id": BillingRun,
               "billing_period_id": BillingPeriod},

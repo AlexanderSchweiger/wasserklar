@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% from "owner_change/_wizard_steps.html" import wizard_steps %}
+{% block title %}Eigentümerwechsel – Mitgliedschaft{% endblock %}
+{% block page_title %}<i class="fas fa-exchange-alt me-2"></i> Eigentümerwechsel – {{ property.label() }}{% endblock %}
+{% block content %}
+
+{{ wizard_steps(3, True, create_settlement) }}
+
+<form method="post" action="{{ url_for('owner_change.member', property_id=property.id) }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+  <div class="card mb-3">
+    <div class="card-header"><h3 class="card-title">Schritt 3: Mitgliedschaft</h3></div>
+    <div class="card-body">
+
+      <div class="mb-3">
+        <div class="fw-bold mb-2">Altbesitzer</div>
+        {% for c in old_customers %}
+        <label class="form-check">
+          <input type="checkbox" class="form-check-input" name="resign_ids" value="{{ c.id }}"
+                 {% if resign_suggest.get(c.id) %}checked{% endif %}>
+          <span class="form-check-label">
+            {{ c.name }} als <strong>ausgeschieden</strong> markieren
+            (Mitglied bis {{ (stichtag).strftime('%d.%m.%Y') }})
+            {% if not resign_suggest.get(c.id) %}<span class="text-secondary small">– besitzt noch andere Objekte</span>{% endif %}
+          </span>
+        </label>
+        {% endfor %}
+      </div>
+
+      <div class="fw-bold mb-2">Neue Eigentümer</div>
+      {% for c in new_customers %}
+      <div class="row g-3 align-items-end mb-2">
+        <div class="col-md-5"><div>{{ c.name }}</div></div>
+        <div class="col-md-4">
+          <label class="form-label">Status</label>
+          <select name="new_status_{{ c.id }}" class="form-select">
+            {% for key, label in status_labels.items() %}
+            <option value="{{ key }}" {% if key == 'member' %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Mitglied seit</label>
+          <input type="date" name="new_member_since_{{ c.id }}" class="form-control"
+                 value="{{ c.member_since.isoformat() if c.member_since else stichtag.isoformat() }}">
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="d-flex">
+    <a href="{{ url_for('owner_change.meters', property_id=property.id) }}" class="btn btn-link">Zurück</a>
+    <button type="submit" class="btn btn-primary ms-auto">Weiter</button>
+  </div>
+</form>
+{% endblock %}

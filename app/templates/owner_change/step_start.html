@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% from "owner_change/_wizard_steps.html" import wizard_steps %}
+{% block title %}Eigentümerwechsel{% endblock %}
+{% block page_title %}<i class="fas fa-exchange-alt me-2"></i> Eigentümerwechsel – {{ property.label() }}{% endblock %}
+{% block content %}
+
+{{ wizard_steps(1, is_wg, sel.create_settlement) }}
+
+<form method="post" action="{{ url_for('owner_change.start', property_id=property.id) }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+  <div class="card mb-3">
+    <div class="card-header"><h3 class="card-title">Schritt 1: Stichtag &amp; neue Eigentümer</h3></div>
+    <div class="card-body">
+
+      <div class="mb-3">
+        <div class="text-secondary small mb-1">Aktuelle Eigentümer</div>
+        {% for ow in active_ownerships %}
+          <span class="badge bg-secondary-lt me-1">{{ ow.customer.name }}</span>
+        {% endfor %}
+      </div>
+
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label required">Stichtag (Verkaufs-/Übergabedatum)</label>
+          <input type="date" name="stichtag" class="form-control" required
+                 value="{{ sel.stichtag }}">
+          <div class="form-hint">Der Stichtag zählt bereits zum neuen Eigentümer.</div>
+        </div>
+        <div class="col-md-8">
+          <label class="form-label">Abrechnungsperiode</label>
+          <select name="period_id" class="form-select tom-select">
+            {% for p in periods %}
+            <option value="{{ p.id }}"
+              {% if sel.period_id == p.id or (not sel.period_id and suggested_period and suggested_period.id == p.id) %}selected{% endif %}>
+              {{ p.name }} ({{ p.start_date.strftime('%d.%m.%Y') }} – {{ p.end_date.strftime('%d.%m.%Y') }})
+              {% if p.active %} · aktiv{% endif %}
+            </option>
+            {% endfor %}
+          </select>
+          <div class="form-hint">Wird aus dem Stichtag vorgeschlagen — bei Bedarf anpassen.</div>
+        </div>
+      </div>
+
+      <div class="mt-3">
+        <label class="form-label required">Neue Eigentümer</label>
+        <select name="new_customer_ids" class="form-select tom-select" multiple required
+                data-placeholder="Kontakt(e) wählen …">
+          {% for c in customers %}
+          <option value="{{ c.id }}" {% if c.id in sel.new_customer_ids %}selected{% endif %}>{{ c.name }}</option>
+          {% endfor %}
+        </select>
+        <div class="form-hint">Mehrfachauswahl möglich (z.&nbsp;B. Ehepaar).
+          Kontakt fehlt? <a href="{{ url_for('customers.new') }}" target="_blank">Neuen Kontakt anlegen</a>.</div>
+      </div>
+
+      <div class="mt-3">
+        <label class="form-label">Notiz (optional)</label>
+        <textarea name="note" class="form-control" rows="2">{{ sel.note }}</textarea>
+      </div>
+    </div>
+  </div>
+
+  {% if can_bill %}
+  <div class="card mb-3">
+    <div class="card-header"><h3 class="card-title">Schlussrechnung</h3></div>
+    <div class="card-body">
+      <label class="form-check">
+        <input type="checkbox" class="form-check-input" name="create_settlement" value="1"
+               {% if sel.create_settlement %}checked{% endif %}>
+        <span class="form-check-label">Schlussrechnung für den Altbesitzer erstellen (Verbrauch bis zum Stichtag)</span>
+      </label>
+      {% if active_ownerships|length > 1 %}
+      <div class="mt-3">
+        <label class="form-label">Empfänger der Schlussrechnung</label>
+        <select name="settlement_recipient_id" class="form-select">
+          {% for ow in active_ownerships %}
+          <option value="{{ ow.customer_id }}"
+            {% if sel.settlement_recipient_id == ow.customer_id %}selected{% endif %}>{{ ow.customer.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% elif active_ownerships %}
+      <input type="hidden" name="settlement_recipient_id" value="{{ active_ownerships[0].customer_id }}">
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="d-flex">
+    <a href="{{ url_for('properties.detail', property_id=property.id) }}" class="btn btn-link">Abbrechen</a>
+    <button type="submit" class="btn btn-primary ms-auto">Weiter zu den Zählerständen</button>
+  </div>
+</form>
+{% endblock %}

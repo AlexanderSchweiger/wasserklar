@@ -106,7 +106,14 @@ def estimate_meter_value(meter, period):
 # ---------------------------------------------------------------------------
 
 def _issued_invoice_for(property_id, period_id):
-    """Die ausgestellte (nicht Entwurf/storniert) Rechnung fuer Objekt+Periode."""
+    """Die ausgestellte (nicht Entwurf/storniert) Rechnung fuer Objekt+Periode.
+
+    Nur ``standard``-Rechnungen (Jahreslauf): eine Schaetz-Korrektur bezieht
+    sich immer auf die regulaere Perioden-Rechnung. Ohne diesen Filter wuerde
+    eine echte Jahresend-Ablesung, die eine geschaetzte Stichtags-Ablesung
+    ersetzt, faelschlich die versendete Schlussrechnung (Eigentuemerwechsel)
+    treffen und einen unsinnigen Korrekturposten erzeugen.
+    """
     if property_id is None or period_id is None:
         return None
     return (
@@ -114,6 +121,7 @@ def _issued_invoice_for(property_id, period_id):
         .filter(
             Invoice.property_id == property_id,
             Invoice.billing_period_id == period_id,
+            Invoice.invoice_kind == Invoice.KIND_STANDARD,
             Invoice.status.in_(_ISSUED_STATUSES),
         )
         .order_by(Invoice.id.desc())

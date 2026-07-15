@@ -29,6 +29,10 @@
             </a>
           </dd>
           {% endif %}
+          {% if invoice.invoice_kind == invoice.KIND_FINAL_SETTLEMENT %}
+          <dt class="col-sm-5">Art</dt>
+          <dd class="col-sm-7"><span class="badge bg-purple-lt">Schlussrechnung (Eigentümerwechsel)</span></dd>
+          {% endif %}
           <dt class="col-sm-5">Periode</dt>
           <dd class="col-sm-7">{{ invoice.billing_period.name if invoice.billing_period else '—' }}</dd>
           <dt class="col-sm-5">Datum</dt>

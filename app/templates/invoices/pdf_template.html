@@ -120,7 +120,7 @@
   {% endif %}
 </div>
 
-<h1>Rechnung {{ invoice.invoice_number }}</h1>
+<h1>{% if invoice.invoice_kind == invoice.KIND_FINAL_SETTLEMENT %}Schlussrechnung{% else %}Rechnung{% endif %} {{ invoice.invoice_number }}</h1>
 
 {% if invoice.property %}
 <p class="intro">Wir stellen für die Liegenschaft <strong>„{{ invoice.property.address_display() or invoice.property.label() }}"</strong> wie folgt in Rechnung:</p>

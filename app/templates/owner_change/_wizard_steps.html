@@ -1,0 +1,13 @@
+{% macro wizard_steps(current, is_wg, has_settlement) %}
+<ul class="steps steps-counter steps-green my-4">
+  <li class="step-item {% if current == 1 %}active{% endif %}">Stichtag &amp; Eigentümer</li>
+  <li class="step-item {% if current == 2 %}active{% endif %}">Zählerstände</li>
+  {% if is_wg %}
+  <li class="step-item {% if current == 3 %}active{% endif %}">Mitgliedschaft</li>
+  {% endif %}
+  {% if has_settlement %}
+  <li class="step-item {% if current == 4 %}active{% endif %}">Schlussrechnung</li>
+  {% endif %}
+  <li class="step-item {% if current == 5 %}active{% endif %}">Bestätigung</li>
+</ul>
+{% endmacro %}

@@ -86,9 +86,25 @@
     };
   }
 
+  // Aus einem gecachten/serialisierten DOM-Snapshot (htmx-History-Restore,
+  // View-Transition, POST→Redirect auf dieselbe URL) kann ein bereits
+  // gerendertes .ts-wrapper-DOM neben dem <select> zurueckbleiben, waehrend die
+  // lebende .tomselect-Referenz am Element fehlt (frischer, aus einem HTML-
+  // String deserialisierter Knoten). Der Guard `if (el.tomselect) return`
+  // greift dann NICHT und es wird ein ZWEITES Widget daneben gebaut — das
+  // beobachtete „doppelte Status-Dropdown". Vor dem Neuaufbau daher etwaige
+  // Waisen-Wrapper entfernen. Idempotent: ohne Waisen passiert nichts.
+  function removeOrphanTomSelect(el) {
+    var sib;
+    while ((sib = el.previousElementSibling) && sib.classList.contains('ts-wrapper')) sib.remove();
+    while ((sib = el.nextElementSibling) && sib.classList.contains('ts-wrapper')) sib.remove();
+    el.classList.remove('tomselected', 'ts-hidden-accessible');
+  }
+
   function initTomSelects(root) {
     (root || document).querySelectorAll('select.tom-select').forEach(function (el) {
       if (el.tomselect) return;
+      removeOrphanTomSelect(el);
       var cfg = {
         allowEmptyOption: true,
         selectOnTab: true,            // Tab waehlt die markierte Option + springt weiter
@@ -122,6 +138,7 @@
   function initColorSelects(root) {
     (root || document).querySelectorAll('select.color-select').forEach(function (el) {
       if (el.tomselect) return;
+      removeOrphanTomSelect(el);
       new TomSelect(el, {
         allowEmptyOption: true,
         selectOnTab: true,

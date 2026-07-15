@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% from "owner_change/_wizard_steps.html" import wizard_steps %}
+{% block title %}Eigentümerwechsel – Bestätigung{% endblock %}
+{% block page_title %}<i class="fas fa-exchange-alt me-2"></i> Eigentümerwechsel – {{ property.label() }}{% endblock %}
+{% block content %}
+
+{{ wizard_steps(5, is_wg, create_settlement) }}
+
+<div class="card mb-3">
+  <div class="card-header"><h3 class="card-title">Schritt 5: Bestätigung</h3></div>
+  <div class="card-body">
+    <dl class="row mb-0">
+      <dt class="col-md-3">Objekt</dt><dd class="col-md-9">{{ property.label() }}</dd>
+      <dt class="col-md-3">Stichtag</dt><dd class="col-md-9">{{ stichtag.strftime('%d.%m.%Y') }} (Periode {{ period.name }})</dd>
+      <dt class="col-md-3">Bisherige Eigentümer</dt>
+      <dd class="col-md-9">
+        {% for c in old_customers %}<span class="badge bg-secondary-lt me-1">{{ c.name }}</span>{% endfor %}
+        <span class="text-secondary small">— werden zum {{ (stichtag).strftime('%d.%m.%Y') }} beendet</span>
+      </dd>
+      <dt class="col-md-3">Neue Eigentümer</dt>
+      <dd class="col-md-9">
+        {% for c in new_customers %}<span class="badge bg-green-lt me-1">{{ c.name }}</span>{% endfor %}
+      </dd>
+    </dl>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header"><h3 class="card-title">Zählerstände am Stichtag</h3></div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm mb-0">
+        <thead><tr><th>Zähler</th><th class="text-end">Stand am Stichtag (m³)</th></tr></thead>
+        <tbody>
+          {% for mid, d in meter_inputs.items() %}
+          <tr>
+            <td>Zähler #{{ mid }}</td>
+            <td class="text-end">{{ d.value | de_number }}{% if d.is_estimated %} <span class="badge bg-yellow-lt">geschätzt</span>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% if create_settlement %}
+<div class="card mb-3">
+  <div class="card-header">
+    <h3 class="card-title">Schlussrechnung an {{ recipient.name }}</h3>
+    <div class="card-subtitle">Tarif {{ tariff.name if tariff }} · {{ fee_mode_labels.get(state.fee_mode) }}</div>
+  </div>
+  <div class="card-body">
+    {% if preview and preview.has_lines %}
+    <div class="table-responsive">
+      <table class="table table-sm mb-0">
+        <tbody>
+          {% for l in preview.lines %}
+          <tr><td>{{ l.description }}</td><td class="text-end">{{ l.amount | de_number }} €</td></tr>
+          {% endfor %}
+        </tbody>
+        <tfoot><tr><th class="text-end">Brutto</th><th class="text-end">{{ preview.gross_total | de_number }} €</th></tr></tfoot>
+      </table>
+    </div>
+    <div class="text-secondary small mt-2">Wird als <strong>Entwurf</strong> angelegt — Versand über die normale Rechnungs-Ansicht.</div>
+    {% else %}
+    <div class="alert alert-warning mb-0">Die Schlussrechnung hätte keine Positionen — bitte zurückgehen und Stände/Tarif prüfen.</div>
+    {% endif %}
+  </div>
+</div>
+{% else %}
+<div class="alert alert-info">Es wird <strong>keine</strong> Schlussrechnung erstellt. Der volle Perioden­verbrauch
+  wird im nächsten Rechnungslauf dem neuen Eigentümer verrechnet.</div>
+{% endif %}
+
+<form method="post" action="{{ url_for('owner_change.confirm', property_id=property.id) }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="d-flex">
+    <a href="{{ url_for('owner_change.meters', property_id=property.id) }}" class="btn btn-link">Zurück</a>
+    <button type="submit" class="btn btn-primary ms-auto">
+      <i class="fas fa-check me-1"></i> Eigentümerwechsel durchführen
+    </button>
+  </div>
+</form>
+{% endblock %}

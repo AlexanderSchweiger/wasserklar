@@ -683,6 +683,91 @@ class MeterReplacement(db.Model):
                 f"new={self.new_meter_id} {self.replacement_date}>")
 
 
+class OwnerChange(db.Model):
+    """Eigentuemerwechsel-Event beim Liegenschaftsverkauf: Stichtag +
+    Snapshot der zum Stichtag abgerechneten Verbrauchsmengen je Zaehler.
+
+    Der Wizard (app/owner_change/) schreibt zum Stichtag eine Ablesung als
+    normale Perioden-Ablesung (``save_reading``), beendet alle aktiven
+    ``PropertyOwnership`` zum Vortag und legt neue an. Diese Zeile friert ein,
+    wie viel Verbrauch bereits dem Altbesitzer verrechnet wurde
+    (``OwnerChangeMeterValue.consumption_billed``) — der Massen-Rechnungslauf
+    zieht das vom Jahresverbrauch des Nachbesitzers ab. Alt-/Neu-Eigentuemer
+    werden NICHT dupliziert (die ``PropertyOwnership``-Historie + die
+    ``settlement_invoice.customer`` sind die Quelle).
+
+    Muster: ``MeterReplacement`` (Event-Tabelle mit Snapshot + redundanter
+    ``property_id`` fuer Per-Objekt-Abfragen ohne Join)."""
+    __tablename__ = "owner_changes"
+
+    # Grundgebuehr-Modus der Schlussrechnung
+    FEE_MODE_NEW_OWNER_FULL = "new_owner_full"  # Neubesitzer traegt volle Jahresgebuehr
+    FEE_MODE_PRO_RATA = "pro_rata"              # tagegenau geteilt
+
+    id = db.Column(db.Integer, primary_key=True)
+    property_id = db.Column(
+        db.Integer, db.ForeignKey("properties.id"), nullable=False, index=True)
+    billing_period_id = db.Column(
+        db.Integer, db.ForeignKey("billing_periods.id"), nullable=False, index=True)
+    change_date = db.Column(db.Date, nullable=False)  # Stichtag = valid_from der neuen Ownership
+    # Schlussrechnung (optional): ondelete SET NULL feuert auf SQLite NICHT
+    # (kein FK-Pragma) -> der Deduktions-Join filtert zusaetzlich auf einen
+    # nicht-stornierten Invoice, und invoices.delete nullt die Verweise selbst.
+    settlement_invoice_id = db.Column(
+        db.Integer, db.ForeignKey("invoices.id", ondelete="SET NULL"),
+        nullable=True, index=True)
+    base_fee_mode = db.Column(
+        db.String(20), nullable=False, default=FEE_MODE_NEW_OWNER_FULL,
+        server_default=db.text("'new_owner_full'"))
+    # Anzahl Tage, fuer die die Grundgebuehr dem Altbesitzer verrechnet wurde
+    # (nur bei pro_rata gesetzt); NULL = keine Gebuehr auf der Schlussrechnung.
+    fee_days_billed = db.Column(db.Integer, nullable=True)
+    note = db.Column(db.Text, nullable=True)
+    created_by_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    property = db.relationship("Property")
+    billing_period = db.relationship("BillingPeriod")
+    settlement_invoice = db.relationship("Invoice", foreign_keys=[settlement_invoice_id])
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+    meter_values = db.relationship(
+        "OwnerChangeMeterValue", backref="owner_change", lazy="select",
+        cascade="all, delete-orphan")
+
+    def __repr__(self):
+        return f"<OwnerChange property={self.property_id} {self.change_date}>"
+
+
+class OwnerChangeMeterValue(db.Model):
+    """Zaehler-Snapshot zu einem ``OwnerChange``: Stand am Stichtag
+    (``value_at_change``) und der davon dem Altbesitzer verrechnete Verbrauch
+    (``consumption_billed``, NULL = keine Abrechnungsbasis vorhanden)."""
+    __tablename__ = "owner_change_meter_values"
+
+    id = db.Column(db.Integer, primary_key=True)
+    owner_change_id = db.Column(
+        db.Integer, db.ForeignKey("owner_changes.id", ondelete="CASCADE"),
+        nullable=False, index=True)
+    meter_id = db.Column(
+        db.Integer, db.ForeignKey("water_meters.id"), nullable=False, index=True)
+    value_at_change = db.Column(db.Numeric(12, 3), nullable=False)
+    consumption_billed = db.Column(db.Numeric(12, 3), nullable=True)
+    is_estimated = db.Column(
+        db.Boolean, nullable=False, default=False, server_default=db.text("false"))
+
+    meter = db.relationship("WaterMeter")
+
+    __table_args__ = (
+        db.UniqueConstraint("owner_change_id", "meter_id",
+                            name="uq_owner_change_meter"),
+    )
+
+    def __repr__(self):
+        return (f"<OwnerChangeMeterValue oc={self.owner_change_id} "
+                f"meter={self.meter_id} v={self.value_at_change}>")
+
+
 class MeterTour(db.Model):
     """Zaehlertausch-Tour: buendelt faellige Zaehler (Nacheichfrist) zu einer
     abfahrbaren Route. Die Stop-Reihenfolge wird serverseitig per
@@ -1330,6 +1415,14 @@ class Invoice(EmailTrackableMixin, db.Model):
     STATUS_CREDIT = "Guthaben"
     ALL_STATUSES = [STATUS_DRAFT, STATUS_SENT, STATUS_PAID, STATUS_CANCELLED, STATUS_CREDIT]
 
+    # Rechnungsart: 'standard' = regulaerer (Jahres-)Rechnungslauf,
+    # 'final_settlement' = unterjaehrige Schlussrechnung beim Eigentuemerwechsel
+    # (Verbrauch bis zum Stichtag). Der Massen-Rechnungslauf ueberspringt und
+    # verrechnet nur ``standard``-Rechnungen; die Schlussrechnung reduziert den
+    # spaeteren Jahresverbrauch des Nachbesitzers (siehe app/owner_change/).
+    KIND_STANDARD = "standard"
+    KIND_FINAL_SETTLEMENT = "final_settlement"
+
     # Erlaubte manuelle Statuswechsel (Dropdown auf der Detailseite via
     # ``invoices.set_status``). Steuert den Lebenszyklus einer Rechnung:
     #   Entwurf  → Versendet            (Entwurf wird sonst gelöscht, nicht storniert)
@@ -1356,6 +1449,10 @@ class Invoice(EmailTrackableMixin, db.Model):
     date = db.Column(db.Date, default=date.today)
     due_date = db.Column(db.Date)
     status = db.Column(db.String(20), default=STATUS_DRAFT)
+    invoice_kind = db.Column(
+        db.String(20), nullable=False, default=KIND_STANDARD,
+        server_default=db.text("'standard'"),
+    )
     total_amount = db.Column(db.Numeric(10, 2), default=0)
     pdf_path = db.Column(db.String(500))
     doc_path = db.Column(db.String(500))   # gecachte .docx für gesperrte Rechnungen

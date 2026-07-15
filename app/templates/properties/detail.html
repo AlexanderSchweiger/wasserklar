@@ -258,6 +258,10 @@
       <div class="card-header">
         <h3 class="card-title">Besitzer</h3>
         <div class="card-options">
+          <a href="{{ url_for('owner_change.start', property_id=property.id) }}"
+             class="btn btn-sm btn-outline-primary">
+            <i class="fas fa-exchange-alt me-1"></i> Eigentümerwechsel
+          </a>
           <button type="button"
              data-url="{{ url_for('properties.ownership_new', property_id=property.id) }}"
              data-modal-title="Neuer Besitzer"

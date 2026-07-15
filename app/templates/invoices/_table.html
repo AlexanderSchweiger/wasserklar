@@ -44,7 +44,11 @@
       <td>
         <input type="checkbox" name="invoice_ids" value="{{ inv.id }}" class="invoice-cb">
       </td>
-      <td><code>{{ inv.invoice_number }}</code></td>
+      <td><code>{{ inv.invoice_number }}</code>
+        {% if inv.invoice_kind == inv.KIND_FINAL_SETTLEMENT %}
+        <span class="badge bg-purple-lt ms-1" title="Schlussrechnung (Eigentümerwechsel)">SR</span>
+        {% endif %}
+      </td>
       <td>
         <a href="{{ url_for('customers.detail', customer_id=inv.customer_id) }}">
           {{ inv.customer.name }}
