@@ -3,14 +3,20 @@
 Erzeugt 100 Kunden, 120 Objekte, 150 Zaehler, vollstaendige Vorjahres-Abrechnung
 mit Zaehlerstaenden, laufende Periode mit ~20 Zaehlertauschen, gemischte
 Rechnungen / offene Posten / Mahnungen, 2 Bankkonten + Umbuchungen,
-Sammelbuchungen mit Projekten und verschiedenen Steuersaetzen, passende Tarife.
+Buchungen mit Projekten und verschiedenen Steuersaetzen, passende Tarife.
 
-Dazu ein kompletter **Leitungsnetz**-Datensatz: ein aktiver Leitungsplan mit
-3 Quellen (inkl. historischer Schuettungs-Messreihen mit Trockenperioden),
-Hochbehaelter, Zubringer-/Haupt-/Versorgungsleitungen, ~30 Hausanschluessen
-(grossteils Liegenschaften zugeordnet + geocodet, einige bewusst unzugeordnet
-zum Testen der Zuordnen-Funktion), Hydranten/Schiebern mit Wartungs-/Pruef-Logs
-(teils faellig), drei **Probenahmestellen** mit quartalsweisen **Wasserproben/
+Dazu ein kompletter **Leitungsnetz**-Datensatz: ein aktiver Leitungsplan als
+**zusammenhaengendes Netz** (Quellen -> Sammelschacht -> Hochbehaelter ->
+Hauptleitung -> Ortsverteiler -> Versorgungsstraenge), das **alle
+Vokabular-Elementtypen** verwendet: 3 Quellen (inkl. historischer
+Schuettungs-Messreihen mit Trockenperioden), Hochbehaelter, Pumpe, Verteiler,
+Entlueftung, Materialwechsel, Druckminderschacht (sonstiges), Zubringer-/
+Haupt-/Versorgungs-/Hausanschluss-/sonstige Leitungen (Notverbund), ~30
+Hausanschluesse jeweils mit **Anbohrschelle** + Stichleitung (grossteils
+Liegenschaften zugeordnet + geocodet, einige bewusst unzugeordnet zum Testen
+der Zuordnen-Funktion), Strangenden als Endhydrant/Endkappe/Entleerung,
+Hydranten (Ueber-/Unterflur)/Schieber mit Wartungs-/Pruef-Logs (teils
+faellig), drei **Probenahmestellen** mit quartalsweisen **Wasserproben/
 Laborwerten** (groesstenteils unauffaellig, mit einigen Grenzwert-Ueberschreitungen:
 Nitrat-Trend, mikrobiologische Beanstandung, Eisen/Mangan) sowie ein gefuelltes
 **Stoerungsjournal** (Rohrbrueche, Lecks, Druckverlust ...).
@@ -101,10 +107,11 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     """
     from datetime import datetime
     from app.models import (
-        Role, User, Customer, Property, PropertyOwnership, WaterMeter,
+        Role, User, Customer, Property, PropertyOwnership, PropertyWgProfile,
+        WaterMeter,
         MeterReading, MeterReplacement, BillingPeriod, WaterTariff, Account,
         Project, RealAccount,
-        Transfer, Invoice, InvoiceItem, BookingGroup, Booking, OpenItem,
+        Transfer, Invoice, InvoiceItem, Booking, OpenItem,
         DunningPolicy, DunningStage, DunningNotice, FiscalYear,
         NetworkPlan, NetworkFeature, MaintenanceLog, SpringYield, Incident,
         WaterSample, LabResult,
@@ -208,7 +215,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         name=f"Tarif {prev_year}", valid_from=prev_year, valid_to=prev_year,
         base_fee=Decimal("32.00"), additional_fee=Decimal("8.00"),
         price_per_m3=Decimal("1.40"),
-        notes=f"Tarif fuer Periode {prev_year}.",
+        notes=f"Tarif für Periode {prev_year}.",
     )
     t_curr = WaterTariff(
         name=f"Tarif {current_year}", valid_from=current_year, valid_to=None,
@@ -223,12 +230,12 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     # ------------------------------------------------------------------
     # Konten (3 Einnahme, 3 Ausgabe)
     # ------------------------------------------------------------------
-    acc_wasser = Account(code="100", name="Wasserumsatz", description="Wassergebuehren")
-    acc_anschluss = Account(code="110", name="Anschlussgebuehren", description="Einmalige Anschlussgebuehren")
-    acc_mahn = Account(code="120", name="Mahngebuehren", description="Vereinnahmte Mahnspesen")
+    acc_wasser = Account(code="100", name="Wasserumsatz", description="Wassergebühren")
+    acc_anschluss = Account(code="110", name="Anschlussgebühren", description="Einmalige Anschlussgebühren")
+    acc_mahn = Account(code="120", name="Mahngebühren", description="Vereinnahmte Mahnspesen")
     acc_reparatur = Account(code="200", name="Reparaturen", description="Reparatur- und Wartungskosten")
-    acc_buero = Account(code="210", name="Buerobedarf", description="Verwaltungs-Material")
-    acc_bank = Account(code="220", name="Bankkosten", description="Kontofuehrungs- und Kreditzinsen")
+    acc_buero = Account(code="210", name="Bürobedarf", description="Verwaltungs-Material")
+    acc_bank = Account(code="220", name="Bankkosten", description="Kontoführungs- und Kreditzinsen")
     db.session.add_all([acc_wasser, acc_anschluss, acc_mahn, acc_reparatur, acc_buero, acc_bank])
     db.session.flush()
     counts["accounts"] = 6
@@ -239,8 +246,8 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     project_data = [
         ("QSA", "Quellsanierung 2025", "#2ecc71", "Sanierung Hauptquelle Nord"),
         ("LTN", "Leitungstausch Nord", "#3498db", "Erneuerung Hauptleitung Nord-Süd"),
-        ("HYD", "Hydrantenwartung", "#e67e22", "Jaehrliche Hydrantenwartung"),
-        ("VER", "Verwaltung", "#95a5a6", "Allgemeine Verwaltungstaetigkeit"),
+        ("HYD", "Hydrantenwartung", "#e67e22", "Jährliche Hydrantenwartung"),
+        ("VER", "Verwaltung", "#95a5a6", "Allgemeine Verwaltungstätigkeit"),
         ("PMW", "Pumpwerk-Modernisierung", "#9b59b6", "Tausch Druckkessel + Steuerung"),
     ]
     projects = []
@@ -344,6 +351,21 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
             properties.append(p)
     db.session.flush()
     counts["properties"] = len(properties)
+
+    # ------------------------------------------------------------------
+    # WG-Profile (Anteile + Flaeche): unabhaengig vom Mandant-Typ befuellt,
+    # analog zur Schriftfuehrung weiter unten — die Tabelle existiert immer,
+    # nur die UI blendet sie ausserhalb des WG-Modus aus. Flaeche je
+    # Objekttyp gestaffelt, Anteile nach der Vereins-Konvention "1 Anteil
+    # je angefangene 100 m²" (siehe Hinweistext im Objekt-Formular).
+    _AREA_RANGES = {"Haus": (400, 1200), "Garten": (200, 600), "Sonstiges": (100, 2000)}
+    for prop in properties:
+        lo, hi = _AREA_RANGES.get(prop.object_type, (100, 2000))
+        area = rng.randint(lo, hi)
+        shares = -(-area // 100)  # ceil-Division ohne math-Import
+        prop.wg_profile = PropertyWgProfile(shares=shares, area_m2=area)
+    db.session.flush()
+    counts["property_wg_profiles"] = len(properties)
 
     # PropertyOwnerships
     for prop, cust_idx in _zip_props_to_owners(properties):
@@ -487,7 +509,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
             eichjahr=current_year,
             meter_type="main",
             active=True,
-            notes=f"Tausch fuer alten Zaehler {old_meter.meter_number}",
+            notes=f"Tausch für alten Zähler {old_meter.meter_number}",
         )
         db.session.add(m_new)
         db.session.flush()
@@ -596,7 +618,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         # Positionen: Grundgebuehr (10%), Wasser (10%), evtl. Reparatur (20%)
         db.session.add(InvoiceItem(
             invoice_id=inv.id,
-            description="Grundgebuehr Wasserversorgung",
+            description="Grundgebühr Wasserversorgung",
             quantity=Decimal("1"), unit="Stk",
             unit_price=base, amount=base,
             tax_rate=Decimal("10.00"),
@@ -623,30 +645,20 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         if status == Invoice.STATUS_SENT:
             sent_invoices.append(inv)
 
-        # Fuer PAID-Rechnungen: Zahlungsbuchung
+        # Fuer PAID-Rechnungen: Zahlungsbuchung als normale Buchung (keine
+        # Sammelbuchung — die braucht es real erst ab 2 Positionen mit
+        # unterschiedlichen Steuersaetzen, siehe accounting/services.py).
         if status == Invoice.STATUS_PAID:
-            grp = BookingGroup(
-                date=inv_date + timedelta(days=14),
+            pay_date = inv_date + timedelta(days=14)
+            b = Booking(
+                date=pay_date,
+                account_id=acc_wasser.id,
+                amount=inv.total_amount,
                 description=f"Zahlung {inv.invoice_number}",
                 reference=inv.invoice_number,
                 invoice_id=inv.id,
                 customer_id=cust.id,
-                total_amount=inv.total_amount,
-                status=BookingGroup.STATUS_AKTIV,
-                created_by_id=admin.id,
-            )
-            db.session.add(grp)
-            db.session.flush()
-            b = Booking(
-                date=grp.date,
-                account_id=acc_wasser.id,
-                amount=inv.total_amount,
-                description=grp.description,
-                reference=inv.invoice_number,
-                invoice_id=inv.id,
-                customer_id=cust.id,
                 real_account_id=giro.id,
-                group_id=grp.id,
                 tax_rate=Decimal("10.00"),
                 status=Booking.STATUS_VERBUCHT,
                 created_by_id=admin.id,
@@ -661,7 +673,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     # ------------------------------------------------------------------
     extra_op1 = OpenItem(
         customer_id=customers[5].id,
-        description="Anschlussgebuehr Gartenzaehler Nachruestung",
+        description="Anschlussgebühr Gartenzähler Nachrüstung",
         amount=Decimal("120.00"),
         date=today - timedelta(days=45),
         due_date=today + timedelta(days=15),
@@ -672,7 +684,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     )
     extra_op2 = OpenItem(
         customer_id=customers[12].id,
-        description="Saeumniszuschlag manuell",
+        description="Säumniszuschlag manuell",
         amount=Decimal("8.50"),
         date=today - timedelta(days=20),
         due_date=today + timedelta(days=10),
@@ -701,7 +713,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
             if fee and fee > 0:
                 fee_item = InvoiceItem(
                     invoice_id=inv.id,
-                    description=f"Mahngebuehr {stage.name}",
+                    description=f"Mahngebühr {stage.name}",
                     quantity=Decimal("1"), unit="Stk",
                     unit_price=fee, amount=fee,
                     tax_rate=None,
@@ -731,19 +743,21 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     counts["dunning_notices"] = len(sent_invoices)
 
     # ------------------------------------------------------------------
-    # Sammelbuchungen (12) — gemischt Projekte / Steuersaetze / Bankkonten
+    # Buchungen (12) — gemischt Projekte / Steuersaetze / Bankkonten. Normale
+    # Einzelbuchungen ohne BookingGroup-Wrapper (Sammelbuchung ist real erst
+    # ab 2 Positionen mit unterschiedlichen Steuersaetzen relevant).
     # ------------------------------------------------------------------
     # 3 davon auf Kreditkonto (Reparatur / Bankgebuehren / Wartung)
     booking_plan = [
         # (date, description, account, project_index, tax_rate, amount, real_account)
         (date(prev_year, 3, 10), "Reparatur Hydrant Dorfstraße", acc_reparatur, 2, Decimal("20.00"), Decimal("-450.00"), giro),
-        (date(prev_year, 5, 22), "Bueromaterial Q2", acc_buero, 3, Decimal("20.00"), Decimal("-89.50"), giro),
+        (date(prev_year, 5, 22), "Büromaterial Q2", acc_buero, 3, Decimal("20.00"), Decimal("-89.50"), giro),
         (date(prev_year, 6, 15), "Wartung Druckkessel", acc_reparatur, 4, Decimal("20.00"), Decimal("-1250.00"), kredit),
         (date(prev_year, 9, 5), "Bankkosten Q3", acc_bank, None, None, Decimal("-32.40"), giro),
-        (date(prev_year, 11, 18), "Anschlussgebuehr Neuanlage", acc_anschluss, 1, Decimal("20.00"), Decimal("450.00"), giro),
+        (date(prev_year, 11, 18), "Anschlussgebühr Neuanlage", acc_anschluss, 1, Decimal("20.00"), Decimal("450.00"), giro),
         (date(prev_year, 12, 28), "Kreditzinsen Q4", acc_bank, None, None, Decimal("-185.00"), kredit),
         (date(current_year, 2, 11), "Leitungstausch Material", acc_reparatur, 1, Decimal("20.00"), Decimal("-2350.00"), kredit),
-        (date(current_year, 3, 14), "Bueromaterial Toner", acc_buero, 3, Decimal("20.00"), Decimal("-65.00"), giro),
+        (date(current_year, 3, 14), "Büromaterial Toner", acc_buero, 3, Decimal("20.00"), Decimal("-65.00"), giro),
         (date(current_year, 5, 9), "Quellsanierung Vorarbeiten", acc_reparatur, 0, Decimal("20.00"), Decimal("-1820.00"), giro),
         (date(current_year, 6, 21), "Bankkosten Q2", acc_bank, None, None, Decimal("-28.90"), giro),
         (date(current_year, 7, 2), "Hydrantenwartung Sommer", acc_reparatur, 2, Decimal("20.00"), Decimal("-540.00"), giro),
@@ -751,24 +765,17 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     ]
     for bdate, desc, account, proj_idx, tax, amt, ra in booking_plan:
         proj_id = projects[proj_idx].id if proj_idx is not None else None
-        grp = BookingGroup(
-            date=bdate, description=desc, reference=f"BG-{bdate.year}-{bdate.month:02d}{bdate.day:02d}",
-            total_amount=amt, status=BookingGroup.STATUS_AKTIV,
-            created_by_id=admin.id,
-        )
-        db.session.add(grp)
-        db.session.flush()
         b = Booking(
             date=bdate, account_id=account.id, amount=amt,
-            description=desc, reference=grp.reference,
+            description=desc, reference=f"BG-{bdate.year}-{bdate.month:02d}{bdate.day:02d}",
             project_id=proj_id, real_account_id=ra.id,
-            group_id=grp.id, tax_rate=tax,
+            tax_rate=tax,
             status=Booking.STATUS_VERBUCHT,
             created_by_id=admin.id,
         )
         db.session.add(b)
     db.session.flush()
-    counts["booking_groups"] = len(booking_plan)
+    counts["bookings"] = len(booking_plan)
 
     # ------------------------------------------------------------------
     # Umbuchungen (3 Stueck Giro <-> Kredit)
@@ -788,7 +795,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         ),
         Transfer(
             date=date(current_year, 7, 15), amount=Decimal("5000.00"),
-            description="Kreditauszahlung fuer Quellsanierung",
+            description="Kreditauszahlung für Quellsanierung",
             from_real_account_id=kredit.id, to_real_account_id=giro.id,
             created_by_id=admin.id,
         ),
@@ -821,9 +828,10 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         name="Leitungsnetz (Demo)",
         status=NetworkPlan.STATUS_ACTIVE,
         maintenance_enabled=True,
-        description="Demonstrations-Leitungsplan: Quellen, Hochbehaelter, "
-                    "Versorgungsnetz, Hausanschluesse, Hydranten und Schieber "
-                    "rund um den Demo-Ort.",
+        description="Demonstrations-Leitungsplan: Quellen, Sammelschacht, "
+                    "Hochbehälter, Versorgungsnetz, Hausanschlüsse mit "
+                    "Anbohrschellen, Hydranten, Schieber, Entlüftung, "
+                    "Entleerung und Notverbund rund um den Demo-Ort.",
         created_by_id=admin.id, updated_by_id=admin.id,
     )
     db.session.add(plan)
@@ -860,28 +868,53 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         return f
 
     # --- Anlagen (Punkte) ---------------------------------------------
+    # Netz-Topologie (alles haengt zusammen, Punkte liegen AUF den Leitungen):
+    #   3 Quellen --Zubringer--> Quellsammelschacht --Zubringer (Pumpe)-->
+    #   Hochbehaelter --Hauptleitung (2 Abschnitte, geteilt am Material-
+    #   wechsel)--> Ortsverteiler --> 4 Versorgungsstraenge (Hausanschluesse
+    #   via Anbohrschelle + Stichleitung; Strangenden: Endhydrant, Endkappe,
+    #   Entleerung bzw. Notverbund zum Nachbarversorger).
     behaelter_pos = (520, 90)
+    sammel_pos = (700, 90)          # Quellsammelschacht
+    hochpunkt_pos = (460, 95)       # Entlueftung am Hochpunkt der Hauptleitung
+    matwechsel_pos = (300, 108)     # GGG->PE-Uebergang, teilt die Hauptleitung
+    druckminderer_pos = (155, 114)  # auf dem sanierten Ortsabschnitt
+    verteiler_pos = (10, 120)       # Ortsverteiler, Startpunkt aller Straenge
+
+    def lerp(a, b, t):
+        """Punkt auf der Strecke ``a``->``b`` (Meter-Offsets) bei ``t`` in [0,1]."""
+        return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
+
     behaelter = add_point(
         "behaelter", "Hochbehälter Sonnberg", *behaelter_pos,
         accuracy="exakt", material="Beton", year_built=1987,
         ground_level_m=512.0, notes="Nutzinhalt 150 m³, zwei Kammern.",
     )
-    add_point("pumpe", "Druckerhöhung Sonnberg", 500, 78,
-              accuracy="exakt", year_built=2009, manufacturer="Grundfos")
-    pumpe = net_features[-1]
-    # Drei Probenahmestellen (Rohwasser an der Quelle, Behälterabgang, Ortsnetz)
-    # — bewusst ohne rng-Parameter, damit die nachfolgenden rng-Ziehungen
-    # (Quellen/Strassen/Hydranten) unveraendert deterministisch bleiben.
+    add_point("verteiler", "Quellsammelschacht", *sammel_pos,
+              accuracy="exakt", year_built=1987,
+              notes="Sammelt die drei Quellzubringer.")
+    pumpe = add_point(
+        "pumpe", "Druckerhöhung Sonnberg", *lerp(sammel_pos, behaelter_pos, 0.5),
+        accuracy="exakt", year_built=2009, manufacturer="Grundfos",
+        notes="Fördert vom Sammelschacht in den Hochbehälter.")
+    add_point("verteiler", "Ortsverteiler", *verteiler_pos, accuracy="gut",
+              notes="Knoten Hauptleitung → vier Versorgungsstränge.")
+    add_point("entlueftung", "Entlüftung Hochpunkt Sonnberg", *hochpunkt_pos,
+              accuracy="gut", year_built=1992,
+              notes="Automatischer Be-/Entlüfter am Hochpunkt der Hauptleitung.")
+    add_point("materialwechsel", "Materialwechsel GGG → PE", *matwechsel_pos,
+              accuracy="gut",
+              notes="Übergang Duktilguss DN 150 auf PE DN 125 (Teilsanierung 2014).")
+    add_point("sonstiges", "Druckminderschacht Ortseingang", *druckminderer_pos,
+              accuracy="gut", year_built=2014, manufacturer="HAWLE",
+              notes="Druckminderer, reduziert auf 4,5 bar fürs Ortsnetz.")
     probe_behaelter = add_point(
-        "probenahme", "Probenahmestelle Behälterabgang", 514, 92, accuracy="gut",
+        "probenahme", "Probenahmestelle Behälterabgang",
+        *lerp(behaelter_pos, hochpunkt_pos, 0.1), accuracy="gut",
         notes="Reinwasser-Beprobung am Behälterabgang.")
-    add_point("verteiler", "Ortsverteiler", 10, 120, accuracy="gut")
     probe_ortsnetz = add_point(
-        "probenahme", "Probenahmestelle Ortsnetz", 8, 150, accuracy="gut",
-        notes="Zapfstelle am Ende des Versorgungsstrangs (Ortsnetz).")
-    probe_quelle = add_point(
-        "probenahme", "Probenahmestelle Quelle Brunnertal", 895, -290, accuracy="gut",
-        notes="Rohwasser-Beprobung an der Quellfassung.")
+        "probenahme", "Probenahmestelle Ortsnetz", 10, 150, accuracy="gut",
+        notes="Zapfstelle am Versorgungsstrang Dorfstraße (Ortsnetz).")
 
     # 3 Quellen mit je (Position, Basis-Schuettung l/s, Saison-Amplitude,
     # Sommer-Trockenheitsfaktor) — Steinbründl faellt im Trockensommer fast trocken.
@@ -898,25 +931,44 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         )
         springs.append({"f": sp, "pos": sp_pos, "base": base, "amp": amp,
                         "drought": drought})
+    probe_quelle = add_point(
+        "probenahme", "Probenahmestelle Quelle Brunnertal",
+        *lerp(springs[0]["pos"], sammel_pos, 0.03), accuracy="gut",
+        notes="Rohwasser-Beprobung an der Quellfassung.")
 
-    # --- Transport-/Versorgungsleitungen (Linien) ---------------------
+    # --- Transport-/Zubringerleitungen (Linien) -----------------------
+    # Jede Quelle einzeln zum Sammelschacht, von dort EIN Zubringer (mit
+    # Pumpe auf der Strecke) zum Hochbehaelter — keine ueberlagerten Linien.
     for sp in springs:
         add_line("zubringer", f"Zubringer {sp['f'].name}",
-                 [sp["pos"], (700, behaelter_pos[1]), behaelter_pos],
+                 [sp["pos"], sammel_pos],
                  accuracy="geschaetzt", material="PE",
                  dimension_dn=rng.choice([80, 100]), year_built=rng.randint(1985, 2010),
                  pressure_rating="PN 10")
+    add_line("zubringer", "Zubringer Sammelschacht–Hochbehälter",
+             [sammel_pos, behaelter_pos],
+             accuracy="gut", material="PE", dimension_dn=125,
+             year_built=2009, pressure_rating="PN 16")
 
+    # Hauptleitung in zwei Abschnitten, am Materialwechsel-Punkt geteilt
+    # (Alt-Bestand Duktilguss, sanierter PE-Abschnitt Richtung Ort).
     hauptleitung = add_line(
-        "hauptleitung", "Hauptleitung Hochbehälter–Ort",
-        [behaelter_pos, (300, 108), (10, 120)],
+        "hauptleitung", "Hauptleitung Hochbehälter–Ortseingang",
+        [behaelter_pos, hochpunkt_pos, matwechsel_pos],
         accuracy="gut", material="Duktilguss (GGG)", dimension_dn=150,
         year_built=1992, pressure_rating="PN 10",
     )
+    add_line(
+        "hauptleitung", "Hauptleitung Ortseingang–Ortsverteiler",
+        [matwechsel_pos, druckminderer_pos, verteiler_pos],
+        accuracy="gut", material="PE", dimension_dn=125,
+        year_built=2014, pressure_rating="PN 10",
+    )
 
     # --- Versorgungsstraenge + Hausanschluesse ------------------------
-    # Je Strasse eine Versorgungsleitung; entlang sechs Hausanschluesse, jeweils
-    # mit Stichleitung und einer geocodeten Liegenschaft (BEV-Treffer simuliert).
+    # Je Strasse eine Versorgungsleitung AB dem Ortsverteiler (das Netz haengt
+    # zusammen); entlang sechs Hausanschluesse — jeweils Anbohrschelle auf der
+    # Leitung, Stichleitung und geocodete Liegenschaft (BEV-Treffer simuliert).
     streets = [
         ("Dorfstraße",  (10, 120),  (0, 27)),     # nach Osten
         ("Hauptstraße", (-40, 116), (-26, 3)),    # nach Suedwesten
@@ -925,6 +977,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     ]
     assigned_props = properties[:24]
     versorg_lines = []
+    street_ends = []
     ha_stub_example = None
     ha_idx = 0
     geocoded_count = 0
@@ -933,28 +986,42 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     for st_name, (s_n, s_e), (d_n, d_e) in streets:
         n_houses = 6
         end = (s_n + d_n * (n_houses + 1), s_e + d_e * (n_houses + 1))
+        # Die Anbohrschellen-Punkte liegen als (kollineare) Zwischen-Vertices
+        # in der Leitungsgeometrie — Stichleitungen teilen sich damit einen
+        # Vertex mit der Versorgungsleitung (explizit zusammenhaengende
+        # Topologie, Rendering unveraendert).
+        taps = [(s_n + d_n * j, s_e + d_e * j) for j in range(1, n_houses + 1)]
+        waypoints = [(s_n, s_e), *taps, end]
+        if (s_n, s_e) != verteiler_pos:
+            waypoints.insert(0, verteiler_pos)   # Anbindung an den Ortsverteiler
         vleitung = add_line(
             "versorgungsleitung", f"Versorgungsleitung {st_name}",
-            [(s_n, s_e), end], accuracy="gut",
+            waypoints, accuracy="gut",
             material=rng.choice(["PE", "Guss (GG)", "PVC"]),
             dimension_dn=rng.choice([80, 100, 100, 125]),
             year_built=rng.randint(1978, 2016), pressure_rating="PN 10",
         )
         versorg_lines.append(vleitung)
+        street_ends.append(end)
         # Einheits-Perpendikular (Meter) fuer den seitlichen Hausversatz.
         mag = math.hypot(d_n, d_e)
         pn, pe = d_e / mag, -d_n / mag
-        for j in range(1, n_houses + 1):
-            base_n, base_e = s_n + d_n * j, s_e + d_e * j
+        for j, (base_n, base_e) in enumerate(taps, start=1):
             side = 1 if j % 2 else -1
             ha_n, ha_e = base_n + side * 14 * pn, base_e + side * 14 * pe
             prop = assigned_props[ha_idx]
+            # Ein DN je Haus: Anbohrschelle, Stichleitung und Hausanschluss
+            # gehoeren technisch zusammen.
+            dn = rng.choice([25, 32, 40])
+            add_point("anbohrschelle", None, base_n, base_e, accuracy="gut",
+                      dimension_dn=dn,
+                      manufacturer=rng.choice(["HAWLE", "VONROLL"]))
             add_point("hausanschluss", None, ha_n, ha_e, accuracy="gut",
-                      material="PE", dimension_dn=rng.choice([25, 32, 40]),
+                      material="PE", dimension_dn=dn,
                       year_built=rng.randint(1980, 2020), property_id=prop.id)
             stub = add_line("hausanschlussleitung", None,
                             [(base_n, base_e), (ha_n, ha_e)],
-                            accuracy="geschaetzt", material="PE", dimension_dn=25)
+                            accuracy="geschaetzt", material="PE", dimension_dn=dn)
             if ha_stub_example is None:
                 ha_stub_example = stub
             # Liegenschaft ~4 m neben dem Hausanschluss geocoden (BEV-Treffer).
@@ -963,6 +1030,25 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
             prop.geocoded_at = geocode_ts
             geocoded_count += 1
             ha_idx += 1
+
+    # --- Strangenden: Endkappe, Entleerung, Notverbund ----------------
+    # Dorfstrasse endet im Endhydranten H01 (siehe Hydranten unten), der
+    # Birkenweg in einer Endkappe, der Quellweg in einer Entleerung; die
+    # Hauptstrasse geht in den normal geschlossenen Notverbund zum
+    # Nachbarversorger ueber (sonstige Leitung + Uebergabeschieber S06).
+    add_point("leitungsende", "Endkappe Birkenweg", *street_ends[2],
+              accuracy="gut",
+              notes="Blindes Leitungsende — Spülpunkt, bei Netzspülung "
+                    "mitspülen (Stagnationsgefahr).")
+    add_point("auslauf", "Entleerung Quellweg", *street_ends[3],
+              accuracy="gut", dimension_dn=50,
+              notes="Entleerung in den Vorfluter (Quellbach).")
+    add_line("sonstige_leitung", "Notverbund Nachbarversorger",
+             [street_ends[1],
+              (street_ends[1][0] - 78, street_ends[1][1] + 9)],
+             accuracy="geschaetzt", material="PE", dimension_dn=100,
+             notes="Verbindungsleitung zur Nachbargenossenschaft — "
+                   "Übergabeschieber normal geschlossen.")
 
     # 3 unzugeordnete Hausanschluesse NAHE je einer freien geocodeten
     # Liegenschaft -> per „Zuordnen"-Button (assign-hausanschluss) loesbar.
@@ -982,22 +1068,42 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
                   accuracy="geschaetzt", material="PE", dimension_dn=25,
                   property_id=None)
 
-    # --- Hydranten & Schieber -----------------------------------------
+    # --- Hydranten & Schieber (auf den Leitungsachsen) ----------------
+    # Positionen liegen exakt AUF den Leitungen (Punkte der Strassenachse
+    # bzw. lerp auf einem Segment) — der Plan liest sich als ein Netz.
+    hydrant_specs = [
+        # (Position, Bauart, Notiz)
+        (street_ends[0], "ueberflur", "Endhydrant Dorfstraße — Spülpunkt."),
+        ((-92, 122), "unterflur", None),                # Hauptstraße
+        ((79, 187), "ueberflur", None),                 # Birkenweg
+        ((31, 41), "unterflur", None),                  # Quellweg
+        (lerp(hochpunkt_pos, matwechsel_pos, 0.5), "ueberflur", None),  # Hauptleitung
+        ((10, 140), "ueberflur", None),                 # Dorfstraße / Ortsmitte
+    ]
     hydranten = []
-    for i, (hn, he) in enumerate(
-            [(0, 180), (-30, 60), (90, 175), (130, 165), (300, 108), (12, 122)], start=1):
+    for i, ((hn, he), htype, hnote) in enumerate(hydrant_specs, start=1):
         hydranten.append(add_point(
             "hydrant", f"Hydrant H{i:02d}", hn, he, accuracy="gut",
-            year_built=rng.randint(1990, 2021),
-            manufacturer=rng.choice(["HAWLE", "VONROLL", "Düker"])))
+            hydrant_type=htype, year_built=rng.randint(1990, 2021),
+            manufacturer=rng.choice(["HAWLE", "VONROLL", "Düker"]),
+            notes=hnote))
 
+    schieber_specs = [
+        # (Position, Name, Notiz)
+        (lerp(behaelter_pos, hochpunkt_pos, 0.15), "Schieber Behälterabgang", None),
+        ((10, 126), "Schieber Dorfstraße", None),
+        (lerp(verteiler_pos, (-40, 116), 0.4), "Schieber Hauptstraße", None),
+        (lerp((16, 124), street_ends[2], 0.15), "Schieber Birkenweg", None),
+        (lerp((4, 116), street_ends[3], 0.2), "Schieber Quellweg", None),
+        (street_ends[1], "Übergabeschieber Notverbund",
+         "Normal geschlossen — Übergabe an den Nachbarversorger."),
+    ]
     schieber = []
-    for i, (sn, se) in enumerate(
-            [(260, 104), (0, 250), (-26, 40), (35, 130), (520, 86)], start=1):
+    for (sn, se), s_name, s_note in schieber_specs:
         schieber.append(add_point(
-            "schieber", f"Schieber S{i:02d}", sn, se, accuracy="gut",
+            "schieber", s_name, sn, se, accuracy="gut",
             dimension_dn=rng.choice([80, 100, 125]),
-            manufacturer=rng.choice(["HAWLE", "VONROLL"])))
+            manufacturer=rng.choice(["HAWLE", "VONROLL"]), notes=s_note))
 
     db.session.flush()  # alle Features -> IDs
     counts["network_features"] = len(net_features)
@@ -1018,6 +1124,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         (schieber[2], MaintenanceLog.KIND_FUNCTION_TEST, date(prev_year, 11, 2), 24, "mangel"),
         (schieber[3], MaintenanceLog.KIND_FUNCTION_TEST, date(prev_year - 1, 6, 14), 24, "ok"),
         (schieber[4], MaintenanceLog.KIND_FUNCTION_TEST, date(current_year, 5, 9), 24, "ok"),
+        (schieber[5], MaintenanceLog.KIND_FUNCTION_TEST, date(prev_year, 4, 22), 12, "ok"),
         (behaelter, MaintenanceLog.KIND_INSPECTION, date(current_year, 4, 2), 12, "ok"),
         (springs[0]["f"], MaintenanceLog.KIND_INSPECTION, date(prev_year, 8, 1), 12, "ok"),
         (springs[1]["f"], MaintenanceLog.KIND_INSPECTION, date(current_year, 5, 20), 24, "ok"),
@@ -1345,16 +1452,10 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
             status_b = (Booking.STATUS_OFFEN if bdate > offen_cutoff
                         else Booking.STATUS_VERBUCHT)
             ref = f"BG-{bdate.year}-{bdate.month:02d}{bdate.day:02d}"
-            grp = BookingGroup(
-                date=bdate, description=desc, reference=ref, total_amount=amt,
-                status=BookingGroup.STATUS_AKTIV, created_by_id=admin.id,
-            )
-            db.session.add(grp)
-            db.session.flush()
             db.session.add(Booking(
                 date=bdate, account_id=account.id, amount=amt, description=desc,
                 reference=ref, project_id=(projects[proj_idx].id if proj_idx is not None else None),
-                real_account_id=ra.id, group_id=grp.id, tax_rate=tax,
+                real_account_id=ra.id, tax_rate=tax,
                 status=status_b, created_by_id=admin.id,
             ))
             bridge_bookings += 1

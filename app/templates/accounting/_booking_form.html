@@ -156,7 +156,7 @@
     </div>
   </div>
 
-  {# Zeile 4: Kontakt (Kunde/Lieferant) | Bankkonto #}
+  {# Zeile 4: Kontakt (Kunde/Lieferant) | Bank/Kassa #}
   <div class="row g-3 mt-1">
     <div class="col-12 col-sm-6">
       <label class="form-label">Kontakt (Kunde/Lieferant)</label>
@@ -174,9 +174,9 @@
       <small class="form-hint">Bestehenden wählen oder neuen Namen eintippen und mit <kbd>Enter</kbd> anlegen.</small>
     </div>
     <div class="col-12 col-sm-6">
-      <label class="form-label">Bankkonto</label>
+      <label class="form-label">Bank/Kassa</label>
       <select name="real_account_id" id="booking-real-account-select" class="form-select tom-select">
-        <option value="">– kein Bankkonto –</option>
+        <option value="">– kein Konto –</option>
         {% for ra in real_accounts %}
         <option value="{{ ra.id }}" {{ 'selected' if sel_real == ra.id|string }}>
           {{ ra.name }}{% if ra.iban %} ({{ ra.iban }}){% endif %}

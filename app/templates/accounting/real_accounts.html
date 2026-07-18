@@ -1,13 +1,13 @@
 {% extends "base.html" %}
-{% block title %}Bankkonten{% endblock %}
-{% block page_title %}<i class="fas fa-university me-2"></i> Reale Bankkonten{% endblock %}
+{% block title %}Bank & Kassa{% endblock %}
+{% block page_title %}<i class="fas fa-wallet me-2"></i> Bank & Kassa{% endblock %}
 {% block content %}
 
 <div class="row mb-3">
   <div class="col text-end">
     <button type="button" data-url="{{ url_for('accounting.real_account_new') }}"
             onclick="openRealAccountModal(this)" class="btn btn-primary">
-      <i class="fas fa-plus me-1"></i> Neues Bankkonto
+      <i class="fas fa-plus me-1"></i> Neues Konto
     </button>
   </div>
 </div>
@@ -21,6 +21,7 @@
         <h3 class="card-title">
           <i class="fas {{ ra.icon or 'fa-university' }} me-1"></i>
           {{ ra.name }}
+          {% if ra.is_cash %}<span class="badge bg-teal-lt ms-1">Kassa</span>{% endif %}
           {% if ra.is_default %}<span class="badge bg-success text-white ms-1">Standard</span>{% endif %}
           {% if not ra.active %}<span class="badge bg-secondary text-white ms-1">Inaktiv</span>{% endif %}
         </h3>
@@ -91,7 +92,9 @@
           {% set last = entry.history[-1] %}
           <tfoot class="table-active">
             <tr>
-              <td colspan="3" class="fw-bold">Aktueller Kontostand</td>
+              <td colspan="3" class="fw-bold">
+                {{ 'Aktueller Kassastand' if ra.is_cash else 'Aktueller Kontostand' }}
+              </td>
               <td class="text-end fw-bold fs-5 {{ 'text-success' if last.closing >= 0 else 'text-danger' }}">
                 {{ last.closing|de_number }} €
               </td>
@@ -100,6 +103,17 @@
           {% endif %}
         </table>
         </div>
+        {# Eine Kassa kann real nie unter 0 fallen — negativer Stand heisst
+           fehlende oder falsch datierte Buchungen (klassischer Pruefbefund). #}
+        {% if ra.is_cash and entry.history and entry.history[-1].closing < 0 %}
+        <div class="alert alert-warning mb-0 rounded-0 border-start-0 border-end-0 border-bottom-0 py-2">
+          <i class="fas fa-exclamation-triangle me-1"></i>
+          <small>
+            Negativer Kassastand — eine Barkassa kann nicht weniger als 0 € enthalten.
+            Bitte Anfangssaldo und Buchungen prüfen.
+          </small>
+        </div>
+        {% endif %}
       </div>
 
       <div class="card-footer text-end py-2">
@@ -113,10 +127,10 @@
   {% else %}
   <div class="col">
     <div class="alert alert-info">
-      Noch keine Bankkonten angelegt.
+      Noch keine Konten angelegt.
       <button type="button" data-url="{{ url_for('accounting.real_account_new') }}"
               onclick="openRealAccountModal(this)" class="btn btn-link p-0 align-baseline">
-        Erstes Bankkonto anlegen
+        Erstes Bankkonto oder Kassa anlegen
       </button>
     </div>
   </div>

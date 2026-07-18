@@ -1794,8 +1794,17 @@ class TaxRate(db.Model):
 # ---------------------------------------------------------------------------
 
 class RealAccount(db.Model):
-    """Reales Bankkonto (z. B. Girokonto, Kreditkonto)."""
+    """Reales Geldkonto — Bankkonto (Giro/Kredit) oder Bargeldkassa.
+
+    Die Kassa ist bewusst kein eigenes Model: Buchungen, Umbuchungen
+    (Bareinnahme → Bank), Jahresabschluss-Snapshot und Auswertungen sollen
+    identisch funktionieren. ``account_type`` steuert nur Beschriftung,
+    IBAN-Sichtbarkeit und den Ausschluss aus dem Bankauszug-Import.
+    """
     __tablename__ = "real_accounts"
+
+    TYPE_BANK = "bank"
+    TYPE_CASH = "cash"
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
@@ -1805,11 +1814,24 @@ class RealAccount(db.Model):
     active = db.Column(db.Boolean, default=True)
     icon = db.Column(db.String(50), nullable=True, default="fa-university")
     is_default = db.Column(db.Boolean, default=False, nullable=False)
+    # server_default, weil der SaaS-Provisioner Seeds per Roh-INSERT schreibt
+    # (Python-Defaults greifen dort nicht).
+    account_type = db.Column(db.String(10), nullable=False,
+                             default=TYPE_BANK, server_default=TYPE_BANK)
 
     bookings = db.relationship("Booking", backref="real_account", lazy="dynamic")
 
+    @property
+    def is_cash(self):
+        """True fuer Bargeldkassa (Altbestand ohne Wert gilt als Bankkonto)."""
+        return self.account_type == self.TYPE_CASH
+
+    @property
+    def type_label(self):
+        return "Kassa" if self.is_cash else "Bankkonto"
+
     def __repr__(self):
-        return f"<RealAccount {self.name}>"
+        return f"<RealAccount {self.name} ({self.account_type})>"
 
 
 class Transfer(db.Model):

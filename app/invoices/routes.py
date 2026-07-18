@@ -1,11 +1,12 @@
+import json
 import os
 import re
 from datetime import date, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from flask import (
     render_template, redirect, url_for, flash, request,
-    current_app, send_file, abort,
+    current_app, send_file, abort, make_response,
 )
 from flask_login import login_required, current_user
 
@@ -2340,54 +2341,108 @@ def tariffs():
     return render_template("invoices/tariffs.html", tariffs=all_tariffs)
 
 
+def _parse_tariff_form():
+    """Liest und validiert das Tarifformular.
+
+    Gibt ``(data, error)`` zurueck — ``data`` ist ein dict fuer den
+    Konstruktor bzw. die Zuweisung, ``error`` eine deutsche Fehlermeldung
+    oder ``None``.
+    """
+    def _fee_or_none(field):
+        v = request.form.get(field, "").strip().replace(",", ".")
+        return Decimal(v) if v else None
+
+    name = request.form.get("name", "").strip()
+    if not name:
+        return None, "Bitte einen Namen für den Tarif angeben."
+    try:
+        valid_from = int(request.form["valid_from"])
+        valid_to = int(request.form["valid_to"]) if request.form.get("valid_to", "").strip() else None
+    except (KeyError, ValueError):
+        return None, "Gültig von/bis müssen Jahreszahlen sein."
+    if valid_to is not None and valid_to < valid_from:
+        return None, "„Gültig bis“ darf nicht vor „Gültig von“ liegen."
+    try:
+        base_fee = _fee_or_none("base_fee")
+        additional_fee = _fee_or_none("additional_fee")
+        price_raw = request.form.get("price_per_m3", "").strip().replace(",", ".")
+        if not price_raw:
+            return None, "Bitte einen Preis pro m³ angeben."
+        price_per_m3 = Decimal(price_raw)
+    except (InvalidOperation, ValueError):
+        return None, "Ungültiger Betrag — bitte Zahlen eingeben."
+
+    return dict(
+        name=name,
+        valid_from=valid_from,
+        valid_to=valid_to,
+        base_fee=base_fee,
+        base_fee_label=request.form.get("base_fee_label", "").strip() or "Grundgebühr",
+        additional_fee=additional_fee,
+        additional_fee_label=request.form.get("additional_fee_label", "").strip() or "Zusatzgebühr",
+        price_per_m3=price_per_m3,
+        notes=request.form.get("notes", ""),
+    ), None
+
+
+def _tariff_body(tariff, form):
+    """Rendert den Tarifformular-Body fuer das Modal."""
+    return render_template("invoices/_tariff_form_body.html", tariff=tariff, form=form)
+
+
+def _tariff_modal_saved(tariff_id):
+    """204 + HX-Trigger fuers Tarif-Modal (schliessen + neu laden)."""
+    resp = make_response("", 204)
+    resp.headers["HX-Trigger"] = json.dumps({
+        "closeTariffModal": True,
+        "tariffSaved": {"tariff_id": tariff_id},
+    })
+    return resp
+
+
 @bp.route("/tariffs/new", methods=["GET", "POST"])
 @login_required
 def tariff_new():
+    is_modal = bool(request.headers.get("X-From-Modal"))
     if request.method == "POST":
-        def _fee_or_none(field):
-            v = request.form.get(field, "").strip().replace(",", ".")
-            return Decimal(v) if v else None
-
-        t = WaterTariff(
-            name=request.form["name"].strip(),
-            valid_from=int(request.form["valid_from"]),
-            valid_to=int(request.form["valid_to"]) if request.form.get("valid_to") else None,
-            base_fee=_fee_or_none("base_fee"),
-            base_fee_label=request.form.get("base_fee_label", "").strip() or "Grundgebühr",
-            additional_fee=_fee_or_none("additional_fee"),
-            additional_fee_label=request.form.get("additional_fee_label", "").strip() or "Zusatzgebühr",
-            price_per_m3=Decimal(request.form["price_per_m3"].replace(",", ".")),
-            notes=request.form.get("notes", ""),
-        )
+        data, err = _parse_tariff_form()
+        if err:
+            flash(err, "danger")
+            return _tariff_body(None, request.form) if is_modal else \
+                render_template("invoices/tariff_form.html", tariff=None, form=request.form)
+        t = WaterTariff(**data)
         db.session.add(t)
         db.session.commit()
         flash("Tarif angelegt.", "success")
+        if is_modal:
+            return _tariff_modal_saved(t.id)
         return redirect(url_for("invoices.tariffs"))
-    return render_template("invoices/tariff_form.html", tariff=None)
+    if is_modal:
+        return _tariff_body(None, None)
+    return render_template("invoices/tariff_form.html", tariff=None, form=None)
 
 
 @bp.route("/tariffs/<int:tariff_id>/edit", methods=["GET", "POST"])
 @login_required
 def tariff_edit(tariff_id):
     t = db.get_or_404(WaterTariff, tariff_id)
+    is_modal = bool(request.headers.get("X-From-Modal"))
     if request.method == "POST":
-        def _fee_or_none(field):
-            v = request.form.get(field, "").strip().replace(",", ".")
-            return Decimal(v) if v else None
-
-        t.name = request.form["name"].strip()
-        t.valid_from = int(request.form["valid_from"])
-        t.valid_to = int(request.form["valid_to"]) if request.form.get("valid_to") else None
-        t.base_fee = _fee_or_none("base_fee")
-        t.base_fee_label = request.form.get("base_fee_label", "").strip() or "Grundgebühr"
-        t.additional_fee = _fee_or_none("additional_fee")
-        t.additional_fee_label = request.form.get("additional_fee_label", "").strip() or "Zusatzgebühr"
-        t.price_per_m3 = Decimal(request.form["price_per_m3"].replace(",", "."))
-        t.notes = request.form.get("notes", "")
+        data, err = _parse_tariff_form()
+        if err:
+            flash(err, "danger")
+            return _tariff_body(t, request.form) if is_modal else \
+                render_template("invoices/tariff_form.html", tariff=t, form=request.form)
+        for field, value in data.items():
+            setattr(t, field, value)
         db.session.commit()
         flash("Tarif aktualisiert.", "success")
+        if is_modal:
+            return _tariff_modal_saved(t.id)
         return redirect(url_for("invoices.tariffs"))
-    return render_template("invoices/tariff_form.html", tariff=t)
+    if is_modal:
+        return _tariff_body(t, None)
+    return render_template("invoices/tariff_form.html", tariff=t, form=None)
 
 
 # ---------------------------------------------------------------------------

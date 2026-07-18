@@ -232,3 +232,26 @@ class TestSplit:
         assert r.status_code == 200
         db.session.refresh(line)
         assert len(line.allocations) == 0
+
+
+class TestCashAccountExcluded:
+    """Eine Kassa hat keinen Kontoauszug — sie darf im Import nicht auftauchen."""
+
+    def test_upload_form_hides_cash_accounts(self, client, statement):
+        _login(client)
+        db.session.add(RealAccount(name="Barkassa", opening_balance=Decimal("0"),
+                                   account_type=RealAccount.TYPE_CASH))
+        db.session.commit()
+        r = client.get("/bank-import/upload")
+        assert r.status_code == 200
+        assert b"Giro" in r.data
+        assert "Barkassa".encode() not in r.data
+
+    def test_upload_redirects_when_only_cash_accounts_exist(self, client, admin):
+        _login(client)
+        db.session.add(RealAccount(name="Barkassa", opening_balance=Decimal("0"),
+                                   account_type=RealAccount.TYPE_CASH))
+        db.session.commit()
+        r = client.get("/bank-import/upload")
+        assert r.status_code == 302
+        assert "/bank-import" in r.headers["Location"]

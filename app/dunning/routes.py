@@ -47,12 +47,18 @@ def _dunning_filename(notice, ext):
 # ---------------------------------------------------------------------------
 
 def _dunning_pdf_context(notice, wg=None, summary=None):
-    """Vollständiger Template-Kontext für ``dunning/pdf_template.html``.
+    """Vollständiger Template-Kontext fürs Mahn-PDF-Template.
 
     Zentralisiert die gerenderten Stufentexte (Einleitung/Schluss) + Design,
-    damit Download, Vorschau, Mail und Bulk denselben Output erzeugen.
+    damit Download, Vorschau, Mail und Bulk denselben Output erzeugen. Das
+    Design kann ein eigenes Template über den Schlüssel ``dunning_template``
+    vorgeben (z.B. das SaaS-„wasserklar"-Design, analog zu den Rechnungen);
+    sonst die OSS-Standardvorlage — siehe ``_dunning_template_name``.
     """
-    from app.settings_service import wg_settings
+    from app.settings_service import (
+        wg_settings, get_contact_info, get_contact_info_font_size,
+        get_invoice_sender_address,
+    )
     if wg is None:
         wg = wg_settings()
     if summary is None:
@@ -62,7 +68,15 @@ def _dunning_pdf_context(notice, wg=None, summary=None):
         notice=notice, invoice=notice.invoice, summary=summary,
         wg=wg, design=_current_design(),
         letter_intro=intro, letter_closing=closing,
+        contact_info=get_contact_info(),
+        contact_info_font_size=get_contact_info_font_size(),
+        invoice_sender_address=get_invoice_sender_address(),
     )
+
+
+def _dunning_template_name(design):
+    """Vorlagen-Datei für das Mahn-PDF: eigenes Design-Template, sonst Default."""
+    return design.get("dunning_template", "dunning/pdf_template.html")
 
 
 def _dunning_versioned_path(notice, ext):
@@ -84,7 +98,8 @@ def _dunning_versioned_path(notice, ext):
 def _render_dunning_pdf_bytes(notice):
     """PDF-Bytes (WeasyPrint). Wirft ImportError/OSError ohne WeasyPrint."""
     import weasyprint
-    html_str = render_template("dunning/pdf_template.html", **_dunning_pdf_context(notice))
+    ctx = _dunning_pdf_context(notice)
+    html_str = render_template(_dunning_template_name(ctx["design"]), **ctx)
     return weasyprint.HTML(string=html_str).write_pdf()
 
 
@@ -354,7 +369,8 @@ def notice_pdf_preview(notice_id):
     notice = db.session.get(DunningNotice, notice_id)
     if not notice:
         abort(404)
-    return render_template("dunning/pdf_template.html", **_dunning_pdf_context(notice))
+    ctx = _dunning_pdf_context(notice)
+    return render_template(_dunning_template_name(ctx["design"]), **ctx)
 
 
 # ---------------------------------------------------------------------------
@@ -594,7 +610,8 @@ def bulk_pdf_merged():
         if notice.pdf_path and os.path.exists(notice.pdf_path):
             writer.append(notice.pdf_path)
         else:
-            html_str = render_template("dunning/pdf_template.html", **_dunning_pdf_context(notice))
+            ctx = _dunning_pdf_context(notice)
+            html_str = render_template(_dunning_template_name(ctx["design"]), **ctx)
             pdf_bytes = weasyprint.HTML(string=html_str).render().write_pdf()
             writer.append(io.BytesIO(pdf_bytes))
     writer.compress_identical_objects()

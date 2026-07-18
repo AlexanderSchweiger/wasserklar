@@ -6,9 +6,11 @@
   <div class="card-header">
     <h3 class="card-title">Tarife</h3>
     <div class="card-options">
-      <a href="{{ url_for('invoices.tariff_new') }}" class="btn btn-primary">
+      <button type="button" data-url="{{ url_for('invoices.tariff_new') }}"
+              data-modal-title="Neuer Tarif"
+              onclick="openTariffModal(this)" class="btn btn-primary">
         <i class="fas fa-plus me-1"></i> Neuer Tarif
-      </a>
+      </button>
     </div>
   </div>
   <div class="card-body p-0">
@@ -33,10 +35,12 @@
           <td class="text-end">{{ t.base_fee|de_number }} €</td>
           <td class="text-end">{{ t.price_per_m3|de_number(4) }} €</td>
           <td class="text-end">
-            <a href="{{ url_for('invoices.tariff_edit', tariff_id=t.id) }}"
-               class="btn btn-sm btn-outline-secondary">
+            <button type="button" data-url="{{ url_for('invoices.tariff_edit', tariff_id=t.id) }}"
+                    data-modal-title="Tarif bearbeiten"
+                    onclick="openTariffModal(this)"
+                    class="btn btn-sm btn-outline-secondary" title="Bearbeiten">
               <i class="fas fa-edit"></i>
-            </a>
+            </button>
           </td>
         </tr>
         {% else %}
@@ -49,4 +53,22 @@
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block modals %}
+{% include "invoices/_tariff_modal.html" %}
+{% endblock %}
+
+{% block scripts %}
+{% include "_modal_edit_helpers.html" %}
+<script>
+setupEditModal({
+  formId: 'tariffForm',
+  bodyId: 'tariffModalBody',
+  modalId: 'tariffModal',
+  openFn: 'openTariffModal',
+  closeEvent: 'closeTariffModal',
+  savedEvent: 'tariffSaved',
+});
+</script>
 {% endblock %}

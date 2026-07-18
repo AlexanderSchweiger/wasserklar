@@ -109,12 +109,18 @@ def index():
 @bp.route("/upload", methods=["GET", "POST"])
 @login_required
 def upload():
+    # Kassa-Konten sind hier bewusst ausgeschlossen — fuer Bargeld gibt es
+    # keinen Kontoauszug zum Importieren.
     real_accounts = (
-        RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
+        RealAccount.query
+        .filter(RealAccount.active.is_(True),
+                RealAccount.account_type != RealAccount.TYPE_CASH)
+        .order_by(RealAccount.name)
+        .all()
     )
     if not real_accounts:
         flash(
-            "Bitte legen Sie zuerst ein Bankkonto unter Buchhaltung › Bankkonten an.",
+            "Bitte legen Sie zuerst ein Bankkonto unter Buchhaltung › Bank & Kassa an.",
             "warning",
         )
         return redirect(url_for("bank_import.index"))
@@ -170,7 +176,7 @@ def upload():
                 require_manual_account=True,
             )
         real_account = RealAccount.query.get(ra_id)
-        if real_account is None or not real_account.active:
+        if real_account is None or not real_account.active or real_account.is_cash:
             flash("Ungültiges Bankkonto.", "danger")
             return redirect(url_for("bank_import.upload"))
 

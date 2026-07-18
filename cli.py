@@ -946,10 +946,14 @@ def register_commands(app):
         20 Rechnungen (gemischte Status), 4 Mahnungen (Stufen 1-4),
         2 Bankkonten + 3 Umbuchungen, 12 Sammelbuchungen mit Projekten und
         verschiedenen Steuersaetzen, passende Tarife. Plus kompletter
-        Leitungsnetz-Datensatz: aktiver Plan mit 3 Quellen (historische
-        Schuettungs-Messreihen mit Trockenperioden), Hochbehaelter, Leitungen,
-        ~30 Hausanschluessen (grossteils zugeordnet + geocodet), Hydranten/
-        Schiebern mit teils faelligen Pruef-Logs und 9 Stoerungsjournal-Eintraegen.
+        Leitungsnetz-Datensatz: aktiver Plan als zusammenhaengendes Netz mit
+        allen Elementtypen — 3 Quellen (historische Schuettungs-Messreihen mit
+        Trockenperioden), Sammelschacht, Hochbehaelter, Pumpe, Entlueftung,
+        Materialwechsel, Druckminderschacht, Leitungen inkl. Notverbund, ~30
+        Hausanschluessen mit Anbohrschellen (grossteils zugeordnet + geocodet),
+        Strangenden (Endhydrant/Endkappe/Entleerung), Hydranten (Ueber-/
+        Unterflur)/Schiebern mit teils faelligen Pruef-Logs und 9
+        Stoerungsjournal-Eintraegen.
         Dazu Schriftfuehrung (nur WG-Modus): Vorstandssitzungen + Hauptversammlungen
         mit Tagesordnung, Anwesenheit, Protokollen und einem Beschluss-Register.
 

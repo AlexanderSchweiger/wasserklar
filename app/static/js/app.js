@@ -135,6 +135,23 @@
     });
   }
 
+  // htmx schreibt beim Swap die Attribute jedes Elements MIT id zweimal: erst
+  // die des alten Knotens (damit CSS-Transitions vom alten Zustand starten),
+  // dann am Ende des Settle-Schritts die aus der Server-Antwort. Dabei wird das
+  // KOMPLETTE class-Attribut ersetzt — also auch die Klassen `tomselected` und
+  // `ts-hidden-accessible`, die TomSelect im afterSwap-Init auf das Original-
+  // <select> gesetzt hat (Settle laeuft NACH afterSwap). Das <select> ist danach
+  // wieder sichtbar und steht als ZWEITES Dropdown neben dem TomSelect-Widget —
+  // das beobachtete „doppelte Status-Dropdown" nach einem Statuswechsel.
+  // Nach dem Settle daher die Verstecken-Klassen wieder aufsetzen. Bewusst nur
+  // die Klassen (kein tabIndex o.ae.): das ist exakt der Zustand, den ein
+  // frischer Init hinterlaesst. Idempotent — ohne Clobber passiert nichts.
+  function restoreTomSelectHiding(root) {
+    (root || document).querySelectorAll('select.tom-select, select.color-select').forEach(function (el) {
+      if (el.tomselect) el.classList.add('tomselected', 'ts-hidden-accessible');
+    });
+  }
+
   function initColorSelects(root) {
     (root || document).querySelectorAll('select.color-select').forEach(function (el) {
       if (el.tomselect) return;
@@ -238,6 +255,14 @@
   document.addEventListener('htmx:afterSwap', function (e) {
     initTomSelects(e.detail.target);
     initColorSelects(e.detail.target);
+  });
+
+  // Nach dem Settle das von htmx zurueckgeschriebene class-Attribut reparieren
+  // (siehe restoreTomSelectHiding). Bewusst ueber das ganze Dokument statt ueber
+  // e.detail.target: bei outerHTML-Swaps ist das Ziel nicht zuverlaessig der
+  // Container des betroffenen <select>, und die Pruefung kostet nichts.
+  document.addEventListener('htmx:afterSettle', function () {
+    restoreTomSelectHiding(document);
   });
 
   // Selbstheilung des Lade-Spinners nach einer geboosteten Voll-Navigation.

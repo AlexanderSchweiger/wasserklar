@@ -1782,7 +1782,7 @@ def report_export_excel():
     ws.cell(row=r, column=1, value="Saldo").font = TOTAL_FONT
     r += 2
 
-    _subhdr(ws, r, ["Bankkonto", "IBAN", "Stand 1.1.", "Stand 31.12."])
+    _subhdr(ws, r, ["Konto", "IBAN", "Stand 1.1.", "Stand 31.12."])
     r += 1
     total_jan1 = Decimal("0"); total_dec31 = Decimal("0")
     for k in konten_list:
@@ -1871,8 +1871,8 @@ def report_export_excel():
     # ================================================================
     # BLATT 4: Bankkonten-Entwicklung
     # ================================================================
-    ws4 = wb.create_sheet("Bankkonten")
-    _hdr(ws4, 1, ["Bankkonto", "IBAN", f"Stand 1.1.{year}", f"Bewegung {year}", f"Stand 31.12.{year}"])
+    ws4 = wb.create_sheet("Konten")
+    _hdr(ws4, 1, ["Konto", "IBAN", f"Stand 1.1.{year}", f"Bewegung {year}", f"Stand 31.12.{year}"])
     r4 = 2
     sum_jan1 = Decimal("0"); sum_dec31 = Decimal("0")
     for k in konten_list:
@@ -2977,8 +2977,14 @@ def real_accounts():
     )
 
 
+def _account_type_from_form(form):
+    """Kontoart aus dem Formular; alles Unbekannte faellt auf 'bank' zurueck."""
+    raw = (form.get("account_type") or "").strip()
+    return raw if raw in (RealAccount.TYPE_BANK, RealAccount.TYPE_CASH) else RealAccount.TYPE_BANK
+
+
 def _real_account_modal_saved(ra_id):
-    """204 + HX-Trigger fuers Bankkonto-Modal (schliessen + neu laden)."""
+    """204 + HX-Trigger fuers Konto-Modal (schliessen + neu laden)."""
     resp = make_response("", 204)
     resp.headers["HX-Trigger"] = json.dumps({
         "closeRealAccountModal": True,
@@ -2996,17 +3002,22 @@ def real_account_new():
         set_default = "is_default" in request.form
         if set_default:
             RealAccount.query.filter_by(is_default=True).update({"is_default": False})
+        account_type = _account_type_from_form(request.form)
+        is_cash = account_type == RealAccount.TYPE_CASH
         ra = RealAccount(
             name=request.form["name"].strip(),
             description=request.form.get("description", "").strip(),
-            iban=request.form.get("iban", "").strip(),
+            # Eine Kassa hat per Definition keine IBAN — Feld ist im Formular
+            # ausgeblendet, koennte aber noch einen Wert mitschicken.
+            iban="" if is_cash else request.form.get("iban", "").strip(),
             opening_balance=Decimal(opening_raw),
             icon=request.form.get("icon", "fa-university").strip() or "fa-university",
             is_default=set_default,
+            account_type=account_type,
         )
         db.session.add(ra)
         db.session.commit()
-        flash("Bankkonto angelegt.", "success")
+        flash(f"{ra.type_label} angelegt.", "success")
         if is_modal:
             return _real_account_modal_saved(ra.id)
         return redirect(url_for("accounting.real_accounts"))
@@ -3025,15 +3036,16 @@ def real_account_edit(ra_id):
         set_default = "is_default" in request.form
         if set_default:
             RealAccount.query.filter(RealAccount.id != ra.id, RealAccount.is_default == True).update({"is_default": False})
+        ra.account_type = _account_type_from_form(request.form)
         ra.name = request.form["name"].strip()
         ra.description = request.form.get("description", "").strip()
-        ra.iban = request.form.get("iban", "").strip()
+        ra.iban = "" if ra.is_cash else request.form.get("iban", "").strip()
         ra.opening_balance = Decimal(opening_raw)
         ra.active = "active" in request.form
         ra.icon = request.form.get("icon", "fa-university").strip() or "fa-university"
         ra.is_default = set_default
         db.session.commit()
-        flash("Bankkonto aktualisiert.", "success")
+        flash(f"{ra.type_label} aktualisiert.", "success")
         if is_modal:
             return _real_account_modal_saved(ra.id)
         return redirect(url_for("accounting.real_accounts"))

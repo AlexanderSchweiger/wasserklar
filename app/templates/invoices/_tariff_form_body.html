@@ -1,0 +1,118 @@
+{# Form-Body fuers Tarif-Modal — per HTMX in tariffModalBody geladen.
+   Erwartet tariff (oder None) + optional form (nach Validierungsfehler). #}
+{% include "_flash_inline.html" %}
+{% if form %}
+  {% set val_name = form.get('name', '') %}
+  {% set val_valid_from = form.get('valid_from', '') %}
+  {% set val_valid_to = form.get('valid_to', '') %}
+  {% set val_base_fee = form.get('base_fee', '') %}
+  {% set val_base_fee_label = form.get('base_fee_label', '') %}
+  {% set val_additional_fee = form.get('additional_fee', '') %}
+  {% set val_additional_fee_label = form.get('additional_fee_label', '') %}
+  {% set val_price_per_m3 = form.get('price_per_m3', '') %}
+  {% set val_notes = form.get('notes', '') %}
+{% elif tariff %}
+  {% set val_name = tariff.name %}
+  {% set val_valid_from = tariff.valid_from %}
+  {% set val_valid_to = tariff.valid_to if tariff.valid_to is not none else '' %}
+  {% set val_base_fee = tariff.base_fee if tariff.base_fee is not none else '' %}
+  {% set val_base_fee_label = tariff.base_fee_label or '' %}
+  {% set val_additional_fee = tariff.additional_fee if tariff.additional_fee is not none else '' %}
+  {% set val_additional_fee_label = tariff.additional_fee_label or '' %}
+  {% set val_price_per_m3 = tariff.price_per_m3 %}
+  {% set val_notes = tariff.notes or '' %}
+{% else %}
+  {% set val_name = '' %}
+  {% set val_valid_from = '' %}
+  {% set val_valid_to = '' %}
+  {% set val_base_fee = '' %}
+  {% set val_base_fee_label = '' %}
+  {% set val_additional_fee = '' %}
+  {% set val_additional_fee_label = '' %}
+  {% set val_price_per_m3 = '' %}
+  {% set val_notes = '' %}
+{% endif %}
+<div class="mb-3">
+  <label class="form-label">Name <span class="text-danger">*</span></label>
+  <input type="text" name="name" class="form-control" value="{{ val_name }}" required>
+</div>
+<div class="row g-2">
+  <div class="col-md-6">
+    <div class="mb-3">
+      <label class="form-label">Gültig von (Jahr) <span class="text-danger">*</span></label>
+      <input type="number" name="valid_from" class="form-control" value="{{ val_valid_from }}" required>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="mb-3">
+      <label class="form-label">Gültig bis <small class="text-muted">(leer = aktuell)</small></label>
+      <input type="number" name="valid_to" class="form-control" value="{{ val_valid_to }}">
+    </div>
+  </div>
+</div>
+
+<hr>
+<h6 class="text-muted mb-3">Gebühren</h6>
+<div class="alert alert-info py-2 mb-3">
+  <i class="fas fa-info-circle me-1"></i>
+  <strong>Hinweis:</strong> Grundgebühr und Zusatzgebühr erscheinen nur dann als Rechnungsposition,
+  wenn ein Betrag eingetragen ist. Auch <code>0,00</code> erzeugt eine Position.
+  Leer lassen = diese Gebühr wird auf der Rechnung gar nicht angezeigt.
+</div>
+
+<div class="row g-2">
+  <div class="col-md-5">
+    <div class="mb-3">
+      <label class="form-label">Grundgebühr (€/Jahr) <small class="text-muted">(leer = keine Position)</small></label>
+      <div class="input-group">
+        <input type="number" name="base_fee" step="0.01" class="form-control" value="{{ val_base_fee }}">
+        <span class="input-group-text">€</span>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-7">
+    <div class="mb-3">
+      <label class="form-label">Bezeichnung auf Rechnung</label>
+      <input type="text" name="base_fee_label" class="form-control"
+        placeholder="Grundgebühr" value="{{ val_base_fee_label }}">
+    </div>
+  </div>
+</div>
+
+<div class="row g-2">
+  <div class="col-md-5">
+    <div class="mb-3">
+      <label class="form-label">Zusatzgebühr (€/Jahr) <small class="text-muted">(leer = keine Position)</small></label>
+      <div class="input-group">
+        <input type="number" name="additional_fee" step="0.01" class="form-control" value="{{ val_additional_fee }}">
+        <span class="input-group-text">€</span>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-7">
+    <div class="mb-3">
+      <label class="form-label">Bezeichnung auf Rechnung</label>
+      <input type="text" name="additional_fee_label" class="form-control"
+        placeholder="Zusatzgebühr" value="{{ val_additional_fee_label }}">
+    </div>
+  </div>
+</div>
+
+<div class="row g-2">
+  <div class="col-md-5">
+    <div class="mb-3">
+      <label class="form-label">Preis pro m³ <span class="text-danger">*</span></label>
+      <div class="input-group">
+        <input type="number" name="price_per_m3" step="0.0001" class="form-control"
+          value="{{ val_price_per_m3 }}" required>
+        <span class="input-group-text">€/m³</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<hr>
+<div class="mb-3">
+  <label class="form-label">Notizen</label>
+  <textarea name="notes" class="form-control" rows="2">{{ val_notes }}</textarea>
+</div>

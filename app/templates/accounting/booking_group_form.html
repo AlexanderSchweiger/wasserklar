@@ -99,9 +99,9 @@
           </select>
         </div>
         <div class="col-12 col-sm-4">
-          <label class="form-label">Bankkonto</label>
+          <label class="form-label">Bank/Kassa</label>
           <select name="real_account_id" class="form-select tom-select">
-            <option value="">– kein Bankkonto –</option>
+            <option value="">– kein Konto –</option>
             {% for ra in real_accounts %}
             <option value="{{ ra.id }}"
                     {{ 'selected' if hdr_real_account_id == ra.id|string

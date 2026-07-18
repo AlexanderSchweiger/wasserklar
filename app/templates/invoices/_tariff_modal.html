@@ -1,16 +1,18 @@
-{# Modal-Skelett fuer Bankkonto/Kassa anlegen/bearbeiten. Body wird per HTMX
+{# Modal-Skelett fuer Tarif anlegen/bearbeiten. Body wird per HTMX
    (X-From-Modal-GET) geladen, Submit nativ via htmx → 204 + HX-Trigger
-   (closeRealAccountModal + realAccountSaved). #}
-<div class="modal fade" id="realAccountModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog">
+   (closeTariffModal + tariffSaved). #}
+<div class="modal fade" id="tariffModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title"><i class="fas fa-wallet me-2"></i> Konto</h5>
+        <h5 class="modal-title">
+          <i class="fas fa-sliders-h me-2"></i> <span data-modal-title-text>Tarif</span>
+        </h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
       </div>
-      <form id="realAccountForm" method="post" hx-headers='{"X-From-Modal": "1"}'>
+      <form id="tariffForm" method="post" hx-headers='{"X-From-Modal": "1"}'>
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <div class="modal-body" id="realAccountModalBody">
+        <div class="modal-body" id="tariffModalBody">
           <div class="text-center text-muted py-4">
             <div class="spinner-border spinner-border-sm" role="status"></div>
           </div>

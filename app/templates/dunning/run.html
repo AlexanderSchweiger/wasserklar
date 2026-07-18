@@ -69,7 +69,7 @@
                                     {% if n.level_snapshot > cur.level %}{% set cur.level = n.level_snapshot %}{% endif %}
                                 {% endfor %}
                                 {% if cur.level > 0 %}
-                                    <span class="badge bg-secondary">Stufe {{ cur.level }}</span>
+                                    <span class="badge bg-secondary text-white">Stufe {{ cur.level }}</span>
                                 {% else %}
                                     <span class="text-muted">–</span>
                                 {% endif %}

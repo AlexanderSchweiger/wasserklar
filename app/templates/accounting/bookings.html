@@ -62,13 +62,13 @@
         </select>
       </div>
       <div class="mb-3">
-        <label class="form-label mb-0 me-1">Bankkonto</label>
+        <label class="form-label mb-0 me-1">Bank/Kassa</label>
         <select name="real_account_id" class="form-select form-select-sm"
           hx-get="{{ url_for('accounting.bookings') }}"
           hx-trigger="change"
           hx-target="#bookings-table"
           hx-include="{{ filter_include }}">
-          <option value="">Alle Bankkonten</option>
+          <option value="">Alle Konten</option>
           {% for ra in real_accounts %}
           <option value="{{ ra.id }}" {{ 'selected' if real_account_id|string == ra.id|string }}>{{ ra.name }}</option>
           {% endfor %}

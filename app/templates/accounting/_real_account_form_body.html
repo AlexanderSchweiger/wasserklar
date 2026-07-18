@@ -11,6 +11,7 @@
   {% set val_icon = form.get('icon', 'fa-university') or 'fa-university' %}
   {% set val_is_default = form.get('is_default') %}
   {% set val_active = form.get('active') %}
+  {% set val_type = form.get('account_type', 'bank') or 'bank' %}
 {% elif real_account %}
   {% set val_name = real_account.name %}
   {% set val_iban = real_account.iban or '' %}
@@ -19,6 +20,7 @@
   {% set val_icon = real_account.icon or 'fa-university' %}
   {% set val_is_default = real_account.is_default %}
   {% set val_active = real_account.active %}
+  {% set val_type = real_account.account_type or 'bank' %}
 {% else %}
   {% set val_name = '' %}
   {% set val_iban = '' %}
@@ -27,14 +29,42 @@
   {% set val_icon = 'fa-university' %}
   {% set val_is_default = false %}
   {% set val_active = true %}
+  {% set val_type = 'bank' %}
 {% endif %}
 <input type="hidden" name="icon" id="icon-input" value="{{ val_icon }}">
 <div class="mb-3">
-  <label class="form-label">Name <span class="text-danger">*</span></label>
-  <input type="text" name="name" class="form-control" required
-    value="{{ val_name }}" placeholder="z. B. Girokonto Raiffeisenbank">
+  <label class="form-label">Kontoart <span class="text-danger">*</span></label>
+  <div class="row g-2" id="account-type-group">
+    <div class="col-6">
+      <label class="form-selectgroup-item w-100">
+        <input type="radio" name="account_type" value="bank" class="form-selectgroup-input"
+          {{ 'checked' if val_type != 'cash' }}>
+        <span class="form-selectgroup-label w-100 py-2">
+          <i class="fas fa-university me-1"></i> Bankkonto
+        </span>
+      </label>
+    </div>
+    <div class="col-6">
+      <label class="form-selectgroup-item w-100">
+        <input type="radio" name="account_type" value="cash" class="form-selectgroup-input"
+          {{ 'checked' if val_type == 'cash' }}>
+        <span class="form-selectgroup-label w-100 py-2">
+          <i class="fas fa-cash-register me-1"></i> Kassa
+        </span>
+      </label>
+    </div>
+  </div>
+  <small class="form-hint">
+    Eine Kassa bildet den Bargeldbestand ab (Barzahlungen von Mitgliedern).
+    Bargeld, das später zur Bank gebracht wird, erfassen Sie als Umbuchung.
+  </small>
 </div>
 <div class="mb-3">
+  <label class="form-label">Name <span class="text-danger">*</span></label>
+  <input type="text" name="name" class="form-control" required id="ra-name-input"
+    value="{{ val_name }}" placeholder="z. B. Girokonto Raiffeisenbank">
+</div>
+<div class="mb-3" id="iban-field">
   <label class="form-label">IBAN</label>
   <input type="text" name="iban" class="form-control"
     value="{{ val_iban }}" placeholder="AT12 3456 7890 1234 5678">
@@ -50,7 +80,7 @@
       value="{{ val_opening }}">
     <span class="input-group-text">€</span>
   </div>
-  <small class="form-hint">
+  <small class="form-hint" id="opening-hint">
     Kontostand vor der ersten im Programm erfassten Buchung (z. B. Stand per 1.1.).
     Wird zum Berechnen des aktuellen Saldos addiert.
   </small>
@@ -145,5 +175,31 @@
     s.addEventListener('click', function () { selectIcon(s.dataset.icon); });
   });
   selectIcon(input.value);
+
+  // Kontoart: IBAN nur bei Bankkonto, passende Hinweistexte, und beim
+  // Umschalten auf Kassa das noch unveraenderte Default-Icon mitziehen.
+  var ibanField = root.querySelector('#iban-field');
+  var nameInput = root.querySelector('#ra-name-input');
+  var openingHint = root.querySelector('#opening-hint');
+  var typeRadios = root.querySelectorAll('input[name="account_type"]');
+
+  function applyType(isCash) {
+    if (ibanField) ibanField.style.display = isCash ? 'none' : '';
+    if (nameInput) {
+      nameInput.placeholder = isCash ? 'z. B. Kassa' : 'z. B. Girokonto Raiffeisenbank';
+    }
+    if (openingHint) {
+      openingHint.textContent = isCash
+        ? 'Bargeldbestand vor der ersten im Programm erfassten Buchung (z. B. Stand per 1.1.). Wird zum Berechnen des aktuellen Kassastands addiert.'
+        : 'Kontostand vor der ersten im Programm erfassten Buchung (z. B. Stand per 1.1.). Wird zum Berechnen des aktuellen Saldos addiert.';
+    }
+    if (isCash && input.value === 'fa-university') selectIcon('fa-cash-register');
+    if (!isCash && input.value === 'fa-cash-register') selectIcon('fa-university');
+  }
+
+  typeRadios.forEach(function (r) {
+    r.addEventListener('change', function () { applyType(r.value === 'cash' && r.checked); });
+  });
+  applyType(root.querySelector('input[name="account_type"][value="cash"]:checked') !== null);
 })();
 </script>
