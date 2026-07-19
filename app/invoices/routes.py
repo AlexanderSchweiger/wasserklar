@@ -511,10 +511,13 @@ def generate():
 
             # Bereits vorhanden? Nur regulaere (standard) Rechnungen blockieren
             # den Lauf — eine Schlussrechnung (final_settlement) tut das nicht.
+            # Stornierte Rechnungen zaehlen nicht als "vorhanden", damit ein
+            # storniertes Objekt im naechsten Lauf erneut abgerechnet wird.
             exists = Invoice.query.filter(
                 Invoice.property_id == prop.id,
                 Invoice.billing_period_id == period.id,
                 Invoice.invoice_kind == Invoice.KIND_STANDARD,
+                Invoice.status != Invoice.STATUS_CANCELLED,
             ).first()
             if exists:
                 skipped += 1
@@ -778,9 +781,24 @@ def new():
         )
         notes = request.form.get("notes", "").strip()
 
+        # Abrechnungsperiode aus dem Rechnungsdatum ableiten (nicht blind die
+        # aktive nehmen — Einzelrechnungen werden oft nachtraeglich/rueckdatiert
+        # erfasst). Ohne passende Periode faellt es auf die aktive zurueck.
+        # Traegt die Rechnung in die Perioden-Uebersicht ein; ohne das waeren
+        # manuelle Rechnungen dort unsichtbar.
+        inv_period = (
+            BillingPeriod.query
+            .filter(BillingPeriod.start_date <= inv_date,
+                    BillingPeriod.end_date >= inv_date)
+            .order_by(BillingPeriod.start_date.desc())
+            .first()
+            or BillingPeriod.current()
+        )
+
         inv = Invoice(
             invoice_number=_next_invoice_number(inv_date.year),
             customer_id=customer.id,
+            billing_period_id=inv_period.id if inv_period else None,
             date=inv_date,
             due_date=due_date,
             status=Invoice.STATUS_DRAFT,
@@ -1888,13 +1906,16 @@ def billing_runs():
     return render_template("invoices/billing_runs.html", runs=runs)
 
 
-def _billing_run_amounts(invoice, base_label, add_label):
-    """Kennzahlen einer Lauf-Rechnung für die Detail-Tabelle (eine Items-Iteration).
+def _invoice_amounts(invoice, base_labels, add_labels):
+    """Kennzahlen einer Rechnung für die Übersichts-Tabellen (eine Items-Iteration).
 
-    Klassifiziert die Positionen anhand der Lauf-Snapshot-Labels: ``unit == "m³"``
-    ist der Wasserverbrauch, ``description`` == Grund-/Zusatzgebühr-Label die
-    Pauschalen. ``ust`` = Brutto (gespeichert in ``total_amount``) − Netto;
-    bei nicht USt-pflichtigen Läufen 0. Mahngebühr-Items werden ignoriert.
+    Klassifiziert die Positionen anhand der Tarif-Labels: ``unit == "m³"`` ist der
+    Wasserverbrauch, ``description`` in ``base_labels`` / ``add_labels`` sind die
+    Pauschalen. Die Labels kommen als **Mengen**, weil die Perioden-Übersicht
+    Rechnungen aus mehreren Läufen mit unterschiedlichen Tarif-Snapshots bündelt
+    (die Lauf-Detailseite übergibt schlicht einelementige Mengen).
+    ``ust`` = Brutto (gespeichert in ``total_amount``) − Netto; bei nicht
+    USt-pflichtigen Läufen 0. Mahngebühr-Items werden ignoriert.
     """
     m3 = Decimal("0")
     water_net = Decimal("0")
@@ -1909,9 +1930,9 @@ def _billing_run_amounts(invoice, base_label, add_label):
         if item.unit == "m³":
             water_net += amount
             m3 += item.quantity or Decimal("0")
-        elif item.description == base_label:
+        elif item.description in base_labels:
             base_fee += amount
-        elif item.description == add_label:
+        elif item.description in add_labels:
             add_fee += amount
     gross = Decimal(str(invoice.total_amount or 0))
     return {
@@ -1925,30 +1946,18 @@ def _billing_run_amounts(invoice, base_label, add_label):
     }
 
 
-def _billing_run_overview(run):
-    """Aggregiert die Kennzahlen eines Rechnungslaufs für die Detailseite und
-    den Komplett-Ausdruck (Deckblatt).
+def _invoice_overview(invoices, base_labels, add_labels):
+    """Aggregiert die Kennzahlen einer Rechnungsmenge — geteilt von der
+    Rechnungslauf-Detailseite (ein Lauf) und der Perioden-Übersicht (alle
+    Rechnungen einer Abrechnungsperiode, lauf-übergreifend).
 
     Liefert ein Dict mit der Rechnungsliste (`rows`/`invoices`), Versand- und
     Zahlungs-Zählern sowie den Summen. Stornierte Rechnungen sind gegenstandslos
     und fließen nicht in die Summen ein — es gilt: Gesamtsumme = Bezahlt + Offen.
+
+    Erwartet eine bereits geladene Liste (inkl. der noetigen Eager-Loads), damit
+    die Aufrufer ihre Query selbst bauen koennen.
     """
-    from sqlalchemy.orm import selectinload, joinedload
-
-    invoices = (
-        run.invoices
-        .options(
-            selectinload(Invoice.items),
-            joinedload(Invoice.customer),
-            joinedload(Invoice.property),
-        )
-        .order_by(Invoice.invoice_number, Invoice.id)
-        .all()
-    )
-
-    base_label = run.tariff_base_fee_label or "Grundgebühr"
-    add_label = run.tariff_additional_fee_label or "Zusatzgebühr"
-
     rows = []
     count_draft = count_sent = count_mail = count_post = 0
     count_paid = count_open = 0
@@ -1961,7 +1970,7 @@ def _billing_run_overview(run):
     post_ids = []   # versandbereite Entwürfe per Post
 
     for inv in invoices:
-        amt = _billing_run_amounts(inv, base_label, add_label)
+        amt = _invoice_amounts(inv, base_labels, add_labels)
         if amt["ust"] and amt["ust"] > 0:
             run_has_vat = True
         wants_email = inv.customer.wants_email
@@ -2015,8 +2024,6 @@ def _billing_run_overview(run):
     return {
         "invoices": invoices,
         "rows": rows,
-        "base_label": base_label,
-        "add_label": add_label,
         "count_draft": count_draft, "count_sent": count_sent,
         "count_mail": count_mail, "count_post": count_post,
         "count_paid": count_paid, "count_open": count_open,
@@ -2028,6 +2035,32 @@ def _billing_run_overview(run):
     }
 
 
+def _billing_run_overview(run):
+    """Kennzahlen **eines** Rechnungslaufs (Detailseite, Excel-Export).
+
+    Duenner Wrapper um :func:`_invoice_overview` — laedt die Rechnungen des Laufs
+    und klassifiziert die Pauschal-Positionen gegen den Tarif-Snapshot des Laufs.
+    """
+    from sqlalchemy.orm import selectinload, joinedload
+
+    invoices = (
+        run.invoices
+        .options(
+            selectinload(Invoice.items),
+            joinedload(Invoice.customer),
+            joinedload(Invoice.property),
+        )
+        .order_by(Invoice.invoice_number, Invoice.id)
+        .all()
+    )
+    base_label = run.tariff_base_fee_label or "Grundgebühr"
+    add_label = run.tariff_additional_fee_label or "Zusatzgebühr"
+    ov = _invoice_overview(invoices, {base_label}, {add_label})
+    ov["base_label"] = base_label
+    ov["add_label"] = add_label
+    return ov
+
+
 @bp.route("/billing-runs/<int:run_id>")
 @login_required
 def billing_run_detail(run_id):
@@ -2036,6 +2069,213 @@ def billing_run_detail(run_id):
     return render_template(
         "invoices/billing_run_detail.html",
         run=run, doc_format=doc_format, **_billing_run_overview(run),
+    )
+
+
+def _period_completeness(period):
+    """Vollstaendigkeitskontrolle einer Abrechnungsperiode: welche Objekte haben
+    noch **keine** Rechnung — und warum nicht.
+
+    Spiegelt bewusst die Auswahl-Logik des Massen-Rechnungslaufs
+    (:func:`generate`): abgerechnet wird pro **aktivem Objekt**, das eine
+    Ablesung in der Periode hat und einen aktuellen Eigentuemer besitzt; eine
+    bereits vorhandene regulaere (nicht stornierte) Rechnung blockiert. Weicht
+    diese Funktion davon ab, zeigt die Uebersicht Zahlen, die der naechste Lauf
+    nicht reproduziert — beim Aendern also immer beide Stellen gemeinsam lesen.
+
+    Drei Toepfe:
+      ``ready``      Ablesung da, Eigentuemer da, keine Rechnung → Handlungsliste,
+                     der naechste Rechnungslauf holt genau diese.
+      ``no_owner``   Ablesung da, aber kein aktueller Eigentuemer. Der Lauf
+                     ueberspringt sie still (zaehlt sie nur als ``skipped``) —
+                     hier sichtbar gemacht, weil das sonst niemandem auffaellt.
+      ``no_reading`` Aktives Objekt mit aktivem Zaehler, aber ohne Ablesung in
+                     der Periode → wartet auf die Ablesung.
+    """
+    from app.models import PropertyOwnership
+
+    # Objekte MIT Ablesung in der Periode (gleiche Bedingungen wie im Lauf:
+    # ueber alle Zaehler, auch ausgebaute; nur aktive Objekte).
+    read_prop_ids = {
+        pid for (pid,) in
+        db.session.query(WaterMeter.property_id)
+        .join(MeterReading, MeterReading.meter_id == WaterMeter.id)
+        .join(Property, Property.id == WaterMeter.property_id)
+        .filter(MeterReading.billing_period_id == period.id,
+                Property.active.is_(True))
+        .distinct()
+    }
+
+    # Objekte, die fuer die Periode schon eine regulaere Rechnung haben.
+    billed_prop_ids = {
+        pid for (pid,) in
+        db.session.query(Invoice.property_id)
+        .filter(Invoice.billing_period_id == period.id,
+                Invoice.property_id.isnot(None),
+                Invoice.invoice_kind == Invoice.KIND_STANDARD,
+                Invoice.status != Invoice.STATUS_CANCELLED)
+        .distinct()
+    }
+
+    # Aktive Objekte mit mindestens einem aktiven Zaehler — die Grundgesamtheit
+    # dessen, was in der Periode ueberhaupt abgerechnet werden sollte.
+    metered_prop_ids = {
+        pid for (pid,) in
+        db.session.query(Property.id)
+        .join(WaterMeter, WaterMeter.property_id == Property.id)
+        .filter(Property.active.is_(True), WaterMeter.active.is_(True))
+        .distinct()
+    }
+
+    open_ids = (read_prop_ids | metered_prop_ids) - billed_prop_ids
+    result = {"ready": [], "no_owner": [], "no_reading": [],
+              "billed_count": len(billed_prop_ids),
+              "total_count": len(read_prop_ids | metered_prop_ids)}
+    if not open_ids:
+        return result
+
+    props = (
+        Property.query
+        .filter(Property.id.in_(open_ids))
+        .order_by(Property.object_number, Property.strasse, Property.id)
+        .all()
+    )
+    # Eigentuemer in EINER Query vorladen — ``Property.current_owner()`` setzt
+    # sonst pro Objekt eine eigene Abfrage ab (N+1).
+    owners = {}
+    for pid, cust in (
+        db.session.query(PropertyOwnership.property_id, Customer)
+        .join(Customer, Customer.id == PropertyOwnership.customer_id)
+        .filter(PropertyOwnership.property_id.in_(open_ids),
+                PropertyOwnership.valid_to.is_(None))
+        .all()
+    ):
+        owners.setdefault(pid, cust)
+
+    for prop in props:
+        entry = {"prop": prop, "owner": owners.get(prop.id)}
+        if prop.id not in read_prop_ids:
+            result["no_reading"].append(entry)
+        elif entry["owner"] is None:
+            result["no_owner"].append(entry)
+        else:
+            result["ready"].append(entry)
+    return result
+
+
+@bp.route("/period")
+@login_required
+def period_overview_current():
+    """Menue-Einstieg „Jahresuebersicht" — die aktive Abrechnungsperiode.
+
+    Eigene Route statt eines Menue-Links mit fest verdrahteter ID: welche
+    Periode aktiv ist, aendert sich, und das Menue soll immer die aktuelle
+    treffen. Ohne aktive Periode faellt es auf die juengste zurueck.
+    """
+    period = BillingPeriod.current() or (
+        BillingPeriod.query
+        .order_by(BillingPeriod.start_date.desc(), BillingPeriod.id.desc())
+        .first()
+    )
+    if period is None:
+        flash("Es ist noch keine Abrechnungsperiode angelegt.", "warning")
+        return redirect(url_for("periods.index"))
+    return redirect(url_for("invoices.period_overview", period_id=period.id))
+
+
+@bp.route("/period/<int:period_id>")
+@login_required
+def period_overview(period_id):
+    """Gesamtübersicht aller Rechnungen einer Abrechnungsperiode — lauf-übergreifend.
+
+    Der Rechnungslauf bleibt das unveraenderliche Protokoll **eines** Erzeugungs-
+    und Versand-Vorgangs (und damit der Ort fuer Druck/Mailing); diese Seite ist
+    die Bestandssicht daneben: was ist in der Periode abgerechnet, versendet,
+    bezahlt, offen. Sie erfasst darum auch, was in keinem Lauf steckt — manuell
+    erstellte Einzelrechnungen und die Schlussrechnungen aus dem
+    Eigentuemerwechsel (``invoice_kind='final_settlement'``).
+
+    Rechnungen ohne ``billing_period_id`` (Bestandsdaten aus der Zeit vor den
+    Perioden bzw. vor dem Setzen der Periode in ``invoices.new``) werden ueber
+    ihr Rechnungsdatum in die Periode gezogen, damit die Uebersicht auch auf
+    Altdaten vollstaendig ist.
+    """
+    from sqlalchemy import or_, and_
+    from sqlalchemy.orm import selectinload, joinedload
+
+    period = db.get_or_404(BillingPeriod, period_id)
+
+    invoices = (
+        Invoice.query
+        .options(
+            selectinload(Invoice.items),
+            joinedload(Invoice.customer),
+            joinedload(Invoice.property),
+            joinedload(Invoice.billing_run),
+        )
+        .filter(or_(
+            Invoice.billing_period_id == period.id,
+            and_(
+                Invoice.billing_period_id.is_(None),
+                Invoice.date >= period.start_date,
+                Invoice.date <= period.end_date,
+            ),
+        ))
+        .order_by(Invoice.invoice_number, Invoice.id)
+        .all()
+    )
+
+    runs = (
+        BillingRun.query
+        .filter_by(billing_period_id=period.id)
+        .order_by(BillingRun.created_at)
+        .all()
+    )
+    # Pauschal-Labels aller Laeufe der Periode zusammenfassen — bei einem
+    # Tarifwechsel zwischen zwei Laeufen koennen die Bezeichnungen abweichen,
+    # und die Positionen werden ueber genau diese Labels klassifiziert.
+    base_labels = {r.tariff_base_fee_label or "Grundgebühr" for r in runs} or {"Grundgebühr"}
+    add_labels = {r.tariff_additional_fee_label or "Zusatzgebühr" for r in runs} or {"Zusatzgebühr"}
+
+    ov = _invoice_overview(invoices, base_labels, add_labels)
+
+    # --- Herkunft je Rechnung + Kennzahlen je Lauf (ohne Zusatz-Queries) -----
+    run_stats = {
+        r.id: {"run": r, "count": 0, "gross": Decimal("0"), "open": Decimal("0")}
+        for r in runs
+    }
+    count_single = count_final = 0
+    for row in ov["rows"]:
+        inv = row["inv"]
+        if inv.billing_run_id:
+            row["origin"] = "run"
+            st = run_stats.get(inv.billing_run_id)
+            if st is not None:
+                st["count"] += 1
+                if inv.status != Invoice.STATUS_CANCELLED:
+                    st["gross"] += row["amt"]["gross"]
+                    if inv.status != Invoice.STATUS_PAID:
+                        st["open"] += row["amt"]["gross"]
+        elif inv.invoice_kind == Invoice.KIND_FINAL_SETTLEMENT:
+            row["origin"] = "final"
+            count_final += 1
+        else:
+            row["origin"] = "single"
+            count_single += 1
+
+    return render_template(
+        "invoices/period_overview.html",
+        period=period,
+        periods=BillingPeriod.query.order_by(
+            BillingPeriod.start_date.desc(), BillingPeriod.id.desc()
+        ).all(),
+        runs=runs,
+        run_stats=[run_stats[r.id] for r in runs],
+        count_single=count_single,
+        count_final=count_final,
+        completeness=_period_completeness(period),
+        doc_format=AppSetting.get("invoice.document_format", "pdf"),
+        **ov,
     )
 
 

@@ -102,6 +102,25 @@ class TestBillingRun:
         # Zweiter Lauf legt keine zweite Rechnung fuer dasselbe Objekt+Periode an.
         assert Invoice.query.count() == 1
 
+    def test_generate_recreates_invoice_after_storno(self, client, admin, billing_setup):
+        _login(client)
+        data = {
+            "billing_period_id": str(billing_setup["period"].id),
+            "tariff_id": str(billing_setup["tariff"].id),
+            "account_id": str(billing_setup["account"].id),
+            "due_days": "30",
+        }
+        client.post("/invoices/generate", data=data, follow_redirects=False)
+        inv = Invoice.query.one()
+        inv.status = Invoice.STATUS_CANCELLED
+        db.session.commit()
+
+        client.post("/invoices/generate", data=data, follow_redirects=False)
+        # Stornierte Rechnung blockiert den naechsten Lauf nicht mehr.
+        assert Invoice.query.count() == 2
+        statuses = sorted(i.status for i in Invoice.query.all())
+        assert statuses == sorted([Invoice.STATUS_CANCELLED, Invoice.STATUS_DRAFT])
+
     def test_generate_without_period_flashes_and_redirects(self, client, admin,
                                                            billing_setup):
         _login(client)

@@ -1,0 +1,98 @@
+{# Zusammenfassungs-Kachel einer Rechnungsmenge — Versand-Fortschritt, Summen,
+   Zahlungs-Fortschritt. Geteilt von der Rechnungslauf-Detailseite (ein Lauf)
+   und der Perioden-Übersicht (alle Läufe + Einzel-/Schlussrechnungen).
+
+   Erwartet die Keys aus `_invoice_overview()` im Kontext: count_draft,
+   count_mail, count_post, count_sent, count_live, pct_sent, sum_total,
+   sum_paid, sum_open, count_paid, count_open, pct_paid, other_status_counts.
+   Optional `summary_title` für die Kopfzeile. #}
+{% set status_badge_lt = {'Bezahlt': 'bg-success-lt', 'Storniert': 'bg-danger-lt', 'Guthaben': 'bg-azure-lt'} %}
+<div class="card mb-3">
+  <div class="card-header">
+    <h3 class="card-title"><i class="fas fa-chart-pie me-2"></i> {{ summary_title | default('Zusammenfassung') }}</h3>
+  </div>
+  <div class="card-body">
+
+    {# --- Versand-Fortschritt ----------------------------------------------- #}
+    <div class="row g-3 align-items-center mb-3">
+      <div class="col-md-5">
+        <div class="row g-3 text-center">
+          <div class="col-6">
+            <div class="text-muted small text-uppercase">Noch nicht versandt</div>
+            <div class="h1 mb-0 {{ 'text-muted' if count_draft == 0 }}">{{ count_draft }}</div>
+            {% if count_draft %}
+            <div class="small mt-1">
+              <span class="text-azure"><i class="fas fa-envelope me-1"></i>{{ count_mail }} per Mail</span>
+              <span class="text-muted mx-1">·</span>
+              <span class="text-orange"><i class="fas fa-inbox me-1"></i>{{ count_post }} per Post</span>
+            </div>
+            {% endif %}
+          </div>
+          <div class="col-6">
+            <div class="text-muted small text-uppercase">Schon versendet</div>
+            <div class="h1 mb-0 text-green">{{ count_sent }}</div>
+            {% if count_live %}<div class="small text-muted mt-1">von {{ count_live }}</div>{% endif %}
+          </div>
+        </div>
+      </div>
+      <div class="col-md-7">
+        <div class="d-flex justify-content-between align-items-end mb-1">
+          <span class="small text-muted text-uppercase">Versand-Fortschritt</span>
+          <span class="small"><strong class="text-green">{{ pct_sent }} %</strong> versendet</span>
+        </div>
+        <div class="progress" style="height: 1.25rem">
+          <div class="progress-bar bg-green" role="progressbar" style="width: {{ pct_sent }}%"
+               aria-valuenow="{{ pct_sent }}" aria-valuemin="0" aria-valuemax="100"></div>
+        </div>
+      </div>
+    </div>
+
+    <hr class="my-3">
+
+    {# --- Finanzen: Gesamt / Bezahlt / Offen -------------------------------- #}
+    <div class="row g-3 text-center mb-3">
+      <div class="col-12 col-md-4">
+        <div class="text-muted small text-uppercase">Gesamtsumme</div>
+        <div class="h2 mb-0">{{ sum_total | de_number }} €</div>
+        <div class="small text-muted mt-1">{{ count_paid + count_open }} Rechnung{{ '' if (count_paid + count_open) == 1 else 'en' }}</div>
+      </div>
+      <div class="col-6 col-md-4">
+        <div class="text-muted small text-uppercase"><i class="fas fa-check-circle me-1"></i> Bezahlt</div>
+        <div class="h2 mb-0 text-green">{{ sum_paid | de_number }} €</div>
+        <div class="small text-muted mt-1">{{ count_paid }} Rechnung{{ '' if count_paid == 1 else 'en' }}</div>
+      </div>
+      <div class="col-6 col-md-4">
+        <div class="text-muted small text-uppercase"><i class="fas fa-hourglass-half me-1"></i> Offen</div>
+        <div class="h2 mb-0 {{ 'text-muted' if sum_open == 0 else 'text-orange' }}">{{ sum_open | de_number }} €</div>
+        <div class="small text-muted mt-1">{{ count_open }} Rechnung{{ '' if count_open == 1 else 'en' }}</div>
+      </div>
+    </div>
+
+    {% if sum_total > 0 %}
+    {# --- Zahlungs-Fortschritt --------------------------------------------- #}
+    <div class="d-flex justify-content-between align-items-end mb-1">
+      <span class="small text-muted text-uppercase">Zahlungseingang</span>
+      <span class="small"><strong class="text-green">{{ pct_paid }} %</strong> bezahlt</span>
+    </div>
+    <div class="progress" style="height: 1.5rem">
+      <div class="progress-bar bg-green" role="progressbar" style="width: {{ pct_paid }}%"
+           aria-valuenow="{{ pct_paid }}" aria-valuemin="0" aria-valuemax="100">
+        {% if pct_paid >= 12 %}{{ sum_paid | de_number }} €{% endif %}
+      </div>
+    </div>
+    <div class="d-flex justify-content-between small text-muted mt-1">
+      <span>{{ sum_paid | de_number }} € eingegangen</span>
+      <span>{{ sum_open | de_number }} € offen</span>
+    </div>
+    {% endif %}
+
+    {% if other_status_counts %}
+    <div class="mt-3 pt-3 border-top">
+      <span class="text-muted small me-2">Weitere Status:</span>
+      {% for st, cnt in other_status_counts.items() %}
+        <span class="badge {{ status_badge_lt.get(st, 'bg-secondary-lt') }} me-1">{{ st }}: {{ cnt }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+</div>

@@ -1,0 +1,559 @@
+{% extends "base.html" %}
+{% block title %}Abrechnung {{ period.name }}{% endblock %}
+{% block page_title %}<i class="fas fa-layer-group me-2"></i> Abrechnung {{ period.name }}{% endblock %}
+{% block content %}
+
+{# Gesamtsicht einer Abrechnungsperiode — bewusst lauf-übergreifend:
+   der Rechnungslauf bleibt das Protokoll eines Versand-Vorgangs (Druck/Mailing
+   dort), diese Seite ist der Bestand: was ist abgerechnet, versendet, bezahlt,
+   offen — inkl. der Rechnungen, die in keinem Lauf stecken. #}
+
+<!-- Kopfzeile: Zeitraum + Perioden-Wechsel -->
+<div class="card mb-3">
+  <div class="card-body d-flex flex-wrap align-items-center gap-3">
+    <div>
+      <div class="text-muted small text-uppercase">Abrechnungsperiode</div>
+      <div class="h2 mb-0">
+        {{ period.name }}
+        {% if period.active %}<span class="badge bg-success text-white ms-1">aktiv</span>{% endif %}
+      </div>
+      <div class="text-muted small mt-1">
+        {{ period.start_date.strftime('%d.%m.%Y') }} – {{ period.end_date.strftime('%d.%m.%Y') }}
+      </div>
+    </div>
+
+    <div class="ms-auto d-flex flex-wrap align-items-center gap-2">
+      {% if periods | length > 1 %}
+      <div class="dropdown">
+        <button class="btn btn-outline-secondary dropdown-toggle" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false">
+          <i class="fas fa-exchange-alt me-1"></i> Periode wechseln
+        </button>
+        <ul class="dropdown-menu dropdown-menu-end">
+          {% for p in periods %}
+          <li>
+            <a class="dropdown-item {{ 'active' if p.id == period.id }}"
+               href="{{ url_for('invoices.period_overview', period_id=p.id) }}">
+              {{ p.name }}
+              {% if p.active %}<span class="badge bg-success-lt ms-1">aktiv</span>{% endif %}
+            </a>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+      <a href="{{ url_for('invoices.index', period_id=period.id) }}"
+         class="btn btn-outline-secondary" title="In der normalen Rechnungsliste öffnen (mit allen Filtern)">
+        <i class="fas fa-list me-1"></i> In Rechnungsliste
+      </a>
+      <a href="{{ url_for('invoices.generate') }}" class="btn btn-primary">
+        <i class="fas fa-play me-1"></i> Neuer Rechnungslauf
+      </a>
+    </div>
+  </div>
+</div>
+
+<!-- Zusammenfassung über die ganze Periode -->
+{% with summary_title = 'Zusammenfassung — gesamte Periode' %}
+  {% include "invoices/_overview_summary.html" %}
+{% endwith %}
+
+<!-- Vollständigkeit: was fehlt in dieser Periode noch? -->
+{% set c = completeness %}
+{% set open_total = c.ready | length + c.no_owner | length + c.no_reading | length %}
+<div class="card mb-3">
+  <div class="card-header">
+    <h3 class="card-title">
+      <i class="fas fa-tasks me-2"></i> Vollständigkeit
+      {% if open_total == 0 and c.billed_count %}
+      <span class="badge bg-success text-white ms-2">vollständig</span>
+      {% elif open_total %}
+      <span class="badge bg-orange text-white ms-2">{{ open_total }} offen</span>
+      {% endif %}
+    </h3>
+    <div class="card-options">
+      <span class="text-muted small">
+        {{ c.billed_count }} von {{ c.total_count }} Objekt{{ '' if c.total_count == 1 else 'en' }} abgerechnet
+      </span>
+    </div>
+  </div>
+  <div class="card-body">
+    {% if c.total_count %}
+    {% set pct_done = (c.billed_count / c.total_count * 100) | round | int %}
+    <div class="progress mb-3" style="height: 1.25rem">
+      <div class="progress-bar bg-green" role="progressbar" style="width: {{ pct_done }}%"
+           aria-valuenow="{{ pct_done }}" aria-valuemin="0" aria-valuemax="100">
+        {% if pct_done >= 12 %}{{ pct_done }} %{% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if open_total == 0 %}
+      {% if c.billed_count %}
+      <p class="text-muted mb-0">
+        <i class="fas fa-check-circle text-green me-1"></i>
+        Alle abzurechnenden Objekte dieser Periode haben eine Rechnung.
+      </p>
+      {% else %}
+      <p class="text-muted mb-0">Für diese Periode gibt es noch keine abzurechnenden Objekte.</p>
+      {% endif %}
+    {% else %}
+
+    <div class="row g-3">
+      {# --- Abrechnungsbereit: die eigentliche Handlungsliste ------------- #}
+      <div class="col-lg-4">
+        <div class="d-flex align-items-center mb-2">
+          <span class="badge bg-orange text-white me-2">{{ c.ready | length }}</span>
+          <strong>Bereit zum Abrechnen</strong>
+        </div>
+        <p class="text-muted small">
+          Ablesung und Eigentümer vorhanden, aber noch keine Rechnung — der
+          nächste Rechnungslauf erfasst genau diese Objekte.
+        </p>
+        {% if c.ready %}
+        <div class="list-group list-group-flush mb-2" style="max-height:220px;overflow:auto">
+          {% for e in c.ready %}
+          <div class="list-group-item px-0 py-1 border-0">
+            <a href="{{ url_for('properties.detail', property_id=e.prop.id) }}">
+              {{ e.prop.object_number or ('Objekt ' ~ e.prop.id) }}
+            </a>
+            <small class="text-muted">
+              {{ [e.prop.strasse, e.prop.hausnummer] | select | join(' ') }}
+              {% if e.owner %}· {{ e.owner.name }}{% endif %}
+            </small>
+          </div>
+          {% endfor %}
+        </div>
+        <a href="{{ url_for('invoices.generate') }}" class="btn btn-primary btn-sm">
+          <i class="fas fa-play me-1"></i> Rechnungslauf starten
+        </a>
+        {% else %}
+        <p class="text-muted small mb-0"><em>Nichts offen.</em></p>
+        {% endif %}
+      </div>
+
+      {# --- Ohne Ablesung: wartet, keine Aktion moeglich ------------------ #}
+      <div class="col-lg-4">
+        <div class="d-flex align-items-center mb-2">
+          <span class="badge bg-secondary text-white me-2">{{ c.no_reading | length }}</span>
+          <strong>Warten auf Ablesung</strong>
+        </div>
+        <p class="text-muted small">
+          Aktives Objekt mit Zähler, aber ohne Ablesung in dieser Periode.
+        </p>
+        {% if c.no_reading %}
+        <div class="list-group list-group-flush mb-2" style="max-height:220px;overflow:auto">
+          {% for e in c.no_reading %}
+          <div class="list-group-item px-0 py-1 border-0">
+            <a href="{{ url_for('properties.detail', property_id=e.prop.id) }}">
+              {{ e.prop.object_number or ('Objekt ' ~ e.prop.id) }}
+            </a>
+            <small class="text-muted">
+              {{ [e.prop.strasse, e.prop.hausnummer] | select | join(' ') }}
+            </small>
+          </div>
+          {% endfor %}
+        </div>
+        {% if current_user.has_permission('zaehler') %}
+        <a href="{{ url_for('meters.readings') }}" class="btn btn-outline-secondary btn-sm">
+          <i class="fas fa-tachometer-alt me-1"></i> Zu den Ablesungen
+        </a>
+        {% endif %}
+        {% else %}
+        <p class="text-muted small mb-0"><em>Nichts offen.</em></p>
+        {% endif %}
+      </div>
+
+      {# --- Ohne Eigentuemer: wird vom Lauf STILL uebersprungen ----------- #}
+      <div class="col-lg-4">
+        <div class="d-flex align-items-center mb-2">
+          <span class="badge {{ 'bg-danger text-white' if c.no_owner else 'bg-secondary text-white' }} me-2">
+            {{ c.no_owner | length }}
+          </span>
+          <strong>Kein Eigentümer hinterlegt</strong>
+        </div>
+        <p class="text-muted small">
+          Ablesung vorhanden, aber kein aktueller Eigentümer — der Rechnungslauf
+          <strong>überspringt diese Objekte stillschweigend</strong>. Erst nach
+          Zuordnung eines Eigentümers werden sie abgerechnet.
+        </p>
+        {% if c.no_owner %}
+        <div class="list-group list-group-flush" style="max-height:220px;overflow:auto">
+          {% for e in c.no_owner %}
+          <div class="list-group-item px-0 py-1 border-0">
+            <a href="{{ url_for('properties.detail', property_id=e.prop.id) }}">
+              {{ e.prop.object_number or ('Objekt ' ~ e.prop.id) }}
+            </a>
+            <small class="text-muted">
+              {{ [e.prop.strasse, e.prop.hausnummer] | select | join(' ') }}
+            </small>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-muted small mb-0"><em>Nichts offen.</em></p>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Herkunft der Rechnungen: Läufe + alles, was in keinem Lauf steckt -->
+<div class="card mb-3">
+  <div class="card-header">
+    <h3 class="card-title"><i class="fas fa-history me-2"></i> Wie kamen die Rechnungen zustande?</h3>
+    <div class="card-options">
+      <a href="{{ url_for('invoices.billing_runs') }}" class="btn btn-secondary btn-sm">
+        <i class="fas fa-list me-1"></i> Alle Läufe
+      </a>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover mb-0 align-middle">
+        <thead>
+          <tr>
+            <th>Herkunft</th>
+            <th>Erstellt</th>
+            <th>Benutzer</th>
+            <th>Tarif</th>
+            <th class="text-end">Rechnungen</th>
+            <th class="text-end">Summe</th>
+            <th class="text-end">davon offen</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for st in run_stats %}
+          {% set run = st.run %}
+          <tr>
+            <td>
+              <span class="badge bg-blue-lt">
+                <i class="fas fa-play me-1"></i> Rechnungslauf
+              </span>
+            </td>
+            <td>
+              <a href="{{ url_for('invoices.billing_run_detail', run_id=run.id) }}">
+                {{ run.created_at.strftime('%d.%m.%Y %H:%M') }}
+              </a>
+            </td>
+            <td>{{ run.created_by.username if run.created_by else '—' }}</td>
+            <td>
+              {{ run.tariff_name }}
+              <small class="text-muted">({{ run.tariff_price_per_m3 | de_number(4) }} €/m³)</small>
+            </td>
+            <td class="text-end">{{ st.count }}</td>
+            <td class="text-end">{{ st.gross | de_number }} €</td>
+            <td class="text-end {{ 'text-muted' if st.open == 0 else 'text-orange' }}">
+              {{ st.open | de_number }} €
+            </td>
+            <td class="text-end text-nowrap">
+              <a href="{{ url_for('invoices.billing_run_detail', run_id=run.id) }}"
+                 class="btn btn-sm btn-outline-secondary" title="Lauf-Detail (Druck &amp; Mailing)">
+                <i class="fas fa-eye"></i>
+              </a>
+            </td>
+          </tr>
+          {% endfor %}
+
+          {% if count_final %}
+          <tr>
+            <td><span class="badge bg-purple-lt"><i class="fas fa-user-tag me-1"></i> Schlussrechnungen</span></td>
+            <td colspan="3" class="text-muted">
+              Eigentümerwechsel — unterjährig, außerhalb der Läufe erstellt
+            </td>
+            <td class="text-end">{{ count_final }}</td>
+            <td colspan="3"></td>
+          </tr>
+          {% endif %}
+
+          {% if count_single %}
+          <tr>
+            <td><span class="badge bg-secondary-lt"><i class="fas fa-file-invoice me-1"></i> Einzelrechnungen</span></td>
+            <td colspan="3" class="text-muted">Manuell angelegt</td>
+            <td class="text-end">{{ count_single }}</td>
+            <td colspan="3"></td>
+          </tr>
+          {% endif %}
+
+          {% if not run_stats and not count_final and not count_single %}
+          <tr>
+            <td colspan="8" class="text-center text-muted py-4">
+              In dieser Periode wurde noch nichts abgerechnet.
+              <a href="{{ url_for('invoices.generate') }}">Ersten Rechnungslauf starten →</a>
+            </td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Alle Rechnungen der Periode -->
+<div class="card">
+  <div class="card-header d-flex flex-wrap align-items-center gap-2">
+    <h3 class="card-title mb-0">
+      Alle Rechnungen der Periode
+      <span class="badge bg-primary text-white ms-1">{{ rows | length }}</span>
+    </h3>
+    <div class="d-flex flex-wrap align-items-center gap-2">
+      <div class="input-group input-group-sm" style="width:250px">
+        <input type="search" id="po-search" class="form-control form-control-sm"
+               placeholder="Nr., Kunde, Liegenschaft, Adresse…">
+        <span class="input-group-text"><i class="fas fa-search"></i></span>
+      </div>
+      <select id="po-status-filter" class="form-select form-select-sm" style="width:150px">
+        <option value="">Status: alle</option>
+        <option value="Entwurf">Entwurf</option>
+        <option value="Versendet">Versendet</option>
+        <option value="Bezahlt">Bezahlt</option>
+        <option value="Guthaben">Guthaben</option>
+        <option value="Storniert">Storniert</option>
+      </select>
+      <select id="po-origin-filter" class="form-select form-select-sm" style="width:175px">
+        <option value="">Herkunft: alle</option>
+        <option value="run">Aus Rechnungslauf</option>
+        <option value="final">Schlussrechnung</option>
+        <option value="single">Einzelrechnung</option>
+      </select>
+      <select id="po-versand-filter" class="form-select form-select-sm" style="width:155px">
+        <option value="">Versandart: alle</option>
+        <option value="mail">Nur per Mail</option>
+        <option value="post">Nur per Post</option>
+      </select>
+      <button type="button" class="btn btn-sm btn-outline-secondary" id="po-reset">
+        <i class="fas fa-times me-1"></i> Filter zurücksetzen
+      </button>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover table-striped mb-0 align-middle" id="po-table">
+        <thead>
+          <tr>
+            <th class="po-sort" data-key="invnr" data-type="text">Rechnungsnr. <i class="fas fa-sort text-muted"></i></th>
+            <th class="po-sort" data-key="kunde" data-type="text">Kunde <i class="fas fa-sort text-muted"></i></th>
+            <th class="po-sort" data-key="adresse" data-type="text" title="Sortiert nach Straße, dann Hausnummer">Liegenschaft <i class="fas fa-sort text-muted"></i></th>
+            <th class="po-sort" data-key="herkunft" data-type="text">Herkunft <i class="fas fa-sort text-muted"></i></th>
+            <th class="po-sort" data-key="versandart" data-type="text">Versandart <i class="fas fa-sort text-muted"></i></th>
+            <th class="po-sort text-end" data-key="m3" data-type="num">m³ <i class="fas fa-sort text-muted"></i></th>
+            <th class="po-sort text-end" data-key="wasser" data-type="num">Wasser <i class="fas fa-sort text-muted"></i></th>
+            <th class="po-sort text-end" data-key="grund" data-type="num">Grundgeb. <i class="fas fa-sort text-muted"></i></th>
+            <th class="po-sort text-end" data-key="zusatz" data-type="num">Zusatzgeb. <i class="fas fa-sort text-muted"></i></th>
+            <th class="po-sort text-end" data-key="netto" data-type="num">Netto <i class="fas fa-sort text-muted"></i></th>
+            {% if run_has_vat %}
+            <th class="po-sort text-end" data-key="ust" data-type="num">USt <i class="fas fa-sort text-muted"></i></th>
+            {% endif %}
+            <th class="po-sort text-end" data-key="brutto" data-type="num">Brutto <i class="fas fa-sort text-muted"></i></th>
+            <th class="po-sort" data-key="mailstatus" data-type="text">Mail-Status <i class="fas fa-sort text-muted"></i></th>
+            <th class="po-sort" data-key="status" data-type="text">Status <i class="fas fa-sort text-muted"></i></th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          {% set inv = row.inv %}{% set amt = row.amt %}
+          <tr data-id="{{ inv.id }}"
+              data-invnr="{{ inv.invoice_number }}"
+              data-kunde="{{ inv.customer.name }}"
+              data-objektnr="{{ inv.property.object_number if inv.property else '' }}"
+              data-strasse="{{ inv.property.strasse if inv.property else '' }}"
+              data-hausnr="{{ inv.property.hausnummer if inv.property else '' }}"
+              data-herkunft="{{ row.origin }}"
+              data-versandart="{{ 'mail' if row.wants_email else 'post' }}"
+              data-email="{{ inv.customer.email or '' }}"
+              data-m3="{{ amt.m3 or 0 }}"
+              data-wasser="{{ amt.water_net }}"
+              data-grund="{{ amt.base_fee }}"
+              data-zusatz="{{ amt.additional_fee }}"
+              data-netto="{{ amt.net }}"
+              data-ust="{{ amt.ust }}"
+              data-brutto="{{ amt.gross }}"
+              data-status="{{ inv.status }}"
+              data-mailstatus="{{ inv.last_email_status_de or '' }}">
+            <td><code>{{ inv.invoice_number }}</code></td>
+            <td>
+              <a href="{{ url_for('customers.detail', customer_id=inv.customer_id) }}">
+                {{ inv.customer.name }}
+              </a>
+            </td>
+            <td>
+              {% if inv.property %}
+              <a href="{{ url_for('properties.detail', property_id=inv.property_id) }}">
+                {{ inv.property.object_number or inv.property_id }}
+              </a>
+              {% set addr = [inv.property.strasse, inv.property.hausnummer] | select | join(' ') %}
+              {% if addr %}
+              <br><small class="text-muted">{{ addr }}</small>
+              {% endif %}
+              {% else %}—{% endif %}
+            </td>
+            <td class="text-nowrap">
+              {% if row.origin == 'run' %}
+                {% if inv.billing_run %}
+                <a href="{{ url_for('invoices.billing_run_detail', run_id=inv.billing_run_id) }}"
+                   class="badge bg-blue-lt text-decoration-none"
+                   title="Rechnungslauf vom {{ inv.billing_run.created_at.strftime('%d.%m.%Y %H:%M') }}">
+                  <i class="fas fa-play me-1"></i>{{ inv.billing_run.created_at.strftime('%d.%m.%Y') }}
+                </a>
+                {% else %}
+                <span class="badge bg-blue-lt"><i class="fas fa-play me-1"></i>Lauf</span>
+                {% endif %}
+              {% elif row.origin == 'final' %}
+                <span class="badge bg-purple-lt" title="Unterjährige Schlussrechnung aus einem Eigentümerwechsel">
+                  <i class="fas fa-user-tag me-1"></i>Schlussrechnung
+                </span>
+              {% else %}
+                <span class="badge bg-secondary-lt" title="Manuell angelegte Einzelrechnung">
+                  <i class="fas fa-file-invoice me-1"></i>Einzeln
+                </span>
+              {% endif %}
+            </td>
+            <td>
+              {% if row.wants_email %}
+              <span class="badge bg-azure-lt"><i class="fas fa-envelope me-1"></i>Mail</span>
+              {% if inv.customer.email %}<br><small class="text-muted">{{ inv.customer.email }}</small>{% endif %}
+              {% else %}
+              <span class="badge bg-secondary-lt"><i class="fas fa-inbox me-1"></i>Post</span>
+              {% endif %}
+            </td>
+            <td class="text-end">{{ amt.m3 | de_number(2) if amt.m3 else '—' }}</td>
+            <td class="text-end">{{ amt.water_net | de_number }} €</td>
+            <td class="text-end">{{ amt.base_fee | de_number }} €</td>
+            <td class="text-end">{{ amt.additional_fee | de_number }} €</td>
+            <td class="text-end">{{ amt.net | de_number }} €</td>
+            {% if run_has_vat %}
+            <td class="text-end">{{ amt.ust | de_number }} €</td>
+            {% endif %}
+            <td class="text-end fw-semibold">{{ amt.gross | de_number }} €</td>
+            <td>{% with subject = inv %}{% include "invoices/_email_status_badge.html" %}{% endwith %}</td>
+            <td>
+              {% if inv.status == 'Entwurf' %}
+                <span class="badge bg-secondary text-white">{{ inv.status }}</span>
+              {% elif inv.status == 'Versendet' %}
+                <span class="badge bg-info text-white">{{ inv.status }}</span>
+              {% elif inv.status == 'Bezahlt' %}
+                <span class="badge bg-success text-white">{{ inv.status }}</span>
+              {% elif inv.status == 'Storniert' %}
+                <span class="badge bg-danger text-white">{{ inv.status }}</span>
+              {% else %}
+                <span class="badge bg-warning text-dark">{{ inv.status }}</span>
+              {% endif %}
+            </td>
+            <td class="text-nowrap">
+              <a href="{{ url_for('invoices.detail', invoice_id=inv.id) }}"
+                 class="btn btn-sm btn-outline-secondary" title="Rechnungsdetail">
+                <i class="fas fa-eye"></i>
+              </a>
+              {% if doc_format in ('pdf', 'both') %}
+              <a href="{{ url_for('invoices.pdf', invoice_id=inv.id) }}?fmt=pdf"
+                 class="btn btn-sm btn-outline-danger ms-1" target="_blank" title="PDF">
+                <i class="fas fa-file-pdf"></i>
+              </a>
+              {% endif %}
+              {% if doc_format in ('docx', 'both') %}
+              <a href="{{ url_for('invoices.pdf', invoice_id=inv.id) }}?fmt=docx"
+                 class="btn btn-sm btn-outline-secondary ms-1" target="_blank" title="Word">
+                <i class="fas fa-file-word"></i>
+              </a>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div id="po-empty" class="text-center text-muted py-4 d-none">
+      Keine Rechnungen entsprechen dem Filter.
+    </div>
+    {% if not rows %}
+    <div class="text-center text-muted py-4">
+      In dieser Periode gibt es noch keine Rechnungen.
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// In EINE IIFE gewickelt: hx-boost tauscht <body> aus und fuehrt dieses Inline-
+// Skript bei jeder geboosteten Navigation erneut aus. Top-level `const`/`let`
+// wuerden beim zweiten Lauf mit dem bereits existierenden globalen Binding
+// kollidieren ("Identifier already declared") und das gesamte Skript abbrechen.
+(function () {
+  const table = document.getElementById('po-table');
+  if (!table) return;
+
+  const tbody = table.tBodies[0];
+  const rows = Array.from(tbody.rows);
+  const search = document.getElementById('po-search');
+  const statusSel = document.getElementById('po-status-filter');
+  const originSel = document.getElementById('po-origin-filter');
+  const versandSel = document.getElementById('po-versand-filter');
+  const reset = document.getElementById('po-reset');
+  const empty = document.getElementById('po-empty');
+
+  function applyFilter() {
+    const q = (search.value || '').trim().toLowerCase();
+    const st = statusSel.value;
+    const or_ = originSel.value;
+    const v = versandSel.value;
+    let visible = 0;
+    rows.forEach(r => {
+      const hay = [r.dataset.invnr, r.dataset.kunde, r.dataset.objektnr,
+                   r.dataset.strasse, r.dataset.hausnr, r.dataset.email].join(' ').toLowerCase();
+      const show = (!q || hay.includes(q))
+                && (!st || r.dataset.status === st)
+                && (!or_ || r.dataset.herkunft === or_)
+                && (!v || r.dataset.versandart === v);
+      r.style.display = show ? '' : 'none';
+      if (show) visible++;
+    });
+    if (empty) empty.classList.toggle('d-none', visible !== 0 || rows.length === 0);
+  }
+  [search, statusSel, originSel, versandSel].forEach(el => {
+    if (el) el.addEventListener(el.tagName === 'INPUT' ? 'input' : 'change', applyFilter);
+  });
+  if (reset) reset.addEventListener('click', function () {
+    if (search) search.value = '';
+    [statusSel, originSel, versandSel].forEach(el => { if (el) el.value = ''; });
+    applyFilter();
+  });
+
+  let sortDir = 1, sortKeyCur = null;
+  table.querySelectorAll('th.po-sort').forEach(th => {
+    th.style.cursor = 'pointer';
+    th.addEventListener('click', function () {
+      const key = th.dataset.key;
+      const type = th.dataset.type || 'text';
+      if (sortKeyCur === key) { sortDir = -sortDir; } else { sortKeyCur = key; sortDir = 1; }
+      const sorted = rows.slice().sort((a, b) => {
+        if (key === 'adresse') {
+          const as = (a.dataset.strasse || '').toLowerCase();
+          const bs = (b.dataset.strasse || '').toLowerCase();
+          if (as !== bs) return as < bs ? -sortDir : sortDir;
+          const ah = parseInt(((a.dataset.hausnr || '').match(/\d+/) || ['0'])[0], 10);
+          const bh = parseInt(((b.dataset.hausnr || '').match(/\d+/) || ['0'])[0], 10);
+          return (ah - bh) * sortDir;
+        }
+        let av = a.dataset[key] || '', bv = b.dataset[key] || '';
+        if (type === 'num') {
+          return ((parseFloat(av) || 0) - (parseFloat(bv) || 0)) * sortDir;
+        }
+        av = av.toLowerCase(); bv = bv.toLowerCase();
+        if (av < bv) return -sortDir;
+        if (av > bv) return sortDir;
+        return 0;
+      });
+      sorted.forEach(r => tbody.appendChild(r));
+      table.querySelectorAll('th.po-sort i').forEach(i => { i.className = 'fas fa-sort text-muted'; });
+      const ic = th.querySelector('i');
+      if (ic) ic.className = sortDir > 0 ? 'fas fa-sort-up' : 'fas fa-sort-down';
+    });
+  });
+})();
+</script>
+{% endblock %}

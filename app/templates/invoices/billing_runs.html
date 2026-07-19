@@ -38,7 +38,14 @@
             </a>
           </td>
           <td>{{ run.created_by.username if run.created_by else '—' }}</td>
-          <td><strong>{{ run.billing_period.name if run.billing_period else '—' }}</strong></td>
+          <td>
+            {% if run.billing_period %}
+            <a href="{{ url_for('invoices.period_overview', period_id=run.billing_period_id) }}"
+               title="Gesamtübersicht dieser Periode (alle Läufe)">
+              <strong>{{ run.billing_period.name }}</strong>
+            </a>
+            {% else %}<strong>—</strong>{% endif %}
+          </td>
           <td>
             {{ run.tariff_name }}
             <small class="text-muted">

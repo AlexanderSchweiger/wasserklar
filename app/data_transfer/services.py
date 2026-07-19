@@ -30,6 +30,7 @@ from flask import current_app, g
 from sqlalchemy import and_, func, inspect as sa_inspect, or_, text
 
 from app.extensions import db
+from app.data_transfer.guard import import_active
 from app.models import (
     AppSetting, BankStatementLine, BankStatementLineAllocation,
     Booking, BookingGroup, Customer, CustomerCounter,
@@ -530,26 +531,30 @@ def import_from_zip(extract_dir: Path, manifest: dict, *, mode: str = "replace",
         with open(tpath, "r", encoding="utf-8") as fh:
             table_records[model] = json.load(fh)
 
+    # Der ganze Lauf (inkl. commit — der flusht) laeuft unter dem Import-Guard,
+    # damit aufgesetzte before_flush-Listener keine Folgeobjekte anlegen, die
+    # der Import gleich darauf selbst mitbringt. Siehe guard.py.
     try:
-        if mode == "replace":
-            _truncate_models(models)
-            for model in models:
-                if model not in table_records:
-                    continue
-                _insert_replace(model, table_records[model], stats)
-            _apply_deferred_updates(table_records, mode="replace", id_map=id_map, stats=stats)
-            _reset_sequences(models)
-        else:  # merge
-            for model in models:
-                if model not in table_records:
-                    continue
-                _insert_merge(model, table_records[model], id_map, update_existing, stats)
-            _apply_deferred_updates(table_records, mode="merge", id_map=id_map, stats=stats)
+        with import_active():
+            if mode == "replace":
+                _truncate_models(models)
+                for model in models:
+                    if model not in table_records:
+                        continue
+                    _insert_replace(model, table_records[model], stats)
+                _apply_deferred_updates(table_records, mode="replace", id_map=id_map, stats=stats)
+                _reset_sequences(models)
+            else:  # merge
+                for model in models:
+                    if model not in table_records:
+                        continue
+                    _insert_merge(model, table_records[model], id_map, update_existing, stats)
+                _apply_deferred_updates(table_records, mode="merge", id_map=id_map, stats=stats)
 
-        # Counter auf MAX nachziehen (gegen Nummern-Kollision bei spaeteren Inserts)
-        _bump_counters(stats)
+            # Counter auf MAX nachziehen (gegen Nummern-Kollision bei spaeteren Inserts)
+            _bump_counters(stats)
 
-        db.session.commit()
+            db.session.commit()
     except Exception as exc:
         db.session.rollback()
         raise ImportError_(f"Import fehlgeschlagen: {exc}") from exc

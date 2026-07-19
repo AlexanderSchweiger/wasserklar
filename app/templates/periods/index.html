@@ -42,6 +42,13 @@
           </td>
           <td class="text-end col-actions">
             <div class="d-flex justify-content-end gap-1">
+              {% if current_user.has_permission('rechnungen_op') %}
+              <a href="{{ url_for('invoices.period_overview', period_id=period.id) }}"
+                 class="btn btn-outline-primary btn-sm"
+                 title="Abrechnung dieser Periode — alle Rechnungen über alle Läufe hinweg">
+                <i class="fas fa-layer-group"></i>
+              </a>
+              {% endif %}
               {% if not period.active %}
               <form method="post" action="{{ url_for('periods.activate', period_id=period.id) }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
