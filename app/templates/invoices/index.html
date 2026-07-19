@@ -107,6 +107,16 @@
       <a href="{{ url_for('invoices.generate') }}" class="btn btn-primary btn-sm">
         <i class="fas fa-play me-1"></i> Rechnungslauf
       </a>
+      {# Gesamtabrechnung: die gefilterte Periode, sonst die aktive. #}
+      {% set overview_period = (periods | selectattr('id', 'equalto', period_filter|int) | first)
+                               if period_filter else (periods | selectattr('active') | first) %}
+      {% if overview_period %}
+      <a href="{{ url_for('invoices.period_overview', period_id=overview_period.id) }}"
+         class="btn btn-secondary btn-sm ms-1"
+         title="Gesamtübersicht der Periode — alle Rechnungen über alle Läufe hinweg">
+        <i class="fas fa-layer-group me-1"></i> Abrechnung {{ overview_period.name }}
+      </a>
+      {% endif %}
       <a href="{{ url_for('invoices.billing_runs') }}" class="btn btn-secondary btn-sm ms-1" title="Rechnungslauf-Übersicht">
         <i class="fas fa-history me-1"></i> Läufe
       </a>
