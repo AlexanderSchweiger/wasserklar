@@ -573,7 +573,11 @@
       btn.type = 'button';
       btn.className = 'btn btn-sm btn-primary';
       btn.innerHTML = '<i class="fas fa-download me-1"></i> Laden &amp; als versendet markieren';
-      btn.addEventListener('click', function () { brDownloadPostBatch(chunk, from, to, btn); });
+      // Bewusst ueber window.* aufgerufen (nicht die lokale Referenz): die SaaS-
+      // Schicht ersetzt brDownloadPostBatch durch die Auftraege-Variante.
+      btn.addEventListener('click', function () {
+        window.brDownloadPostBatch(chunk, from, to, btn);
+      });
       row.appendChild(label);
       row.appendChild(btn);
       list.appendChild(row);
@@ -613,6 +617,9 @@
       btn.innerHTML = '<i class="fas fa-redo me-1"></i> Erneut versuchen';
     }
   }
+  // Ueberschreibbarer Hook + Dirty-Setter fuer Overrides (SaaS: Auftraege-Queue).
+  window.brDownloadPostBatch = brDownloadPostBatch;
+  window.brMarkVersandDirty = function () { brVersandDirty = true; };
 
   const modalEl = document.getElementById('versendenModal');
   if (modalEl) {
