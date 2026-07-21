@@ -147,6 +147,109 @@ class TestRowSwap:
         assert "OP entfernen".encode() in r.data
 
 
+class TestOpenItemPicker:
+    """Zuordnung laeuft ueber ein Such-Modal statt ueber ein <select> mit allen
+    offenen Posten in jeder Zeile (DOM-Groesse + Query-Explosion ueber die
+    ``open_balance``-Property)."""
+
+    def _op(self, cust_name, desc, amount, *, customer_number=None, invoice_number=None):
+        cust = Customer(name=cust_name, active=True, customer_number=customer_number)
+        db.session.add(cust)
+        db.session.flush()
+        invoice_id = None
+        if invoice_number:
+            inv = Invoice(
+                invoice_number=invoice_number, customer_id=cust.id,
+                status=Invoice.STATUS_SENT, date=date(2026, 1, 1),
+                total_amount=Decimal(amount),
+            )
+            db.session.add(inv)
+            db.session.flush()
+            invoice_id = inv.id
+        op = OpenItem(
+            customer_id=cust.id, description=desc, amount=Decimal(amount),
+            status=OpenItem.STATUS_OPEN, invoice_id=invoice_id,
+        )
+        db.session.add(op)
+        db.session.flush()
+        return op
+
+    def test_preview_has_no_bulk_open_item_select(self, client, statement):
+        stmt, line = statement
+        self._op("Weit Entfernt", "Nicht in der Zeile", "42.00")
+        db.session.commit()
+        _login(client)
+        r = client.get(f"/bank-import/statements/{stmt.id}")
+        assert r.status_code == 200
+        # Kein Riesen-<select>: der Posten steht erst im Modal, nicht in der Zeile.
+        assert "Nicht in der Zeile".encode() not in r.data
+        assert "Offenen Posten suchen".encode() in r.data
+
+    def test_picker_lists_and_ranks_exact_amount_first(self, client, statement):
+        stmt, line = statement                       # Zeilenbetrag 113,75
+        self._op("Anders Betrag", "Anderer Posten", "10.00")
+        self._op("Passt Genau", "Treffer", "113.75")
+        db.session.commit()
+        _login(client)
+        r = client.get(f"/bank-import/statements/{stmt.id}/lines/{line.id}/open-items")
+        assert r.status_code == 200
+        body = r.data.decode()
+        assert "Betrag passt" in body
+        # Betragsgleicher Posten steht vor dem anderen.
+        assert body.index("Passt Genau") < body.index("Anders Betrag")
+
+    def test_picker_search_matches_invoice_number(self, client, statement):
+        stmt, line = statement
+        self._op("Such Kunde", "Rechnungsposten", "80.00", invoice_number="2026-00777")
+        self._op("Ganz Anderer", "Irrelevant", "5.00")
+        db.session.commit()
+        _login(client)
+        r = client.get(
+            f"/bank-import/statements/{stmt.id}/lines/{line.id}/open-items",
+            query_string={"q": "00777", "fragment": "1"},
+        )
+        assert r.status_code == 200
+        assert b"2026-00777" in r.data
+        assert "Irrelevant".encode() not in r.data
+        assert b"<html" not in r.data          # Fragment, kein Modal-Rahmen
+
+    def test_picker_search_matches_amount(self, client, statement):
+        stmt, line = statement
+        self._op("Betrag Kunde", "Ueber Betrag gefunden", "1234.50")
+        self._op("Ganz Anderer", "Irrelevant", "5.00")
+        db.session.commit()
+        _login(client)
+        r = client.get(
+            f"/bank-import/statements/{stmt.id}/lines/{line.id}/open-items",
+            query_string={"q": "1.234,50", "fragment": "1"},
+        )
+        assert r.status_code == 200
+        assert "Ueber Betrag gefunden".encode() in r.data
+        assert "Irrelevant".encode() not in r.data
+
+    def test_picker_assignment_closes_modal(self, client, statement):
+        stmt, line = statement
+        op = self._op("Zuordnen Kunde", "Posten", "113.75")
+        db.session.commit()
+        _login(client)
+        r = client.post(
+            f"/bank-import/statements/{stmt.id}/lines/{line.id}",
+            data={"action": "set_open_item", "open_item_id": str(op.id),
+                  "source": "picker"},
+            headers={"HX-Request": "true"},
+        )
+        assert r.status_code == 200
+        assert r.headers.get("HX-Trigger") == "bankOpItemPicked"
+        db.session.refresh(line)
+        assert line.matched_open_item_id == op.id
+
+    def test_picker_rejects_foreign_statement(self, client, statement):
+        stmt, line = statement
+        _login(client)
+        r = client.get(f"/bank-import/statements/{stmt.id + 999}/lines/{line.id}/open-items")
+        assert r.status_code == 404
+
+
 class TestSplit:
     def _two_ops(self, amount_a="13.75", amount_b="100.00"):
         cust = Customer(name="Splitter Kunde", active=True)

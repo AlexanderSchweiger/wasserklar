@@ -1,0 +1,47 @@
+{# Modal-Body „Offenen Posten zuordnen". Wird per HTMX in #bankOpPickerModalBody
+   geladen. Ersetzt das frühere Riesen-<select> in jeder Zeile: die Suche laeuft
+   serverseitig (Kunde, Beschreibung, Rechnungs-/Kundennummer, Betrag) und
+   tauscht nur die Trefferliste. #}
+{% set _search_url = url_for('bank_import.open_item_picker',
+                             statement_id=statement_id, line_id=line.id, fragment=1) %}
+<div class="modal-header">
+  <h5 class="modal-title">Offenen Posten zuordnen</h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+</div>
+
+<div class="modal-body">
+  <div class="row g-2 mb-3">
+    <div class="col">
+      <div class="text-muted small">Gegenpartei</div>
+      <div class="fw-bold">{{ line.counterparty_name or '—' }}</div>
+    </div>
+    <div class="col">
+      <div class="text-muted small">Verwendungszweck</div>
+      <div>{{ line.purpose or '—' }}</div>
+    </div>
+    <div class="col-auto text-end">
+      <div class="text-muted small">Buchungsbetrag</div>
+      <div class="fw-bold {% if line.amount > 0 %}text-success{% else %}text-danger{% endif %}">
+        {{ line.amount | de_number(decimals=2, signed=True) }} €
+      </div>
+    </div>
+  </div>
+
+  <div class="input-icon mb-3">
+    <span class="input-icon-addon"><i class="fas fa-search"></i></span>
+    <input type="search" name="q" value="{{ q }}" class="form-control"
+           id="opPickerSearch" autocomplete="off"
+           placeholder="Kunde, Beschreibung, Rechnungsnr., Kundennr. oder Betrag …"
+           hx-get="{{ _search_url }}"
+           hx-trigger="input changed delay:250ms, search"
+           hx-target="#opPickerResults" hx-swap="innerHTML">
+  </div>
+
+  <div id="opPickerResults">
+    {% include "bank_import/_open_item_results.html" %}
+  </div>
+</div>
+
+<div class="modal-footer">
+  <button type="button" class="btn btn-link" data-bs-dismiss="modal">Abbrechen</button>
+</div>

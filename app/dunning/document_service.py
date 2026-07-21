@@ -95,8 +95,16 @@ def _remove_table_borders(table):
 # DOCX-Generierung
 # ---------------------------------------------------------------------------
 
-def generate_dunning_docx(notice, wg: dict, design: dict | None = None) -> bytes:
+def generate_dunning_docx(notice, wg: dict, design: dict | None = None,
+                          invoice_sender_address: str | None = None) -> bytes:
     """Erstellt ein Word-Dokument (.docx) für eine Mahnung.
+
+    Layout wie beim Rechnungs-DOCX (``app/invoices/document_service.py``):
+    Briefkopf, darunter **Absender-Rückadresse + Empfänger links, Infoblock
+    rechts** als rahmenlose 2-Spalten-Tabelle. Word kennt kein ``float`` wie das
+    PDF-Layout — ohne Tabelle rutscht der Empfänger unter den Infoblock statt
+    daneben. Genau das war der Fehler: die gestapelten Blöcke kosteten rund
+    7 Zeilen Höhe und schoben die Fußzeile auf eine zweite Seite.
 
     Parameters
     ----------
@@ -107,6 +115,9 @@ def generate_dunning_docx(notice, wg: dict, design: dict | None = None) -> bytes
     design : dict | None
         Design-Parameter (Schriftart, Farben). Wenn ``None``, wird das
         Standard-Design ``classic`` verwendet.
+    invoice_sender_address : str | None
+        Einzeilige Absender-Rückadresse über der Empfängeranschrift
+        (Fensterkuvert). ``None`` lädt den gespeicherten Wert.
 
     Returns
     -------
@@ -117,6 +128,9 @@ def generate_dunning_docx(notice, wg: dict, design: dict | None = None) -> bytes
 
     if design is None:
         design = get_design("classic")
+    if invoice_sender_address is None:
+        from app.settings_service import get_invoice_sender_address
+        invoice_sender_address = get_invoice_sender_address()
 
     font_name = design.get("docx_font", "Arial")
     text_rgb = _hex_to_rgb(design.get("text_color", "#333333"))

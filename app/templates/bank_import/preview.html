@@ -127,6 +127,14 @@
     </div>
   </div>
 </div>
+
+<div class="modal modal-blur fade" id="bankOpPickerModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-centered" role="document">
+    <div class="modal-content" id="bankOpPickerModalBody">
+      {# Inhalt wird per HTMX aus bank_import.open_item_picker geladen #}
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -144,34 +152,39 @@
       }
     });
   }
-  if (!window.__bankSplitCloseBound) {
-    window.__bankSplitCloseBound = true;
-    document.body.addEventListener('bankSplitSaved', function () {
-      var modalEl = document.getElementById('bankSplitModal');
-      if (window.bootstrap && modalEl) {
-        var inst = bootstrap.Modal.getInstance(modalEl);
-        if (inst) inst.hide();
-      }
+  // Offenen Posten suchen + zuordnen: gleiches Muster wie das Aufteilen-Modal.
+  // Die Trefferliste postet direkt an update_line (action=set_open_item,
+  // source=picker), tauscht die Tabellenzeile und der Server antwortet mit
+  // HX-Trigger „bankOpItemPicked" -> Modal schliessen.
+  function openOpPicker(lineId) {
+    var url = "{{ url_for('bank_import.preview', statement_id=stmt.id) }}/lines/" + lineId + "/open-items";
+    var modalEl = document.getElementById('bankOpPickerModal');
+    htmx.ajax('GET', url, {target: '#bankOpPickerModalBody', swap: 'innerHTML'}).then(function () {
+      if (!window.bootstrap || !modalEl) return;
+      // Fokus erst nach der Bootstrap-Einblendung setzen (vorher ignoriert der
+      // Browser ihn); {once:true}, damit sich die Listener nicht stapeln.
+      modalEl.addEventListener('shown.bs.modal', function () {
+        var inp = modalEl.querySelector('#opPickerSearch');
+        if (inp) inp.focus();
+      }, {once: true});
+      bootstrap.Modal.getOrCreateInstance(modalEl).show();
     });
   }
 
   // Zeilen-Aktionen (Checkbox, Konto-/OP-Auswahl, Verknuepfung entfernen) laufen
   // per HTMX und tauschen via hx-target="closest tr" nur die betroffene Zeile —
-  // kein Full-Reload, daher kein Scroll-Sprung.
-  //
-  // TomSelect im OP-Dropdown der frisch eingetauschten Zeile zuverlaessig
-  // (re-)initialisieren: htmx.onLoad feuert fuer JEDEN neu eingefuegten Knoten
-  // (auch bei outerHTML-Row-Swaps, wo der globale htmx:afterSwap-Handler je nach
-  // htmx-Version den falschen Target-Bezug haette). Einmal pro Tab registrieren
-  // (das scripts-Block laeuft bei jedem hx-boost-Swap neu), Doppel-Init ist via
-  // el.tomselect ohnehin abgefangen.
-  if (window.htmx && !window.__bankImportRowInit) {
-    window.__bankImportRowInit = true;
-    htmx.onLoad(function (content) {
-      if (!content.querySelectorAll) return;
-      content.querySelectorAll('select.tom-select').forEach(function (el) {
-        if (el.tomselect || !window.TomSelect) return;
-        new TomSelect(el, { allowEmptyOption: true, selectOnTab: true });
+  // kein Full-Reload, daher kein Scroll-Sprung. Der <body> ueberlebt die
+  // hx-boost-Navigation, daher reicht ein einmaliges Binding hier.
+  if (!window.__bankModalCloseBound) {
+    window.__bankModalCloseBound = true;
+    ['bankSplitSaved', 'bankOpItemPicked'].forEach(function (evt) {
+      document.body.addEventListener(evt, function () {
+        var id = evt === 'bankSplitSaved' ? 'bankSplitModal' : 'bankOpPickerModal';
+        var modalEl = document.getElementById(id);
+        if (window.bootstrap && modalEl) {
+          var inst = bootstrap.Modal.getInstance(modalEl);
+          if (inst) inst.hide();
+        }
       });
     });
   }

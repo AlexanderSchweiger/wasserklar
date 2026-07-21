@@ -1,0 +1,79 @@
+{# Trefferliste der Offene-Posten-Suche. Wird als Teil des Modal-Bodys und bei
+   jedem Tastendruck im Suchfeld (?fragment=1) allein gerendert. Jede Zeile ist
+   ein eigenes Mini-Formular, das die Zuordnung an update_line postet, die
+   Tabellenzeile im Hintergrund tauscht und via HX-Trigger das Modal schliesst. #}
+{% set _act = url_for('bank_import.update_line', statement_id=statement_id, line_id=line.id) %}
+{% if not items %}
+  <div class="text-center text-muted py-5">
+    <i class="fas fa-search fa-2x mb-2 d-block opacity-50"></i>
+    {% if q %}
+      Keine offenen Posten zu „{{ q }}“ gefunden.
+    {% else %}
+      Es gibt derzeit keine offenen Posten.
+    {% endif %}
+  </div>
+{% else %}
+  <div class="table-responsive op-picker-scroll">
+    <table class="table table-sm table-vcenter table-hover mb-0">
+      <thead>
+        <tr>
+          <th>Kunde</th>
+          <th>Posten</th>
+          <th style="width:90px">Datum</th>
+          <th class="text-end" style="width:100px">Betrag</th>
+          <th class="text-end" style="width:100px">Offen</th>
+          <th style="width:110px"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for op in items %}
+          {% set bal = op.open_balance %}
+          <tr>
+            <td>
+              <div class="fw-bold">{{ op.customer.name }}</div>
+              {% if op.customer.customer_number %}
+                <div class="text-muted small">Kd.-Nr. {{ op.customer.customer_number }}</div>
+              {% endif %}
+            </td>
+            <td>
+              <div>{{ op.description }}</div>
+              {% if op.invoice %}
+                <div class="text-muted small">Rechnung {{ op.invoice.invoice_number }}</div>
+              {% endif %}
+              {% if op.status == 'Teilbezahlt' %}
+                <span class="badge bg-yellow-lt mt-1">Teilbezahlt</span>
+              {% endif %}
+            </td>
+            <td class="text-nowrap">{{ op.date.strftime('%d.%m.%Y') }}</td>
+            <td class="text-end text-nowrap">{{ op.amount | de_number(decimals=2) }} €</td>
+            <td class="text-end text-nowrap">
+              <span class="fw-bold">{{ bal | de_number(decimals=2) }} €</span>
+              {% if bal == target %}
+                <div><span class="badge bg-green-lt">Betrag passt</span></div>
+              {% endif %}
+            </td>
+            <td class="text-end">
+              <form method="post" action="{{ _act }}"
+                    hx-post="{{ _act }}" hx-target="#bank-line-{{ line.id }}"
+                    hx-swap="outerHTML" class="m-0">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="action" value="set_open_item">
+                <input type="hidden" name="source" value="picker">
+                <input type="hidden" name="open_item_id" value="{{ op.id }}">
+                <button type="submit" class="btn btn-sm btn-primary">
+                  <i class="fas fa-link me-1"></i>Zuordnen
+                </button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if truncated %}
+    <div class="text-muted small mt-2">
+      <i class="fas fa-info-circle me-1"></i>
+      Nur die ersten {{ limit }} Treffer werden angezeigt — bitte die Suche eingrenzen.
+    </div>
+  {% endif %}
+{% endif %}

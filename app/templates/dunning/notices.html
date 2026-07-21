@@ -12,18 +12,27 @@
                         hx-get="{{ url_for('dunning.notices') }}"
                         hx-trigger="change"
                         hx-target="#notices-table"
-                        hx-include="[name='status'],[name='q']">
+                        hx-include="[name='status'],[name='versand'],[name='q']">
                     <option value="">Alle Status</option>
                     {% for s in statuses %}
                     <option value="{{ s }}" {{ 'selected' if s == status_filter }}>{{ s }}</option>
                     {% endfor %}
+                </select>
+                <select name="versand" class="form-select form-select-sm" style="width:auto"
+                        hx-get="{{ url_for('dunning.notices') }}"
+                        hx-trigger="change"
+                        hx-target="#notices-table"
+                        hx-include="[name='status'],[name='versand'],[name='q']">
+                    <option value="">Versandart: alle</option>
+                    <option value="mail" {{ 'selected' if versand_filter == 'mail' }}>Nur per Mail</option>
+                    <option value="post" {{ 'selected' if versand_filter == 'post' }}>Nur per Post</option>
                 </select>
                 <input type="text" name="q" class="form-control form-control-sm" style="width:200px"
                        placeholder="Suche…" value="{{ q }}"
                        hx-get="{{ url_for('dunning.notices') }}"
                        hx-trigger="input changed delay:300ms"
                        hx-target="#notices-table"
-                       hx-include="[name='status'],[name='q']">
+                       hx-include="[name='status'],[name='versand'],[name='q']">
                 <div class="btn-group btn-group-sm ms-2">
                     <button type="button"
                             class="btn btn-outline-primary btn-sm" title="Auswahl als DOCX"
@@ -36,9 +45,10 @@
                         <i class="fas fa-file-pdf me-1"></i> PDF
                     </button>
                 </div>
-                <button type="button" class="btn btn-success btn-sm ms-2" title="Auswahl per E-Mail versenden"
-                        onclick="openDunningMassmail()">
-                    <i class="fas fa-envelope me-1"></i> Per E-Mail senden
+                <button type="button" class="btn btn-primary btn-sm ms-2"
+                        title="Mahnungen per E-Mail versenden bzw. für den Postversand drucken"
+                        onclick="dnOpenVersand()">
+                    <i class="fas fa-paper-plane me-1"></i> Mailing &amp; Druck
                 </button>
             </div>
         </div>
@@ -105,45 +115,84 @@
   </div>
 </div>
 
-<!-- Massenmail Modal -->
-<div class="modal fade" id="dnMassmailModal" tabindex="-1">
+<!-- Mailing & Druck: Mail-Versand + Post-Druck in einem Dialog (analog zum
+     Versenden-Dialog des Rechnungslaufs). -->
+<div class="modal fade" id="dnVersandModal" tabindex="-1">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title"><i class="fas fa-envelope me-2"></i> Mahnungen per E-Mail senden</h5>
+        <h5 class="modal-title"><i class="fas fa-paper-plane me-2"></i> Mahnungen versenden</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
       </div>
       <div class="modal-body">
-        <p class="text-muted mb-2">
-          Nur aktive Mahnungen an Kunden mit E-Mail-Adresse und aktiviertem
-          Schriftverkehr per E-Mail werden versendet — die übrigen werden übersprungen.
+        <p class="text-muted small mb-3" id="dn-versand-scope"></p>
+
+        <!-- Per E-Mail -->
+        <h6 class="mb-2">
+          <i class="fas fa-envelope me-1"></i> Per E-Mail versenden
+          <span class="badge bg-azure-lt ms-1" id="dn-mail-count">0</span>
+        </h6>
+        <div id="dn-mail-section">
+          <p class="text-muted small mb-2">
+            Versendet alle versandbereiten Mahnungen, deren Kunde „Schriftverkehr per E-Mail"
+            aktiviert hat. Nach dem Versand wird die Mahnung als versendet markiert und das
+            Dokument gespeichert.
+          </p>
+          <div class="d-flex align-items-center flex-wrap gap-3 mb-2">
+            <button type="button" class="btn btn-primary btn-sm" id="dn-mail-start">
+              <i class="fas fa-paper-plane me-1"></i> Alle per Mail versenden
+            </button>
+            <div class="form-check mb-0">
+              <input type="checkbox" class="form-check-input" id="dn-mail-testmode">
+              <label class="form-check-label text-warning small" for="dn-mail-testmode">
+                <i class="fas fa-flask me-1"></i> Testmodus (an die eigene Adresse)
+              </label>
+            </div>
+            <span class="text-success small fw-semibold" id="dn-mail-msg"></span>
+          </div>
+          <div class="table-responsive" style="max-height:240px;overflow:auto">
+            <table class="table table-sm mb-0">
+              <thead>
+                <tr><th>Rechnungsnr.</th><th>Kunde</th><th>E-Mail</th><th style="width:60px">Status</th></tr>
+              </thead>
+              <tbody id="dn-mail-rows"></tbody>
+            </table>
+          </div>
+        </div>
+        <p class="text-muted mb-0 d-none" id="dn-mail-empty">
+          Keine versandbereiten Mahnungen für den E-Mail-Versand.
         </p>
-        <table class="table table-sm mb-0">
-          <thead>
-            <tr>
-              <th>Rechnungsnr.</th>
-              <th>Kunde</th>
-              <th>E-Mail</th>
-              <th style="width:80px">Status</th>
-            </tr>
-          </thead>
-          <tbody id="dn-massmail-rows"></tbody>
-        </table>
+
+        <hr class="my-4">
+
+        <!-- Per Post -->
+        <h6 class="mb-2">
+          <i class="fas fa-inbox me-1"></i> Per Post (Download)
+          <span class="badge bg-secondary-lt ms-1" id="dn-post-count">0</span>
+        </h6>
+        {% if doc_format in ('pdf', 'both') %}
+        <div id="dn-post-section">
+          <p class="text-muted small mb-2">
+            Zusammengeführtes PDF der per Post zu versendenden Mahnungen – in Gruppen zu max.
+            {{ config.get('BULK_PRINT_MAX', 100) }} Dokumenten. Jeder geladene Bulk markiert die
+            enthaltenen Mahnungen als versendet und speichert das erzeugte Dokument.
+          </p>
+          <div class="list-group" id="dn-post-list"></div>
+        </div>
+        <p class="text-muted mb-0 d-none" id="dn-post-empty">
+          Keine per Post zu versendenden Mahnungen.
+        </p>
+        {% else %}
+        <div class="alert alert-info mb-0">
+          Der Post-Download ist nur im PDF-Format verfügbar (aktuelles Dokumentformat:
+          <strong>{{ doc_format }}</strong>).
+        </div>
+        {% endif %}
+
+        <div class="alert alert-warning mt-3 mb-0 d-none" id="dn-skipped-hint"></div>
       </div>
-      <div class="modal-footer justify-content-between">
-        <div class="form-check">
-          <input type="checkbox" class="form-check-input" id="dn-massmail-testmode">
-          <label class="form-check-label text-warning" for="dn-massmail-testmode">
-            <i class="fas fa-flask me-1"></i> Testmodus (Mails an die eigene Adresse)
-          </label>
-        </div>
-        <div>
-          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
-          <button type="button" class="btn btn-primary ms-2" id="dn-massmail-start-btn"
-                  onclick="startDunningMassmail()">
-            <i class="fas fa-paper-plane me-1"></i> Senden starten
-          </button>
-        </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Schließen</button>
       </div>
     </div>
   </div>
@@ -152,50 +201,48 @@
 
 {% block scripts %}
 <script>
-// Sammel-Download per fetch statt nativem Submit: bei einem Attachment-Response
-// navigiert der Browser nicht, also schliesst kein Event das Warte-Modal. Wir
-// holen die Datei als Blob, schliessen das Modal bei Antwort und zeigen Fehler an.
-// Obergrenze pro Druck-/Export-Durchgang (serverseitig identisch gekappt).
-const BULK_PRINT_MAX = {{ config.get('BULK_PRINT_MAX', 100) }};
+// Das GESAMTE Seiten-Skript liegt in EINER IIFE: hx-boost tauscht <body> aus und
+// fuehrt dieses Inline-Skript bei jeder geboosteten Navigation erneut aus. Ein
+// top-level `const` (frueher BULK_PRINT_MAX / DN_SEND_URL) kollidiert beim
+// zweiten Lauf mit dem bereits existierenden globalen Binding
+// ("Identifier ... has already been declared") — das ist ein PARSE-Fehler, der
+// das komplette Skript verwirft. Genau daran starb hier die Mehrfachauswahl:
+// nach jeder Navigation auf diese Seite (z.B. von den Rechnungen, die dasselbe
+// BULK_PRINT_MAX deklarieren) war weder der Select-All-Handler gebunden noch
+// eine der onclick-Funktionen definiert; nur ein harter Reload half.
+// Lokale Variablen in der IIFE sind bei jedem Lauf frisch -> re-execution-sicher.
+// Nach aussen geht nur, was onclick-Attribute bzw. die SaaS-Overrides brauchen.
+(function () {
+  // Obergrenze pro Druck-/Export-Durchgang (serverseitig identisch gekappt).
+  const BULK_PRINT_MAX = {{ config.get('BULK_PRINT_MAX', 100) }};
+  const DN_SEND_URL = '{{ url_for("dunning.notice_send_email", notice_id=0) }}';
+  const DN_POST_URL = '{{ url_for("dunning.bulk_post_pdf") }}';
+  const DN_MAIL_DELAY = {{ bulk_mail_delay_ms }};  // 0 = Relay (Vollgas), sonst SMTP-Drossel
+  let dnVersandDirty = false;
 
-// Server liefert einen festen Dateinamen (z.B. Mahnungen_gesamt.pdf); pro
-// Gruppe den Bereich einfügen, damit die Downloads unterscheidbar bleiben.
-function rangedName(name, from, to) {
-  const suffix = '_' + from + '-' + to;
-  const dot = name.lastIndexOf('.');
-  return dot < 0 ? name + suffix : name.slice(0, dot) + suffix + name.slice(dot);
-}
+  function dnCsrf() {
+    const form = document.getElementById('notices-form');
+    return form ? form.querySelector('input[name="csrf_token"]').value : '';
+  }
 
-async function dunningBulkDownload(url, title) {
-  const checked = document.querySelectorAll('.dn-cb:checked');
-  if (!checked.length) { alert('Keine Mahnungen ausgewählt.'); return; }
-  // Bei zu großer Auswahl Gruppen-Dialog statt eines Riesen-Renderings.
-  if (checked.length > BULK_PRINT_MAX) { openDunningBatchModal(url, title); return; }
-  const modalEl = document.getElementById('dunningBulkDownloadModal');
-  const spinner = document.getElementById('dunningBulkSpinner');
-  const errBox  = document.getElementById('dunningBulkError');
-  const errMsg  = document.getElementById('dunningBulkErrorMsg');
-  document.getElementById('dunningBulkDownloadModalTitle').textContent = title;
-  spinner.classList.remove('d-none');
-  errBox.classList.add('d-none');
-  const modal = window.bootstrap ? bootstrap.Modal.getOrCreateInstance(modalEl) : null;
-  if (modal) modal.show();
+  // Server liefert einen festen Dateinamen (z.B. Mahnungen_gesamt.pdf); pro
+  // Gruppe den Bereich einfügen, damit die Downloads unterscheidbar bleiben.
+  function rangedName(name, from, to) {
+    const suffix = '_' + from + '-' + to;
+    const dot = name.lastIndexOf('.');
+    return dot < 0 ? name + suffix : name.slice(0, dot) + suffix + name.slice(dot);
+  }
 
-  const form = document.getElementById('notices-form');
-  const csrf = form.querySelector('input[name="csrf_token"]').value;
-  try {
-    const resp = await fetch(url, {
-      method: 'POST',
-      body: new FormData(form),
-      headers: { 'X-CSRFToken': csrf },
-    });
+  // Blob-Response als Datei speichern; wirft bei Nicht-Attachment-Antworten.
+  async function dnSaveAttachment(resp, renameFn) {
     const disposition = resp.headers.get('Content-Disposition') || '';
     if (!resp.ok || !disposition.toLowerCase().includes('attachment')) {
       throw new Error('Das Dokument konnte nicht erstellt werden. Bitte erneut versuchen.');
     }
     const blob = await resp.blob();
     const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition);
-    const name = m ? decodeURIComponent(m[1]) : 'download';
+    let name = m ? decodeURIComponent(m[1]) : 'download';
+    if (renameFn) name = renameFn(name);
     const objUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = objUrl;
@@ -204,183 +251,333 @@ async function dunningBulkDownload(url, title) {
     a.click();
     a.remove();
     setTimeout(function () { URL.revokeObjectURL(objUrl); }, 10000);
-    if (modal) modal.hide();
-  } catch (err) {
-    spinner.classList.add('d-none');
-    errMsg.textContent = err.message || 'Fehler beim Erstellen des Dokuments.';
-    errBox.classList.remove('d-none');
   }
-}
 
-// Auswahl in 100er-Gruppen aufteilen und je Gruppe eine Erzeugen-Zeile bauen.
-// Nichts wird persistiert: bei erneutem Druck entsteht ein frischer Dialog.
-function openDunningBatchModal(url, title) {
-  const ids = Array.from(document.querySelectorAll('.dn-cb:checked')).map(cb => cb.value);
-  const list = document.getElementById('dnBatchList');
-  list.innerHTML = '';
-  document.getElementById('dnBatchTotal').textContent = ids.length;
-  document.getElementById('dnBatchMax').textContent = BULK_PRINT_MAX;
-  document.getElementById('dnBatchTitle').textContent = title;
-  for (let start = 0; start < ids.length; start += BULK_PRINT_MAX) {
-    const chunk = ids.slice(start, start + BULK_PRINT_MAX);
-    const from = start + 1;
-    const to = start + chunk.length;
-    const row = document.createElement('div');
-    row.className = 'list-group-item d-flex justify-content-between align-items-center';
-    const label = document.createElement('span');
-    label.innerHTML = 'Gewählte Dokumente <strong>' + from + '</strong> bis <strong>' + to + '</strong>'
-      + ' <span class="text-muted ms-1">(' + chunk.length + ' Stück)</span>';
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'btn btn-sm btn-primary';
-    btn.innerHTML = '<i class="fas fa-download me-1"></i> Erstellen';
-    btn.addEventListener('click', function () {
+  // ---------- Sammel-Download (DOCX / PDF) der Auswahl ----------
+  // Per fetch statt nativem Submit: bei einem Attachment-Response navigiert der
+  // Browser nicht, also schliesst kein Event das Warte-Modal. Wir holen die Datei
+  // als Blob, schliessen das Modal bei Antwort und zeigen Fehler an.
+  async function dunningBulkDownload(url, title) {
+    const checked = document.querySelectorAll('.dn-cb:checked');
+    if (!checked.length) { alert('Keine Mahnungen ausgewählt.'); return; }
+    // Bei zu großer Auswahl Gruppen-Dialog statt eines Riesen-Renderings.
+    if (checked.length > BULK_PRINT_MAX) { openDunningBatchModal(url, title); return; }
+    const modalEl = document.getElementById('dunningBulkDownloadModal');
+    const spinner = document.getElementById('dunningBulkSpinner');
+    const errBox  = document.getElementById('dunningBulkError');
+    const errMsg  = document.getElementById('dunningBulkErrorMsg');
+    document.getElementById('dunningBulkDownloadModalTitle').textContent = title;
+    spinner.classList.remove('d-none');
+    errBox.classList.add('d-none');
+    const modal = window.bootstrap ? bootstrap.Modal.getOrCreateInstance(modalEl) : null;
+    if (modal) modal.show();
+
+    const csrf = dnCsrf();
+    try {
+      const resp = await fetch(url, {
+        method: 'POST',
+        body: new FormData(document.getElementById('notices-form')),
+        headers: { 'X-CSRFToken': csrf },
+      });
+      await dnSaveAttachment(resp);
+      if (modal) modal.hide();
+    } catch (err) {
+      spinner.classList.add('d-none');
+      errMsg.textContent = err.message || 'Fehler beim Erstellen des Dokuments.';
+      errBox.classList.remove('d-none');
+    }
+  }
+
+  // Auswahl in 100er-Gruppen aufteilen und je Gruppe eine Erzeugen-Zeile bauen.
+  // Nichts wird persistiert: bei erneutem Druck entsteht ein frischer Dialog.
+  function openDunningBatchModal(url, title) {
+    const ids = Array.from(document.querySelectorAll('.dn-cb:checked')).map(cb => cb.value);
+    const list = document.getElementById('dnBatchList');
+    list.innerHTML = '';
+    document.getElementById('dnBatchTotal').textContent = ids.length;
+    document.getElementById('dnBatchMax').textContent = BULK_PRINT_MAX;
+    document.getElementById('dnBatchTitle').textContent = title;
+    dnBuildGroups(list, ids, function (chunk, from, to, btn) {
       dunningBulkDownloadBatch(url, chunk, from, to, btn);
     });
-    row.appendChild(label);
-    row.appendChild(btn);
-    list.appendChild(row);
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('dnBatchModal')).show();
   }
-  bootstrap.Modal.getOrCreateInstance(document.getElementById('dnBatchModal')).show();
-}
 
-// Genau eine Gruppe rendern + herunterladen, danach Button deaktivieren.
-// Bei Fehler bleibt der Button als „Erneut versuchen" aktiv.
-async function dunningBulkDownloadBatch(url, ids, from, to, btn) {
-  const form = document.getElementById('notices-form');
-  const csrf = form.querySelector('input[name="csrf_token"]').value;
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status"></span> Wird erstellt…';
-  try {
-    const fd = new FormData();
-    fd.append('csrf_token', csrf);
-    ids.forEach(id => fd.append('notice_ids', id));
-    const resp = await fetch(url, { method: 'POST', body: fd, headers: { 'X-CSRFToken': csrf } });
-    const disposition = resp.headers.get('Content-Disposition') || '';
-    if (!resp.ok || !disposition.toLowerCase().includes('attachment')) {
-      throw new Error('Erstellung fehlgeschlagen.');
+  // Gemeinsamer Gruppen-Listenbau (Sammeldruck + Post-Versand).
+  function dnBuildGroups(list, ids, onClick, labelWord) {
+    list.innerHTML = '';
+    for (let start = 0; start < ids.length; start += BULK_PRINT_MAX) {
+      const chunk = ids.slice(start, start + BULK_PRINT_MAX);
+      const from = start + 1;
+      const to = start + chunk.length;
+      const row = document.createElement('div');
+      row.className = 'list-group-item d-flex justify-content-between align-items-center';
+      const label = document.createElement('span');
+      label.innerHTML = (labelWord || 'Gewählte Dokumente') + ' <strong>' + from + '</strong>'
+        + '–<strong>' + to + '</strong>'
+        + ' <span class="text-muted ms-1">(' + chunk.length + ' Stück)</span>';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn-sm btn-primary';
+      btn.innerHTML = '<i class="fas fa-download me-1"></i> Erstellen';
+      btn.addEventListener('click', function () { onClick(chunk, from, to, btn); });
+      row.appendChild(label);
+      row.appendChild(btn);
+      list.appendChild(row);
     }
-    const blob = await resp.blob();
-    const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition);
-    const name = rangedName(m ? decodeURIComponent(m[1]) : 'download', from, to);
-    const objUrl = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = objUrl;
-    a.download = name;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(function () { URL.revokeObjectURL(objUrl); }, 10000);
+  }
+
+  function dnBtnDone(btn) {
     btn.classList.remove('btn-primary', 'btn-danger');
     btn.classList.add('btn-success');
     btn.innerHTML = '<i class="fas fa-check me-1"></i> Erstellt';
-  } catch (err) {
+  }
+
+  function dnBtnRetry(btn) {
     btn.disabled = false;
     btn.classList.remove('btn-primary');
     btn.classList.add('btn-danger');
     btn.innerHTML = '<i class="fas fa-redo me-1"></i> Erneut versuchen';
   }
-}
 
-// Select-All-Handler einmalig an document binden (dokumentlevel-Listener
-// ueberleben hx-boost-Swaps; ohne Guard wuerde sich der Handler bei jedem
-// erneuten Seitenbesuch vermehren und jeder Click-auf-Select-All wuerde
-// dieselben Checkboxen N-fach toggeln). Der Handler delegiert ueber die
-// stabile #dn-select-all-ID und funktioniert damit auch nach Body-Swap.
-(function() {
-    if (window.__dunningSelectAllBound) return;
-    window.__dunningSelectAllBound = true;
-    document.addEventListener('change', function(e) {
-        if (e.target && e.target.id === 'dn-select-all') {
-            document.querySelectorAll('.dn-cb').forEach(function(cb) { cb.checked = e.target.checked; });
-        }
-    });
-})();
-
-// Massenmail: Vorschau der ausgewählten Mahnungen, dann serieller Versand mit
-// Status-Icon pro Zeile — analog zum Rechnungsversand.
-const DN_SEND_URL = '{{ url_for("dunning.notice_send_email", notice_id=0) }}';
-
-function openDunningMassmail() {
-  const checked = document.querySelectorAll('.dn-cb:checked');
-  if (!checked.length) { alert('Keine Mahnungen ausgewählt.'); return; }
-  const tbody = document.getElementById('dn-massmail-rows');
-  tbody.innerHTML = '';
-  let hasEligible = false;
-  checked.forEach(cb => {
-    const row = cb.closest('tr');
-    const data = {
-      id: cb.value,
-      number: row.dataset.invoiceNumber,
-      name: row.dataset.customerName,
-      email: row.dataset.customerEmail,
-      enabled: row.dataset.emailEnabled === 'true',
-    };
-    const eligible = data.enabled && data.email;
-    if (eligible) hasEligible = true;
-    const emailCell = eligible
-      ? data.email
-      : '<span class="text-muted">' + (data.email ? 'E-Mail-Versand inaktiv' : 'Keine E-Mail') + '</span>';
-    const statusCell = eligible
-      ? '<i class="fas fa-clock text-muted" id="dn-mm-icon-' + data.id + '"></i>'
-      : '<i class="fas fa-minus text-muted"></i>';
-    const tr = document.createElement('tr');
-    tr.id = 'dn-mm-row-' + data.id;
-    tr.innerHTML = '<td><code>' + data.number + '</code></td>'
-      + '<td>' + data.name + '</td>'
-      + '<td>' + emailCell + '</td>'
-      + '<td>' + statusCell + '</td>';
-    tbody.appendChild(tr);
-  });
-  document.getElementById('dn-massmail-start-btn').disabled = !hasEligible;
-  bootstrap.Modal.getOrCreateInstance(document.getElementById('dnMassmailModal')).show();
-}
-
-async function startDunningMassmail() {
-  document.getElementById('dn-massmail-start-btn').disabled = true;
-  const csrfToken = document.querySelector('#notices-form input[name="csrf_token"]').value;
-  const testMode = document.getElementById('dn-massmail-testmode').checked;
-  const eligible = [];
-  document.querySelectorAll('#dn-massmail-rows tr[id^="dn-mm-row-"]').forEach(tr => {
-    const id = tr.id.replace('dn-mm-row-', '');
-    const icon = document.getElementById('dn-mm-icon-' + id);
-    if (icon) eligible.push({ id, icon });
-  });
-  for (let i = 0; i < eligible.length; i++) {
-    const { id, icon } = eligible[i];
-    icon.className = 'fas fa-spinner fa-spin text-primary';
+  // Genau eine Gruppe rendern + herunterladen, danach Button deaktivieren.
+  // Bei Fehler bleibt der Button als „Erneut versuchen" aktiv.
+  async function dunningBulkDownloadBatch(url, ids, from, to, btn) {
+    const csrf = dnCsrf();
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status"></span> Wird erstellt…';
     try {
-      let body = 'csrf_token=' + encodeURIComponent(csrfToken);
-      if (testMode) body += '&test_mode=1';
-      const resp = await fetch(DN_SEND_URL.replace('/0/', '/' + id + '/'), {
-        method: 'POST',
-        headers: {
-          'X-CSRFToken': csrfToken,
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body,
-      });
-      const json = await resp.json();
-      if (json.ok) {
-        icon.className = json.test_mode
-          ? 'fas fa-check-circle text-warning'
-          : 'fas fa-check-circle text-success';
-        icon.title = json.test_mode ? 'Testmail gesendet an ' + json.email : 'Gesendet an ' + json.email;
-      } else {
-        const td = icon.closest('td');
-        if (td) {
-          td.innerHTML = '<i class="fas fa-times-circle text-danger me-1"></i>'
-            + '<small class="text-danger">' + (json.error || 'Fehler') + '</small>';
-        }
-      }
+      const fd = new FormData();
+      fd.append('csrf_token', csrf);
+      ids.forEach(id => fd.append('notice_ids', id));
+      const resp = await fetch(url, { method: 'POST', body: fd, headers: { 'X-CSRFToken': csrf } });
+      await dnSaveAttachment(resp, function (name) { return rangedName(name, from, to); });
+      dnBtnDone(btn);
     } catch (err) {
-      icon.className = 'fas fa-times-circle text-danger';
-      icon.title = 'Netzwerkfehler';
-    }
-    if (i < eligible.length - 1) {
-      await new Promise(r => setTimeout(r, {{ bulk_mail_delay_ms }}));  // 0 = Relay (Vollgas), sonst SMTP-Drossel
+      dnBtnRetry(btn);
     }
   }
-}
+
+  // ---------- Auswahl ----------
+  // Select-All-Handler einmalig an document binden (dokumentlevel-Listener
+  // ueberleben hx-boost-Swaps; ohne Guard wuerde sich der Handler bei jedem
+  // erneuten Seitenbesuch vermehren und jeder Click-auf-Select-All wuerde
+  // dieselben Checkboxen N-fach toggeln). Der Handler delegiert ueber die
+  // stabile #dn-select-all-ID und funktioniert damit auch nach Body-Swap.
+  if (!document.__dunningSelectAllBound) {
+    document.__dunningSelectAllBound = true;
+    document.addEventListener('change', function (e) {
+      const t = e.target;
+      if (!t) return;
+      if (t.id === 'dn-select-all') {
+        document.querySelectorAll('.dn-cb').forEach(function (cb) { cb.checked = t.checked; });
+      } else if (t.classList && t.classList.contains('dn-cb')) {
+        // Kopf-Checkbox nachziehen (an/aus/teilweise).
+        const all = document.querySelectorAll('.dn-cb');
+        const checked = document.querySelectorAll('.dn-cb:checked');
+        const head = document.getElementById('dn-select-all');
+        if (head) {
+          head.indeterminate = checked.length > 0 && checked.length < all.length;
+          head.checked = all.length > 0 && checked.length === all.length;
+        }
+      }
+    });
+  }
+
+  // ---------- Mailing & Druck ----------
+  // Zeilen des Dialogs: die angehakten, sonst (nichts ausgewaehlt) die komplette
+  // aktuelle Ansicht — so wirkt der Dialog wie beim Rechnungslauf auf „alles",
+  // laesst sich aber gezielt auf eine Auswahl einschraenken.
+  function dnScopeRows() {
+    const checked = Array.from(document.querySelectorAll('.dn-cb:checked'));
+    if (checked.length) {
+      return { rows: checked.map(cb => cb.closest('tr')), selected: true };
+    }
+    return { rows: Array.from(document.querySelectorAll('.dn-cb')).map(cb => cb.closest('tr')),
+             selected: false };
+  }
+
+  function dnRowData(tr) {
+    const cb = tr.querySelector('.dn-cb');
+    return {
+      id: cb ? cb.value : '',
+      number: tr.dataset.invoiceNumber || '',
+      name: tr.dataset.customerName || '',
+      email: tr.dataset.customerEmail || '',
+      versandart: tr.dataset.versandart || 'post',
+      sendable: tr.dataset.sendable === 'true',
+    };
+  }
+
+  function dnOpenVersand() {
+    const scope = dnScopeRows();
+    if (!scope.rows.length) { alert('Keine Mahnungen vorhanden.'); return; }
+
+    const mail = [], post = [];
+    let skipped = 0;
+    scope.rows.forEach(function (tr) {
+      const d = dnRowData(tr);
+      if (!d.sendable) { skipped++; return; }
+      (d.versandart === 'mail' ? mail : post).push(d);
+    });
+
+    document.getElementById('dn-versand-scope').textContent = scope.selected
+      ? scope.rows.length + ' ausgewählte Mahnung(en).'
+      : 'Alle ' + scope.rows.length + ' Mahnung(en) der aktuellen Ansicht '
+        + '(einzelne Zeilen anhaken, um die Auswahl einzuschränken).';
+
+    // --- Mail-Abschnitt ---
+    document.getElementById('dn-mail-count').textContent = mail.length;
+    const tbody = document.getElementById('dn-mail-rows');
+    tbody.innerHTML = '';
+    mail.forEach(function (d) {
+      const tr = document.createElement('tr');
+      tr.id = 'dn-mm-row-' + d.id;
+      tr.dataset.id = d.id;
+      // Kunden-/Rechnungsdaten per textContent setzen, nicht per innerHTML:
+      // die Werte stammen aus data-Attributen und sind nach dem Auslesen
+      // wieder roher Text — ein Kundenname mit '<' wuerde als Markup landen.
+      const tdNr = document.createElement('td');
+      const code = document.createElement('code');
+      code.textContent = d.number;
+      tdNr.appendChild(code);
+      const tdName = document.createElement('td');
+      tdName.textContent = d.name;
+      const tdMail = document.createElement('td');
+      tdMail.textContent = d.email;
+      const tdStatus = document.createElement('td');
+      const icon = document.createElement('i');
+      icon.className = 'fas fa-clock text-muted';
+      icon.id = 'dn-mm-icon-' + d.id;
+      tdStatus.appendChild(icon);
+      tr.append(tdNr, tdName, tdMail, tdStatus);
+      tbody.appendChild(tr);
+    });
+    const mailBtn = document.getElementById('dn-mail-start');
+    mailBtn.disabled = mail.length === 0;
+    mailBtn.innerHTML = '<i class="fas fa-paper-plane me-1"></i> Alle ' + mail.length + ' per Mail versenden';
+    document.getElementById('dn-mail-msg').textContent = '';
+    document.getElementById('dn-mail-section').classList.toggle('d-none', mail.length === 0);
+    document.getElementById('dn-mail-empty').classList.toggle('d-none', mail.length !== 0);
+
+    // --- Post-Abschnitt (nur wenn PDF das aktive Dokumentformat ist) ---
+    document.getElementById('dn-post-count').textContent = post.length;
+    const postSection = document.getElementById('dn-post-section');
+    if (postSection) {
+      const list = document.getElementById('dn-post-list');
+      dnBuildGroups(list, post.map(d => d.id), function (chunk, from, to, btn) {
+        // Bewusst ueber window.* (nicht die lokale Referenz): die SaaS-Schicht
+        // ersetzt dnDownloadPostBatch durch die Auftraege-Variante.
+        window.dnDownloadPostBatch(chunk, from, to, btn);
+      }, 'Mahnungen');
+      postSection.classList.toggle('d-none', post.length === 0);
+      document.getElementById('dn-post-empty').classList.toggle('d-none', post.length !== 0);
+    }
+
+    // --- Uebersprungene ---
+    const hint = document.getElementById('dn-skipped-hint');
+    if (skipped > 0) {
+      hint.innerHTML = '<i class="fas fa-info-circle me-1"></i> ' + skipped
+        + ' Mahnung(en) sind nicht versandbereit (bereits versendet, zurückgesetzt '
+        + 'oder storniert) und werden hier nicht angeboten. Für einen Nachdruck die '
+        + 'Zeilen anhaken und die Schaltfläche <strong>PDF</strong> bzw. '
+        + '<strong>DOCX</strong> verwenden.';
+      hint.classList.remove('d-none');
+    } else {
+      hint.classList.add('d-none');
+    }
+
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('dnVersandModal')).show();
+  }
+
+  // Serieller Mailversand mit Status-Icon pro Zeile — analog zum Rechnungsversand.
+  async function dnStartMail() {
+    const btn = document.getElementById('dn-mail-start');
+    btn.disabled = true;
+    const csrfToken = dnCsrf();
+    const testMode = document.getElementById('dn-mail-testmode').checked;
+    const rows = Array.from(document.querySelectorAll('#dn-mail-rows tr[id^="dn-mm-row-"]'));
+    let ok = 0, fail = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const id = rows[i].dataset.id;
+      const icon = document.getElementById('dn-mm-icon-' + id);
+      if (icon) icon.className = 'fas fa-spinner fa-spin text-primary';
+      try {
+        let body = 'csrf_token=' + encodeURIComponent(csrfToken);
+        if (testMode) body += '&test_mode=1';
+        const resp = await fetch(DN_SEND_URL.replace('/0/', '/' + id + '/'), {
+          method: 'POST',
+          headers: {
+            'X-CSRFToken': csrfToken,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body,
+        });
+        const json = await resp.json();
+        if (json.ok) {
+          ok++;
+          if (icon) {
+            icon.className = json.test_mode
+              ? 'fas fa-check-circle text-warning'
+              : 'fas fa-check-circle text-success';
+            icon.title = json.test_mode ? 'Testmail gesendet an ' + json.email
+                                        : 'Gesendet an ' + json.email;
+          }
+          if (!json.test_mode) dnVersandDirty = true;
+        } else {
+          fail++;
+          if (icon) {
+            icon.className = 'fas fa-times-circle text-danger';
+            icon.title = json.error || 'Fehler';   // Servertext, nie als Markup
+          }
+        }
+      } catch (err) {
+        fail++;
+        if (icon) { icon.className = 'fas fa-times-circle text-danger'; icon.title = 'Netzwerkfehler'; }
+      }
+      if (i < rows.length - 1) {
+        await new Promise(r => setTimeout(r, DN_MAIL_DELAY));
+      }
+    }
+    document.getElementById('dn-mail-msg').textContent = 'Fertig: ' + ok + ' versendet'
+      + (fail ? ', ' + fail + ' fehlgeschlagen' : '') + '.';
+  }
+
+  // Post-Gruppe herunterladen — der Server markiert die enthaltenen Mahnungen
+  // dabei als per Post versendet und friert das Dokument ein.
+  async function dnDownloadPostBatch(ids, from, to, btn) {
+    const csrf = dnCsrf();
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status"></span> Wird erstellt…';
+    try {
+      const fd = new FormData();
+      fd.append('csrf_token', csrf);
+      ids.forEach(id => fd.append('notice_ids', id));
+      const resp = await fetch(DN_POST_URL, { method: 'POST', body: fd, headers: { 'X-CSRFToken': csrf } });
+      await dnSaveAttachment(resp, function (name) { return rangedName(name, from, to); });
+      dnVersandDirty = true;
+      dnBtnDone(btn);
+    } catch (err) {
+      dnBtnRetry(btn);
+    }
+  }
+
+  const versandModal = document.getElementById('dnVersandModal');
+  if (versandModal) {
+    const startBtn = document.getElementById('dn-mail-start');
+    if (startBtn) startBtn.addEventListener('click', dnStartMail);
+    // Versandstatus hat sich geaendert -> Liste beim Schliessen neu laden.
+    versandModal.addEventListener('hidden.bs.modal', function () {
+      if (dnVersandDirty) window.location.reload();
+    });
+  }
+
+  // Nach aussen: onclick-Attribute im Card-Header + SaaS-Overrides
+  // (dunningBulkDownload -> Job-Queue, dnDownloadPostBatch -> Job-Queue).
+  window.dunningBulkDownload = dunningBulkDownload;
+  window.dnDownloadPostBatch = dnDownloadPostBatch;
+  window.dnOpenVersand = dnOpenVersand;
+  window.dnMarkVersandDirty = function () { dnVersandDirty = true; };
+})();
 </script>
 {% endblock %}

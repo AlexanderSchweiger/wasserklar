@@ -512,7 +512,16 @@ async function bulkDownload(url, title) {
 }
 
 // Obergrenze pro Druck-/Export-Durchgang (serverseitig identisch gekappt).
-const BULK_PRINT_MAX = {{ config.get('BULK_PRINT_MAX', 100) }};
+// Bewusst `var`, NICHT `const`: hx-boost tauscht <body> aus und fuehrt dieses
+// Inline-Skript bei jeder geboosteten Navigation erneut aus — im selben
+// globalen Scope. Ein top-level `const` wirft beim zweiten Lauf
+// "Identifier 'BULK_PRINT_MAX' has already been declared"; das ist ein
+// PARSE-Fehler, der das GESAMTE Skript verwirft (Sammelaktion-Leiste,
+// Select-All und Massenmail waren danach tot, bis man hart neu lud).
+// `var` darf redeklariert werden und ist damit re-execution-sicher.
+// (Die Mahnungsliste hat denselben Bezeichner — auch ein Wechsel
+// Rechnungen -> Mahnungen loeste das aus.)
+var BULK_PRINT_MAX = {{ config.get('BULK_PRINT_MAX', 100) }};
 
 // Server liefert einen festen Dateinamen (z.B. Rechnungen_gesamt.pdf); pro
 // Gruppe den Bereich einfügen, damit die Downloads unterscheidbar bleiben.

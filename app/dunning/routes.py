@@ -206,17 +206,38 @@ def run_execute():
 # Notices (Liste)
 # ---------------------------------------------------------------------------
 
+def is_sendable(notice):
+    """Versandbereit = aktive Mahnung, die noch nicht hinausgegangen ist.
+
+    Gegenstueck zu ``Invoice.status == 'Entwurf'`` im Rechnungslauf: nur solche
+    Mahnungen landen im „Mailing & Druck"-Dialog. Bereits versendete koennen
+    weiterhin ueber die Sammel-Buttons (DOCX/PDF) neu gedruckt werden.
+    """
+    return (notice.status == DunningNotice.STATUS_AKTIV
+            and notice.sent_at is None)
+
+
 @bp.route("/notices")
 @login_required
 def notices():
     """Alle Mahnungen auflisten mit Filtern."""
+    from sqlalchemy import and_
+    from sqlalchemy.orm import joinedload
+
     status_filter = request.args.get("status", "")
+    versand_filter = request.args.get("versand", "")
     q = request.args.get("q", "").strip()
 
     query = (
         DunningNotice.query
         .join(Invoice, DunningNotice.invoice_id == Invoice.id)
         .join(Customer, Invoice.customer_id == Customer.id)
+        # Jede Zeile zeigt Rechnung, Kunde (inkl. Versandart) und Stufe —
+        # ohne Eager-Load waeren das drei Zusatz-Queries pro Mahnung.
+        .options(
+            joinedload(DunningNotice.invoice).joinedload(Invoice.customer),
+            joinedload(DunningNotice.stage),
+        )
         .order_by(DunningNotice.issued_date.desc(), DunningNotice.id.desc())
     )
 
@@ -227,6 +248,15 @@ def notices():
             Customer.name.ilike(f"%{q}%"),
             Invoice.invoice_number.ilike(f"%{q}%"),
         ))
+    # Versandart-Filter, analog zum `mail_filter` der Rechnungsliste.
+    # `Customer.wants_email` ist Einwilligung UND Adresse — hier dialekt-portabel
+    # als SQL nachgebaut (kein Python-Property in der WHERE-Klausel moeglich).
+    if versand_filter in ("mail", "post"):
+        has_email = and_(Customer.email.isnot(None), Customer.email != "")
+        if versand_filter == "mail":
+            query = query.filter(Customer.rechnung_per_email == True, has_email)  # noqa: E712
+        else:
+            query = query.filter(or_(Customer.rechnung_per_email != True, ~has_email))  # noqa: E712
 
     notices_list = query.all()
 
@@ -238,7 +268,9 @@ def notices():
         notices=notices_list,
         statuses=DunningNotice.ALL_STATUSES,
         status_filter=status_filter,
+        versand_filter=versand_filter,
         q=q,
+        doc_format=AppSetting.get("invoice.document_format", "pdf"),
     )
 
 
@@ -414,11 +446,13 @@ def notice_send_email(notice_id):
         recipient = customer.email
 
     # Sperrliste: an gesperrte Adressen nicht versenden (Test an Admin bleibt ok).
+    # Ergebnis NICHT nach `notice` schreiben — das ueberschriebe die Mahnung und
+    # der Versand liefe danach auf None (AttributeError statt Mail).
     if not test_mode:
         from app.email_suppression import suppression_notice
-        notice = suppression_notice(recipient)
-        if notice:
-            return jsonify(ok=False, error=notice), 400
+        blocked = suppression_notice(recipient)
+        if blocked:
+            return jsonify(ok=False, error=blocked), 400
 
     wg = wg_settings()
     summary = dunning_summary(notice.invoice)
@@ -624,6 +658,74 @@ def bulk_pdf_merged():
 
     return send_file(merged_path, as_attachment=True,
                      download_name="Mahnungen_gesamt.pdf")
+
+
+@bp.route("/bulk-post-pdf", methods=["POST"])
+@login_required
+def bulk_post_pdf():
+    """Post-Versand: markierte Mahnungen als ein zusammengeführtes PDF — und
+    markiert sie dabei als per Post versendet.
+
+    Gegenstück zum Mailversand (:func:`notice_send_email`) und Spiegel von
+    ``invoices.billing_run_post_bulk``: das heruntergeladene PDF **ist** der
+    Post-Beleg, wird daher pro Mahnung eingefroren (``_freeze_dunning_document``)
+    und die Mahnung auf ``sent_via='post'`` gesetzt. Bewusst **kein**
+    Archiv-Reuse wie in :func:`bulk_pdf_merged` — gedruckt wird genau das
+    Dokument, das jetzt hinausgeht.
+
+    Bereits versendete Mahnungen in der Auswahl bleiben unverändert, werden aber
+    mit ausgeliefert (Nachdruck).
+    """
+    notice_ids = request.form.getlist("notice_ids", type=int)
+    if not notice_ids:
+        flash("Keine Mahnungen ausgewählt.", "warning")
+        return redirect(url_for("dunning.notices"))
+    if (resp := _bulk_print_limit_exceeded(notice_ids)):
+        return resp
+
+    try:
+        import weasyprint  # noqa: F401
+    except (ImportError, OSError):
+        flash("PDF-Erzeugung erfordert WeasyPrint (nur im Docker-Container). "
+              "Verwenden Sie den DOCX-Export.", "warning")
+        return redirect(url_for("dunning.notices"))
+
+    from pypdf import PdfWriter
+
+    notices_list = (
+        DunningNotice.query
+        .filter(DunningNotice.id.in_(notice_ids))
+        .join(Invoice, DunningNotice.invoice_id == Invoice.id)
+        .order_by(Invoice.invoice_number)
+        .all()
+    )
+    if not notices_list:
+        flash("Keine Mahnungen gefunden.", "warning")
+        return redirect(url_for("dunning.notices"))
+
+    # Einzel-Render + pypdf statt WeasyPrint-copy() ueber mehrere Dokumente —
+    # Begruendung siehe bulk_pdf_merged.
+    writer = PdfWriter()
+    for notice in notices_list:
+        pdf_bytes = _render_dunning_pdf_bytes(notice)
+        _freeze_dunning_document(notice, "pdf", pdf_bytes)
+        if is_sendable(notice):
+            notice.sent_via = "post"
+            notice.sent_at = datetime.utcnow()
+            notice.sent_to = "Post"
+        writer.append(io.BytesIO(pdf_bytes))
+    db.session.commit()
+
+    writer.compress_identical_objects()
+    doc_dir = os.path.join(current_app.config["PDF_DIR"], "_bulk")
+    os.makedirs(doc_dir, exist_ok=True)
+    merged_path = os.path.join(doc_dir, "Mahnungen_Post.pdf")
+    with open(merged_path, "wb") as fh:
+        writer.write(fh)
+    writer.close()
+
+    return send_file(merged_path, as_attachment=True,
+                     download_name="Mahnungen_Post.pdf")
 
 
 # ---------------------------------------------------------------------------

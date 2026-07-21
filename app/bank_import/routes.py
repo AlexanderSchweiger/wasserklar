@@ -11,6 +11,7 @@ from flask import (
     url_for,
 )
 from flask_login import current_user, login_required
+from sqlalchemy import case as sa_case, or_
 
 from app.extensions import db
 from app.models import (
@@ -18,6 +19,8 @@ from app.models import (
     BankStatement,
     BankStatementLine,
     BankStatementLineAllocation,
+    Customer,
+    Invoice,
     OpenItem,
     RealAccount,
 )
@@ -34,6 +37,22 @@ def _round2(value) -> Decimal:
 
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+
+# Trefferlimit der Offene-Posten-Suche im Zuordnungs-Modal.
+OPEN_ITEM_PICKER_LIMIT = 50
+
+
+def _parse_amount(raw):
+    """'1.234,50' / '1234.50' / '1234' -> Decimal, sonst None (Suchfeld)."""
+    s = (raw or "").strip().replace("€", "").replace(" ", "")
+    if not s:
+        return None
+    if "," in s:
+        s = s.replace(".", "").replace(",", ".")
+    try:
+        return Decimal(s).quantize(_CENT, rounding=ROUND_HALF_UP)
+    except (ArithmeticError, ValueError):
+        return None
 
 
 def _line_render_context(lines):
@@ -55,17 +74,12 @@ def _line_render_context(lines):
         for op in ops:
             open_items_by_customer.setdefault(op.customer_id, []).append(op)
 
-    # Komplette Liste aller offenen Posten (fuer das Tom-Select-Dropdown in
-    # Zeilen, bei denen kein Kunde automatisch erkannt wurde — der Nutzer
-    # kann dann manuell durchsuchen statt einen Workaround zu basteln).
-    all_open_items = (
-        OpenItem.query.filter(
-            OpenItem.status.in_([OpenItem.STATUS_OPEN, OpenItem.STATUS_PARTIAL]),
-        )
-        .join(OpenItem.customer)
-        .order_by(OpenItem.date.desc())
-        .all()
-    )
+    # Bewusst KEINE Liste aller offenen Posten mehr im Zeilen-Kontext: die lag
+    # frueher als komplettes <select> in JEDER unzugeordneten Zeile. Neben dem
+    # DOM-Wildwuchs kostete das pro Option einen Zugriff auf die Property
+    # ``OpenItem.open_balance`` — und die feuert jedes Mal eine eigene Summen-
+    # Query (Zeilen x offene Posten). Die Auswahl laeuft jetzt ueber das
+    # Zuordnungs-Modal (``open_item_picker``) mit serverseitiger Suche.
 
     # Pro Zeile: Beziehung Bankbetrag <-> offener Posten (auf Cent gerundet,
     # sonst loest ein Decimal('100.00') vs. Decimal('100.000') faelschlich
@@ -92,7 +106,6 @@ def _line_render_context(lines):
     return {
         "accounts": accounts,
         "open_items_by_customer": open_items_by_customer,
-        "all_open_items": all_open_items,
         "payment_status": payment_status,
     }
 
@@ -325,6 +338,9 @@ def update_line(statement_id, line_id):
         if action == "set_split":
             # Modal nach erfolgreichem Speichern schliessen.
             resp.headers["HX-Trigger"] = "bankSplitSaved"
+        elif action == "set_open_item" and request.form.get("source") == "picker":
+            # Zuordnung kam aus dem Suchen-Modal -> dieses schliessen.
+            resp.headers["HX-Trigger"] = "bankOpItemPicked"
         return resp
     return redirect(url_for("bank_import.preview", statement_id=statement_id))
 
@@ -378,6 +394,75 @@ def _apply_split(line):
     line.override_account_id = None
     line.match_type = BankStatementLine.MATCH_SPLIT
     line.selected = True
+
+
+@bp.route("/statements/<int:statement_id>/lines/<int:line_id>/open-items")
+@login_required
+def open_item_picker(statement_id, line_id):
+    """Zuordnungs-Modal „Offenen Posten suchen" fuer eine Zeile.
+
+    Ohne ``?fragment=1`` der komplette Modal-Body, mit nur die Trefferliste
+    (Live-Suche tauscht ausschliesslich die Liste).
+
+    Bewusst serverseitig gesucht statt als grosses <select> je Zeile: die
+    Volltextsuche greift so auch auf Rechnungs- und Kundennummer zu, das DOM
+    bleibt klein, und die Summen-Query hinter ``OpenItem.open_balance`` laeuft
+    nur fuer die angezeigten Treffer.
+    """
+    line = BankStatementLine.query.get_or_404(line_id)
+    if line.statement_id != statement_id:
+        abort(404)
+
+    q = (request.args.get("q") or "").strip()
+    target = _round2(abs(line.amount))
+
+    query = (
+        OpenItem.query.filter(
+            OpenItem.status.in_([OpenItem.STATUS_OPEN, OpenItem.STATUS_PARTIAL]),
+        )
+        .join(OpenItem.customer)
+        .outerjoin(OpenItem.invoice)
+    )
+
+    if q:
+        like = f"%{q}%"
+        conds = [
+            Customer.name.ilike(like),
+            OpenItem.description.ilike(like),
+            Invoice.invoice_number.ilike(like),
+        ]
+        if q.isdigit():
+            conds.append(Customer.customer_number == int(q))
+        amount = _parse_amount(q)
+        if amount is not None:
+            conds.append(OpenItem.amount == amount)
+        query = query.filter(or_(*conds))
+
+    items = (
+        query.order_by(
+            # Betragsgleiche Posten nach oben — beim Bankabgleich ist das fast
+            # immer der gesuchte. CASE statt NULLS-Trick: dialekt-portabel.
+            sa_case((OpenItem.amount == target, 0), else_=1).asc(),
+            OpenItem.date.desc(),
+        )
+        .limit(OPEN_ITEM_PICKER_LIMIT + 1)
+        .all()
+    )
+    truncated = len(items) > OPEN_ITEM_PICKER_LIMIT
+    items = items[:OPEN_ITEM_PICKER_LIMIT]
+
+    ctx = {
+        "line": line,
+        "statement_id": statement_id,
+        "items": items,
+        "q": q,
+        "target": target,
+        "truncated": truncated,
+        "limit": OPEN_ITEM_PICKER_LIMIT,
+    }
+    if request.args.get("fragment"):
+        return render_template("bank_import/_open_item_results.html", **ctx)
+    return render_template("bank_import/_open_item_modal.html", **ctx)
 
 
 @bp.route("/statements/<int:statement_id>/lines/<int:line_id>/split")

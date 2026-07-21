@@ -314,6 +314,18 @@ tr.overdue { background-color: #fff3cd !important; }
   box-shadow: inset 0 -1px 0 var(--tblr-border-color, #dee2e6);
 }
 
+/* Trefferliste der Offene-Posten-Suche (Bank-Import-Modal). Eigene Regel statt
+   der is-fill-Kette oben: im Modal gibt es keinen .page-wrapper, die Hoehe
+   kommt hier bewusst per max-height (der Modal-Body ist ohnehin begrenzt). */
+.op-picker-scroll { max-height: 45vh; overflow: auto; }
+.op-picker-scroll > .table > thead > tr > th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--tblr-bg-surface, #fff);
+  box-shadow: inset 0 -1px 0 var(--tblr-border-color, #dee2e6);
+}
+
 /* Actions-Spalte beim horizontalen Scrollen rechts fixieren. Opt-in via
    .col-actions an Header- UND Body-Zelle (nicht :last-child, sonst wuerden
    colspan-Leerzeilen / aufgeklappte Detail-Zeilen faelschlich gepinnt).

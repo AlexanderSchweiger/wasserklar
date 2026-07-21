@@ -7,6 +7,7 @@
             <th class="text-center" style="width:70px">Stufe</th>
             <th>Rechnung</th>
             <th>Kunde</th>
+            <th>Versandart</th>
             <th class="text-center">Ausgestellt</th>
             <th class="text-center">Nachfrist</th>
             <th class="text-end">Gebühr</th>
@@ -17,10 +18,15 @@
     </thead>
     <tbody>
         {% for n in notices %}
+        {# Versandbereit = aktiv und noch nicht raus (Server-Pendant:
+           dunning.routes.is_sendable). Nur solche landen im „Mailing & Druck"-
+           Dialog; versendete koennen ueber DOCX/PDF nachgedruckt werden. #}
+        {% set sendable = n.status == 'Aktiv' and not n.sent_at %}
         <tr data-invoice-number="{{ n.invoice.invoice_number }}"
-            data-customer-name="{{ n.invoice.customer.name }}"
+            data-customer-name="{{ n.invoice.customer.name | e }}"
             data-customer-email="{{ n.invoice.customer.email or '' }}"
-            data-email-enabled="{{ 'true' if (n.status == 'Aktiv' and n.invoice.customer.wants_email) else 'false' }}">
+            data-versandart="{{ 'mail' if n.invoice.customer.wants_email else 'post' }}"
+            data-sendable="{{ 'true' if sendable else 'false' }}">
             <td>
                 <input type="checkbox" name="notice_ids" value="{{ n.id }}" class="dn-cb">
             </td>
@@ -40,6 +46,19 @@
                 </a>
             </td>
             <td>{{ n.invoice.customer.name }}</td>
+            <td>
+                {% if n.invoice.customer.wants_email %}
+                <span class="badge bg-azure-lt"><i class="fas fa-envelope me-1"></i>Mail</span>
+                <br><small class="text-muted">{{ n.invoice.customer.email }}</small>
+                {% else %}
+                <span class="badge bg-secondary-lt"><i class="fas fa-inbox me-1"></i>Post</span>
+                {% if not n.invoice.customer.email %}
+                <br><small class="text-muted">keine E-Mail</small>
+                {% else %}
+                <br><small class="text-muted">Mail nicht freigegeben</small>
+                {% endif %}
+                {% endif %}
+            </td>
             <td class="text-center">{{ n.issued_date.strftime('%d.%m.%Y') }}</td>
             <td class="text-center">
                 {% if n.new_due_date %}
@@ -87,7 +106,7 @@
         </tr>
         {% else %}
         <tr>
-            <td colspan="10" class="text-center text-muted py-3">Keine Mahnungen gefunden.</td>
+            <td colspan="11" class="text-center text-muted py-3">Keine Mahnungen gefunden.</td>
         </tr>
         {% endfor %}
     </tbody>

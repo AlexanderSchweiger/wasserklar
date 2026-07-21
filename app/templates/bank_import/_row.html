@@ -172,7 +172,10 @@
             hx-post="{{ _act }}" hx-target="closest tr" hx-swap="outerHTML" class="m-0">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="action" value="set_open_item">
-        <select name="open_item_id" class="form-select form-select-sm tom-select"
+        {# Bewusst ein natives <select>: die Liste umfasst nur die offenen
+           Posten dieses einen Kunden (kurz). Fuer alles andere gibt es die
+           Volltextsuche im Modal darunter. #}
+        <select name="open_item_id" class="form-select form-select-sm"
                 onchange="this.form.requestSubmit()">
           <option value="">– offenen Posten wählen –</option>
           {% for op in open_items_by_customer[line.matched_customer_id] %}
@@ -183,6 +186,9 @@
           {% endfor %}
         </select>
       </form>
+      <button type="button" class="btn btn-sm btn-link p-0 mt-1" onclick="openOpPicker({{ line.id }})">
+        <i class="fas fa-search me-1"></i>Anderen Posten suchen
+      </button>
       <form method="post" action="{{ _act }}"
             hx-post="{{ _act }}" hx-target="closest tr" hx-swap="outerHTML" class="m-0 mt-1">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -199,21 +205,12 @@
         <span class="badge bg-orange-lt"><i class="fas fa-exclamation-triangle me-1"></i>Keine Zuordnung</span>
       </div>
       {% if is_pending %}
-      <form method="post" action="{{ _act }}"
-            hx-post="{{ _act }}" hx-target="closest tr" hx-swap="outerHTML" class="m-0 mb-1">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <input type="hidden" name="action" value="set_open_item">
-        <select name="open_item_id" class="form-select form-select-sm tom-select"
-                onchange="this.form.requestSubmit()">
-          <option value="">– offenen Posten suchen –</option>
-          {% for op in all_open_items %}
-            <option value="{{ op.id }}">
-              {{ op.customer.name }} · {{ op.description }} · {{ op.amount | de_number(decimals=2) }} €
-              (offen: {{ op.open_balance | de_number(decimals=2) }} €)
-            </option>
-          {% endfor %}
-        </select>
-      </form>
+      {# Auswahl ueber das Suchen-Modal statt ueber ein <select> mit allen
+         offenen Posten in JEDER Zeile — siehe open_item_picker. #}
+      <button type="button" class="btn btn-sm btn-outline-primary mb-1"
+              onclick="openOpPicker({{ line.id }})">
+        <i class="fas fa-search me-1"></i>Offenen Posten suchen
+      </button>
       <form method="post" action="{{ _act }}"
             hx-post="{{ _act }}" hx-target="closest tr" hx-swap="outerHTML" class="m-0">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
