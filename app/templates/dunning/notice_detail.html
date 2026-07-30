@@ -96,14 +96,21 @@
                 </div>
                 <div class="card-body">
                     <div class="d-flex gap-2 flex-wrap">
+                        {# Nur freigegebene Dokumentformate anbieten (AppSetting
+                           invoice.document_format — gilt für Rechnungen UND
+                           Mahnungen). #}
+                        {% if doc_format in ('docx', 'both') %}
                         <a href="{{ url_for('dunning.notice_pdf', notice_id=notice.id, fmt='docx') }}"
                            class="btn btn-outline-primary" hx-boost="false">
                             <i class="fas fa-file-word me-1"></i> DOCX
                         </a>
+                        {% endif %}
+                        {% if doc_format in ('pdf', 'both') %}
                         <a href="{{ url_for('dunning.notice_pdf', notice_id=notice.id, fmt='pdf') }}"
                            class="btn btn-outline-primary" hx-boost="false">
                             <i class="fas fa-file-pdf me-1"></i> PDF
                         </a>
+                        {% endif %}
                         {% if notice.status == 'Aktiv' %}
                             {% set has_email = notice.invoice.customer.email %}
                             {% if has_email and notice.invoice.customer.wants_email %}

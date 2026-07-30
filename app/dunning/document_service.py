@@ -77,6 +77,20 @@ def _set_cell_border_bottom(cell, size_pt: int = 12, color_hex: str = "333333"):
     tcPr.append(tcBorders)
 
 
+def _tight(paragraph, *, before: int = 0, after: int = 2):
+    """Absatz eng setzen (Adress-/Meta-/Infoblöcke).
+
+    Word gibt jedem Absatz standardmäßig ~10 pt Abstand nach unten. In den
+    mehrzeiligen Blöcken summiert sich das auf mehrere Zentimeter und war der
+    zweite Grund für den Seitenumbruch.
+    """
+    pf = paragraph.paragraph_format
+    pf.space_before = Pt(before)
+    pf.space_after = Pt(after)
+    pf.line_spacing = 1.0
+    return paragraph
+
+
 def _remove_table_borders(table):
     tbl = table._tbl
     tblPr = tbl.find(qn("w:tblPr"))
@@ -170,6 +184,7 @@ def generate_dunning_docx(notice, wg: dict, design: dict | None = None,
 
     left_cell = header_tbl.cell(0, 0)
     p_name = left_cell.paragraphs[0]
+    p_name.paragraph_format.space_after = Pt(0)
     run_name = p_name.add_run(wg.get("name", ""))
     run_name.bold = True
     run_name.font.size = Pt(12)
@@ -179,6 +194,7 @@ def generate_dunning_docx(notice, wg: dict, design: dict | None = None,
     if address:
         for line in address.replace("\\n", "\n").split("\n"):
             p_addr = left_cell.add_paragraph(line.strip())
+            _tight(p_addr)
             p_addr.runs[0].font.size = Pt(9)
             p_addr.runs[0].font.color.rgb = muted_rgb
 
@@ -189,6 +205,7 @@ def generate_dunning_docx(notice, wg: dict, design: dict | None = None,
         if val:
             p = right_cell.add_paragraph(val)
             p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            _tight(p)
             p.runs[0].font.size = Pt(9)
             p.runs[0].font.color.rgb = accent_rgb
     if not right_cell.paragraphs[0].text:
@@ -198,7 +215,7 @@ def generate_dunning_docx(notice, wg: dict, design: dict | None = None,
 
     doc.add_paragraph()  # Abstand
 
-    # ── Meta (rechtsbündig) ──────────────────────────────────────────────
+    # ── Absender + Empfänger (links) | Infoblock (rechts) ────────────────
     meta_lines = [
         ("Rechnungsnummer", invoice.invoice_number),
     ]
@@ -209,46 +226,62 @@ def generate_dunning_docx(notice, wg: dict, design: dict | None = None,
     if notice.new_due_date:
         meta_lines.append(("Zahlbar bis", notice.new_due_date.strftime("%d.%m.%Y")))
 
-    for label, value in meta_lines:
-        p = doc.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        run_lbl = p.add_run(f"{label}: ")
-        run_lbl.bold = True
-        run_lbl.font.color.rgb = heading_rgb
-        p.add_run(value)
+    addr_tbl = doc.add_table(rows=1, cols=2)
+    _remove_table_borders(addr_tbl)
+    addr_tbl.columns[0].width = Cm(9)
+    addr_tbl.columns[1].width = Cm(7)
+    recipient_cell = addr_tbl.cell(0, 0)
+    meta_cell = addr_tbl.cell(0, 1)
 
-    doc.add_paragraph()  # Abstand
-
-    # ── Empfänger ────────────────────────────────────────────────────────
-    p_cust = doc.add_paragraph(customer.letter_name)
-    p_cust.runs[0].bold = True
+    # Absender-Rückadresse (klein, Fensterkuvert) über der Anschrift.
+    p_cust = recipient_cell.paragraphs[0]
+    if invoice_sender_address:
+        run_ret = p_cust.add_run(invoice_sender_address)
+        run_ret.font.size = Pt(7)
+        run_ret.font.color.rgb = muted_rgb
+        p_cust.paragraph_format.space_after = Pt(0)
+        p_cust = recipient_cell.add_paragraph()
+    p_cust.add_run(customer.letter_name).bold = True
+    _tight(p_cust, after=0)
 
     street_parts = [customer.strasse, customer.hausnummer]
     street = " ".join(p for p in street_parts if p)
     city_parts = [customer.plz, customer.ort]
     city = " ".join(p for p in city_parts if p)
     if street:
-        doc.add_paragraph(street)
+        _tight(recipient_cell.add_paragraph(street), after=0)
     if city:
-        doc.add_paragraph(city)
+        _tight(recipient_cell.add_paragraph(city), after=0)
     land = customer.land
     if land and land != "Österreich":
-        doc.add_paragraph(land)
+        _tight(recipient_cell.add_paragraph(land), after=0)
+
+    # Infoblock rechts, auf gleicher Höhe wie der Absender.
+    meta_cell.paragraphs[0].clear()
+    meta_first = True
+    for label, value in meta_lines:
+        p = meta_cell.paragraphs[0] if meta_first else meta_cell.add_paragraph()
+        meta_first = False
+        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        _tight(p)
+        run_lbl = p.add_run(f"{label}: ")
+        run_lbl.bold = True
+        run_lbl.font.color.rgb = heading_rgb
+        p.add_run(value)
 
     # ── Überschrift ──────────────────────────────────────────────────────
     title = notice.print_title_snapshot or notice.name_snapshot
     heading = doc.add_heading(title, level=1)
+    heading.paragraph_format.space_before = Pt(18)
+    heading.paragraph_format.space_after = Pt(6)
     heading.runs[0].font.color.rgb = heading_rgb
     heading.runs[0].font.name = font_name
 
     # ── Einleitungstext (pro Stufe konfigurierbar, siehe services) ───────
-    p_intro = doc.add_paragraph()
-    p_intro.add_run("Sehr geehrte Damen und Herren,").bold = False
-    doc.add_paragraph()
+    doc.add_paragraph("Sehr geehrte Damen und Herren,")
     for para in (intro_text or "").split("\n"):
         if para.strip():
             doc.add_paragraph(para.strip())
-    doc.add_paragraph()
 
     # ── Forderungsübersicht ──────────────────────────────────────────────
     tbl = doc.add_table(rows=1, cols=2)
@@ -313,24 +346,24 @@ def generate_dunning_docx(notice, wg: dict, design: dict | None = None,
     payment_cell = payment_tbl.cell(0, 0)
     _set_cell_bg(payment_cell, payment_bg_hex)
 
-    p_pay = payment_cell.paragraphs[0]
+    p_pay = _tight(payment_cell.paragraphs[0])
     run_pay_lbl = p_pay.add_run("Zahlungsinformationen")
     run_pay_lbl.bold = True
     run_pay_lbl.font.color.rgb = heading_rgb
 
-    p_pay2 = payment_cell.add_paragraph("Bitte überweisen Sie den Betrag von ")
+    p_pay2 = _tight(payment_cell.add_paragraph("Bitte überweisen Sie den Betrag von "))
     p_pay2.add_run(f"{_de_fmt(summary['gross_total'], 2)} €").bold = True
     p_pay2.add_run(f" bis zum {new_due_str}")
 
     if wg.get("iban"):
-        p_iban = payment_cell.add_paragraph("IBAN: ")
+        p_iban = _tight(payment_cell.add_paragraph("IBAN: "))
         p_iban.add_run(wg["iban"]).bold = True
     if wg.get("bic"):
-        payment_cell.add_paragraph(f"BIC: {wg['bic']}")
-    payment_cell.add_paragraph(
+        _tight(payment_cell.add_paragraph(f"BIC: {wg['bic']}"))
+    _tight(payment_cell.add_paragraph(
         f"Empfänger: {wg.get('account_holder') or wg.get('name', '')}"
-    )
-    p_ref = payment_cell.add_paragraph("Verwendungszweck: ")
+    ))
+    p_ref = _tight(payment_cell.add_paragraph("Verwendungszweck: "))
     p_ref.add_run(f"{invoice.invoice_number} / Mahnung").bold = True
 
     doc.add_paragraph()
@@ -340,18 +373,26 @@ def generate_dunning_docx(notice, wg: dict, design: dict | None = None,
         if para.strip():
             doc.add_paragraph(para.strip())
 
-    doc.add_paragraph()  # Abstand
-
-    # ── Fußzeile ─────────────────────────────────────────────────────────
+    # ── Fußzeile: echte Word-Seitenfußzeile ──────────────────────────────
+    # Frueher ein normaler Absatz am Textende — der rutschte bei gut gefuelltem
+    # Blatt als einzige Zeile auf eine zweite Seite (genau der gemeldete Fehler).
+    # In der Seitenfusszeile liegt er im unteren Seitenrand und kann per
+    # Definition keinen Umbruch ausloesen; zusaetzlich steht er dann auf JEDER
+    # Seite, falls eine Mahnung doch einmal laenger wird.
     footer_parts = [wg.get("name", "")]
     addr = wg.get("address", "")
     if addr:
         footer_parts.append(addr.replace("\\n", " | ").replace("\n", " | "))
     if wg.get("email"):
         footer_parts.append(wg["email"])
-    p_footer = doc.add_paragraph(" \u2014 ".join(footer_parts))
-    p_footer.runs[0].font.size = Pt(9)
-    p_footer.runs[0].font.color.rgb = muted_rgb
+    p_footer = section.footer.paragraphs[0]
+    p_footer.text = " \u2014 ".join(p for p in footer_parts if p)
+    p_footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _tight(p_footer)
+    if p_footer.runs:
+        p_footer.runs[0].font.name = font_name
+        p_footer.runs[0].font.size = Pt(8)
+        p_footer.runs[0].font.color.rgb = muted_rgb
 
     buf = io.BytesIO()
     doc.save(buf)

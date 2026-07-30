@@ -148,3 +148,59 @@ class TestPostBulk:
         _login(client)
         resp = client.post("/dunning/bulk-post-pdf", data={})
         assert resp.status_code == 302
+
+
+class TestDocumentFormatGating:
+    """Die AppSetting ``invoice.document_format`` gilt für Rechnungen UND
+    Mahnungen: steht sie auf „Nur PDF", darf nirgends ein Word-Download
+    angeboten werden (gemeldeter Fehler — der DOCX-Button war ungegatet)."""
+
+    def _urls(self, client, notice_id):
+        return (
+            client.get("/dunning/notices").get_data(as_text=True),
+            client.get(f"/dunning/notices/{notice_id}").get_data(as_text=True),
+        )
+
+    def test_pdf_only_hides_word(self, client, admin):
+        from app.models import AppSetting
+        _login(client)
+        n = _notice("Kunde", email=None, per_mail=False, invoice_number="2026-1")
+        AppSetting.set("invoice.document_format", "pdf")
+        db.session.commit()
+        for html in self._urls(client, n.id):
+            assert "fmt=docx" not in html
+            assert "bulk_docx" not in html and "bulk-docx" not in html
+            assert "fa-file-word" not in html
+            assert "fa-file-pdf" in html
+
+    def test_docx_only_hides_pdf(self, client, admin):
+        from app.models import AppSetting
+        _login(client)
+        n = _notice("Kunde", email=None, per_mail=False, invoice_number="2026-1")
+        AppSetting.set("invoice.document_format", "docx")
+        db.session.commit()
+        for html in self._urls(client, n.id):
+            assert "fa-file-word" in html
+            assert "fa-file-pdf" not in html
+
+    def test_both_shows_both(self, client, admin):
+        from app.models import AppSetting
+        _login(client)
+        n = _notice("Kunde", email=None, per_mail=False, invoice_number="2026-1")
+        AppSetting.set("invoice.document_format", "both")
+        db.session.commit()
+        for html in self._urls(client, n.id):
+            assert "fa-file-word" in html
+            assert "fa-file-pdf" in html
+
+    def test_post_download_section_needs_pdf(self, client, admin):
+        """Der Post-Sammeldruck ist PDF-only — bei „Nur Word" erscheint statt
+        der Gruppenliste ein Hinweis (wie beim Rechnungslauf)."""
+        from app.models import AppSetting
+        _login(client)
+        _notice("Kunde", email=None, per_mail=False, invoice_number="2026-1")
+        AppSetting.set("invoice.document_format", "docx")
+        db.session.commit()
+        html = client.get("/dunning/notices").get_data(as_text=True)
+        assert 'id="dn-post-list"' not in html
+        assert "nur im PDF-Format verfügbar" in html

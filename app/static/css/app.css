@@ -378,6 +378,26 @@ tr.overdue { background-color: #fff3cd !important; }
 .navbar-vertical { scrollbar-width: none; }            /* Firefox */
 .navbar-vertical::-webkit-scrollbar { display: none; } /* Chrome/Edge/Safari */
 
+/* Sidebar-Orientierung: aktive Hauptgruppe + aktive Unterseite deutlich
+   hervorheben. Tabler hebt aktive Links per Default nur ueber die Textfarbe
+   hervor — auf der dunklen Leiste zu subtil, man verliert schnell, welche Seite
+   gerade offen ist. Wir legen einen Hintergrund drauf: dezent fuer die aktive
+   Gruppe, kraeftiger + linke Akzentkante fuer die aktive Seite. Die farbigen
+   Gruppen-Icons (inline gesetzt) bleiben davon unberuehrt. */
+.navbar-vertical .navbar-nav > .nav-item > .nav-link.active {
+  background: rgba(255, 255, 255, .07);
+  border-radius: 6px;
+}
+.navbar-vertical .nav-sm .nav-link.active {
+  background: rgba(255, 255, 255, .14);
+  border-radius: 6px;
+}
+/* „weitere"-Umschalter: dezenter als echte Menuepunkte (Meta-Steuerung),
+   volle Deckung sobald er aktiv ist (verstecktes Kind ist die offene Seite). */
+.navbar-vertical .wk-more-toggle { opacity: .72; font-size: .8125rem; }
+.navbar-vertical .wk-more-toggle:hover,
+.navbar-vertical .wk-more-toggle.active { opacity: 1; }
+
 /* Top-Navbar (.wk-topbar): seit dem Responsive-Fix auf allen Breiten sichtbar
    (frueher d-none d-lg-flex). Unterhalb lg erscheint sie als zweite Zeile unter
    der eingeklappten Sidebar. Dort: alles in EINER Zeile halten (kein Umbruch,

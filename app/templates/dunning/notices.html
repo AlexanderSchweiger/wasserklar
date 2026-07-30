@@ -33,17 +33,24 @@
                        hx-trigger="input changed delay:300ms"
                        hx-target="#notices-table"
                        hx-include="[name='status'],[name='versand'],[name='q']">
+                {# Nur die in den Einstellungen freigegebenen Dokumentformate
+                   anbieten (AppSetting invoice.document_format — gilt für
+                   Rechnungen UND Mahnungen). #}
                 <div class="btn-group btn-group-sm ms-2">
+                    {% if doc_format in ('docx', 'both') %}
                     <button type="button"
                             class="btn btn-outline-primary btn-sm" title="Auswahl als DOCX"
                             onclick="dunningBulkDownload('{{ url_for('dunning.bulk_docx_merged') }}', 'Word-Dokument wird erstellt')">
                         <i class="fas fa-file-word me-1"></i> DOCX
                     </button>
+                    {% endif %}
+                    {% if doc_format in ('pdf', 'both') %}
                     <button type="button"
                             class="btn btn-outline-primary btn-sm" title="Auswahl als PDF"
                             onclick="dunningBulkDownload('{{ url_for('dunning.bulk_pdf_merged') }}', 'PDF wird zusammengeführt')">
                         <i class="fas fa-file-pdf me-1"></i> PDF
                     </button>
+                    {% endif %}
                 </div>
                 <button type="button" class="btn btn-primary btn-sm ms-2"
                         title="Mahnungen per E-Mail versenden bzw. für den Postversand drucken"

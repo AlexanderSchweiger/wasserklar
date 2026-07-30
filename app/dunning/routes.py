@@ -106,8 +106,11 @@ def _render_dunning_pdf_bytes(notice):
 def _render_dunning_docx_bytes(notice):
     """DOCX-Bytes der Mahnung mit aktuellem Design + gerenderten Texten."""
     from app.dunning.document_service import generate_dunning_docx
-    from app.settings_service import wg_settings
-    return generate_dunning_docx(notice, wg_settings(), design=_current_design())
+    from app.settings_service import wg_settings, get_invoice_sender_address
+    return generate_dunning_docx(
+        notice, wg_settings(), design=_current_design(),
+        invoice_sender_address=get_invoice_sender_address(),
+    )
 
 
 def _freeze_dunning_document(notice, ext, data):
@@ -288,7 +291,10 @@ def notice_detail(notice_id):
         return redirect(url_for("dunning.notices"))
 
     summary = dunning_summary(notice.invoice)
-    return render_template("dunning/notice_detail.html", notice=notice, summary=summary)
+    return render_template(
+        "dunning/notice_detail.html", notice=notice, summary=summary,
+        doc_format=AppSetting.get("invoice.document_format", "pdf"),
+    )
 
 
 @bp.route("/notices/<int:notice_id>/reset", methods=["POST"])

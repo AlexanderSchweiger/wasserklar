@@ -60,7 +60,7 @@
             <li class="nav-item">
               <a class="nav-link {% if request.endpoint == 'main.dashboard' %}active{% endif %}"
                 href="{{ url_for('main.dashboard') }}">
-                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-tachometer-alt"></i></span>
+                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-tachometer-alt" style="color:#ced4de"></i></span>
                 <span class="nav-link-title">Dashboard</span>
               </a>
             </li>
@@ -69,7 +69,7 @@
             <li class="nav-item">
               <a class="nav-link {% if request.blueprint == 'notes' %}active{% endif %}"
                 href="{{ url_for('notes.index') }}">
-                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-thumbtack"></i></span>
+                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-thumbtack" style="color:#f5c542"></i></span>
                 <span class="nav-link-title">Notizen</span>
               </a>
             </li>
@@ -168,13 +168,22 @@
             {% set stammdaten_active   = _nav_kunden or _nav_objekte or _nav_import or _nav_buchungsjahre or _nav_perioden %}
             {% set verwaltung_active   = _nav_benutzer or _nav_einstellungen or _nav_data_transfer or _nav_dokumente or _nav_backups or _nav_support or _nav_abonnement or _nav_api_keys %}
 
+            {# ── „weitere"-Untergruppen: aufgeklappt, sobald ein verstecktes
+               Kind aktiv ist (sonst landet man auf einer Seite, die im Menü
+               gerade nicht sichtbar ist). #}
+            {% set _nav_rollen              = request.endpoint in ('auth.roles','auth.role_new','auth.role_edit') %}
+            {% set _more_invoices_active    = _nav_korrekturen or _nav_tarife or _nav_email_settings %}
+            {% set _more_zaehler_active     = _nav_zaehlertausch or _nav_zaehlertausch_hist %}
+            {% set _more_buchhaltung_active = _nav_kontenplan or _nav_projekte %}
+            {% set _more_verwaltung_active  = _nav_rollen or _nav_data_transfer %}
+
             {% if current_user.has_permission('stammdaten') %}
             <li class="nav-item">
               <a class="nav-link dropdown-toggle {% if stammdaten_active %}active{% endif %}" href="#navbar-stammdaten"
                 data-bs-toggle="collapse" role="button"
                 aria-expanded="{{ 'true' if stammdaten_active else 'false' }}"
                 aria-controls="navbar-stammdaten">
-                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-database"></i></span>
+                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-database" style="color:#4dabf7"></i></span>
                 <span class="nav-link-title">{{ 'Genossenschaft' if is_wg else 'Stammdaten' }}</span>
               </a>
               <div class="collapse {% if stammdaten_active %}show{% endif %}" id="navbar-stammdaten">
@@ -220,7 +229,7 @@
                 data-bs-toggle="collapse" role="button"
                 aria-expanded="{{ 'true' if zaehler_active else 'false' }}"
                 aria-controls="navbar-zaehler">
-                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-tachometer-alt"></i></span>
+                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-tachometer-alt" style="color:#3bc9db"></i></span>
                 <span class="nav-link-title">Zähler</span>
               </a>
               <div class="collapse {% if zaehler_active %}show{% endif %}" id="navbar-zaehler">
@@ -243,18 +252,6 @@
                       <i class="fas fa-file-import me-2"></i>Ablesungen importieren
                     </a>
                   </li>
-                  <li class="nav-item">
-                    <a class="nav-link {% if _nav_zaehlertausch %}active{% endif %}"
-                      href="{{ url_for('meters.swap_import_upload') }}">
-                      <i class="fas fa-exchange-alt me-2"></i>Zählertausch-Import
-                    </a>
-                  </li>
-                  <li class="nav-item">
-                    <a class="nav-link {% if _nav_zaehlertausch_hist %}active{% endif %}"
-                      href="{{ url_for('meters.replacements') }}">
-                      <i class="fas fa-history me-2"></i>Zählertausch-Historie
-                    </a>
-                  </li>
                   {% if config.FEATURE_METER_TOURS %}
                   <li class="nav-item">
                     <a class="nav-link {% if _nav_meter_tours %}active{% endif %}"
@@ -264,6 +261,31 @@
                   </li>
                   {% endif %}
                   {% block saas_zaehler_extra %}{% endblock %}
+                  {# Zählertausch-Import/-Historie: nur bei tatsächlichem Tausch — eingeklappt. #}
+                  <li class="nav-item">
+                    <a class="nav-link dropdown-toggle wk-more-toggle {% if _more_zaehler_active %}active{% endif %}"
+                      href="#navbar-zaehler-more" data-bs-toggle="collapse" role="button"
+                      aria-expanded="{{ 'true' if _more_zaehler_active else 'false' }}"
+                      aria-controls="navbar-zaehler-more">
+                      <i class="fas fa-ellipsis-h me-2"></i>weitere
+                    </a>
+                    <div class="collapse {% if _more_zaehler_active %}show{% endif %}" id="navbar-zaehler-more">
+                      <ul class="nav nav-sm flex-column">
+                        <li class="nav-item">
+                          <a class="nav-link {% if _nav_zaehlertausch %}active{% endif %}"
+                            href="{{ url_for('meters.swap_import_upload') }}">
+                            <i class="fas fa-exchange-alt me-2"></i>Zählertausch-Import
+                          </a>
+                        </li>
+                        <li class="nav-item">
+                          <a class="nav-link {% if _nav_zaehlertausch_hist %}active{% endif %}"
+                            href="{{ url_for('meters.replacements') }}">
+                            <i class="fas fa-history me-2"></i>Zählertausch-Historie
+                          </a>
+                        </li>
+                      </ul>
+                    </div>
+                  </li>
                 </ul>
               </div>
             </li>
@@ -275,7 +297,7 @@
                 data-bs-toggle="collapse" role="button"
                 aria-expanded="{{ 'true' if accounting_active else 'false' }}"
                 aria-controls="navbar-accounting">
-                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-calculator"></i></span>
+                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-calculator" style="color:#51cf66"></i></span>
                 <span class="nav-link-title">Buchhaltung</span>
               </a>
               <div class="collapse {% if accounting_active %}show{% endif %}" id="navbar-accounting">
@@ -299,24 +321,37 @@
                     </a>
                   </li>
                   <li class="nav-item">
-                    <a class="nav-link {% if _nav_kontenplan %}active{% endif %}"
-                      href="{{ url_for('accounting.accounts') }}">
-                      <i class="fas fa-sitemap me-2"></i>Kontenplan
-                    </a>
-                  </li>
-                  <li class="nav-item">
-                    <a class="nav-link {% if _nav_projekte %}active{% endif %}"
-                      href="{{ url_for('projects.index') }}">
-                      <i class="fas fa-project-diagram me-2"></i>Projekte
-                    </a>
-                  </li>
-                  <li class="nav-item">
                     <a class="nav-link {% if _nav_bankimport %}active{% endif %}"
                       href="{{ url_for('bank_import.index') }}">
                       <i class="fas fa-file-invoice me-2"></i>Import Bankauszüge
                     </a>
                   </li>
                   {% block saas_buchhaltung_extra %}{% endblock %}
+                  {# Kontenplan (1× eingerichtet) + Projekte (optional) — eingeklappt. #}
+                  <li class="nav-item">
+                    <a class="nav-link dropdown-toggle wk-more-toggle {% if _more_buchhaltung_active %}active{% endif %}"
+                      href="#navbar-accounting-more" data-bs-toggle="collapse" role="button"
+                      aria-expanded="{{ 'true' if _more_buchhaltung_active else 'false' }}"
+                      aria-controls="navbar-accounting-more">
+                      <i class="fas fa-ellipsis-h me-2"></i>weitere
+                    </a>
+                    <div class="collapse {% if _more_buchhaltung_active %}show{% endif %}" id="navbar-accounting-more">
+                      <ul class="nav nav-sm flex-column">
+                        <li class="nav-item">
+                          <a class="nav-link {% if _nav_kontenplan %}active{% endif %}"
+                            href="{{ url_for('accounting.accounts') }}">
+                            <i class="fas fa-sitemap me-2"></i>Kontenplan
+                          </a>
+                        </li>
+                        <li class="nav-item">
+                          <a class="nav-link {% if _nav_projekte %}active{% endif %}"
+                            href="{{ url_for('projects.index') }}">
+                            <i class="fas fa-project-diagram me-2"></i>Projekte
+                          </a>
+                        </li>
+                      </ul>
+                    </div>
+                  </li>
                 </ul>
               </div>
             </li>
@@ -328,15 +363,18 @@
                 data-bs-toggle="collapse" role="button"
                 aria-expanded="{{ 'true' if invoices_active else 'false' }}"
                 aria-controls="navbar-invoices">
-                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-file-invoice-dollar"></i></span>
+                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-file-invoice-dollar" style="color:#20c997"></i></span>
                 <span class="nav-link-title">Rechnungen / OP</span>
               </a>
               <div class="collapse {% if invoices_active %}show{% endif %}" id="navbar-invoices">
                 <ul class="nav nav-sm flex-column ps-3">
+                  {# Jahresübersicht bewusst ganz oben: der Einstieg beim Verrechnen
+                     aller Kunden — lauf-übergreifender Bestand (abgerechnet /
+                     versendet / bezahlt / offen). #}
                   <li class="nav-item">
-                    <a class="nav-link {% if _nav_neue_rechnung %}active{% endif %}"
-                      href="{{ url_for('invoices.new') }}">
-                      <i class="fas fa-plus me-2"></i>Rechnung erstellen
+                    <a class="nav-link {% if _nav_jahresuebersicht %}active{% endif %}"
+                      href="{{ url_for('invoices.period_overview_current') }}">
+                      <i class="fas fa-layer-group me-2"></i>Jahresübersicht
                     </a>
                   </li>
                   <li class="nav-item">
@@ -352,37 +390,46 @@
                     </a>
                   </li>
                   <li class="nav-item">
-                    <a class="nav-link {% if _nav_jahresuebersicht %}active{% endif %}"
-                      href="{{ url_for('invoices.period_overview_current') }}">
-                      <i class="fas fa-layer-group me-2"></i>Jahresübersicht
-                    </a>
-                  </li>
-                  <li class="nav-item">
                     <a class="nav-link {% if _nav_rechnungslaeufe or _nav_rechnungslauf %}active{% endif %}"
                       href="{{ url_for('invoices.billing_runs') }}">
                       <i class="fas fa-history me-2"></i>Rechnungsläufe
                     </a>
                   </li>
+                  {# Selten (≈1×/Jahr) unter „weitere" eingeklappt. „Rechnung
+                     erstellen" entfällt — erreichbar über den Button in „Alle
+                     Rechnungen". #}
                   <li class="nav-item">
-                    <a class="nav-link {% if _nav_korrekturen %}active{% endif %}"
-                      href="{{ url_for('invoices.corrections') }}">
-                      <i class="fas fa-balance-scale me-2"></i>Korrekturen
+                    <a class="nav-link dropdown-toggle wk-more-toggle {% if _more_invoices_active %}active{% endif %}"
+                      href="#navbar-invoices-more" data-bs-toggle="collapse" role="button"
+                      aria-expanded="{{ 'true' if _more_invoices_active else 'false' }}"
+                      aria-controls="navbar-invoices-more">
+                      <i class="fas fa-ellipsis-h me-2"></i>weitere
                     </a>
+                    <div class="collapse {% if _more_invoices_active %}show{% endif %}" id="navbar-invoices-more">
+                      <ul class="nav nav-sm flex-column">
+                        <li class="nav-item">
+                          <a class="nav-link {% if _nav_korrekturen %}active{% endif %}"
+                            href="{{ url_for('invoices.corrections') }}">
+                            <i class="fas fa-balance-scale me-2"></i>Korrekturen
+                          </a>
+                        </li>
+                        <li class="nav-item">
+                          <a class="nav-link {% if _nav_tarife %}active{% endif %}"
+                            href="{{ url_for('invoices.tariffs') }}">
+                            <i class="fas fa-tags me-2"></i>Tarife
+                          </a>
+                        </li>
+                        {% if current_user.has_permission('verwaltung') %}
+                        <li class="nav-item">
+                          <a class="nav-link {% if _nav_email_settings %}active{% endif %}"
+                            href="{{ url_for('invoices.email_settings') }}">
+                            <i class="fas fa-envelope me-2"></i>E-Mail-Einstellungen
+                          </a>
+                        </li>
+                        {% endif %}
+                      </ul>
+                    </div>
                   </li>
-                    <li class="nav-item">
-                    <a class="nav-link {% if _nav_tarife %}active{% endif %}"
-                      href="{{ url_for('invoices.tariffs') }}">
-                      <i class="fas fa-tags me-2"></i>Tarife
-                    </a>
-                  </li>
-                  {% if current_user.has_permission('verwaltung') %}
-                  <li class="nav-item">
-                    <a class="nav-link {% if _nav_email_settings %}active{% endif %}"
-                      href="{{ url_for('invoices.email_settings') }}">
-                      <i class="fas fa-envelope me-2"></i>E-Mail-Einstellungen
-                    </a>
-                  </li>
-                  {% endif %}
                 </ul>
               </div>
             </li>
@@ -394,7 +441,7 @@
                 data-bs-toggle="collapse" role="button"
                 aria-expanded="{{ 'true' if dunning_active else 'false' }}"
                 aria-controls="navbar-dunning">
-                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-gavel"></i></span>
+                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-gavel" style="color:#ff922b"></i></span>
                 <span class="nav-link-title">Mahnwesen</span>
               </a>
               <div class="collapse {% if dunning_active %}show{% endif %}" id="navbar-dunning">
@@ -434,7 +481,7 @@
                 data-bs-toggle="collapse" role="button"
                 aria-expanded="{{ 'true' if technik_active or incidents_active else 'false' }}"
                 aria-controls="navbar-network">
-                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-map-marked-alt"></i></span>
+                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-map-marked-alt" style="color:#748ffc"></i></span>
                 <span class="nav-link-title">Leitungsnetz</span>
               </a>
               <div class="collapse {% if technik_active or incidents_active %}show{% endif %}" id="navbar-network">
@@ -504,7 +551,7 @@
                 data-bs-toggle="collapse" role="button"
                 aria-expanded="{{ 'true' if _sf_group_active else 'false' }}"
                 aria-controls="navbar-schriftfuehrung">
-                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-feather-alt"></i></span>
+                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-feather-alt" style="color:#cc5de8"></i></span>
                 <span class="nav-link-title">Schriftführung</span>
               </a>
               <div class="collapse {% if _sf_group_active %}show{% endif %}" id="navbar-schriftfuehrung">
@@ -554,7 +601,7 @@
                 data-bs-toggle="collapse" role="button"
                 aria-expanded="{{ 'true' if auswertungen_active else 'false' }}"
                 aria-controls="navbar-auswertungen">
-                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-chart-line"></i></span>
+                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-chart-line" style="color:#f06595"></i></span>
                 <span class="nav-link-title">Auswertungen</span>
               </a>
               <div class="collapse {% if auswertungen_active %}show{% endif %}" id="navbar-auswertungen">
@@ -590,21 +637,15 @@
                 data-bs-toggle="collapse" role="button"
                 aria-expanded="{{ 'true' if verwaltung_active else 'false' }}"
                 aria-controls="navbar-verwaltung">
-                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-tools"></i></span>
+                <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="fas fa-tools" style="color:#adb5bd"></i></span>
                 <span class="nav-link-title">Verwaltung</span>
               </a>
               <div class="collapse {% if verwaltung_active %}show{% endif %}" id="navbar-verwaltung">
                 <ul class="nav nav-sm flex-column ps-3">
                   <li class="nav-item">
-                    <a class="nav-link {% if _nav_benutzer and request.endpoint not in ('auth.roles','auth.role_new','auth.role_edit') %}active{% endif %}"
+                    <a class="nav-link {% if _nav_benutzer and not _nav_rollen %}active{% endif %}"
                       href="{{ url_for('auth.users') }}">
                       <i class="fas fa-user-cog me-2"></i>Benutzer
-                    </a>
-                  </li>
-                  <li class="nav-item">
-                    <a class="nav-link {% if request.endpoint in ('auth.roles','auth.role_new','auth.role_edit') %}active{% endif %}"
-                      href="{{ url_for('auth.roles') }}">
-                      <i class="fas fa-user-shield me-2"></i>Rollen & Rechte
                     </a>
                   </li>
                   <li class="nav-item">
@@ -613,13 +654,32 @@
                       <i class="fas fa-cog me-2"></i>Einstellungen
                     </a>
                   </li>
-                  <li class="nav-item">
-                    <a class="nav-link {% if _nav_data_transfer %}active{% endif %}"
-                      href="{{ url_for('data_transfer.index') }}">
-                      <i class="fas fa-exchange-alt me-2"></i>Daten-Export/Import
-                    </a>
-                  </li>
                   {% block saas_verwaltung_extra %}{% endblock %}
+                  {# Rollen & Rechte + Daten-Export/Import: Admin-Selten — eingeklappt. #}
+                  <li class="nav-item">
+                    <a class="nav-link dropdown-toggle wk-more-toggle {% if _more_verwaltung_active %}active{% endif %}"
+                      href="#navbar-verwaltung-more" data-bs-toggle="collapse" role="button"
+                      aria-expanded="{{ 'true' if _more_verwaltung_active else 'false' }}"
+                      aria-controls="navbar-verwaltung-more">
+                      <i class="fas fa-ellipsis-h me-2"></i>weitere
+                    </a>
+                    <div class="collapse {% if _more_verwaltung_active %}show{% endif %}" id="navbar-verwaltung-more">
+                      <ul class="nav nav-sm flex-column">
+                        <li class="nav-item">
+                          <a class="nav-link {% if _nav_rollen %}active{% endif %}"
+                            href="{{ url_for('auth.roles') }}">
+                            <i class="fas fa-user-shield me-2"></i>Rollen &amp; Rechte
+                          </a>
+                        </li>
+                        <li class="nav-item">
+                          <a class="nav-link {% if _nav_data_transfer %}active{% endif %}"
+                            href="{{ url_for('data_transfer.index') }}">
+                            <i class="fas fa-exchange-alt me-2"></i>Daten-Export/Import
+                          </a>
+                        </li>
+                      </ul>
+                    </div>
+                  </li>
                 </ul>
               </div>
             </li>

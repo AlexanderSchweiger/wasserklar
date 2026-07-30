@@ -24,7 +24,7 @@
     </li>
     <li class="nav-item" role="presentation">
       <a class="nav-link" id="tab-rechnung" data-bs-toggle="tab" href="#pane-rechnung" role="tab">
-        <i class="fas fa-file-alt me-1"></i> Rechnungsformat
+        <i class="fas fa-file-alt me-1"></i> Dokumentformat
       </a>
     </li>
     <li class="nav-item" role="presentation">
@@ -361,16 +361,21 @@
     <div class="tab-pane fade" id="pane-rechnung" role="tabpanel">
       <div class="card">
         <div class="card-header">
-          <h3 class="card-title"><i class="fas fa-file-alt me-1"></i> Rechnungsformat</h3>
+          <h3 class="card-title"><i class="fas fa-file-alt me-1"></i> Dokumentformat</h3>
         </div>
         <div class="card-body">
           <div class="mb-3">
-            <label class="form-label">Verfügbare Formate für Rechnungsdokumente</label>
+            <label class="form-label">Verfügbare Formate für erzeugte Dokumente</label>
             <select name="invoice_document_format" class="form-select">
               <option value="pdf"  {% if doc_format == 'pdf'  %}selected{% endif %}>Nur PDF (empfohlen)</option>
               <option value="docx" {% if doc_format == 'docx' %}selected{% endif %}>Nur Word (.docx)</option>
               <option value="both" {% if doc_format == 'both' %}selected{% endif %}>PDF und Word (.docx)</option>
             </select>
+            <div class="form-text">
+              Gilt für <strong>Rechnungen und Mahnungen</strong> (sowie Rundschreiben und
+              Schriftverkehr): Es werden nur Download-Schaltflächen der hier freigegebenen
+              Formate angezeigt, und der E-Mail-Versand hängt genau diese Formate an.
+            </div>
           </div>
           <div id="docx-warning" class="alert alert-warning mb-3"
                style="{% if doc_format not in ('docx', 'both') %}display:none{% endif %}">
@@ -514,7 +519,7 @@
             <div class="col-md-6">
               <div class="fw-bold text-success mb-1"><i class="fas fa-shield-alt me-1"></i> Bleibt erhalten</div>
               <ul class="small mb-0 ps-3">
-                <li>alle <strong>Einstellungen</strong> (Kontaktdaten, E-Mail, Rechnungsformat …)</li>
+                <li>alle <strong>Einstellungen</strong> (Kontaktdaten, E-Mail, Dokumentformat …)</li>
                 <li>Benutzer & Rollen (Sie bleiben angemeldet)</li>
               </ul>
               <div class="text-muted small mt-2">

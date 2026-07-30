@@ -43,6 +43,60 @@ def dashboard():
     missing_readings = total_meters - read_in_period
     read_percent = round(read_in_period / total_meters * 100) if total_meters else 0
 
+    # ── Abrechnungs-Fortschritt der aktiven Periode (Dashboard-Kachel) ────────
+    # „Wie weit bin ich mit dem Verrechnen aller Kunden?" — die drei Stufen
+    # abgerechnet → versendet → bezahlt. Der Objekt-Zähler (abgerechnet) kommt
+    # aus DERSELBEN Quelle wie die Jahresübersicht (_period_completeness), damit
+    # Dashboard und Übersichtsseite nie auseinanderlaufen. Versand-/Zahlungs-
+    # Kennzahlen als billige Status-Aggregation über die Rechnungen der Periode
+    # (gleiche Perioden-Zuordnung wie period_overview: eigene Periode ODER ohne
+    # Periode, aber Rechnungsdatum im Zeitraum).
+    billing_progress = None
+    if active_period is not None:
+        from app.invoices.routes import _period_completeness
+        from sqlalchemy import or_, and_
+        comp = _period_completeness(active_period)
+        total_count = comp["total_count"]
+        billed_count = comp["billed_count"]
+
+        status_rows = (
+            db.session.query(
+                Invoice.status,
+                func.count(Invoice.id),
+                func.coalesce(func.sum(Invoice.total_amount), 0),
+            )
+            .filter(or_(
+                Invoice.billing_period_id == active_period.id,
+                and_(
+                    Invoice.billing_period_id.is_(None),
+                    Invoice.date >= active_period.start_date,
+                    Invoice.date <= active_period.end_date,
+                ),
+            ))
+            .group_by(Invoice.status)
+            .all()
+        )
+        cnt = {s: c for s, c, _ in status_rows}
+        sums = {s: float(t or 0) for s, _, t in status_rows}
+        # „versendet" = Entwurfsstatus verlassen und nicht storniert (wie
+        # _invoice_overview) — zählt dauerhaft, auch nach Bezahlung.
+        count_sent = sum(c for s, c in cnt.items()
+                         if s not in (Invoice.STATUS_DRAFT, Invoice.STATUS_CANCELLED))
+        count_live = cnt.get(Invoice.STATUS_DRAFT, 0) + count_sent
+        sum_total = sum(t for s, t in sums.items() if s != Invoice.STATUS_CANCELLED)
+        sum_paid = sums.get(Invoice.STATUS_PAID, 0.0)
+        billing_progress = {
+            "billed_count": billed_count,
+            "total_count": total_count,
+            "pct_billed": round(billed_count / total_count * 100) if total_count else 0,
+            "count_sent": count_sent,
+            "count_live": count_live,
+            "pct_sent": round(count_sent / count_live * 100) if count_live else 0,
+            "sum_paid": sum_paid,
+            "sum_total": sum_total,
+            "pct_paid": round(sum_paid / sum_total * 100) if sum_total else 0,
+        }
+
     # Verbrauchs-Historie pro Abrechnungsperiode (letzte 8, chronologisch)
     consumption_rows = (
         db.session.query(BillingPeriod.name, func.sum(MeterReading.consumption))
@@ -160,6 +214,7 @@ def dashboard():
         current_year=current_year,
         today=date.today(),
         active_period=active_period,
+        billing_progress=billing_progress,
         open_invoices=open_invoices,
         total_open=total_open,
         total_meters=total_meters,
