@@ -93,6 +93,7 @@ def index():
     from app.properties import bev_geocode
     ctx["bev_index_info"] = bev_geocode.index_info(current_app.config["BEV_INDEX_PATH"])
     ctx["property_count"] = Property.query.filter_by(active=True).count()
+    ctx["has_filter"] = bool(q or shares_filter != "all")
     return render_template("properties/index.html", **ctx)
 
 

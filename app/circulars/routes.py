@@ -161,7 +161,8 @@ def index():
     return render_template("circulars/index.html",
                            templates=constants.BUILTIN_TEMPLATES,
                            kinds=constants.KIND_LABELS,
-                           prefill=prefill, open_modal=open_modal, **ctx)
+                           prefill=prefill, open_modal=open_modal,
+                           has_filter=bool(status or kind), **ctx)
 
 
 def _apply_form(circular, form):

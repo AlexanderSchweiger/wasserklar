@@ -8,6 +8,7 @@
   <div class="card-header">
     <div class="d-flex align-items-center flex-wrap" style="gap:.5rem">
       <select class="form-select form-select-sm w-auto" name="plan" aria-label="Plan filtern"
+              data-filter-field
               hx-get="{{ url_for('network.elements') }}"
               hx-trigger="change"
               hx-target="#elemente-table"
@@ -18,6 +19,7 @@
         {% endfor %}
       </select>
       <select class="form-select form-select-sm w-auto" name="type" aria-label="Typ filtern"
+              data-filter-field
               hx-get="{{ url_for('network.elements') }}"
               hx-trigger="change"
               hx-target="#elemente-table"
@@ -37,6 +39,7 @@
       <div class="input-group input-group-sm" style="width:300px">
         <input type="search" name="q" value="{{ q }}" class="form-control"
           placeholder="Bezeichnung, Notiz, Liegenschaft, Besitzer…"
+          data-filter-field
           hx-get="{{ url_for('network.elements') }}"
           hx-trigger="input changed delay:300ms, search"
           hx-target="#elemente-table"
@@ -45,6 +48,10 @@
       </div>
       <input type="hidden" name="sort" value="{{ sort }}">
       <input type="hidden" name="dir" value="{{ dir }}">
+      <a href="{{ url_for('network.elements', sort=sort, dir=dir) }}"
+         class="btn btn-sm btn-outline-secondary{{ '' if has_filter else ' d-none' }}" data-filter-reset>
+        <i class="fas fa-times me-1"></i> Filter zurücksetzen
+      </a>
     </div>
     <div class="card-actions">
       <a href="{{ url_for('network.index') }}" class="btn btn-sm" hx-boost="false">

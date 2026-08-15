@@ -18,16 +18,16 @@
         <div class="col-md-3">
           <label class="form-label">Kunde</label>
           <input type="text" name="customer" class="form-control form-control-sm"
-                 value="{{ f_customer }}" placeholder="Kundenname …">
+                 value="{{ f_customer }}" placeholder="Kundenname …" onchange="this.form.requestSubmit()">
         </div>
         <div class="col-md-3">
           <label class="form-label">Rechnungsnr. / Beschreibung</label>
           <input type="text" name="ref" class="form-control form-control-sm"
-                 value="{{ f_ref }}" placeholder="RE-2024-… oder Beschreibung">
+                 value="{{ f_ref }}" placeholder="RE-2024-… oder Beschreibung" onchange="this.form.requestSubmit()">
         </div>
         <div class="col-md-2">
           <label class="form-label">Abrechnungsperiode</label>
-          <select name="period" class="form-select form-select-sm">
+          <select name="period" class="form-select form-select-sm" onchange="this.form.requestSubmit()">
             <option value="">— Alle —</option>
             {% for p in billing_periods %}
             <option value="{{ p.id }}" {{ 'selected' if f_period == p.id|string }}>{{ p.name }}</option>
@@ -37,31 +37,30 @@
         <div class="col-md-2">
           <label class="form-label">Betrag ≥ (€)</label>
           <input type="number" name="amount_min" class="form-control form-control-sm"
-                 step="0.01" min="0" value="{{ f_amount_min }}" placeholder="0.00">
+                 step="0.01" min="0" value="{{ f_amount_min }}" placeholder="0.00" onchange="this.form.requestSubmit()">
         </div>
         <div class="col-md-2">
           <label class="form-label">Betrag ≤ (€)</label>
           <input type="number" name="amount_max" class="form-control form-control-sm"
-                 step="0.01" min="0" value="{{ f_amount_max }}" placeholder="9999.00">
+                 step="0.01" min="0" value="{{ f_amount_max }}" placeholder="9999.00" onchange="this.form.requestSubmit()">
         </div>
       </div>
       <div class="row align-items-center mb-2 mt-2">
         <div class="col-auto">
           <label for="status" class="form-label mb-0 me-1">Status</label>
-          <select name="status" id="status" class="form-select form-select-sm d-inline-block" style="width:auto">
+          <select name="status" id="status" class="form-select form-select-sm d-inline-block" style="width:auto" onchange="this.form.requestSubmit()">
             <option value="open"   {{ 'selected' if status_filter == 'open' }}>Offene</option>
             <option value="closed" {{ 'selected' if status_filter == 'closed' }}>Geschlossene</option>
             <option value="all"    {{ 'selected' if status_filter == 'all' }}>Alle</option>
           </select>
         </div>
+        {% if has_filter %}
         <div class="col-auto ms-2">
-          <button type="submit" class="btn btn-sm btn-primary me-2">
-            <i class="fas fa-search me-1"></i> Anzeigen
-          </button>
           <a href="{{ url_for('accounting.open_items') }}" class="btn btn-sm btn-outline-secondary">
-            <i class="fas fa-times me-1"></i> Zurücksetzen
+            <i class="fas fa-times me-1"></i> Filter zurücksetzen
           </a>
         </div>
+        {% endif %}
       </div>
     </form>
   </div>

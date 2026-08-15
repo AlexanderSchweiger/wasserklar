@@ -433,7 +433,7 @@ def year_bookings(year, real_account_id=None):
     q = apply_storno_filter(q)
     if real_account_id:
         q = q.filter(Booking.real_account_id == real_account_id)
-    return q.order_by(Booking.date).all()
+    return q.order_by(Booking.date, Booking.id).all()
 
 
 def year_billing_runs(year):
@@ -521,7 +521,7 @@ def ust_compute(year, quartal):
         .filter(Booking.tax_rate.isnot(None), Booking.tax_rate > 0)
     )
     q = apply_storno_filter(q)
-    bookings = q.join(Booking.account).order_by(Booking.date).all()
+    bookings = q.join(Booking.account).order_by(Booking.date, Booking.id).all()
 
     ust_rows = {}
     vst_rows = {}

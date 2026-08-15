@@ -183,7 +183,17 @@ def commit_statement(statement_id: int, user_id: int) -> dict:
 
     stats = {"committed": 0, "skipped": 0, "errors": []}
 
-    pending_lines = stmt.lines.filter_by(line_status=BankStatementLine.STATUS_PENDING).all()
+    # Explizit nach line_index sortieren: die Buchungen sollen in exakt der
+    # Reihenfolge des Bankauszugs angelegt werden, damit ihre IDs (und damit
+    # der Zweitsortierschluessel der Buchungsliste) der Auszugs-Reihenfolge
+    # folgen. Die Relationship hat zwar dasselbe order_by, aber das ist ein
+    # Implementierungsdetail von lazy="dynamic" — hier haengt Fachlogik dran.
+    pending_lines = (
+        stmt.lines
+        .filter_by(line_status=BankStatementLine.STATUS_PENDING)
+        .order_by(BankStatementLine.line_index.asc())
+        .all()
+    )
 
     for line in pending_lines:
         if not line.selected:

@@ -151,6 +151,7 @@ def index():
         countries=countries,
         status_filter=status_filter,
         func_filter=func_filter,
+        has_filter=bool(q or country_filter or status_filter or func_filter),
         wg_profile_map=wg_profile_map,
         wg_functions_map=wg_functions_map,
         suppressed_emails=suppressed_emails,

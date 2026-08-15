@@ -273,6 +273,7 @@ def notices():
         status_filter=status_filter,
         versand_filter=versand_filter,
         q=q,
+        has_filter=bool(status_filter or versand_filter or q),
         doc_format=AppSetting.get("invoice.document_format", "pdf"),
     )
 

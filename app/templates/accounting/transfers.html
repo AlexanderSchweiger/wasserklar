@@ -7,17 +7,16 @@
   <div class="col">
     <form class="d-flex align-items-center gap-2" method="get">
       <label class="mb-0">Jahr:</label>
-      <select name="year" class="form-control form-control-sm" style="width:100px">
+      <select name="year" class="form-control form-control-sm" style="width:100px" onchange="this.form.requestSubmit()">
         {% for y in all_years %}
         <option value="{{ y }}" {{ 'selected' if y == year }}>{{ y }}</option>
         {% endfor %}
       </select>
-      <button type="submit" class="btn btn-sm btn-primary">
-        <i class="fas fa-search me-1"></i> Anzeigen
-      </button>
+      {% if has_filter %}
       <a href="{{ url_for('accounting.transfers') }}" class="btn btn-sm btn-outline-secondary">
-        <i class="fas fa-times me-1"></i> Zurücksetzen
+        <i class="fas fa-times me-1"></i> Filter zurücksetzen
       </a>
+      {% endif %}
     </form>
   </div>
   <div class="col text-end">

@@ -10,12 +10,12 @@
       <div>
         <label class="form-label fw-bold mb-1">Jahr</label>
         <input type="number" name="year" value="{{ year }}" min="2000" max="2100"
-          class="form-control form-control-sm" style="width:90px">
+          class="form-control form-control-sm" style="width:90px" onchange="this.form.requestSubmit()">
       </div>
 
       <div>
         <label class="form-label fw-bold mb-1">Bank/Kassa</label>
-        <select name="real_account_id" class="form-select form-select-sm tom-select">
+        <select name="real_account_id" class="form-select form-select-sm tom-select" onchange="this.form.requestSubmit()">
           <option value="0" {% if real_account_id == 0 %}selected{% endif %}>Alle Konten</option>
           {% for ra in all_real_accounts %}
           <option value="{{ ra.id }}" {% if real_account_id == ra.id %}selected{% endif %}>{{ ra.name }}</option>
@@ -24,12 +24,11 @@
       </div>
 
       <div class="d-flex gap-2 align-items-end">
-        <button type="submit" class="btn btn-sm btn-primary">
-          <i class="fas fa-search me-1"></i> Anzeigen
-        </button>
+        {% if has_filter %}
         <a href="{{ url_for('accounting.report') }}" class="btn btn-sm btn-outline-secondary">
-          <i class="fas fa-times me-1"></i> Zurücksetzen
+          <i class="fas fa-times me-1"></i> Filter zurücksetzen
         </a>
+        {% endif %}
         <a href="{{ url_for('accounting.export_csv', year=year) }}"
            class="btn btn-outline-secondary">
           <i class="fas fa-file-csv me-1"></i> CSV

@@ -9,6 +9,7 @@
             <h3 class="card-title">{{ notices | length }} Mahnung(en)</h3>
             <div class="card-options d-flex align-items-center gap-2">
                 <select name="status" class="form-select form-select-sm" style="width:auto"
+                        data-filter-field
                         hx-get="{{ url_for('dunning.notices') }}"
                         hx-trigger="change"
                         hx-target="#notices-table"
@@ -19,6 +20,7 @@
                     {% endfor %}
                 </select>
                 <select name="versand" class="form-select form-select-sm" style="width:auto"
+                        data-filter-field
                         hx-get="{{ url_for('dunning.notices') }}"
                         hx-trigger="change"
                         hx-target="#notices-table"
@@ -29,10 +31,15 @@
                 </select>
                 <input type="text" name="q" class="form-control form-control-sm" style="width:200px"
                        placeholder="Suche…" value="{{ q }}"
+                       data-filter-field
                        hx-get="{{ url_for('dunning.notices') }}"
                        hx-trigger="input changed delay:300ms"
                        hx-target="#notices-table"
                        hx-include="[name='status'],[name='versand'],[name='q']">
+                <a href="{{ url_for('dunning.notices') }}"
+                   class="btn btn-sm btn-outline-secondary{{ '' if has_filter else ' d-none' }}" data-filter-reset>
+                    <i class="fas fa-times me-1"></i> Filter zurücksetzen
+                </a>
                 {# Nur die in den Einstellungen freigegebenen Dokumentformate
                    anbieten (AppSetting invoice.document_format — gilt für
                    Rechnungen UND Mahnungen). #}

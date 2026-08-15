@@ -37,6 +37,7 @@ def index():
         "projects/index.html",
         projects=projects,
         show_closed=show_closed,
+        has_filter=show_closed,
     )
 
 
@@ -135,7 +136,7 @@ def detail(project_id):
     bookings = (
         Booking.query
         .filter_by(project_id=project.id)
-        .order_by(Booking.date.desc())
+        .order_by(Booking.date.desc(), Booking.id.asc())
         .all()
     )
 

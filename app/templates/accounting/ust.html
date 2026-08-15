@@ -1,7 +1,19 @@
 {% extends "base.html" %}
 {% block title %}USt-Voranmeldung {{ year }}{% endblock %}
 {% block page_title %}<i class="fas fa-percentage me-2"></i> Umsatzsteuervoranmeldung{% endblock %}
+
 {% block content %}
+
+{# Style bewusst im Body (nicht in head_extra): hx-boost tauscht nur den Body,
+   Head-Inhalte einer geboosteten Navigation wuerden nicht greifen. #}
+<style>
+  /* Drill-Down in die Buchungsliste: die ganze Zeile ist klickbar, weil der
+     .stretched-link in der ersten Zelle den positionierten <tr> ausfuellt. */
+  .ust-drill-row { position: relative; cursor: pointer; }
+  .ust-drill-row:hover { background-color: var(--tblr-table-hover-bg, rgba(0,0,0,.04)); }
+  .ust-drill-card { transition: transform .12s ease, box-shadow .12s ease; }
+  .ust-drill-card:hover { transform: translateY(-2px); box-shadow: var(--tblr-box-shadow, 0 .5rem 1rem rgba(0,0,0,.15)); }
+</style>
 
 {# --- Filterleiste --- #}
 <div class="row mb-3">
@@ -9,7 +21,7 @@
     <form method="get" class="d-flex flex-wrap align-items-end gap-3">
       <div>
         <label class="form-label mb-1">Jahr</label>
-        <select name="year" class="form-select form-select-sm" style="width:110px">
+        <select name="year" class="form-select form-select-sm" style="width:110px" onchange="this.form.requestSubmit()">
           {% for y in vat_years %}
           <option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y }}</option>
           {% endfor %}
@@ -17,7 +29,7 @@
       </div>
       <div>
         <label class="form-label mb-1">Zeitraum</label>
-        <select name="quartal" class="form-control form-control-sm">
+        <select name="quartal" class="form-control form-control-sm" onchange="this.form.requestSubmit()">
           <option value="0" {% if quartal == 0 %}selected{% endif %}>Gesamtjahr</option>
           <option value="1" {% if quartal == 1 %}selected{% endif %}>Q1 (Jän–Mär)</option>
           <option value="2" {% if quartal == 2 %}selected{% endif %}>Q2 (Apr–Jun)</option>
@@ -26,12 +38,11 @@
         </select>
       </div>
       <div class="d-flex gap-2 align-items-end">
-        <button type="submit" class="btn btn-sm btn-primary">
-          <i class="fas fa-search me-1"></i> Anzeigen
-        </button>
+        {% if has_filter %}
         <a href="{{ url_for('accounting.ust') }}" class="btn btn-sm btn-outline-secondary">
-          <i class="fas fa-times me-1"></i> Zurücksetzen
+          <i class="fas fa-times me-1"></i> Filter zurücksetzen
         </a>
+        {% endif %}
         <a href="{{ url_for('accounting.export_ust_csv', year=year, quartal=quartal) }}"
            class="btn btn-outline-secondary">
           <i class="fas fa-file-csv me-1"></i> CSV Export
@@ -47,48 +58,70 @@
   Zeitraum: <strong>{{ date_from.strftime("%d.%m.%Y") }}</strong> bis
   <strong>{{ date_to.strftime("%d.%m.%Y") }}</strong>
   &mdash; nur Buchungen mit Steuersatz, ohne stornierte Buchungen
+  <br>
+  <i class="fas fa-mouse-pointer me-1"></i>
+  Klick auf eine Kachel oder Tabellenzeile zeigt die zugehörigen Buchungen.
 </p>
 
-{# --- Zusammenfassung oben --- #}
+{# --- Zusammenfassung oben ---
+   Jede Kachel und jede Tabellenzeile verlinkt auf die Buchungsliste, gefiltert
+   auf exakt die Buchungen, aus denen der Betrag stammt (Jahr + Quartal + Typ +
+   Steuersatz). ``quartal or None`` laesst den Parameter beim Gesamtjahr weg. #}
+{% set books_ust  = url_for('accounting.bookings', year=year, quarter=quartal or None, kind='income',  tax='any') %}
+{% set books_vst  = url_for('accounting.bookings', year=year, quarter=quartal or None, kind='expense', tax='any') %}
+{% set books_all  = url_for('accounting.bookings', year=year, quarter=quartal or None, tax='any') %}
+
 <div class="row row-deck row-cards mb-4">
   <div class="col-md-4">
-    <div class="card bg-success text-white h-100">
-      <div class="card-body d-flex flex-column">
-        <div class="small text-uppercase fw-semibold mb-2" style="color: rgba(255,255,255,0.7)">
-          Umsatzsteuer (Zahllast)
-        </div>
-        <div class="h1 mb-0 flex-grow-1">{{ total_ust|de_number }} €</div>
-        <div class="mt-3 small" style="color: rgba(255,255,255,0.7)">
-          <i class="fas fa-arrow-up me-1"></i> USt
+    <a href="{{ books_ust }}" class="text-decoration-none d-flex w-100"
+       title="Buchungen mit Umsatzsteuer in diesem Zeitraum anzeigen">
+      <div class="card bg-success text-white w-100 ust-drill-card">
+        <div class="card-body d-flex flex-column">
+          <div class="small text-uppercase fw-semibold mb-2" style="color: rgba(255,255,255,0.7)">
+            Umsatzsteuer (Zahllast)
+          </div>
+          <div class="h1 mb-0 flex-grow-1">{{ total_ust|de_number }} €</div>
+          <div class="mt-3 small d-flex justify-content-between" style="color: rgba(255,255,255,0.7)">
+            <span><i class="fas fa-arrow-up me-1"></i> USt</span>
+            <span><i class="fas fa-list me-1"></i> Buchungen</span>
+          </div>
         </div>
       </div>
-    </div>
+    </a>
   </div>
   <div class="col-md-4">
-    <div class="card bg-warning text-white h-100">
-      <div class="card-body d-flex flex-column">
-        <div class="small text-uppercase fw-semibold mb-2" style="color: rgba(255,255,255,0.7)">
-          Vorsteuer (Guthaben)
-        </div>
-        <div class="h1 mb-0 flex-grow-1">{{ total_vst|de_number }} €</div>
-        <div class="mt-3 small" style="color: rgba(255,255,255,0.7)">
-          <i class="fas fa-arrow-down me-1"></i> VSt
+    <a href="{{ books_vst }}" class="text-decoration-none d-flex w-100"
+       title="Buchungen mit Vorsteuer in diesem Zeitraum anzeigen">
+      <div class="card bg-warning text-white w-100 ust-drill-card">
+        <div class="card-body d-flex flex-column">
+          <div class="small text-uppercase fw-semibold mb-2" style="color: rgba(255,255,255,0.7)">
+            Vorsteuer (Guthaben)
+          </div>
+          <div class="h1 mb-0 flex-grow-1">{{ total_vst|de_number }} €</div>
+          <div class="mt-3 small d-flex justify-content-between" style="color: rgba(255,255,255,0.7)">
+            <span><i class="fas fa-arrow-down me-1"></i> VSt</span>
+            <span><i class="fas fa-list me-1"></i> Buchungen</span>
+          </div>
         </div>
       </div>
-    </div>
+    </a>
   </div>
   <div class="col-md-4">
-    <div class="card {{ 'bg-danger' if zahllast > 0 else 'bg-success' }} text-white h-100">
-      <div class="card-body d-flex flex-column">
-        <div class="small text-uppercase fw-semibold mb-2" style="color: rgba(255,255,255,0.7)">
-          Zahllast (USt − Vorsteuer)
-        </div>
-        <div class="h1 mb-0 flex-grow-1">{{ zahllast|de_number }} €</div>
-        <div class="mt-3 small" style="color: rgba(255,255,255,0.7)">
-          <i class="fas fa-balance-scale me-1"></i> Zahllast
+    <a href="{{ books_all }}" class="text-decoration-none d-flex w-100"
+       title="Alle steuerrelevanten Buchungen in diesem Zeitraum anzeigen">
+      <div class="card {{ 'bg-danger' if zahllast > 0 else 'bg-success' }} text-white w-100 ust-drill-card">
+        <div class="card-body d-flex flex-column">
+          <div class="small text-uppercase fw-semibold mb-2" style="color: rgba(255,255,255,0.7)">
+            Zahllast (USt − Vorsteuer)
+          </div>
+          <div class="h1 mb-0 flex-grow-1">{{ zahllast|de_number }} €</div>
+          <div class="mt-3 small d-flex justify-content-between" style="color: rgba(255,255,255,0.7)">
+            <span><i class="fas fa-balance-scale me-1"></i> Zahllast</span>
+            <span><i class="fas fa-list me-1"></i> Buchungen</span>
+          </div>
         </div>
       </div>
-    </div>
+    </a>
   </div>
 </div>
 
@@ -115,8 +148,14 @@
           </thead>
           <tbody>
             {% for rate, v in ust_rows %}
-            <tr>
-              <td><span class="badge bg-success text-white">{{ rate }} %</span></td>
+            <tr class="ust-drill-row">
+              <td>
+                <a class="stretched-link text-reset text-decoration-none"
+                   href="{{ url_for('accounting.bookings', year=year, quarter=quartal or None, kind='income', tax=rate) }}"
+                   title="Einnahmen-Buchungen mit {{ rate }} % USt anzeigen">
+                  <span class="badge bg-success text-white">{{ rate }} %</span>
+                </a>
+              </td>
               <td class="text-end">{{ v.brutto|de_number }} €</td>
               <td class="text-end text-muted">{{ v.netto|de_number }} €</td>
               <td class="text-end fw-bold text-success">{{ v.steuer|de_number }} €</td>
@@ -131,8 +170,11 @@
           </tbody>
           {% if ust_rows %}
           <tfoot class="table-light">
-            <tr>
-              <th>Gesamt</th>
+            <tr class="ust-drill-row">
+              <th>
+                <a class="stretched-link text-reset text-decoration-none" href="{{ books_ust }}"
+                   title="Alle Einnahmen-Buchungen mit USt anzeigen">Gesamt</a>
+              </th>
               <th class="text-end">{{ ust_brutto|de_number }} €</th>
               <th class="text-end">{{ ust_netto|de_number }} €</th>
               <th class="text-end text-success">{{ total_ust|de_number }} €</th>
@@ -167,8 +209,14 @@
           </thead>
           <tbody>
             {% for rate, v in vst_rows %}
-            <tr>
-              <td><span class="badge bg-warning text-dark">{{ rate }} %</span></td>
+            <tr class="ust-drill-row">
+              <td>
+                <a class="stretched-link text-reset text-decoration-none"
+                   href="{{ url_for('accounting.bookings', year=year, quarter=quartal or None, kind='expense', tax=rate) }}"
+                   title="Ausgaben-Buchungen mit {{ rate }} % VSt anzeigen">
+                  <span class="badge bg-warning text-dark">{{ rate }} %</span>
+                </a>
+              </td>
               <td class="text-end">{{ v.brutto|de_number }} €</td>
               <td class="text-end text-muted">{{ v.netto|de_number }} €</td>
               <td class="text-end fw-bold text-warning">{{ v.steuer|de_number }} €</td>
@@ -183,8 +231,11 @@
           </tbody>
           {% if vst_rows %}
           <tfoot class="table-light">
-            <tr>
-              <th>Gesamt</th>
+            <tr class="ust-drill-row">
+              <th>
+                <a class="stretched-link text-reset text-decoration-none" href="{{ books_vst }}"
+                   title="Alle Ausgaben-Buchungen mit VSt anzeigen">Gesamt</a>
+              </th>
               <th class="text-end">{{ vst_brutto|de_number }} €</th>
               <th class="text-end">{{ vst_netto|de_number }} €</th>
               <th class="text-end text-warning">{{ total_vst|de_number }} €</th>
@@ -209,18 +260,29 @@
         <div class="table-responsive">
         <table class="table mb-0">
           <tbody>
-            <tr>
-              <td>Umsatzsteuer gesamt</td>
+            <tr class="ust-drill-row">
+              <td>
+                <a class="stretched-link text-reset text-decoration-none" href="{{ books_ust }}"
+                   title="Buchungen mit Umsatzsteuer anzeigen">Umsatzsteuer gesamt</a>
+              </td>
               <td class="text-end text-success fw-bold">{{ total_ust|de_number }} €</td>
             </tr>
-            <tr>
-              <td>Vorsteuer gesamt</td>
+            <tr class="ust-drill-row">
+              <td>
+                <a class="stretched-link text-reset text-decoration-none" href="{{ books_vst }}"
+                   title="Buchungen mit Vorsteuer anzeigen">Vorsteuer gesamt</a>
+              </td>
               <td class="text-end text-warning fw-bold">– {{ total_vst|de_number }} €</td>
             </tr>
           </tbody>
           <tfoot class="table-light">
-            <tr>
-              <th>{{ 'Zahllast' if zahllast > 0 else 'Gutschrift' }}</th>
+            <tr class="ust-drill-row">
+              <th>
+                <a class="stretched-link text-reset text-decoration-none" href="{{ books_all }}"
+                   title="Alle steuerrelevanten Buchungen anzeigen">
+                  {{ 'Zahllast' if zahllast > 0 else 'Gutschrift' }}
+                </a>
+              </th>
               <th class="text-end {{ 'text-danger' if zahllast > 0 else 'text-success' }}">
                 {{ zahllast|abs|de_number }} €
               </th>

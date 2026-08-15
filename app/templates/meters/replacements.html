@@ -10,6 +10,7 @@
         <label class="form-label mb-0 me-1">Abrechnungsperiode</label>
         <select id="period-select" name="period_id"
           class="form-select form-select-sm" style="width:auto; display:inline-block"
+          data-filter-field
           hx-get="{{ url_for('meters.replacements') }}"
           hx-trigger="change"
           hx-target="#replacements-table"
@@ -25,6 +26,7 @@
       <div class="input-group input-group-sm" style="width:260px">
         <input type="search" name="q" value="{{ q }}" class="form-control"
           placeholder="Objekt, Ort oder Zählernr. suchen…"
+          data-filter-field
           hx-get="{{ url_for('meters.replacements') }}"
           hx-trigger="input changed delay:300ms"
           hx-target="#replacements-table"
@@ -32,8 +34,9 @@
         <span class="input-group-text"><i class="fas fa-search"></i></span>
       </div>
       <div class="mb-3 d-flex gap-2 align-items-center">
-        <a href="{{ url_for('meters.replacements') }}" class="btn btn-outline-secondary btn-sm">
-          <i class="fas fa-times me-1"></i> Zurücksetzen
+        <a href="{{ url_for('meters.replacements') }}"
+           class="btn btn-outline-secondary btn-sm{{ '' if has_filter else ' d-none' }}" data-filter-reset>
+          <i class="fas fa-times me-1"></i> Filter zurücksetzen
         </a>
       </div>
     </div>

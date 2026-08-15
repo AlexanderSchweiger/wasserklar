@@ -25,11 +25,13 @@
 <div class="card table-card">
   <div class="card-header">
     {% set months = [(1,'Jänner'),(2,'Februar'),(3,'März'),(4,'April'),(5,'Mai'),(6,'Juni'),(7,'Juli'),(8,'August'),(9,'September'),(10,'Oktober'),(11,'November'),(12,'Dezember')] %}
+    {% set has_filter = account_id or project_id or real_account_id or kind or month or quarter or tax or (year != now_year) %}
     <div class="filter-bar" id="bookings-filter-bar">
       <div class="mb-3">
         <label class="form-label mb-0 me-1">Jahr</label>
         <input type="number" name="year" value="{{ year }}" min="2000" max="2100"
           class="form-control form-control-sm" style="width:90px"
+          data-filter-field data-filter-default="{{ now_year }}"
           hx-get="{{ url_for('accounting.bookings') }}"
           hx-trigger="change"
           hx-target="#bookings-table"
@@ -38,6 +40,7 @@
       <div class="mb-3">
         <label class="form-label mb-0 me-1">Monat</label>
         <select name="month" class="form-select form-select-sm"
+          data-filter-field
           hx-get="{{ url_for('accounting.bookings') }}"
           hx-trigger="change"
           hx-target="#bookings-table"
@@ -51,6 +54,7 @@
       <div class="mb-3">
         <label class="form-label mb-0 me-1">Quartal</label>
         <select name="quarter" class="form-select form-select-sm"
+          data-filter-field
           hx-get="{{ url_for('accounting.bookings') }}"
           hx-trigger="change"
           hx-target="#bookings-table"
@@ -64,6 +68,7 @@
       <div class="mb-3">
         <label class="form-label mb-0 me-1">Bank/Kassa</label>
         <select name="real_account_id" class="form-select form-select-sm"
+          data-filter-field
           hx-get="{{ url_for('accounting.bookings') }}"
           hx-trigger="change"
           hx-target="#bookings-table"
@@ -77,6 +82,7 @@
       <div class="mb-3">
         <label class="form-label mb-0 me-1">Typ</label>
         <select name="kind" class="form-select form-select-sm"
+          data-filter-field
           hx-get="{{ url_for('accounting.bookings') }}"
           hx-trigger="change"
           hx-target="#bookings-table"
@@ -89,6 +95,7 @@
       <div class="mb-3">
         <label class="form-label mb-0 me-1">Steuer</label>
         <select name="tax" class="form-select form-select-sm"
+          data-filter-field
           hx-get="{{ url_for('accounting.bookings') }}"
           hx-trigger="change"
           hx-target="#bookings-table"
@@ -103,6 +110,7 @@
       <div class="mb-3">
         <label class="form-label mb-0 me-1">Konto</label>
         <select name="account_id" class="form-select form-select-sm tom-select"
+          data-filter-field
           hx-get="{{ url_for('accounting.bookings') }}"
           hx-trigger="change"
           hx-target="#bookings-table"
@@ -118,6 +126,7 @@
       <div class="mb-3">
         <label class="form-label mb-0 me-1">Projekt</label>
         <select name="project_id" class="form-select form-select-sm tom-select"
+          data-filter-field
           hx-get="{{ url_for('accounting.bookings') }}"
           hx-trigger="change"
           hx-target="#bookings-table"
@@ -131,15 +140,9 @@
         </select>
       </div>
       <div class="mb-3 d-flex gap-2">
-        <button type="button" class="btn btn-sm btn-primary"
-          hx-get="{{ url_for('accounting.bookings') }}"
-          hx-trigger="click"
-          hx-target="#bookings-table"
-          hx-include="{{ filter_include }}">
-          <i class="fas fa-search me-1"></i> Anzeigen
-        </button>
-        <a href="{{ url_for('accounting.bookings') }}" class="btn btn-sm btn-outline-secondary">
-          <i class="fas fa-times me-1"></i> Zurücksetzen
+        <a href="{{ url_for('accounting.bookings') }}" class="btn btn-sm btn-outline-secondary{{ '' if has_filter else ' d-none' }}"
+           data-filter-reset>
+          <i class="fas fa-times me-1"></i> Filter zurücksetzen
         </a>
       </div>
     </div>

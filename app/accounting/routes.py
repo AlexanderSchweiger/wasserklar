@@ -189,7 +189,14 @@ def _bookings_table_ctx(params, bulk_done_count=None):
         .filter(extract("year", Booking.date) == year)
         .order_by(
             Booking.date.desc(),
-            func.coalesce(Booking.storno_of_id, Booking.id).desc(),
+            # Innerhalb eines Tages nach ID AUFSTEIGEND — das ist die
+            # Erfassungs- bzw. Import-Reihenfolge und damit exakt die
+            # Reihenfolge des Bankauszugs (der Import vergibt die IDs in
+            # Auszugs-Reihenfolge). coalesce haelt ein Storno bei seiner
+            # Originalbuchung, Booking.id bricht den Gleichstand innerhalb
+            # des Paares (Original vor Storno).
+            func.coalesce(Booking.storno_of_id, Booking.id).asc(),
+            Booking.id.asc(),
         )
     )
     if account_id:
@@ -1387,12 +1394,17 @@ def open_items():
         BillingPeriod.start_date.desc(), BillingPeriod.id.desc()
     ).all()
 
+    has_filter = bool(
+        customer_q or ref_q or period_q or amount_min_raw or amount_max_raw
+        or status_filter != "open"
+    )
     return render_template(
         "accounting/open_items.html",
         items=pagination.items,
         total_open=total_open,
         today=date.today(),
         status_filter=status_filter,
+        has_filter=has_filter,
         f_customer=customer_q,
         f_ref=ref_q,
         f_period=period_q,
@@ -1670,6 +1682,7 @@ def report():
         "accounting/report.html",
         year=year,
         real_account_id=real_account_id,
+        has_filter=(real_account_id != 0 or year != date.today().year),
         all_real_accounts=all_real_accounts,
         income_rows=income_rows,
         expense_rows=expense_rows,
@@ -2435,7 +2448,7 @@ def export_csv():
         query = query.filter(db.or_(Booking.tax_rate.is_(None), Booking.tax_rate == 0))
     elif tax in {str(int(r)) for r in tax_service.tax_rate_values()}:
         query = query.filter(Booking.tax_rate == Decimal(tax))
-    bookings = query.order_by(Booking.date).all()
+    bookings = query.order_by(Booking.date, Booking.id).all()
 
     def generate():
         output = io.StringIO()
@@ -2504,10 +2517,13 @@ def ust():
         )
         year = vat_years[0]
     totals = acc_svc.ust_totals(year, quartal)
+    default_year = date.today().year if date.today().year in vat_years else vat_years[0]
+    has_filter = quartal != 0 or year != default_year
     return render_template(
         "accounting/ust.html",
         year=year, quartal=quartal,
         vat_years=vat_years,
+        has_filter=has_filter,
         date_from=totals["date_from"], date_to=totals["date_to"],
         ust_rows=totals["ust_rows"], vst_rows=totals["vst_rows"],
         total_ust=totals["total_ust"], total_vst=totals["total_vst"],
@@ -2749,12 +2765,17 @@ def kundenauswertung():
         q_rechnungsadresse, modus, sort,
     )
     flat = _flatten_rows(result)
+    has_filter = bool(
+        q_name or q_kunden_nr or q_zaehler or q_objekt_adresse
+        or q_rechnungsadresse or modus != "alle"
+    )
 
     return render_template(
         "accounting/kunden.html",
         flat_rows=flat,
         total_kunden=len(result),
         modus=modus, sort=sort,
+        has_filter=has_filter,
         q_name=q_name, q_kunden_nr=q_kunden_nr, q_zaehler=q_zaehler,
         q_objekt_adresse=q_objekt_adresse, q_rechnungsadresse=q_rechnungsadresse,
     )
@@ -3075,6 +3096,7 @@ def transfers():
         "accounting/transfers.html",
         transfers=transfers_list,
         year=year,
+        has_filter=(year != date.today().year),
         all_years=all_years,
         real_accounts=real_accounts,
     )

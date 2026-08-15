@@ -28,6 +28,7 @@
     <div class="input-group input-group-sm" style="width:280px">
       <input type="search" name="q" value="{{ q }}" class="form-control"
         placeholder="Kontakte suchen…"
+        data-filter-field
         hx-get="{{ url_for('customers.index') }}"
         hx-trigger="input changed delay:300ms, search"
         hx-target="#customer-table"
@@ -36,6 +37,7 @@
     </div>
     {% if countries | length > 1 %}
     <select name="country" class="form-select form-select-sm" style="width:180px"
+      data-filter-field
       hx-get="{{ url_for('customers.index') }}"
       hx-trigger="change"
       hx-target="#customer-table"
@@ -48,6 +50,7 @@
     {% endif %}
     {% if is_wg %}
     <select name="status" class="form-select form-select-sm" style="width:150px"
+      data-filter-field
       hx-get="{{ url_for('customers.index') }}"
       hx-trigger="change"
       hx-target="#customer-table"
@@ -58,6 +61,7 @@
       {% endfor %}
     </select>
     <select name="func" class="form-select form-select-sm" style="width:170px"
+      data-filter-field
       hx-get="{{ url_for('customers.index') }}"
       hx-trigger="change"
       hx-target="#customer-table"
@@ -75,8 +79,9 @@
     <input type="hidden" name="type" value="{{ type_filter }}">
     <input type="hidden" name="sort" value="{{ sort }}">
     <input type="hidden" name="dir" value="{{ dir }}">
-    <a href="{{ url_for('customers.index', type=type_filter, sort=sort, dir=dir) }}" class="btn btn-sm btn-outline-secondary">
-      <i class="fas fa-times me-1"></i> Zurücksetzen
+    <a href="{{ url_for('customers.index', type=type_filter, sort=sort, dir=dir) }}"
+       class="btn btn-sm btn-outline-secondary{{ '' if has_filter else ' d-none' }}" data-filter-reset>
+      <i class="fas fa-times me-1"></i> Filter zurücksetzen
     </a>
     <div class="ms-auto d-flex gap-2 align-items-center">
       <a href="{{ url_for('customers.import_upload') }}" class="btn btn-outline-secondary">

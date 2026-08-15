@@ -6,16 +6,21 @@
   <div class="card-header d-flex align-items-center flex-wrap" style="gap:.5rem">
     <form method="get" class="d-flex align-items-center" style="gap:.5rem" id="archiveFilter">
       {% if years %}
-      <select name="year" class="form-select form-select-sm" style="width:130px" onchange="document.getElementById('archiveFilter').submit()">
+      <select name="year" class="form-select form-select-sm" style="width:130px" onchange="this.form.requestSubmit()">
         <option value="">Alle Jahre</option>
         {% for y in years %}<option value="{{ y }}" {% if year_filter == y|string %}selected{% endif %}>{{ y }}</option>{% endfor %}
       </select>
       {% endif %}
-      <select name="type" class="form-select form-select-sm" style="width:170px" onchange="document.getElementById('archiveFilter').submit()">
+      <select name="type" class="form-select form-select-sm" style="width:170px" onchange="this.form.requestSubmit()">
         <option value="">Alle Dokumente</option>
         <option value="protocol" {% if type_filter == 'protocol' %}selected{% endif %}>Nur Protokolle</option>
         {% for k, l in sf_doc_type_labels.items() %}<option value="{{ k }}" {% if k == type_filter %}selected{% endif %}>{{ l }}</option>{% endfor %}
       </select>
+      {% if has_filter %}
+      <a href="{{ url_for('schriftfuehrung.archive') }}" class="btn btn-sm btn-outline-secondary">
+        <i class="fas fa-times me-1"></i> Filter zurücksetzen
+      </a>
+      {% endif %}
     </form>
     <div class="ms-auto">
       <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#docUploadModal">

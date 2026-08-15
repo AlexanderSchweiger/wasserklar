@@ -298,6 +298,11 @@ def index():
             invoices=invoices, doc_format=doc_format, pagination=pagination,
             **sort_ctx,
         )
+    default_date_from = date(date.today().year, 1, 1).isoformat()
+    has_filter = bool(
+        status_filter or period_filter or date_to or q or project_id_filter
+        or mail_filter or date_from != default_date_from
+    )
     return render_template(
         "invoices/index.html",
         invoices=invoices,
@@ -309,6 +314,8 @@ def index():
         doc_format=doc_format,
         accounts=accounts,
         pagination=pagination,
+        has_filter=has_filter,
+        default_date_from=default_date_from,
         **sort_ctx,
     )
 

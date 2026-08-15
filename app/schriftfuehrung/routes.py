@@ -972,6 +972,7 @@ def resolutions():
                year_filter=year, years=years)
     if request.headers.get("HX-Request"):
         return render_template("schriftfuehrung/_resolutions_table.html", **ctx)
+    ctx["has_filter"] = bool(q or status or mtype or year)
     return render_template("schriftfuehrung/resolutions.html", **ctx)
 
 
@@ -1027,7 +1028,8 @@ def archive():
     years = sorted(all_years, reverse=True)
 
     return render_template("schriftfuehrung/archive.html", docs=docs, protocols=protocols,
-                           year_filter=year, type_filter=dtype, years=years)
+                           year_filter=year, type_filter=dtype, years=years,
+                           has_filter=bool(year or dtype))
 
 
 @bp.route("/archive/upload", methods=["POST"])

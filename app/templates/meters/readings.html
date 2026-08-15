@@ -11,6 +11,7 @@
         <label class="form-label mb-0 me-1">Abrechnungsperiode</label>
         <select id="period-select" name="period_id"
           class="form-select form-select-sm" style="width:auto; display:inline-block"
+          data-filter-field data-filter-default="{{ period_default_id or '' }}"
           hx-get="{{ url_for('meters.readings') }}"
           hx-trigger="change"
           hx-target="#meters-table"
@@ -27,6 +28,7 @@
       <div class="input-group input-group-sm" style="width:240px">
         <input type="search" name="q" value="{{ q }}" class="form-control"
           placeholder="Liegenschaft, Besitzer oder Zählernr. suchen…"
+          data-filter-field
           hx-get="{{ url_for('meters.readings') }}"
           hx-trigger="input changed delay:300ms"
           hx-target="#meters-table"
@@ -38,6 +40,7 @@
         <div class="form-check mb-0">
           <input class="form-check-input" type="checkbox" name="only_missing" value="1"
             id="only-missing-check" {{ 'checked' if only_missing }}
+            data-filter-field
             hx-get="{{ url_for('meters.readings') }}"
             hx-trigger="change"
             hx-target="#meters-table"
@@ -46,15 +49,9 @@
         </div>
       </div>
       <div class="mb-3 d-flex gap-2 align-items-center">
-        <button type="button" class="btn btn-sm btn-primary"
-          hx-get="{{ url_for('meters.readings') }}"
-          hx-trigger="click"
-          hx-target="#meters-table"
-          hx-include="[name='q'],[id='period-select'],[name='mode'],[name='only_missing']">
-          <i class="fas fa-search me-1"></i> Anzeigen
-        </button>
-        <a href="{{ url_for('meters.readings') }}" class="btn btn-outline-secondary btn-sm">
-          <i class="fas fa-times me-1"></i> Zurücksetzen
+        <a href="{{ url_for('meters.readings') }}"
+           class="btn btn-outline-secondary btn-sm{{ '' if has_filter else ' d-none' }}" data-filter-reset>
+          <i class="fas fa-times me-1"></i> Filter zurücksetzen
         </a>
       </div>
     </div>

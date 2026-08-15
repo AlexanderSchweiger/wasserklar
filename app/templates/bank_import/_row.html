@@ -30,8 +30,15 @@
     {% endif %}
   </td>
 
-  {# --- Datum --- #}
-  <td class="text-nowrap">{{ line.booking_date.strftime('%d.%m.%Y') }}</td>
+  {# --- Datum: Buchungstag; Valuta nur wenn abweichend --- #}
+  <td class="text-nowrap">
+    {{ line.booking_date.strftime('%d.%m.%Y') }}
+    {% if line.value_date and line.value_date != line.booking_date %}
+      <div class="text-muted small" title="Valutadatum (Wertstellung)">
+        Val. {{ line.value_date.strftime('%d.%m.%Y') }}
+      </div>
+    {% endif %}
+  </td>
 
   {# --- Gegenpartei --- #}
   <td>

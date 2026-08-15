@@ -159,7 +159,7 @@
         <option value="mail">Nur per Mail</option>
         <option value="post">Nur per Post</option>
       </select>
-      <button type="button" class="btn btn-sm btn-outline-secondary" id="br-reset">
+      <button type="button" class="btn btn-sm btn-outline-secondary d-none" id="br-reset">
         <i class="fas fa-times me-1"></i> Filter zurücksetzen
       </button>
       {% if run.billing_period_id %}
@@ -466,6 +466,7 @@
         if (show) visible++;
       });
       if (empty) empty.classList.toggle('d-none', visible !== 0 || rows.length === 0);
+      if (reset) reset.classList.toggle('d-none', !(q || v));
     }
     if (search) search.addEventListener('input', applyFilter);
     if (versand) versand.addEventListener('change', applyFilter);

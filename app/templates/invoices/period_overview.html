@@ -323,7 +323,7 @@
         <option value="mail">Nur per Mail</option>
         <option value="post">Nur per Post</option>
       </select>
-      <button type="button" class="btn btn-sm btn-outline-secondary" id="po-reset">
+      <button type="button" class="btn btn-sm btn-outline-secondary d-none" id="po-reset">
         <i class="fas fa-times me-1"></i> Filter zurücksetzen
       </button>
     </div>
@@ -513,6 +513,7 @@
       if (show) visible++;
     });
     if (empty) empty.classList.toggle('d-none', visible !== 0 || rows.length === 0);
+    if (reset) reset.classList.toggle('d-none', !(q || st || or_ || v));
   }
   [search, statusSel, originSel, versandSel].forEach(el => {
     if (el) el.addEventListener(el.tagName === 'INPUT' ? 'input' : 'change', applyFilter);

@@ -9,6 +9,7 @@
       <div class="mb-3">
         <label class="form-label mb-0 me-1">Status</label>
         <select name="status" class="form-select form-select-sm tom-select"
+          data-filter-field
           hx-get="{{ url_for('invoices.index') }}"
           hx-trigger="change"
           hx-target="#invoices-table"
@@ -22,6 +23,7 @@
       <div class="mb-3" style="width:170px">
         <label class="form-label mb-0 me-1">Periode</label>
         <select name="period_id" class="form-select form-select-sm tom-select"
+          data-filter-field
           hx-get="{{ url_for('invoices.index') }}"
           hx-trigger="change"
           hx-target="#invoices-table"
@@ -36,6 +38,7 @@
         <label class="form-label mb-0 me-1">Datum von</label>
         <input type="date" name="date_from" value="{{ date_from }}"
           class="form-control form-control-sm" style="width:145px"
+          data-filter-field data-filter-default="{{ default_date_from }}"
           hx-get="{{ url_for('invoices.index') }}"
           hx-trigger="change"
           hx-target="#invoices-table"
@@ -45,6 +48,7 @@
         <label class="form-label mb-0 me-1">bis</label>
         <input type="date" name="date_to" value="{{ date_to }}"
           class="form-control form-control-sm" style="width:145px"
+          data-filter-field
           hx-get="{{ url_for('invoices.index') }}"
           hx-trigger="change"
           hx-target="#invoices-table"
@@ -53,6 +57,7 @@
       <div class="mb-3" style="width:180px">
         <label class="form-label mb-0 me-1">Projekt</label>
         <select name="project_id" class="form-select form-select-sm tom-select"
+          data-filter-field
           hx-get="{{ url_for('invoices.index') }}"
           hx-trigger="change"
           hx-target="#invoices-table"
@@ -66,7 +71,8 @@
         </select>
       </div>
       <div class="input-group input-group-sm" style="width:220px">
-        <input type="search" name="q" placeholder="Kundenname…" class="form-control form-control-sm"
+        <input type="search" name="q" value="{{ q }}" placeholder="Kundenname…" class="form-control form-control-sm"
+          data-filter-field
           hx-get="{{ url_for('invoices.index') }}"
           hx-trigger="input changed delay:300ms"
           hx-target="#invoices-table"
@@ -76,6 +82,7 @@
       <div class="mb-3" style="width:220px">
         <label class="form-label mb-0 me-1">Schriftverkehr</label>
         <select name="mail_filter" class="form-select form-select-sm"
+          data-filter-field
           hx-get="{{ url_for('invoices.index') }}"
           hx-trigger="change"
           hx-target="#invoices-table"
@@ -88,15 +95,9 @@
       <input type="hidden" name="sort" value="{{ sort }}">
       <input type="hidden" name="dir" value="{{ dir }}">
       <div class="mb-3 d-flex gap-2 align-items-center">
-        <button type="button" class="btn btn-sm btn-primary"
-          hx-get="{{ url_for('invoices.index') }}"
-          hx-trigger="click"
-          hx-target="#invoices-table"
-          hx-include="[name='status'],[name='period_id'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id'],[name='mail_filter'],[name='sort'],[name='dir']">
-          <i class="fas fa-search me-1"></i> Anzeigen
-        </button>
-        <a href="{{ url_for('invoices.index') }}" class="btn btn-sm btn-outline-secondary">
-          <i class="fas fa-times me-1"></i> Zurücksetzen
+        <a href="{{ url_for('invoices.index') }}"
+           class="btn btn-sm btn-outline-secondary{{ '' if has_filter else ' d-none' }}" data-filter-reset>
+          <i class="fas fa-times me-1"></i> Filter zurücksetzen
         </a>
       </div>
     </div>

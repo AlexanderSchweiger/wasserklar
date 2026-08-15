@@ -9,6 +9,7 @@
       <div class="input-group input-group-sm" style="width:280px">
         <input type="search" name="q" value="{{ q }}" class="form-control"
           placeholder="Zählernr., Liegenschaft, Besitzer, Standort…"
+          data-filter-field
           hx-get="{{ url_for('meters.index') }}"
           hx-trigger="input changed delay:300ms"
           hx-target="#meters-table"
@@ -19,6 +20,7 @@
         <input type="checkbox" class="form-check-input" id="show_inactive"
           name="show_inactive" value="1"
           {{ 'checked' if show_inactive }}
+          data-filter-field
           hx-get="{{ url_for('meters.index') }}"
           hx-trigger="change"
           hx-target="#meters-table"
@@ -28,8 +30,9 @@
       <input type="hidden" name="sort" value="{{ sort }}">
       <input type="hidden" name="dir" value="{{ dir }}">
       <div class="ms-auto d-flex gap-2 align-items-center">
-        <a href="{{ url_for('meters.index', sort=sort, dir=dir) }}" class="btn btn-sm btn-outline-secondary">
-          <i class="fas fa-times me-1"></i> Zurücksetzen
+        <a href="{{ url_for('meters.index', sort=sort, dir=dir) }}"
+           class="btn btn-sm btn-outline-secondary{{ '' if has_filter else ' d-none' }}" data-filter-reset>
+          <i class="fas fa-times me-1"></i> Filter zurücksetzen
         </a>
       </div>
     </div>

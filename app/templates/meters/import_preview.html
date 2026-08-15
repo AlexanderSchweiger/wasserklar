@@ -177,8 +177,8 @@
                  placeholder="Filter: Liegenschaftsnummer" autocomplete="off">
         </div>
         <div class="col-md-3 d-flex align-items-center gap-2">
-          <button type="button" id="filter-reset" class="btn btn-outline-secondary btn-sm">
-            <i class="fas fa-times me-1"></i> Zurücksetzen
+          <button type="button" id="filter-reset" class="btn btn-outline-secondary btn-sm d-none">
+            <i class="fas fa-times me-1"></i> Filter zurücksetzen
           </button>
           <small class="text-muted ms-auto"><span id="filter-count">{{ rows | length }}</span> / {{ rows | length }} Zeilen</small>
         </div>
@@ -361,6 +361,7 @@
       if (show) visible++;
     });
     countEl.textContent = visible;
+    btnReset.classList.toggle('d-none', !(qc || qm || qo));
   }
 
   inputCustomer.addEventListener('input', apply);

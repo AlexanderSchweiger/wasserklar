@@ -451,6 +451,7 @@ def elements():
     )
     if request.headers.get("HX-Request"):
         return render_template("network/_elemente_table.html", **ctx)
+    ctx["has_filter"] = bool(q or plan_filter or type_filter)
     return render_template("network/elemente.html", **ctx)
 
 

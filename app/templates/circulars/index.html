@@ -5,6 +5,7 @@
 <div class="card">
   <div class="card-header d-flex align-items-center flex-wrap" style="gap:.5rem">
     <select name="status" class="form-select form-select-sm" style="width:170px"
+      data-filter-field
       hx-get="{{ url_for('circulars.index') }}" hx-trigger="change" hx-target="#circ-table"
       hx-include="[name='status'],[name='kind']">
       <option value="">Alle Status</option>
@@ -13,6 +14,7 @@
       {% endfor %}
     </select>
     <select name="kind" class="form-select form-select-sm" style="width:190px"
+      data-filter-field
       hx-get="{{ url_for('circulars.index') }}" hx-trigger="change" hx-target="#circ-table"
       hx-include="[name='status'],[name='kind']">
       <option value="">Alle Arten</option>
@@ -20,6 +22,10 @@
       <option value="{{ k }}" {% if k == kind_filter %}selected{% endif %}>{{ l }}</option>
       {% endfor %}
     </select>
+    <a href="{{ url_for('circulars.index') }}"
+       class="btn btn-sm btn-outline-secondary{{ '' if has_filter else ' d-none' }}" data-filter-reset>
+      <i class="fas fa-times me-1"></i> Filter zurücksetzen
+    </a>
     <div class="ms-auto">
       <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#circularCreateModal">
         <i class="fas fa-plus me-1"></i> Neues Rundschreiben

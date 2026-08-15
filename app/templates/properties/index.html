@@ -9,6 +9,7 @@
       <div class="input-group input-group-sm" style="width:280px">
         <input type="search" name="q" value="{{ q }}" class="form-control"
           placeholder="Nummer, Straße, Ort, Besitzer…"
+          data-filter-field
           hx-get="{{ url_for('properties.index') }}"
           hx-trigger="input changed delay:300ms, search"
           hx-target="#property-table"
@@ -17,6 +18,7 @@
       </div>
       {% if is_wg %}
       <select name="shares" class="form-select form-select-sm" style="width:175px"
+        data-filter-field data-filter-default="all"
         hx-get="{{ url_for('properties.index') }}"
         hx-trigger="change"
         hx-target="#property-table"
@@ -28,6 +30,10 @@
       {% endif %}
       <input type="hidden" name="sort" value="{{ sort }}">
       <input type="hidden" name="dir" value="{{ dir }}">
+      <a href="{{ url_for('properties.index', sort=sort, dir=dir) }}"
+         class="btn btn-sm btn-outline-secondary{{ '' if has_filter else ' d-none' }}" data-filter-reset>
+        <i class="fas fa-times me-1"></i> Filter zurücksetzen
+      </a>
     </div>
     <div class="card-options d-flex gap-2 align-items-center">
       <a href="{{ url_for('properties.import_upload') }}" class="btn btn-outline-secondary">

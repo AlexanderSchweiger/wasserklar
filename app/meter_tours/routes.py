@@ -124,6 +124,7 @@ def due():
     }
     if request.headers.get("HX-Request"):
         return render_template("meter_tours/_due_table.html", **ctx)
+    ctx["has_filter"] = bool(q or show_toured or year != current_year)
     return render_template("meter_tours/due.html", **ctx)
 
 

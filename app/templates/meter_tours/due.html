@@ -8,6 +8,7 @@
       <div class="input-group input-group-sm" style="width:280px">
         <input type="search" name="q" value="{{ q }}" class="form-control"
           placeholder="Zählernr., Objekt, Besitzer…"
+          data-filter-field
           hx-get="{{ url_for('meter_tours.due') }}"
           hx-trigger="input changed delay:300ms"
           hx-target="#due-table"
@@ -19,6 +20,7 @@
         <span class="input-group-text">Fällig bis</span>
         <input type="number" name="year" value="{{ year }}" min="2000" max="2100"
           class="form-control"
+          data-filter-field data-filter-default="{{ current_year }}"
           hx-get="{{ url_for('meter_tours.due') }}"
           hx-trigger="input changed delay:300ms"
           hx-target="#due-table"
@@ -27,12 +29,17 @@
       <div class="form-check form-switch ms-3 mb-0">
         <input type="checkbox" class="form-check-input" id="show_toured"
           name="show_toured" value="1" {{ 'checked' if show_toured }}
+          data-filter-field
           hx-get="{{ url_for('meter_tours.due') }}"
           hx-trigger="change"
           hx-target="#due-table"
           hx-include="[name='q'],[name='year'],[name='show_toured']">
         <label class="form-check-label" for="show_toured">Bereits verplante anzeigen</label>
       </div>
+      <a href="{{ url_for('meter_tours.due') }}"
+         class="btn btn-sm btn-outline-secondary{{ '' if has_filter else ' d-none' }}" data-filter-reset>
+        <i class="fas fa-times me-1"></i> Filter zurücksetzen
+      </a>
       <div class="ms-auto d-flex gap-2 align-items-center">
         <form method="post" action="{{ url_for('meter_tours.set_interval') }}"
               class="d-flex align-items-center" title="Nacheichfrist in Jahren (Österreich: 5 Jahre für Kaltwasserzähler)">

@@ -382,7 +382,8 @@ def index():
     )
     if request.headers.get("HX-Request"):
         return render_template("meters/_manage_table.html", **ctx)
-    return render_template("meters/index.html", **ctx)
+    has_filter = bool(q or show_inactive)
+    return render_template("meters/index.html", has_filter=has_filter, **ctx)
 
 
 @bp.route("/readings")
@@ -452,7 +453,18 @@ def readings():
     if request.headers.get("HX-Request"):
         template = "meters/_table_quick.html" if mode == "quick" else "meters/_table.html"
         return render_template(template, **ctx)
-    return render_template("meters/readings.html", q=q, mode=mode, **ctx)
+    active_period = BillingPeriod.current()
+    period_default_id = active_period.id if active_period else None
+    requested_period_id = request.args.get("period_id", type=int)
+    has_filter = bool(
+        q or only_missing
+        or (requested_period_id and requested_period_id != period_default_id)
+    )
+    return render_template(
+        "meters/readings.html", q=q, mode=mode,
+        has_filter=has_filter, period_default_id=period_default_id,
+        **ctx,
+    )
 
 
 @bp.route("/replacements")
@@ -500,7 +512,8 @@ def replacements():
     )
     if request.headers.get("HX-Request"):
         return render_template("meters/_replacements_table.html", **ctx)
-    return render_template("meters/replacements.html", **ctx)
+    has_filter = bool(q or period is not None)
+    return render_template("meters/replacements.html", has_filter=has_filter, **ctx)
 
 
 @bp.route("/bulk_read", methods=["POST"])

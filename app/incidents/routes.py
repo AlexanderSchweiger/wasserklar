@@ -126,7 +126,8 @@ def index():
     )
     if request.headers.get("HX-Request"):
         return render_template("incidents/_table.html", **ctx)
-    return render_template("incidents/index.html", **ctx)
+    has_filter = bool(f["q"] or f["status"] or f["type"] or f["severity"] or f["year"])
+    return render_template("incidents/index.html", has_filter=has_filter, **ctx)
 
 
 # ---------------------------------------------------------------------------

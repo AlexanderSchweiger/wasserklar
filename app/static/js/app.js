@@ -178,6 +178,35 @@
     });
   }
 
+  // --- Filter-Leisten: Zuruecksetzen-Button nur bei aktivem Filter ----------
+
+  // Felder tragen data-filter-field (+ optional data-filter-default, sonst
+  // "" angenommen); der Reset-Link/-Button traegt data-filter-reset. Der
+  // Server rendert den initialen Zustand schon korrekt (has_filter), aber
+  // bei Seiten, deren Filter per htmx nur einen Ergebnis-Fragment-Container
+  // neu laden (hx-target="#xyz-table" o.ae.), bleibt die Filterleiste selbst
+  // unangetastet — der Reset-Button wuerde also nie erscheinen/verschwinden,
+  // wenn der Nutzer tippt/waehlt, ohne dass die ganze Seite neu laedt. Diese
+  // Funktion haelt ihn stattdessen rein client-seitig synchron. Bei Seiten
+  // mit vollem hx-boost-Seitenwechsel ist sie ein no-op-aehnliches Extra
+  // (der Server liefert nach jedem Submit ohnehin einen frischen Zustand).
+  // Checkboxen tragen ihren "an"-Wert fest in .value — dort zaehlt .checked
+  // gegen data-filter-default="true" (Default sonst: unchecked).
+  function syncFilterResets() {
+    var active = false;
+    document.querySelectorAll('[data-filter-field]').forEach(function (f) {
+      if (f.type === 'checkbox') {
+        if (f.checked !== (f.dataset.filterDefault === 'true')) active = true;
+        return;
+      }
+      var def = f.dataset.filterDefault || '';
+      if ((f.value || '').trim() !== def) active = true;
+    });
+    document.querySelectorAll('[data-filter-reset]').forEach(function (el) {
+      el.classList.toggle('d-none', !active);
+    });
+  }
+
   // --- Boost-Ausschluss fuer Downloads / externe Links ----------------------
 
   // Pfad-/Query-Muster, bei denen der Server eine Datei ausliefert
@@ -263,6 +292,16 @@
   // Container des betroffenen <select>, und die Pruefung kostet nichts.
   document.addEventListener('htmx:afterSettle', function () {
     restoreTomSelectHiding(document);
+  });
+
+  // Reset-Button-Sichtbarkeit bei jeder Feldaenderung nachziehen (siehe
+  // syncFilterResets oben) — 'input' fuer Textsuche waehrend des Tippens,
+  // 'change' fuer Selects/Datumsfelder.
+  document.addEventListener('input', function (e) {
+    if (e.target.matches && e.target.matches('[data-filter-field]')) syncFilterResets();
+  });
+  document.addEventListener('change', function (e) {
+    if (e.target.matches && e.target.matches('[data-filter-field]')) syncFilterResets();
   });
 
   // Selbstheilung des Lade-Spinners nach einer geboosteten Voll-Navigation.

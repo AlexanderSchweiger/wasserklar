@@ -17,7 +17,8 @@ dependency-frei (nur stdlib) und robust gegen die SGML-Eigenheiten.
 
 Feld-Mapping (George-OFX):
     DTPOSTED            -> booking_date          (YYYYMMDDHHMMSS[.mmm])
-    DTUSER/DTAVAIL      -> value_date
+    DTAVAIL             -> value_date            (Valuta; DTUSER waere der
+                                                  Auftragstag, NICHT die Valuta)
     TRNAMT             -> amount                (bereits vorzeichenbehaftet)
     FITID              -> tx_id                 (stabile, eindeutige TX-ID)
     NAME / PAYEE/NAME   -> counterparty_name     (32-Zeichen-gekuerzt!)
@@ -177,10 +178,14 @@ def parse(content: bytes) -> ParsedStatement:
         if amount is None:
             continue
 
+        # DTPOSTED = Buchungstag, DTAVAIL = Wertstellung/Valuta.
+        # DTUSER ist KEINE Valuta, sondern der Auftragstag des Auftraggebers
+        # (kann Tage vor der Buchung liegen) — deshalb nur als letzter
+        # Notnagel fuer den Buchungstag, nie als value_date.
         booking_date = _parse_date(tx.child_text("DTPOSTED"))
-        value_date = _parse_date(tx.child_text("DTAVAIL") or tx.child_text("DTUSER"))
+        value_date = _parse_date(tx.child_text("DTAVAIL"))
         if booking_date is None:
-            booking_date = value_date
+            booking_date = value_date or _parse_date(tx.child_text("DTUSER"))
         if booking_date is None:
             continue
         all_dates.append(booking_date)

@@ -56,10 +56,13 @@ def parse(content: bytes, format: str) -> ParsedStatement:
 
     for tx in transactions:
         tx_data = dict(tx.data or {})
-        booking_date = _as_date(tx_data.get("date") or tx_data.get("entry_date"))
+        # MT940-Feld :61: fuehrt ZWEI Daten: Subfeld 1 = Valutadatum, Subfeld 2
+        # (optional, MMDD) = Buchungsdatum. Die mt-940-Lib legt sie als
+        # ``date`` (Valuta) bzw. ``entry_date`` (Buchung) ab — nicht
+        # verwechseln. Fehlt das optionale Buchungsdatum, faellt es per
+        # Konvention auf die Valuta zurueck.
         value_date = _as_date(tx_data.get("date"))
-        if booking_date is None:
-            booking_date = value_date
+        booking_date = _as_date(tx_data.get("entry_date")) or value_date
         if booking_date is None:
             continue
         all_dates.append(booking_date)

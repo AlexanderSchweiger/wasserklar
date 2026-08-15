@@ -8,6 +8,7 @@
     <div class="input-group input-group-sm" style="width:260px">
       <input type="search" name="q" value="{{ filters.q }}" class="form-control"
         placeholder="Störungen suchen…"
+        data-filter-field
         hx-get="{{ url_for('incidents.index') }}"
         hx-trigger="input changed delay:300ms, search"
         hx-target="#incident-table"
@@ -15,6 +16,7 @@
       <span class="input-group-text"><i class="fas fa-search"></i></span>
     </div>
     <select name="status" class="form-select form-select-sm" style="width:160px"
+      data-filter-field
       hx-get="{{ url_for('incidents.index') }}" hx-trigger="change" hx-target="#incident-table"
       hx-include="[name='q'], [name='status'], [name='type'], [name='severity'], [name='year']">
       <option value="">Alle Status</option>
@@ -23,6 +25,7 @@
       {% endfor %}
     </select>
     <select name="type" class="form-select form-select-sm" style="width:180px"
+      data-filter-field
       hx-get="{{ url_for('incidents.index') }}" hx-trigger="change" hx-target="#incident-table"
       hx-include="[name='q'], [name='status'], [name='type'], [name='severity'], [name='year']">
       <option value="">Alle Arten</option>
@@ -31,6 +34,7 @@
       {% endfor %}
     </select>
     <select name="severity" class="form-select form-select-sm" style="width:150px"
+      data-filter-field
       hx-get="{{ url_for('incidents.index') }}" hx-trigger="change" hx-target="#incident-table"
       hx-include="[name='q'], [name='status'], [name='type'], [name='severity'], [name='year']">
       <option value="">Alle Schweregrade</option>
@@ -40,6 +44,7 @@
     </select>
     {% if years %}
     <select name="year" class="form-select form-select-sm" style="width:120px"
+      data-filter-field
       hx-get="{{ url_for('incidents.index') }}" hx-trigger="change" hx-target="#incident-table"
       hx-include="[name='q'], [name='status'], [name='type'], [name='severity'], [name='year']">
       <option value="">Alle Jahre</option>
@@ -48,8 +53,9 @@
       {% endfor %}
     </select>
     {% endif %}
-    <a href="{{ url_for('incidents.index') }}" class="btn btn-sm btn-outline-secondary">
-      <i class="fas fa-times me-1"></i> Zurücksetzen
+    <a href="{{ url_for('incidents.index') }}"
+       class="btn btn-sm btn-outline-secondary{{ '' if has_filter else ' d-none' }}" data-filter-reset>
+      <i class="fas fa-times me-1"></i> Filter zurücksetzen
     </a>
     <div class="ms-auto d-flex gap-2 align-items-center">
       <a href="{{ url_for('incidents.map_view') }}" class="btn btn-outline-secondary" hx-boost="false">
