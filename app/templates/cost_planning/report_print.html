@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Beschlussvorlage — {{ goal.name }}{% endblock %}
+{% block page_title %}<i class="fas fa-file-alt me-2"></i> Beschlussvorlage{% endblock %}
+
+{% block content %}
+<div class="mb-3 d-print-none">
+  <a href="{{ url_for('cost_planning.goal_detail', goal_id=goal.id) }}"
+     class="btn btn-sm" hx-boost="false">
+    <i class="fas fa-arrow-left me-1"></i> Zurück
+  </a>
+  <button type="button" class="btn btn-sm btn-primary" onclick="window.print()">
+    <i class="fas fa-print me-1"></i> Drucken
+  </button>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    {% include "cost_planning/_report_body.html" with context %}
+  </div>
+</div>
+{% endblock %}

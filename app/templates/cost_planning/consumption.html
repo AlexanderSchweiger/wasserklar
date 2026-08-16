@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+{% block title %}Wasserverbrauch{% endblock %}
+{% block page_title %}<i class="fas fa-tint me-2"></i> Wasserverbrauch je Jahr{% endblock %}
+
+{% block content %}
+<div class="row row-cards">
+  <div class="col-lg-8">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Jahressummen</h3>
+        <div class="card-actions">
+          <form method="post" action="{{ url_for('cost_planning.consumption_recalculate') }}"
+                class="d-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-sm">
+              <i class="fas fa-sync me-1"></i> Neu berechnen
+            </button>
+          </form>
+          <button type="button" data-url="{{ url_for('cost_planning.consumption_manual') }}"
+                  data-modal-title="Verbrauchsjahr nachtragen"
+                  onclick="openManualYearModal(this)" class="btn btn-sm btn-primary">
+            <i class="fas fa-plus me-1"></i> Jahr nachtragen
+          </button>
+        </div>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-hover table-vcenter mb-0">
+            <thead>
+              <tr>
+                <th>Jahr</th>
+                <th>Quelle</th>
+                <th class="text-end">Verbrauch (m³)</th>
+                <th class="text-end">Objekte</th>
+                <th>Stand</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in rows %}
+              <tr>
+                <td>
+                  <strong>{{ row.year }}</strong>
+                  {% if row.billing_period and row.billing_period.name != row.year|string %}
+                  <div class="text-secondary small">{{ row.billing_period.name }}</div>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if row.is_override %}
+                  <span class="badge bg-orange text-white">manuell übersteuert</span>
+                  {% elif row.is_manual %}
+                  <span class="badge bg-secondary-lt">manuell</span>
+                  {% else %}
+                  <span class="badge bg-blue text-white">berechnet</span>
+                  {% endif %}
+                  {% if row.notes %}
+                  <div class="text-secondary small">{{ row.notes }}</div>
+                  {% endif %}
+                </td>
+                <td class="text-end">
+                  <strong>{{ row.total_m3|de_number(0) }}</strong>
+                  {% if row.is_override %}
+                  {# Bei einer Uebersteuerung die berechnete Summe daneben
+                     zeigen — sonst waere nicht erkennbar, wovon abgewichen wird. #}
+                  <div class="text-secondary small">
+                    berechnet: {{ row.measured_m3|de_number(0) }}
+                    ({{ row.override_delta|de_number(0, true) }})
+                  </div>
+                  {% endif %}
+                </td>
+                <td class="text-end text-secondary">{{ row.unit_count if row.unit_count is not none else '—' }}</td>
+                <td class="text-secondary small">
+                  {% if row.stale %}
+                    <span class="badge bg-yellow text-dark">wird neu berechnet</span>
+                  {% elif row.reading_count %}
+                    {{ row.reading_count }} Ablesungen
+                    {% if row.computed_at %}
+                    <div>berechnet am {{ row.computed_at.strftime('%d.%m.%Y') }}</div>
+                    {% endif %}
+                  {% else %}
+                    keine Ablesungen
+                  {% endif %}
+                </td>
+                <td class="text-end">
+                  <button type="button"
+                          data-url="{{ url_for('cost_planning.consumption_manual', year=row.year) }}"
+                          data-modal-title="Verbrauch {{ row.year }} {% if row.is_manual %}bearbeiten{% else %}übersteuern{% endif %}"
+                          onclick="openManualYearModal(this)"
+                          class="btn btn-sm btn-outline-secondary"
+                          title="{% if row.is_manual %}Bearbeiten{% else %}Manuell übersteuern{% endif %}">
+                    <i class="fas fa-edit"></i>
+                  </button>
+                  {% if row.is_manual %}
+                  <form method="post" class="d-inline"
+                        action="{{ url_for('cost_planning.consumption_manual_delete', year=row.year) }}"
+                        onsubmit="return confirm('{% if row.is_override %}Übersteuerung für {{ row.year }} aufheben? Es gilt dann wieder die berechnete Summe.{% else %}Verbrauchsjahr {{ row.year }} wirklich löschen?{% endif %}');">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-sm btn-outline-danger"
+                            title="{% if row.is_override %}Übersteuerung aufheben{% else %}Löschen{% endif %}">
+                      <i class="fas {% if row.is_override %}fa-undo{% else %}fa-trash{% endif %}"></i>
+                    </button>
+                  </form>
+                  {% endif %}
+                </td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="6" class="text-center text-muted py-4">
+                  Noch keine Verbrauchsdaten. Sobald Ablesungen erfasst sind,
+                  entstehen die Jahressummen automatisch — frühere Jahre lassen
+                  sich über <em>Jahr nachtragen</em> ergänzen.
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card-footer text-secondary small">
+        Berechnete Jahre sind die Summe der Ablesungen aller Zähler einer
+        Abrechnungsperiode. Sie werden zwischengespeichert, damit Auswertungen
+        nicht jedes Mal über alle Ablesungen rechnen müssen — nach neuen
+        Ablesungen aktualisieren sie sich beim nächsten Aufruf automatisch.
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Planungsbasis</h3>
+      </div>
+      <div class="card-body">
+        <div class="mb-3">
+          <div class="text-secondary small">Ø Jahresverbrauch</div>
+          <div class="h1 mb-0">{{ average|de_number(0) }} m³</div>
+          {% if basis_years %}
+          <div class="text-secondary small">
+            aus {{ basis_years|map(attribute='year')|join(', ') }}
+          </div>
+          {% else %}
+          <div class="text-secondary small">keine Datenbasis</div>
+          {% endif %}
+        </div>
+        <p class="text-secondary small mb-0">
+          Dieser Durchschnitt ist die Grundlage für alle verbrauchsabhängigen
+          Tarifpakete. Das Jahr der laufenden Abrechnungsperiode bleibt außen
+          vor, solange noch nicht alle Zähler abgelesen sind — sonst würde eine
+          halb erfasste Periode den Schnitt verfälschen.
+        </p>
+      </div>
+    </div>
+
+    <div class="card mt-3">
+      <div class="card-header">
+        <h3 class="card-title">Einstellungen</h3>
+      </div>
+      <form method="post" action="{{ url_for('cost_planning.settings_save') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="card-body">
+          <div class="mb-3">
+            <label class="form-label">Musterhaushalt (m³ pro Jahr)</label>
+            <input type="text" name="sample_household_m3" class="form-control"
+                   inputmode="decimal" value="{{ sample_household_m3 | default(120) }}">
+            <small class="form-hint">
+              Referenzverbrauch, an dem die Tarifpakete ihre Mehrbelastung
+              zeigen („+38,40 € pro Jahr").
+            </small>
+          </div>
+          <div class="mb-0">
+            <label class="form-label">Durchschnitt über … Jahre</label>
+            <input type="number" name="avg_years" class="form-control"
+                   min="1" max="10" value="{{ avg_years }}">
+          </div>
+        </div>
+        <div class="card-footer text-end">
+          <button type="submit" class="btn btn-primary">
+            <i class="fas fa-save me-1"></i> Speichern
+          </button>
+        </div>
+      </form>
+    </div>
+
+    <div class="card mt-3">
+      <div class="card-body">
+        <a href="{{ url_for('cost_planning.index') }}" class="btn w-100" hx-boost="false">
+          <i class="fas fa-calculator me-1"></i> Zur Plankostenrechnung
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block modals %}
+{% include "cost_planning/_manual_year_modal.html" %}
+{% endblock %}
+
+{% block scripts %}
+{% include "_modal_edit_helpers.html" %}
+<script>
+setupEditModal({
+  formId: 'manualYearForm',
+  bodyId: 'manualYearModalBody',
+  modalId: 'manualYearModal',
+  openFn: 'openManualYearModal',
+  closeEvent: 'closeManualYearModal',
+  savedEvent: 'manualyearSaved',
+});
+</script>
+{% endblock %}

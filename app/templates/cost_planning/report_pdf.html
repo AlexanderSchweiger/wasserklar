@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <title>Beschlussvorlage — {{ goal.name }}</title>
+  <style>
+    @page { size: A4; margin: 18mm 16mm 20mm 16mm;
+            @bottom-center { content: counter(page) " / " counter(pages);
+                             font-size: 8pt; color: #666; } }
+    body { font-family: "DejaVu Sans", Arial, sans-serif; font-size: 9.5pt;
+           color: #222; line-height: 1.4; }
+    h1 { font-size: 15pt; margin: 0 0 2mm 0; }
+    h2 { font-size: 11pt; margin: 6mm 0 2mm 0; border-bottom: .4pt solid #ccc;
+         padding-bottom: 1mm; }
+    .muted { color: #666; font-size: 8.5pt; }
+    table { width: 100%; border-collapse: collapse; margin-top: 2mm; }
+    th, td { padding: 1.4mm 2mm; border-bottom: .4pt solid #ddd;
+             text-align: left; vertical-align: top; }
+    th { background: #f4f4f4; font-weight: bold; font-size: 8.5pt; }
+    .num { text-align: right; white-space: nowrap; }
+    .pkg { width: 33.33%; vertical-align: top; padding: 2mm;
+           border: .4pt solid #ddd; }
+    .pkg h3 { font-size: 10pt; margin: 0 0 1.5mm 0; }
+    .big { font-size: 12pt; font-weight: bold; }
+    .head { margin-bottom: 4mm; }
+    .head .org { font-size: 11pt; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <div class="head">
+    <div class="org">{{ wg.name }}</div>
+    <div class="muted">{{ wg.address }}</div>
+  </div>
+
+  {% include "cost_planning/_report_body.html" with context %}
+
+  <p class="muted" style="margin-top:8mm">
+    Erstellt am {{ generated_at.strftime('%d.%m.%Y') }} mit
+    {{ app_brand_name if app_brand_name else 'wasserklar' }}.
+    Die Beträge sind eine Planungsrechnung, keine verbindliche Tarifzusage.
+  </p>
+</body>
+</html>

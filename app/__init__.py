@@ -104,6 +104,9 @@ def create_app(config_name=None):
     from app.circulars import bp as circulars_bp
     app.register_blueprint(circulars_bp)
 
+    from app.cost_planning import bp as cost_planning_bp
+    app.register_blueprint(cost_planning_bp)
+
     from app.notes import bp as notes_bp
     app.register_blueprint(notes_bp)
 

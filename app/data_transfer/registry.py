@@ -31,6 +31,7 @@ from app.models import (
     MeetingAttendance, MeetingResolution, MeetingProtocol,
     SchriftverkehrDocument,
     Circular, CircularRecipient, CircularDeliveryLog,
+    ConsumptionYear, FundingGoal,
 )
 
 # Spalten die auf users.id verweisen — werden beim Import auf NULL gesetzt,
@@ -66,6 +67,8 @@ NULL_ON_IMPORT_COLS = {
     SchriftverkehrDocument: ["created_by_id"],
     Circular: ["created_by_id"],
     CircularDeliveryLog: ["user_id"],
+    ConsumptionYear: ["created_by_id"],
+    FundingGoal: ["created_by_id"],
 }
 
 
@@ -84,6 +87,11 @@ CATEGORIES = {
         MeetingAttendance, MeetingResolution, MeetingProtocol,
         SchriftverkehrDocument,
         Circular, CircularRecipient, CircularDeliveryLog,
+        # Plankostenrechnung: Verbrauchs-Jahressummen (auch die manuell
+        # erfassten historischen Jahre) + Finanzierungsziele. Bewusst
+        # "stammdaten" und nicht "buchungen" — es sind keine Belege, und ein
+        # Export ohne sie verloere die manuell nachgetragene Historie.
+        ConsumptionYear, FundingGoal,
         Note,
     ],
     "buchungen": [
@@ -145,6 +153,9 @@ INSERT_ORDER = [
     # Rundschreiben: Circular referenziert WaterSample/Incident (beide oben) +
     # Self-FK predecessor_id (zweiter Pass). Kinder referenzieren Circular + Customer.
     Circular, CircularRecipient, CircularDeliveryLog,
+    # Plankosten: ConsumptionYear referenziert BillingPeriod (weiter oben),
+    # FundingGoal ist FK-frei (ausser users.id, das genullt wird).
+    ConsumptionYear, FundingGoal,
     # Note ans Ende: sein polymorphes entity_id zeigt potenziell auf JEDE der
     # obigen Tabellen (Customer/Property/Invoice/Booking). Beim Voll-Ersatz
     # bleiben IDs erhalten → korrekt. Im Merge-Modus wird entity_id NICHT
@@ -176,6 +187,10 @@ YEAR_FILTERS = {
     # voll exportiert (billig, haelt statement_id-Refs gueltig), Allocation
     # (Grandchild) kaskadiert ueber die gefilterten Line-IDs (services.py).
     BankStatementLine: ("date_year", "booking_date"),
+    # ConsumptionYear haelt ein echtes Integer-Jahr. FundingGoal bekommt
+    # bewusst KEINEN Filter — ein Ziel spannt mehrere Jahre, ein Jahresexport
+    # duerfte es nicht willkuerlich am Startjahr abschneiden.
+    ConsumptionYear: "year",
 }
 
 
@@ -255,6 +270,11 @@ NATURAL_KEYS = {
     Circular: None,
     CircularRecipient: None,
     CircularDeliveryLog: None,
+    # Ein Jahr kommt genau einmal vor (unique) — sauberer Merge-Schluessel.
+    ConsumptionYear: ("year",),
+    # Name allein reicht nicht: "Netzerneuerung" kann es fuer mehrere
+    # Bauabschnitte mit unterschiedlichen Zieljahren geben.
+    FundingGoal: ("name", "target_year"),
 }
 
 
@@ -332,6 +352,7 @@ FOREIGN_KEYS = {
                "predecessor_id": Circular},  # predecessor_id: Self-FK, zweiter Pass
     CircularRecipient: {"circular_id": Circular, "customer_id": Customer},
     CircularDeliveryLog: {"circular_id": Circular, "customer_id": Customer},
+    ConsumptionYear: {"billing_period_id": BillingPeriod},
 }
 
 

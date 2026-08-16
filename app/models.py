@@ -1355,6 +1355,206 @@ class WaterTariff(db.Model):
 
 
 # ---------------------------------------------------------------------------
+# Plankostenrechnung (Verbrauchs-Jahressummen + Finanzierungsziele)
+# ---------------------------------------------------------------------------
+
+class ConsumptionYear(db.Model):
+    """Jahres-Verbrauchssumme in m³ — Cache fuer gemessene Jahre UND
+    Eingabefeld fuer historische Jahre ohne Zaehlerdaten.
+
+    Zwei Quellen, eine Tabelle (``source``):
+
+    * ``measured`` — Summe ueber die ``MeterReading.consumption`` aller
+      Abrechnungsperioden dieses Jahres. Wird berechnet und gecached, damit
+      Dashboard und Plankostenrechnung nicht bei jedem Aufruf ueber alle
+      Ablesungen summieren muessen (bei vielen Zaehlern teuer).
+    * ``manual`` — vom Kassier eingetippte Jahresmenge. Gedacht vor allem fuer
+      Jahre VOR der App-Einfuehrung, aber **jederzeit erlaubt**: auch ein Jahr
+      mit Ablesungen darf uebersteuert werden (unvollstaendige Erfassung,
+      bekannter Zaehlerdefekt, nachtraeglich korrigierte Werte).
+
+    ``total_m3`` ist immer der **wirksame** Wert, mit dem gerechnet wird.
+    ``measured_m3`` haelt daneben die aus den Ablesungen berechnete Summe —
+    auch dann, wenn sie gerade uebersteuert ist. So bleibt sichtbar, wovon die
+    Eingabe abweicht, und die Uebersteuerung laesst sich jederzeit wieder
+    aufheben, ohne neu rechnen zu muessen.
+
+    Schluessel ist das **Kalenderjahr**, nicht die ``BillingPeriod`` — sonst
+    muesste man fuer jedes historische Jahr eine Pseudo-Periode anlegen, nur um
+    eine Zahl zu erfassen. Ziele rechnen ohnehin in Kalenderjahren.
+    ``year`` = ``BillingPeriod.start_date.year`` (bei Juni–Juni-Perioden also
+    das erste Jahr des Namens, "2025/26" -> 2025). Fallen mehrere Perioden auf
+    dasselbe Startjahr, werden sie summiert und ``billing_period_id`` bleibt
+    NULL.
+
+    ``stale`` wird von den Schreibpfaden gesetzt (``save_reading``, Loeschen
+    einer Ablesung, Zaehler-Aenderung) und beim naechsten Oeffnen der
+    Verbrauchs-/Planungsseite abgearbeitet — die Neuberechnung haengt bewusst
+    NICHT im Schreibpfad.
+
+    Muster: ``RealAccountYearBalance`` (per-Jahr-Snapshot mit eigener Zeile).
+    """
+    __tablename__ = "consumption_years"
+
+    SOURCE_MEASURED = "measured"
+    SOURCE_MANUAL = "manual"
+
+    id = db.Column(db.Integer, primary_key=True)
+    year = db.Column(db.Integer, nullable=False, unique=True, index=True)
+    # Nur gesetzt, wenn genau EINE Periode das Jahr speist (der Normalfall).
+    billing_period_id = db.Column(
+        db.Integer, db.ForeignKey("billing_periods.id", ondelete="SET NULL"),
+        nullable=True, index=True)
+    # Wirksamer Wert — je nach ``source`` die Messung oder die Eingabe.
+    total_m3 = db.Column(db.Numeric(14, 3), nullable=False)
+    # Aus den Ablesungen berechnete Summe; bleibt auch bei einer manuellen
+    # Uebersteuerung gefuellt (NULL nur, wenn es gar keine Ablesungen gibt).
+    measured_m3 = db.Column(db.Numeric(14, 3), nullable=True)
+    source = db.Column(
+        db.String(10), nullable=False, default=SOURCE_MEASURED,
+        server_default=db.text("'measured'"))
+    # Plausibilitaets-Anzeige ("aus 312 Ablesungen"); zaehlt die Ablesungen mit
+    # gesetztem Verbrauch, unabhaengig davon ob gerade uebersteuert wird.
+    reading_count = db.Column(db.Integer, nullable=True)
+    unit_count = db.Column(db.Integer, nullable=True)
+    stale = db.Column(
+        db.Boolean, nullable=False, default=False,
+        server_default=db.text("false"))
+    computed_at = db.Column(db.DateTime, nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+    created_by_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(
+        db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    billing_period = db.relationship("BillingPeriod")
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+
+    @property
+    def is_manual(self):
+        return self.source == self.SOURCE_MANUAL
+
+    @property
+    def is_override(self):
+        """Manuelle Eingabe, die eine vorhandene Messung uebersteuert."""
+        return self.is_manual and self.measured_m3 is not None
+
+    @property
+    def override_delta(self):
+        """Abweichung der Eingabe von der Messung (``None`` ohne Messung)."""
+        if not self.is_override:
+            return None
+        return (self.total_m3 or 0) - self.measured_m3
+
+    @property
+    def label(self):
+        """Anzeigename — Periodenname wenn vorhanden, sonst das Jahr."""
+        if self.billing_period is not None:
+            return self.billing_period.name
+        return str(self.year)
+
+    def __repr__(self):
+        return f"<ConsumptionYear {self.year} {self.total_m3} {self.source}>"
+
+
+class FundingGoal(db.Model):
+    """Finanzierungsziel der Plankostenrechnung — entweder eine anzusparende
+    Ruecklage (``investment``, z.B. "Leitungsnetz-Erneuerung, 500.000 € in
+    5 Jahren") oder ein zu tilgender Kredit (``loan``, z.B. "100.000 €,
+    3,5 %, bis 2031").
+
+    Aus Zielbetrag, Laufzeit und Zinssatz leitet ``app/cost_planning/
+    services.py`` den jaehrlichen Bedarf ab (Sparrate bzw. Annuitaet) und
+    daraus drei Tarifpakete. Das Model haelt nur die Eingabe + den gefassten
+    Beschluss (``chosen_scenario``) — gerechnet wird bei jedem Aufruf neu,
+    damit ein geaenderter Verbrauch oder Tarif sofort durchschlaegt.
+    """
+    __tablename__ = "funding_goals"
+
+    TYPE_INVESTMENT = "investment"   # Ruecklage ansparen
+    TYPE_LOAN = "loan"               # Kredit tilgen
+
+    TYPE_CHOICES = [
+        (TYPE_INVESTMENT, "Rücklage ansparen"),
+        (TYPE_LOAN, "Kredit tilgen"),
+    ]
+
+    STATUS_DRAFT = "draft"
+    STATUS_ACTIVE = "active"
+    STATUS_DONE = "done"
+    STATUS_ARCHIVED = "archived"
+
+    STATUS_CHOICES = [
+        (STATUS_DRAFT, "Entwurf"),
+        (STATUS_ACTIVE, "Beschlossen"),
+        (STATUS_DONE, "Erreicht"),
+        (STATUS_ARCHIVED, "Archiviert"),
+    ]
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(150), nullable=False)
+    goal_type = db.Column(
+        db.String(20), nullable=False, default=TYPE_INVESTMENT,
+        server_default=db.text("'investment'"))
+    # investment: Zielsumme; loan: aktuelle Restschuld
+    target_amount = db.Column(db.Numeric(12, 2), nullable=False)
+    # Nur investment: bereits angespart (waechst mit verzinst).
+    existing_reserve = db.Column(
+        db.Numeric(12, 2), nullable=False, default=0,
+        server_default=db.text("0"))
+    # % p.a. — Kreditzins (loan) bzw. Guthabenverzinsung (investment).
+    interest_rate = db.Column(db.Numeric(6, 3), nullable=True)
+    start_year = db.Column(db.Integer, nullable=False)
+    target_year = db.Column(db.Integer, nullable=False)
+    status = db.Column(
+        db.String(20), nullable=False, default=STATUS_DRAFT,
+        server_default=db.text("'draft'"))
+    # Beschlossenes Paket: 'base' | 'volume' | 'balanced' (Keys in
+    # cost_planning.services.SCENARIOS), NULL = noch nicht entschieden.
+    chosen_scenario = db.Column(db.String(20), nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+    created_by_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(
+        db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+
+    @property
+    def is_loan(self):
+        return self.goal_type == self.TYPE_LOAN
+
+    @property
+    def type_label(self):
+        return dict(self.TYPE_CHOICES).get(self.goal_type, self.goal_type)
+
+    @property
+    def status_label(self):
+        return dict(self.STATUS_CHOICES).get(self.status, self.status)
+
+    @property
+    def status_badge_class(self):
+        """Tabler-Badge-Klasse — dezente Status als Soft-Variante, der
+        beschlossene Status prominent. NIE ``text-white-lt`` (Kontrast)."""
+        return {
+            self.STATUS_DRAFT: "bg-secondary-lt",
+            self.STATUS_ACTIVE: "bg-green text-white",
+            self.STATUS_DONE: "bg-blue text-white",
+            self.STATUS_ARCHIVED: "bg-secondary-lt",
+        }.get(self.status, "bg-secondary-lt")
+
+    @property
+    def years(self):
+        """Laufzeit in Jahren (inklusive Start- und Zieljahr)."""
+        return self.target_year - self.start_year + 1
+
+    def __repr__(self):
+        return f"<FundingGoal {self.name} {self.goal_type} {self.target_amount}>"
+
+
+# ---------------------------------------------------------------------------
 # Rechnungsläufe
 # ---------------------------------------------------------------------------
 

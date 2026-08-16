@@ -367,6 +367,7 @@ def commit(rows: list[PreviewRow], cfg: MeterImportConfig) -> ImportStats:
     from app.extensions import db
     from app.models import Property, WaterMeter
     from app.imports.relations import MeterObjectTracker
+    from app.meters.services import recompute_meter_chain
 
     stats = ImportStats()
     tracker = MeterObjectTracker()
@@ -445,7 +446,9 @@ def commit(rows: list[PreviewRow], cfg: MeterImportConfig) -> ImportStats:
                     existing.eichjahr = eichjahr
                 if cfg.col_installed_from:
                     existing.installed_from = installed_from
+                initial_value_changed = False
                 if cfg.col_initial_value:
+                    initial_value_changed = existing.initial_value != initial_value
                     existing.initial_value = initial_value
                 if cfg.col_meter_type:
                     existing.meter_type = meter_type
@@ -454,6 +457,8 @@ def commit(rows: list[PreviewRow], cfg: MeterImportConfig) -> ImportStats:
                 # Meter↔Objekt: re-assign to new property in update mode
                 if existing.property_id != prop.id:
                     existing.property_id = prop.id
+                if initial_value_changed:
+                    recompute_meter_chain(existing)
                 stats.updated += 1
 
             else:

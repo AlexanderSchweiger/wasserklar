@@ -1,0 +1,128 @@
+{# Eine Tarifpaket-Karte. Erwartet ``sc`` (Scenario), ``goal``, ``baseline``,
+   ``sample_household_m3`` und ``chosen`` (bool). #}
+<div class="card h-100 {% if chosen %}border-primary{% endif %}">
+  <div class="card-header">
+    <h3 class="card-title">
+      {{ sc.label }}
+      {% if chosen %}<span class="badge bg-primary text-white ms-2">beschlossen</span>{% endif %}
+    </h3>
+    <div class="card-actions">
+      <span class="badge {{ sc.coverage_badge_class }}">
+        {{ sc.coverage|de_number(0) }} % Deckung
+      </span>
+    </div>
+  </div>
+
+  <div class="card-body">
+    {% if not sc.feasible %}
+    <div class="alert alert-warning">
+      {% for w in sc.warnings %}<div>{{ w }}</div>{% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="datagrid mb-3">
+      <div class="datagrid-item">
+        <div class="datagrid-title">Grundgebühr</div>
+        <div class="datagrid-content">
+          {% if sc.base_fee is not none %}
+          <strong>{{ sc.base_fee|de_number }} €</strong>
+          {% if sc.delta_base_fee > 0 %}
+          <span class="text-green">(+{{ sc.delta_base_fee|de_number }} €)</span>
+          {% else %}
+          <span class="text-secondary">(unverändert)</span>
+          {% endif %}
+          {% else %}
+          <span class="text-secondary">keine</span>
+          {% endif %}
+        </div>
+      </div>
+      <div class="datagrid-item">
+        <div class="datagrid-title">Preis pro m³</div>
+        <div class="datagrid-content">
+          <strong>{{ sc.price_per_m3|de_number(4) }} €</strong>
+          {% if sc.delta_price_per_m3 > 0 %}
+          <span class="text-green">(+{{ sc.delta_price_per_m3|de_number(4) }} €)</span>
+          {% else %}
+          <span class="text-secondary">(unverändert)</span>
+          {% endif %}
+        </div>
+      </div>
+      {% if sc.additional_fee is not none %}
+      <div class="datagrid-item">
+        <div class="datagrid-title">Zusatzgebühr</div>
+        <div class="datagrid-content">
+          {{ sc.additional_fee|de_number }} €
+          <span class="text-secondary">(unverändert)</span>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="p-3 bg-light rounded mb-3">
+      <div class="text-secondary small">
+        Musterhaushalt mit {{ sample_household_m3|de_number(0) }} m³ pro Jahr
+      </div>
+      <div class="h2 mb-0 text-green">+{{ sc.sample_delta_year|de_number }} €</div>
+      <div class="text-secondary small">
+        pro Jahr — das sind {{ sc.sample_delta_month|de_number }} € im Monat
+      </div>
+    </div>
+
+    <table class="table table-sm table-borderless mb-2">
+      <tr>
+        <td class="text-secondary">Benötigt pro Jahr</td>
+        <td class="text-end">{{ sc.required|de_number }} €</td>
+      </tr>
+      <tr>
+        <td class="text-secondary">Erwarteter Mehrertrag</td>
+        <td class="text-end"><strong>{{ sc.realized|de_number }} €</strong></td>
+      </tr>
+      <tr>
+        <td class="text-secondary">
+          {% if sc.gap >= 0 %}Überdeckung{% else %}Unterdeckung{% endif %}
+        </td>
+        <td class="text-end {% if sc.gap < 0 %}text-orange{% else %}text-green{% endif %}">
+          {{ sc.gap|de_number(2, true) }} €
+        </td>
+      </tr>
+    </table>
+
+    <p class="text-secondary small mb-0">{{ sc.description }}</p>
+    {% if sc.key == 'volume' %}
+    <p class="text-secondary small mt-2 mb-0">
+      <i class="fas fa-info-circle me-1"></i>
+      Ein höherer m³-Preis kann den Verbrauch dämpfen — dieser Effekt ist in der
+      Rechnung <em>nicht</em> berücksichtigt.
+    </p>
+    {% endif %}
+  </div>
+
+  <div class="card-footer">
+    <div class="d-flex" style="gap:.5rem">
+      <form method="post" action="{{ url_for('cost_planning.goal_choose', goal_id=goal.id) }}"
+            class="flex-fill">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="scenario" value="{{ sc.key }}">
+        <button type="submit" class="btn btn-sm w-100 {% if chosen %}btn-primary{% else %}btn-outline-primary{% endif %}"
+                {% if not sc.feasible %}disabled{% endif %}>
+          <i class="fas fa-check me-1"></i>
+          {% if chosen %}Beschlossen{% else %}Dieses Paket wählen{% endif %}
+        </button>
+      </form>
+      {% if current_user.has_permission('rechnungen_op') %}
+      <form method="post" action="{{ url_for('cost_planning.goal_apply_tariff', goal_id=goal.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="scenario" value="{{ sc.key }}">
+        <input type="hidden" name="rounding" value="{{ rounding }}">
+        <input type="hidden" name="avg_years" value="{{ avg_years }}">
+        {% if tariff %}<input type="hidden" name="tariff" value="{{ tariff.id }}">{% endif %}
+        <button type="submit" class="btn btn-sm btn-outline-secondary"
+                title="Als neuen Tarif übernehmen"
+                {% if not sc.feasible %}disabled{% endif %}>
+          <i class="fas fa-file-import"></i>
+        </button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+</div>

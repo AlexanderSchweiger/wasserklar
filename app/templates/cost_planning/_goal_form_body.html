@@ -1,0 +1,122 @@
+{# Formular-Body fuer Neuanlage UND Bearbeitung eines Finanzierungsziels.
+   ``form`` ist die zurueckgegebene request.form nach einem Validierungsfehler
+   (dann gewinnen die eingetippten Werte), ``goal`` das bestehende Objekt beim
+   Bearbeiten. Bewusst ohne Jinja-Makro: Makros sehen den Template-Scope nicht
+   zuverlaessig, und die paar Ausdruecke sind inline besser lesbar. #}
+{% set cur_type = (form.get('goal_type') if form else None) or (goal.goal_type if goal else goal_model.TYPE_INVESTMENT) %}
+
+<div class="mb-3">
+  <label class="form-label required">Bezeichnung</label>
+  <input type="text" name="name" class="form-control" required maxlength="150"
+         placeholder="z. B. Leitungsnetz-Erneuerung Ortsteil Nord"
+         value="{{ form.get('name') if form else (goal.name if goal else '') }}">
+</div>
+
+<div class="mb-3">
+  <label class="form-label required">Art des Ziels</label>
+  <div class="form-selectgroup">
+    {% for key, label in goal_model.TYPE_CHOICES %}
+    <label class="form-selectgroup-item">
+      <input type="radio" name="goal_type" value="{{ key }}"
+             class="form-selectgroup-input" data-goal-type
+             {% if cur_type == key %}checked{% endif %}>
+      <span class="form-selectgroup-label">
+        <i class="fas {% if key == 'loan' %}fa-hand-holding-usd{% else %}fa-piggy-bank{% endif %} me-1"></i>
+        {{ label }}
+      </span>
+    </label>
+    {% endfor %}
+  </div>
+  <small class="form-hint">
+    <strong>Rücklage ansparen</strong>: ein Betrag, der bis zum Zieljahr
+    beisammen sein soll (z. B. für eine geplante Sanierung).
+    <strong>Kredit tilgen</strong>: eine bestehende Restschuld, die bis zum
+    Zieljahr zurückgezahlt sein soll.
+  </small>
+</div>
+
+<div class="row">
+  <div class="col-md-6 mb-3">
+    <label class="form-label required" data-amount-label>Zielbetrag (€)</label>
+    <input type="text" name="target_amount" class="form-control" required
+           inputmode="decimal" placeholder="500.000,00"
+           value="{{ form.get('target_amount') if form else (goal.target_amount if goal else '') }}">
+  </div>
+  <div class="col-md-6 mb-3" data-reserve-row>
+    <label class="form-label">Bereits angespart (€)</label>
+    <input type="text" name="existing_reserve" class="form-control"
+           inputmode="decimal" placeholder="0,00"
+           value="{{ form.get('existing_reserve') if form else (goal.existing_reserve if goal else '') }}">
+    <small class="form-hint">Vorhandene Rücklage — wird mitverzinst und vom Ziel abgezogen.</small>
+  </div>
+</div>
+
+<div class="row">
+  <div class="col-md-4 mb-3">
+    <label class="form-label required">Ab Jahr</label>
+    <input type="number" name="start_year" class="form-control" required
+           min="1950" max="2100"
+           value="{{ form.get('start_year') if form else (goal.start_year if goal else current_year) }}">
+  </div>
+  <div class="col-md-4 mb-3">
+    <label class="form-label required">Ziel-Jahr</label>
+    <input type="number" name="target_year" class="form-control" required
+           min="1950" max="2100"
+           value="{{ form.get('target_year') if form else (goal.target_year if goal else current_year + 5) }}">
+  </div>
+  <div class="col-md-4 mb-3">
+    <label class="form-label">Zinssatz (% p. a.)</label>
+    <input type="text" name="interest_rate" class="form-control"
+           inputmode="decimal" placeholder="0,00"
+           value="{{ form.get('interest_rate') if form else (goal.interest_rate if goal else '') }}">
+    <small class="form-hint" data-rate-hint>Leer oder 0 = ohne Verzinsung.</small>
+  </div>
+</div>
+
+{% if goal %}
+<div class="mb-3">
+  <label class="form-label">Status</label>
+  <select name="status" class="form-select">
+    {% for key, label in goal_model.STATUS_CHOICES %}
+    <option value="{{ key }}"
+      {% if (form.get('status') if form else goal.status) == key %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+</div>
+{% endif %}
+
+<div class="mb-1">
+  <label class="form-label">Notizen</label>
+  <textarea name="notes" class="form-control" rows="2"
+            placeholder="z. B. Beschluss der Hauptversammlung vom …">{{ form.get('notes') if form else (goal.notes if goal else '') }}</textarea>
+</div>
+
+{# Kredit: der Zielbetrag IST die Restschuld — "bereits angespart" ergibt dort
+   keinen Sinn und wird ausgeblendet (serverseitig ebenfalls auf 0 gesetzt). #}
+<script>
+(function () {
+  var body = document.getElementById('goalModalBody');
+  if (!body) { return; }
+  function sync() {
+    var loan = body.querySelector('[data-goal-type][value="loan"]');
+    var isLoan = !!(loan && loan.checked);
+    var reserve = body.querySelector('[data-reserve-row]');
+    if (reserve) { reserve.style.display = isLoan ? 'none' : ''; }
+    var amountLabel = body.querySelector('[data-amount-label]');
+    if (amountLabel) {
+      amountLabel.textContent = isLoan ? 'Restschuld (€)' : 'Zielbetrag (€)';
+    }
+    var rateHint = body.querySelector('[data-rate-hint]');
+    if (rateHint) {
+      rateHint.textContent = isLoan
+        ? 'Kreditzinssatz. Leer oder 0 = zinsfrei (reine Tilgung).'
+        : 'Verzinsung der Rücklage. Leer oder 0 = ohne Verzinsung.';
+    }
+  }
+  Array.prototype.forEach.call(
+    body.querySelectorAll('[data-goal-type]'),
+    function (el) { el.addEventListener('change', sync); }
+  );
+  sync();
+})();
+</script>

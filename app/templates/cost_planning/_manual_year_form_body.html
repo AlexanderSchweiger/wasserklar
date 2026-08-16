@@ -1,0 +1,51 @@
+{# Body fuer die manuelle Jahres-Verbrauchsmenge (Neuanlage + Bearbeitung).
+   Gedacht fuer Jahre VOR der App-Einfuehrung, fuer die es keine Ablesungen
+   gibt — Jahre mit Messdaten lehnt der Server ab (Messung schlaegt Eingabe). #}
+{% if row and row.measured_m3 is not none %}
+<div class="alert alert-warning">
+  <i class="fas fa-exclamation-triangle me-1"></i>
+  Für {{ row.year }} liegen <strong>{{ row.reading_count }} Ablesungen</strong> vor,
+  berechnete Summe <strong>{{ row.measured_m3|de_number(0) }} m³</strong>.
+  Ein Wert hier <strong>übersteuert</strong> diese Berechnung — sinnvoll etwa bei
+  unvollständig erfasstem Jahr oder bekanntem Zählerdefekt. Die berechnete Summe
+  bleibt daneben sichtbar und lässt sich jederzeit wieder aktivieren.
+</div>
+{% else %}
+<div class="alert alert-info">
+  <i class="fas fa-info-circle me-1"></i>
+  Vor allem für Jahre <strong>ohne</strong> Zählerdaten gedacht — etwa die Jahre
+  vor der Umstellung auf diese Software. Jahre mit Ablesungen lassen sich
+  ebenfalls übersteuern; die berechnete Summe bleibt dann zum Vergleich stehen.
+</div>
+{% endif %}
+
+<div class="mb-3">
+  <label class="form-label required">Jahr</label>
+  <input type="number" name="year" class="form-control" required
+         min="1950" max="{{ current_year + 1 }}"
+         {% if row %}readonly{% endif %}
+         value="{{ form.get('year') if form else (row.year if row else current_year - 1) }}">
+</div>
+
+<div class="mb-3">
+  <label class="form-label required">Gesamtverbrauch (m³)</label>
+  <input type="text" name="total_m3" class="form-control" required
+         inputmode="decimal" placeholder="42.500,000"
+         value="{{ form.get('total_m3') if form else (row.total_m3 if row else '') }}">
+  <small class="form-hint">Summe über alle Zähler — die im betreffenden Jahr
+    insgesamt abgegebene Wassermenge.</small>
+</div>
+
+<div class="mb-3">
+  <label class="form-label">Anzahl abgerechneter Objekte</label>
+  <input type="number" name="unit_count" class="form-control" min="0"
+         value="{{ form.get('unit_count') if form else (row.unit_count if row else '') }}">
+  <small class="form-hint">Optional — nur zur Einordnung in der Historie.</small>
+</div>
+
+<div class="mb-1">
+  <label class="form-label">Notiz</label>
+  <input type="text" name="notes" class="form-control" maxlength="200"
+         placeholder="z. B. aus der Excel-Liste des Kassiers"
+         value="{{ form.get('notes') if form else (row.notes if row else '') }}">
+</div>

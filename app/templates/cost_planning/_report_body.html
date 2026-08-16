@@ -1,0 +1,132 @@
+{# Gemeinsamer Inhalt der Beschlussvorlage — wird von der HTML-Druckansicht
+   (report_print.html) UND vom PDF (report_pdf.html) eingebunden. Bewusst ohne
+   Tabler-Klassen an den kritischen Stellen, damit derselbe Markup-Baum auch in
+   WeasyPrint (eigenes Stylesheet) sauber aussieht. #}
+
+<h1>{{ goal.name }}</h1>
+<p class="muted">
+  {{ goal.type_label }} · Laufzeit {{ goal.start_year }}–{{ goal.target_year }}
+  ({{ goal.years }} Jahre)
+  {% if requirement and requirement.rate %}
+  · Zinssatz {{ (requirement.rate * 100)|de_number(2) }} % p. a.
+  {% endif %}
+</p>
+
+<h2>Ausgangslage</h2>
+<table>
+  <tr>
+    <td>{% if goal.is_loan %}Offene Restschuld{% else %}Zielbetrag{% endif %}</td>
+    <td class="num">{{ goal.target_amount|de_number }} €</td>
+  </tr>
+  {% if not goal.is_loan and goal.existing_reserve %}
+  <tr>
+    <td>Bereits vorhandene Rücklage</td>
+    <td class="num">{{ goal.existing_reserve|de_number }} €</td>
+  </tr>
+  {% endif %}
+  <tr>
+    <td><strong>Jährlich aufzubringen</strong></td>
+    <td class="num"><strong>{{ requirement.amount|de_number if requirement else '—' }} €</strong></td>
+  </tr>
+  {% if requirement and requirement.rate %}
+  <tr>
+    <td>{% if goal.is_loan %}davon Zinsen über die Laufzeit{% else %}Ersparnis durch Verzinsung{% endif %}</td>
+    <td class="num">{{ requirement.interest_total|de_number }} €</td>
+  </tr>
+  {% endif %}
+  <tr>
+    <td>Durchschnittlicher Jahresverbrauch (Rechenbasis)</td>
+    <td class="num">
+      {{ baseline.avg_m3|de_number(0) }} m³
+      {% if baseline.basis_years %}
+      <span class="muted">({{ baseline.basis_years|map(attribute='year')|join(', ') }})</span>
+      {% endif %}
+    </td>
+  </tr>
+  <tr>
+    <td>Objekte mit Grundgebühr laut Tarif</td>
+    <td class="num">{{ baseline.base_fee_units }} von {{ baseline.billable_units }}</td>
+  </tr>
+  {% if tariff %}
+  <tr>
+    <td>Bisheriger Tarif</td>
+    <td class="num">
+      {{ tariff.name }} —
+      {% if tariff.base_fee is not none %}{{ tariff.base_fee|de_number }} € Grundgebühr, {% endif %}
+      {{ tariff.price_per_m3|de_number(4) }} € je m³
+    </td>
+  </tr>
+  {% endif %}
+</table>
+
+{% if scenarios %}
+<h2>Vorgeschlagene Tarifpakete</h2>
+<table>
+  <tr>
+    {% for sc in scenarios %}
+    <td class="pkg">
+      <h3>{{ sc.label }}</h3>
+      {% if not sc.feasible %}
+      <p class="muted">Mit den vorliegenden Daten nicht umsetzbar.</p>
+      {% else %}
+      <p>
+        Grundgebühr:
+        <strong>{% if sc.base_fee is not none %}{{ sc.base_fee|de_number }} €{% else %}keine{% endif %}</strong>
+        {% if sc.delta_base_fee > 0 %}<br><span class="muted">(+{{ sc.delta_base_fee|de_number }} €)</span>{% endif %}
+      </p>
+      <p>
+        Preis je m³: <strong>{{ sc.price_per_m3|de_number(4) }} €</strong>
+        {% if sc.delta_price_per_m3 > 0 %}<br><span class="muted">(+{{ sc.delta_price_per_m3|de_number(4) }} €)</span>{% endif %}
+      </p>
+      <p>
+        Musterhaushalt ({{ sample_household_m3|de_number(0) }} m³):<br>
+        <span class="big">+{{ sc.sample_delta_year|de_number }} €</span> pro Jahr<br>
+        <span class="muted">= {{ sc.sample_delta_month|de_number }} € im Monat</span>
+      </p>
+      <p class="muted">
+        Erwarteter Mehrertrag {{ sc.realized|de_number }} €
+        ({{ sc.coverage|de_number(0) }} % des Bedarfs)
+      </p>
+      <p class="muted">{{ sc.description }}</p>
+      {% endif %}
+    </td>
+    {% endfor %}
+  </tr>
+</table>
+
+{% if goal.chosen_scenario %}
+<p><strong>Vorgeschlagener Beschluss:</strong>
+  Paket „{{ cp_scenario_labels.get(goal.chosen_scenario, goal.chosen_scenario) }}"
+  ab dem Jahr {{ goal.start_year }}.</p>
+{% endif %}
+
+<h2>Entwicklung über die Laufzeit
+  {% if active_key %}({{ cp_scenario_labels.get(active_key, active_key) }}){% endif %}</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Jahr</th>
+      <th class="num">Jahresbeitrag</th>
+      <th class="num">Zinsen</th>
+      <th class="num">{% if goal.is_loan %}Tilgung{% else %}Einlage{% endif %}</th>
+      <th class="num">{% if goal.is_loan %}Restschuld{% else %}Rücklagenstand{% endif %}</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in active_rows %}
+    <tr>
+      <td>{{ row.year }}</td>
+      <td class="num">{{ row.contribution|de_number }} €</td>
+      <td class="num">{{ row.interest|de_number }} €</td>
+      <td class="num">{{ row.principal|de_number }} €</td>
+      <td class="num"><strong>{{ row.balance|de_number }} €</strong></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if goal.notes %}
+<h2>Anmerkungen</h2>
+<p>{{ goal.notes }}</p>
+{% endif %}

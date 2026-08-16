@@ -113,6 +113,14 @@ ENDPOINT_TO_DOC = {
     "circulars.map_select":        "rundschreiben#netzbereich",
     "circulars.send":              "rundschreiben#versand",
 
+    # Plankostenrechnung (Tarifplanung + Verbrauchshistorie)
+    "cost_planning.index":               "plankostenrechnung",
+    "cost_planning.goal_detail":         "plankostenrechnung#tarifpakete",
+    "cost_planning.goal_form":           "plankostenrechnung#ziele",
+    "cost_planning.consumption_index":   "plankostenrechnung#verbrauch",
+    "cost_planning.consumption_manual":  "plankostenrechnung#verbrauch-manuell",
+    "cost_planning.goal_print":          "plankostenrechnung#beschlussvorlage",
+
     # Projekte
     "projects.index":              "projekte",
 

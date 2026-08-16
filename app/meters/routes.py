@@ -1020,10 +1020,13 @@ def meter_edit(meter_id):
             datetime.strptime(installed_from_str, "%Y-%m-%d").date()
             if installed_from_str else None
         )
+        old_initial_value = meter.initial_value
         meter.initial_value = Decimal(initial_value_str) if initial_value_str else None
         meter.eichjahr = int(eichjahr_str) if eichjahr_str else None
         meter.meter_type = meter_type
         meter.parent_meter_id = parent_id
+        if meter.initial_value != old_initial_value:
+            recompute_meter_chain(meter)
         db.session.commit()
         flash("Zähler aktualisiert.", "success")
         if is_modal:

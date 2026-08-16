@@ -2664,9 +2664,16 @@ def tariff_new():
         if is_modal:
             return _tariff_modal_saved(t.id)
         return redirect(url_for("invoices.tariffs"))
+    # Query-Parameter als Vorbelegung: die Plankostenrechnung leitet mit einem
+    # fertig gerechneten Tarifpaket hierher (``cost_planning.goal_apply_tariff``).
+    # Bewusst nur eine Vorbelegung, kein stiller Insert — der Tarif ist ein
+    # abrechnungsrelevanter Stammsatz, den bestaetigt der Nutzer selbst.
+    # ``request.args`` ist wie ``request.form`` ein MultiDict, der Form-Body
+    # kommt damit ohne Anpassung aus.
+    prefill = request.args if request.args else None
     if is_modal:
-        return _tariff_body(None, None)
-    return render_template("invoices/tariff_form.html", tariff=None, form=None)
+        return _tariff_body(None, prefill)
+    return render_template("invoices/tariff_form.html", tariff=None, form=prefill)
 
 
 @bp.route("/tariffs/<int:tariff_id>/edit", methods=["GET", "POST"])

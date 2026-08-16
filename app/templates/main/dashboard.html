@@ -158,17 +158,32 @@
       {% set pct = (row.value / max_val * 100) if max_val and max_val > 0 else 0 %}
       <div class="d-flex flex-column align-items-center justify-content-end flex-fill" style="height: 100%;">
         <div class="small fw-semibold mb-1">{{ row.value|de_number(decimals=0) }}</div>
+        {# Manuell nachgetragene Jahre (vor der App-Einfuehrung) optisch
+           absetzen — sie sind eine Angabe des Nutzers, keine Messung. #}
         <div class="w-100 rounded-top"
-             title="{{ row.label }}: {{ row.value|de_number(decimals=0) }} m³"
+             title="{{ row.label }}: {{ row.value|de_number(decimals=0) }} m³{% if row.is_manual %} (manuell erfasst){% endif %}"
              style="height: {{ pct }}%; min-height: 3px; max-width: 64px; margin: 0 auto;
-                    background: linear-gradient(180deg, #4a8cb2 0%, #2f6a93 100%);"></div>
+                    background: {% if row.is_manual %}linear-gradient(180deg, #b6bec6 0%, #8c959d 100%){% else %}linear-gradient(180deg, #4a8cb2 0%, #2f6a93 100%){% endif %};"></div>
         <div class="text-muted small mt-2 text-center">{{ row.label }}</div>
       </div>
       {% endfor %}
     </div>
-    <div class="text-muted small mt-2 text-end">Verbrauch in m³ je Abrechnungsperiode</div>
+    <div class="text-muted small mt-2 d-flex justify-content-between">
+      <span>
+        {% if consumption_stale and current_user.has_permission('auswertungen') %}
+        <i class="fas fa-sync me-1"></i>
+        <a href="{{ url_for('cost_planning.consumption_index') }}">Jahressummen aktualisieren</a>
+        {% endif %}
+      </span>
+      <span>Verbrauch in m³ je Jahr</span>
+    </div>
     {% else %}
-    <p class="text-muted text-center mb-0 py-4">Noch keine Verbrauchsdaten erfasst.</p>
+    <p class="text-muted text-center mb-0 py-4">
+      Noch keine Verbrauchsdaten erfasst.
+      {% if current_user.has_permission('auswertungen') %}
+      <a href="{{ url_for('cost_planning.consumption_index') }}">Frühere Jahre nachtragen</a>
+      {% endif %}
+    </p>
     {% endif %}
   </div>
 </div>

@@ -1,0 +1,267 @@
+{% extends "base.html" %}
+{% block title %}Plankostenrechnung{% endblock %}
+{% block page_title %}<i class="fas fa-calculator me-2"></i> Plankostenrechnung{% endblock %}
+
+{# Chart.js per head_extra — der Sidebar-Link auf diese Seite traegt
+   hx-boost="false" (harter Reload), sonst wuerden diese <head>-Scripts nach
+   einem Boost nicht erneut ausgefuehrt (siehe CLAUDE.md). #}
+{% block head_extra %}
+  <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block content %}
+
+{% if not tariff %}
+<div class="alert alert-warning">
+  <i class="fas fa-exclamation-triangle me-1"></i>
+  Es ist noch kein Wassertarif hinterlegt — ohne Tarif lässt sich kein Aufschlag
+  berechnen.
+  <a href="{{ url_for('invoices.tariffs') }}">Jetzt einen Tarif anlegen</a>.
+</div>
+{% endif %}
+
+<div class="row row-cards">
+
+  {# ── Verbrauchsverlauf ─────────────────────────────────────────────── #}
+  <div class="col-lg-7">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title"><i class="fas fa-tint text-secondary me-2"></i>Wasserverbrauch</h3>
+        <div class="card-actions">
+          <a href="{{ url_for('cost_planning.consumption_index') }}" class="btn btn-sm">
+            <i class="fas fa-list me-1"></i>Jahre verwalten
+          </a>
+        </div>
+      </div>
+      <div class="card-body">
+        {% if history %}
+        <div style="height: 260px">
+          <canvas id="consumptionChart"></canvas>
+        </div>
+        <div class="text-secondary small mt-2">
+          Gesamtmenge aller Zähler je Jahr.
+          <span class="badge bg-blue text-white">berechnet</span> stammt aus den
+          Ablesungen, <span class="badge bg-secondary-lt">manuell</span> wurde für
+          Jahre ohne Zählerdaten nachgetragen.
+        </div>
+        {% else %}
+        <div class="alert alert-info mb-0">
+          Noch keine Verbrauchsdaten. Sobald Ablesungen erfasst sind, entsteht die
+          Historie automatisch — für frühere Jahre lässt sie sich
+          <a href="{{ url_for('cost_planning.consumption_index') }}">manuell nachtragen</a>.
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  {# ── Gesamtbedarf ──────────────────────────────────────────────────── #}
+  <div class="col-lg-5">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title"><i class="fas fa-coins text-secondary me-2"></i>Gesamtbedarf je Jahr</h3>
+      </div>
+      {% if combined_rows %}
+      <div class="card-body">
+        <div class="mb-3">
+          <div class="text-secondary small">Spitzenbedarf (Auslegung des Tarifs)</div>
+          <div class="h1 mb-0">{{ peak|de_number }} €</div>
+          <div class="text-secondary small">pro Jahr, über alle laufenden Ziele</div>
+        </div>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm table-vcenter mb-0">
+          <thead>
+            <tr>
+              <th>Jahr</th>
+              <th>Ziele</th>
+              <th class="text-end">Bedarf</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in combined_rows %}
+            <tr>
+              <td>{{ row.year }}</td>
+              <td class="text-secondary small">
+                {% for part in row.parts %}{{ part.goal.name }}{% if not loop.last %}, {% endif %}{% endfor %}
+              </td>
+              <td class="text-end">{{ row.total|de_number }} €</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="card-footer text-secondary small">
+        Laufen mehrere Ziele parallel, addieren sich die Jahresbeträge — der Tarif
+        muss auf den Spitzenbedarf ausgelegt werden.
+      </div>
+      {% else %}
+      <div class="card-body">
+        <div class="alert alert-info mb-0">
+          Noch kein Finanzierungsziel erfasst.
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  {# ── Ziele ─────────────────────────────────────────────────────────── #}
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Finanzierungsziele</h3>
+        <div class="card-actions">
+          <button type="button" data-url="{{ url_for('cost_planning.goal_form') }}"
+                  data-modal-title="Neues Finanzierungsziel"
+                  onclick="openGoalModal(this)" class="btn btn-primary">
+            <i class="fas fa-plus me-1"></i> Neues Ziel
+          </button>
+        </div>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-hover table-vcenter mb-0">
+            <thead>
+              <tr>
+                <th>Bezeichnung</th>
+                <th>Art</th>
+                <th class="text-end">Zielbetrag</th>
+                <th>Laufzeit</th>
+                <th class="text-end">Bedarf pro Jahr</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for goal in goals %}
+              <tr>
+                <td>
+                  <a href="{{ url_for('cost_planning.goal_detail', goal_id=goal.id) }}"
+                     hx-boost="false"><strong>{{ goal.name }}</strong></a>
+                  {% if goal.chosen_scenario %}
+                  <div class="text-secondary small">
+                    Paket: {{ cp_scenario_labels.get(goal.chosen_scenario, goal.chosen_scenario) }}
+                  </div>
+                  {% endif %}
+                </td>
+                <td>
+                  <span class="badge {% if goal.is_loan %}bg-orange text-white{% else %}bg-azure text-white{% endif %}">
+                    {{ goal.type_label }}
+                  </span>
+                </td>
+                <td class="text-end">{{ goal.target_amount|de_number }} €</td>
+                <td>
+                  {{ goal.start_year }}–{{ goal.target_year }}
+                  <span class="text-secondary small">({{ goal.years }} J.)</span>
+                </td>
+                <td class="text-end">
+                  {% set req = requirements.get(goal.id) %}
+                  {% if req %}
+                  <strong>{{ req.amount|de_number }} €</strong>
+                  {% if req.rate %}
+                  <div class="text-secondary small">
+                    inkl. {{ req.interest_total|de_number }} € Zinsen
+                  </div>
+                  {% endif %}
+                  {% else %}
+                  <span class="text-secondary">—</span>
+                  {% endif %}
+                </td>
+                <td><span class="badge {{ goal.status_badge_class }}">{{ goal.status_label }}</span></td>
+                <td class="text-end">
+                  <a href="{{ url_for('cost_planning.goal_detail', goal_id=goal.id) }}"
+                     class="btn btn-sm btn-outline-primary" hx-boost="false"
+                     title="Tarifpakete ansehen">
+                    <i class="fas fa-calculator"></i>
+                  </a>
+                  <button type="button"
+                          data-url="{{ url_for('cost_planning.goal_form', goal_id=goal.id) }}"
+                          data-modal-title="Ziel bearbeiten"
+                          onclick="openGoalModal(this)"
+                          class="btn btn-sm btn-outline-secondary" title="Bearbeiten">
+                    <i class="fas fa-edit"></i>
+                  </button>
+                </td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="7" class="text-center text-muted py-4">
+                  Noch kein Finanzierungsziel. Legen Sie eines an — etwa
+                  „Leitungsnetz-Erneuerung, 500.000 € in 5 Jahren" oder einen
+                  laufenden Kredit — und die App schlägt passende Tarifpakete vor.
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="application/json" id="consumption-history">{{ history | tojson }}</script>
+{% endblock %}
+
+{% block modals %}
+{% include "cost_planning/_goal_modal.html" %}
+{% endblock %}
+
+{% block scripts %}
+{% include "_modal_edit_helpers.html" %}
+<script>
+setupEditModal({
+  formId: 'goalForm',
+  bodyId: 'goalModalBody',
+  modalId: 'goalModal',
+  openFn: 'openGoalModal',
+  closeEvent: 'closeGoalModal',
+  savedEvent: 'goalSaved',
+});
+</script>
+<script>
+(function () {
+  function initChart() {
+    var el = document.getElementById('consumptionChart');
+    var dataEl = document.getElementById('consumption-history');
+    if (!el || !dataEl) { return; }
+    var rows;
+    try { rows = JSON.parse(dataEl.textContent); } catch (e) { return; }
+    if (!rows.length) { return; }
+    new Chart(el.getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels: rows.map(function (r) { return r.label; }),
+        datasets: [{
+          label: 'Verbrauch (m³)',
+          data: rows.map(function (r) { return r.value; }),
+          // Manuell nachgetragene Jahre optisch absetzen — sie sind eine
+          // Schaetzung des Nutzers, keine gemessene Groesse.
+          backgroundColor: rows.map(function (r) {
+            return r.is_manual ? '#adb5bd' : '#1c7ed6';
+          }),
+          borderRadius: 3,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          y: { beginAtZero: true, title: { display: true, text: 'm³' } },
+        },
+        plugins: { legend: { display: false } },
+      },
+    });
+  }
+
+  // Chart.js wird mit defer geladen — beim Lauf dieses Skripts kann es noch
+  // fehlen. Kurz pollen statt auf ein Event zu wetten. Abbruch nach ~2 s.
+  function whenReady(tries) {
+    if (window.Chart) { initChart(); return; }
+    if (tries <= 0) { return; }
+    setTimeout(function () { whenReady(tries - 1); }, 50);
+  }
+  whenReady(40);
+})();
+</script>
+{% endblock %}

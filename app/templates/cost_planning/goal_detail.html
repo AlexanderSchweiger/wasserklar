@@ -1,0 +1,326 @@
+{% extends "base.html" %}
+{% block title %}{{ goal.name }}{% endblock %}
+{% block page_title %}<i class="fas fa-calculator me-2"></i> {{ goal.name }}{% endblock %}
+
+{% block head_extra %}
+  <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block content %}
+
+<div class="mb-3 d-flex flex-wrap align-items-center" style="gap:.5rem">
+  <a href="{{ url_for('cost_planning.index') }}" class="btn btn-sm" hx-boost="false">
+    <i class="fas fa-arrow-left me-1"></i> Übersicht
+  </a>
+  <span class="badge {% if goal.is_loan %}bg-orange text-white{% else %}bg-azure text-white{% endif %}">
+    {{ goal.type_label }}
+  </span>
+  <span class="badge {{ goal.status_badge_class }}">{{ goal.status_label }}</span>
+  <div class="ms-auto d-flex" style="gap:.5rem">
+    <a href="{{ url_for('cost_planning.goal_print', goal_id=goal.id, rounding=rounding, avg_years=avg_years, tariff=tariff.id if tariff else None) }}"
+       class="btn btn-sm" hx-boost="false" target="_blank">
+      <i class="fas fa-print me-1"></i> Beschlussvorlage
+    </a>
+    <a href="{{ url_for('cost_planning.goal_report_pdf', goal_id=goal.id, rounding=rounding, avg_years=avg_years, tariff=tariff.id if tariff else None) }}"
+       class="btn btn-sm" hx-boost="false">
+      <i class="fas fa-file-pdf me-1"></i> PDF
+    </a>
+    <button type="button" data-url="{{ url_for('cost_planning.goal_form', goal_id=goal.id) }}"
+            data-modal-title="Ziel bearbeiten"
+            onclick="openGoalModal(this)" class="btn btn-sm">
+      <i class="fas fa-edit me-1"></i> Bearbeiten
+    </button>
+  </div>
+</div>
+
+{% if requirement_error %}
+<div class="alert alert-danger">{{ requirement_error }}</div>
+{% endif %}
+
+{% if requirement and requirement.already_covered %}
+<div class="alert alert-success">
+  <i class="fas fa-check-circle me-1"></i>
+  Das Ziel ist mit der vorhandenen Rücklage bereits gedeckt — es ist kein
+  Tarifaufschlag erforderlich.
+</div>
+{% endif %}
+
+{% if not tariff %}
+<div class="alert alert-warning">
+  Kein Wassertarif hinterlegt — die Pakete zeigen nur den reinen Aufschlag.
+  <a href="{{ url_for('invoices.tariffs') }}">Tarif anlegen</a>
+</div>
+{% endif %}
+
+{# ── Kennzahlen ───────────────────────────────────────────────────────── #}
+<div class="row row-cards mb-3">
+  <div class="col-sm-6 col-lg-3">
+    <div class="card card-sm">
+      <div class="card-body">
+        <div class="text-secondary small">
+          {% if goal.is_loan %}Restschuld{% else %}Zielbetrag{% endif %}
+        </div>
+        <div class="h2 mb-0">{{ goal.target_amount|de_number(0) }} €</div>
+        {% if not goal.is_loan and goal.existing_reserve %}
+        <div class="text-secondary small">
+          davon {{ goal.existing_reserve|de_number(0) }} € vorhanden
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3">
+    <div class="card card-sm">
+      <div class="card-body">
+        <div class="text-secondary small">Laufzeit</div>
+        <div class="h2 mb-0">{{ goal.years }} Jahre</div>
+        <div class="text-secondary small">{{ goal.start_year }}–{{ goal.target_year }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3">
+    <div class="card card-sm">
+      <div class="card-body">
+        <div class="text-secondary small">Benötigt pro Jahr</div>
+        <div class="h2 mb-0">
+          {{ requirement.amount|de_number if requirement else '—' }} €
+        </div>
+        {% if requirement and requirement.rate %}
+        <div class="text-secondary small">
+          bei {{ (requirement.rate * 100)|de_number(2) }} % p. a.
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3">
+    <div class="card card-sm">
+      <div class="card-body">
+        <div class="text-secondary small">
+          {% if goal.is_loan %}Zinsen gesamt{% else %}Ersparnis durch Verzinsung{% endif %}
+        </div>
+        <div class="h2 mb-0">
+          {{ requirement.interest_total|de_number(0) if requirement else '—' }} €
+        </div>
+        <div class="text-secondary small">
+          über die gesamte Laufzeit
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Rechenbasis + Stellschrauben ─────────────────────────────────────── #}
+<div class="card mb-3">
+  <div class="card-body">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-md-3">
+        <label class="form-label">Basis-Tarif</label>
+        <select name="tariff" class="form-select form-select-sm">
+          {% for t in tariffs %}
+          <option value="{{ t.id }}" {% if tariff and t.id == tariff.id %}selected{% endif %}>
+            {{ t.name }} (ab {{ t.valid_from }})
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Rundung</label>
+        <select name="rounding" class="form-select form-select-sm">
+          {% for key, label in cp_rounding_choices %}
+          <option value="{{ key }}" {% if rounding == key %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Ø über Jahre</label>
+        <input type="number" name="avg_years" class="form-control form-control-sm"
+               min="1" max="10" value="{{ avg_years }}">
+      </div>
+      <div class="col-md-2">
+        <button type="submit" class="btn btn-sm btn-outline-secondary">
+          <i class="fas fa-redo me-1"></i> Neu rechnen
+        </button>
+      </div>
+    </form>
+
+    <hr>
+
+    <div class="row text-secondary small">
+      <div class="col-md-3">
+        <strong class="d-block text-body">{{ baseline.avg_m3|de_number(0) }} m³</strong>
+        Ø Jahresverbrauch
+        {% if baseline.basis_years %}
+        ({{ baseline.basis_years|map(attribute='year')|join(', ') }})
+        {% endif %}
+      </div>
+      <div class="col-md-3">
+        <strong class="d-block text-body">{{ baseline.base_fee_units }}</strong>
+        Objekte zahlen die Grundgebühr <em>aus dem Tarif</em>
+        {% if baseline.override_units %}
+        — {{ baseline.override_units }} mit individuellem Betrag sind vom
+        Aufschlag nicht betroffen
+        {% endif %}
+      </div>
+      <div class="col-md-3">
+        <strong class="d-block text-body">{{ baseline.billable_units }}</strong>
+        abrechenbare Objekte insgesamt
+      </div>
+      <div class="col-md-3">
+        <strong class="d-block text-body">{{ baseline.current_revenue|de_number(0) }} €</strong>
+        heutiger Jahresertrag aus dem Tarif
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Die drei Pakete ──────────────────────────────────────────────────── #}
+{% if scenarios %}
+<h3 class="mb-3">Tarifpakete</h3>
+<div class="row row-cards mb-4">
+  {% for sc in scenarios %}
+  <div class="col-lg-4 mb-3">
+    {% include "cost_planning/_scenario_card.html" with context %}
+  </div>
+  {% endfor %}
+</div>
+
+{# ── Projektion ───────────────────────────────────────────────────────── #}
+<div class="row row-cards">
+  <div class="col-lg-7">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">
+          Verlauf — {{ cp_scenario_labels.get(active_key, active_key) }}
+        </h3>
+      </div>
+      <div class="card-body">
+        <div style="height: 280px">
+          <canvas id="projectionChart"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-5">
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">Jahresverlauf</h3>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm table-vcenter mb-0">
+          <thead>
+            <tr>
+              <th>Jahr</th>
+              <th class="text-end">Beitrag</th>
+              <th class="text-end">Zinsen</th>
+              <th class="text-end">
+                {% if goal.is_loan %}Restschuld{% else %}Rücklage{% endif %}
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in active_rows %}
+            <tr>
+              <td>{{ row.year }}</td>
+              <td class="text-end">{{ row.contribution|de_number(0) }} €</td>
+              <td class="text-end text-secondary">{{ row.interest|de_number(0) }} €</td>
+              <td class="text-end"><strong>{{ row.balance|de_number(0) }} €</strong></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="card-footer text-secondary small">
+        {% if goal.is_loan %}
+          Der jährliche Beitrag ist der volle Kapitaldienst — Zinsen plus Tilgung.
+        {% else %}
+          Rücklagenstand am Jahresende, inklusive Verzinsung des Vorjahresstands.
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="application/json" id="projection-data">{{ chart | tojson }}</script>
+{% endif %}
+
+{# Löschen bewusst außerhalb des Modals — ein <form> im <form> ist ungültiges
+   HTML und der Browser würde es stillschweigend auseinanderreißen. #}
+<div class="mt-4 text-end">
+  <form method="post" action="{{ url_for('cost_planning.goal_delete', goal_id=goal.id) }}"
+        onsubmit="return confirm('Dieses Finanzierungsziel wirklich löschen?');">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button type="submit" class="btn btn-sm btn-outline-danger">
+      <i class="fas fa-trash me-1"></i> Ziel löschen
+    </button>
+  </form>
+</div>
+{% endblock %}
+
+{% block modals %}
+{% include "cost_planning/_goal_modal.html" %}
+{% endblock %}
+
+{% block scripts %}
+{% include "_modal_edit_helpers.html" %}
+<script>
+setupEditModal({
+  formId: 'goalForm',
+  bodyId: 'goalModalBody',
+  modalId: 'goalModal',
+  openFn: 'openGoalModal',
+  closeEvent: 'closeGoalModal',
+  savedEvent: 'goalSaved',
+});
+</script>
+<script>
+(function () {
+  function initChart() {
+    var el = document.getElementById('projectionChart');
+    var dataEl = document.getElementById('projection-data');
+    if (!el || !dataEl) { return; }
+    var d;
+    try { d = JSON.parse(dataEl.textContent); } catch (e) { return; }
+    new Chart(el.getContext('2d'), {
+      type: 'line',
+      data: {
+        labels: d.labels,
+        datasets: [
+          {
+            label: d.is_loan ? 'Restschuld (€)' : 'Rücklage (€)',
+            data: d.balance,
+            borderColor: '#1c7ed6',
+            backgroundColor: 'rgba(28,126,214,.15)',
+            fill: true,
+            tension: 0.2,
+          },
+          {
+            label: d.is_loan ? 'Ursprüngliche Schuld' : 'Zielbetrag',
+            data: d.target,
+            borderColor: '#adb5bd',
+            borderDash: [6, 4],
+            pointRadius: 0,
+            fill: false,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: { y: { beginAtZero: true, title: { display: true, text: '€' } } },
+        plugins: { legend: { position: 'bottom' } },
+      },
+    });
+  }
+
+  // Chart.js kommt per defer — kurz pollen statt auf ein Event zu wetten.
+  function whenReady(tries) {
+    if (window.Chart) { initChart(); return; }
+    if (tries <= 0) { return; }
+    setTimeout(function () { whenReady(tries - 1); }, 50);
+  }
+  whenReady(40);
+})();
+</script>
+{% endblock %}

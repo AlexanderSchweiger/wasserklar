@@ -15,6 +15,7 @@ ein Bulk-Aufrufer alle Eintraege in einer Transaktion speichern.
 from datetime import date
 from decimal import Decimal
 
+from app import consumption
 from app.extensions import db
 from app.models import MeterReading, WaterMeter, BillingPeriod
 
@@ -83,6 +84,14 @@ def recompute_meter_chain(meter):
         )
         if r.value is not None:
             prev_value = r.value
+
+    # Gecachte Jahressummen (``ConsumptionYear``) zur Neuberechnung vormerken.
+    # Bewusst HIER und nicht in ``save_reading``: das ist die einzige Stelle, an
+    # der sich ``consumption`` aendert — Bulk-Import, Zaehlertausch, Swap-Import
+    # und ``reading_delete`` gehen an ``save_reading`` vorbei, an dieser Funktion
+    # aber nicht. Gerechnet wird nichts, nur ein Flag gesetzt (siehe
+    # app/consumption.py).
+    consumption.mark_stale()
     return rows
 
 

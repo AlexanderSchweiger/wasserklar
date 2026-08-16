@@ -111,6 +111,8 @@
             {% set _nav_jahresbericht      = request.endpoint == 'accounting.report' %}
             {% set _nav_ust                = request.endpoint in ('accounting.ust','accounting.export_ust_csv') %}
             {% set _nav_kundenauswertung   = request.endpoint in ('accounting.kundenauswertung','accounting.kundenauswertung_export') %}
+            {% set _nav_verbrauch          = request.endpoint in ('cost_planning.consumption_index','cost_planning.consumption_manual','cost_planning.consumption_recalculate','cost_planning.settings_save') %}
+            {% set _nav_plankosten         = request.blueprint == 'cost_planning' and not _nav_verbrauch %}
 
             {# Leitungsnetz #}
             {% set _nav_leitungsplan = request.endpoint in ('network.index','network.print_view') %}
@@ -163,7 +165,7 @@
             {# Eltern-Aktiv aus Kinder-OR ableiten #}
             {% set accounting_active   = _nav_buchungen or _nav_umbuchungen or _nav_bankkonten or _nav_kontenplan or _nav_projekte or _nav_bankimport %}
             {% set invoices_active     = _nav_neue_rechnung or _nav_alle_rechnungen or _nav_offene_posten or _nav_rechnungslauf or _nav_rechnungslaeufe or _nav_jahresuebersicht or _nav_korrekturen or _nav_email_settings or _nav_tarife %}
-            {% set auswertungen_active = _nav_jahresbericht or _nav_ust or _nav_kundenauswertung %}
+            {% set auswertungen_active = _nav_jahresbericht or _nav_ust or _nav_kundenauswertung or _nav_verbrauch or _nav_plankosten %}
             {% set zaehler_active      = _nav_zaehler or _nav_ablesungen or _nav_ablesungen_import or _nav_zaehlertausch or _nav_zaehlertausch_hist or _nav_meter_tours or _nav_selbsterfassung %}
             {% set stammdaten_active   = _nav_kunden or _nav_objekte or _nav_import or _nav_buchungsjahre or _nav_perioden %}
             {% set verwaltung_active   = _nav_benutzer or _nav_einstellungen or _nav_data_transfer or _nav_dokumente or _nav_backups or _nav_support or _nav_abonnement or _nav_api_keys %}
@@ -624,6 +626,23 @@
                     <a class="nav-link {% if _nav_kundenauswertung %}active{% endif %}"
                       href="{{ url_for('accounting.kundenauswertung') }}">
                       <i class="fas fa-users me-2"></i>Kundenauswertung
+                    </a>
+                  </li>
+                  <li class="nav-item">
+                    <a class="nav-link {% if _nav_verbrauch %}active{% endif %}"
+                      href="{{ url_for('cost_planning.consumption_index') }}">
+                      <i class="fas fa-tint me-2"></i>Wasserverbrauch
+                    </a>
+                  </li>
+                  {# hx-boost="false": die Seite laedt Chart.js im head_extra —
+                     nach einem Boost wuerden diese <head>-Scripts nicht erneut
+                     ausgefuehrt (siehe CLAUDE.md „Seiten-spezifische JS-Libs").
+                     Die Verbrauchsseite darueber hat kein Diagramm und boostet
+                     daher normal. #}
+                  <li class="nav-item">
+                    <a class="nav-link {% if _nav_plankosten %}active{% endif %}"
+                      href="{{ url_for('cost_planning.index') }}" hx-boost="false">
+                      <i class="fas fa-calculator me-2"></i>Plankostenrechnung
                     </a>
                   </li>
                 </ul>
