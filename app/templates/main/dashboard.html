@@ -148,7 +148,7 @@
 {# ── Verbrauch über die Jahre ───────────────────────────────────────────── #}
 <div class="card mb-3">
   <div class="card-header">
-    <h3 class="card-title"><i class="fas fa-chart-area me-1"></i> Wasserverbrauch über die Jahre</h3>
+    <h3 class="card-title"><a href="{{ url_for('cost_planning.consumption_index') }}" class="text-reset"><i class="fas fa-chart-area me-1"></i> Wasserverbrauch über die Jahre</a></h3>
   </div>
   <div class="card-body">
     {% if consumption_history %}

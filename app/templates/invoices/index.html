@@ -6,6 +6,19 @@
 <div class="card table-card">
   <div class="card-header">
     <div class="filter-bar">
+      <div class="mb-3" style="width:240px">
+        <label class="form-label mb-0 me-1">Suche</label>
+        <div class="input-group input-group-sm">
+          <input type="search" name="q" value="{{ q }}"
+            placeholder="Kunde, Rnr, Objekt…" class="form-control form-control-sm"
+            data-filter-field
+            hx-get="{{ url_for('invoices.index') }}"
+            hx-trigger="input changed delay:300ms"
+            hx-target="#invoices-table"
+            hx-include="[name='status'],[name='period_id'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id'],[name='mail_filter'],[name='sort'],[name='dir']">
+          <span class="input-group-text"><i class="fas fa-search"></i></span>
+        </div>
+      </div>
       <div class="mb-3">
         <label class="form-label mb-0 me-1">Status</label>
         <select name="status" class="form-select form-select-sm tom-select"
@@ -69,15 +82,6 @@
           </option>
           {% endfor %}
         </select>
-      </div>
-      <div class="input-group input-group-sm" style="width:220px">
-        <input type="search" name="q" value="{{ q }}" placeholder="Kundenname…" class="form-control form-control-sm"
-          data-filter-field
-          hx-get="{{ url_for('invoices.index') }}"
-          hx-trigger="input changed delay:300ms"
-          hx-target="#invoices-table"
-          hx-include="[name='status'],[name='period_id'],[name='date_from'],[name='date_to'],[name='q'],[name='project_id'],[name='mail_filter'],[name='sort'],[name='dir']">
-        <span class="input-group-text"><i class="fas fa-search"></i></span>
       </div>
       <div class="mb-3" style="width:220px">
         <label class="form-label mb-0 me-1">Schriftverkehr</label>

@@ -1620,8 +1620,16 @@ class Invoice(EmailTrackableMixin, db.Model):
     # (Verbrauch bis zum Stichtag). Der Massen-Rechnungslauf ueberspringt und
     # verrechnet nur ``standard``-Rechnungen; die Schlussrechnung reduziert den
     # spaeteren Jahresverbrauch des Nachbesitzers (siehe app/owner_change/).
+    #
+    # 'credit_note' = Storno-Rechnung (Gutschrift) zu einer stornierten Rechnung.
+    # Sie ist ein eigenes, fortlaufend nummeriertes Beleg-Dokument mit
+    # gespiegelten (negativen) Positionen und verweist ueber ``cancels_invoice_id``
+    # auf das Original — die UStG-§11-Pflichtangabe „Bezug auf die urspruengliche
+    # Rechnung". Eine Rechnung wird NIE geloescht oder ueberschrieben; das
+    # Storno ist immer ein zweiter Beleg (siehe app/invoices/credit_note.py).
     KIND_STANDARD = "standard"
     KIND_FINAL_SETTLEMENT = "final_settlement"
+    KIND_CREDIT_NOTE = "credit_note"
 
     # Erlaubte manuelle Statuswechsel (Dropdown auf der Detailseite via
     # ``invoices.set_status``). Steuert den Lebenszyklus einer Rechnung:
@@ -1632,6 +1640,10 @@ class Invoice(EmailTrackableMixin, db.Model):
     #   Storniert→ (terminal, kein Wechsel mehr)
     # Ein Zurücksetzen auf 'Entwurf' ist nie erlaubt. Die ``pay``-Route folgt
     # ihrer eigenen Betrags-Logik und ist von dieser Tabelle unberührt.
+    #
+    # Storno-Rechnungen (``KIND_CREDIT_NOTE``) durchlaufen dieselben Zustaende,
+    # nur spiegelverkehrt: 'Versendet' = Gutschrift ausgestellt, 'Bezahlt' =
+    # Betrag an den Kunden rueckueberwiesen.
     ALLOWED_TRANSITIONS = {
         STATUS_DRAFT: [STATUS_SENT],
         STATUS_SENT: [STATUS_PAID, STATUS_CREDIT, STATUS_CANCELLED],
@@ -1653,6 +1665,14 @@ class Invoice(EmailTrackableMixin, db.Model):
         db.String(20), nullable=False, default=KIND_STANDARD,
         server_default=db.text("'standard'"),
     )
+    # Self-FK: bei ``invoice_kind='credit_note'`` die stornierte Original-
+    # rechnung. ``ondelete='SET NULL'`` feuert auf SQLite ohne FK-Pragma nicht —
+    # relevant ist das aber nur fuer Entwuerfe, und ein Entwurf hat nie eine
+    # Storno-Rechnung (Entwuerfe werden geloescht, nicht storniert).
+    cancels_invoice_id = db.Column(
+        db.Integer, db.ForeignKey("invoices.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )
     total_amount = db.Column(db.Numeric(10, 2), default=0)
     pdf_path = db.Column(db.String(500))
     doc_path = db.Column(db.String(500))   # gecachte .docx für gesperrte Rechnungen
@@ -1667,6 +1687,13 @@ class Invoice(EmailTrackableMixin, db.Model):
     created_by = db.relationship("User", foreign_keys=[created_by_id])
     bookings = db.relationship("Booking", backref="invoice", lazy="dynamic")
     billing_period = db.relationship("BillingPeriod")
+    # Original <-> Storno-Rechnung(en). Mehrzahl, weil eine Storno-Rechnung
+    # selbst wieder storniert werden kann (dann folgt ggf. eine zweite) —
+    # ``active_credit_note`` liefert die eine gueltige.
+    cancels_invoice = db.relationship(
+        "Invoice", remote_side=[id],
+        backref=db.backref("credit_notes", lazy="select"),
+    )
     # Polymorphe E-Mail-Events (kein FK mehr → viewonly, Aufraeumen explizit).
     # Tiebreaker auf id desc — siehe Kommentar in invoices.email_events-Route.
     email_events = db.relationship(
@@ -1780,6 +1807,49 @@ class Invoice(EmailTrackableMixin, db.Model):
             for item in self.items
             if item.unit == "m³"
         ) or None
+
+    # -- Storno-Rechnung (Gutschrift) ---------------------------------------
+
+    @property
+    def is_credit_note(self):
+        """True, wenn dieser Beleg eine Storno-Rechnung (Gutschrift) ist."""
+        return self.invoice_kind == self.KIND_CREDIT_NOTE
+
+    @property
+    def active_credit_note(self):
+        """Die gueltige Storno-Rechnung zu dieser Rechnung, sonst ``None``.
+
+        Eine selbst wieder stornierte Storno-Rechnung zaehlt nicht — sonst
+        koennte man nach deren Ruecknahme keine neue mehr ausstellen.
+        """
+        for cn in self.credit_notes:
+            if cn.status != Invoice.STATUS_CANCELLED:
+                return cn
+        return None
+
+    @property
+    def refund_amount(self):
+        """Betrag, der aus dieser Gutschrift an den Kunden zurueckgeht.
+
+        Abgeleitet (siehe ``app/invoices/credit_note.py``) statt aus dem
+        Offenen Posten gelesen: den gibt es erst, wenn die Gutschrift versendet
+        wurde — ein Entwurfs-Ausdruck haette sonst faelschlich „keine
+        Rueckzahlung" behauptet. 0 fuer alles ausser Gutschriften.
+        """
+        from decimal import Decimal
+        if not self.is_credit_note:
+            return Decimal("0")
+        from app.invoices.credit_note import refund_amount_for
+        return refund_amount_for(self)
+
+    @property
+    def document_title(self):
+        """Beleg-Bezeichnung fuer PDF/Word/E-Mail („Rechnung"/„Gutschrift"/…)."""
+        if self.invoice_kind == self.KIND_CREDIT_NOTE:
+            return "Gutschrift"
+        if self.invoice_kind == self.KIND_FINAL_SETTLEMENT:
+            return "Schlussrechnung"
+        return "Rechnung"
 
     def __repr__(self):
         return f"<Invoice {self.invoice_number}>"

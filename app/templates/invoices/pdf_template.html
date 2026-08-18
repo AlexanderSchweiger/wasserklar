@@ -58,7 +58,12 @@
     border-bottom: 1px solid {{ design.border_color }};
     font-size: 10pt;
   }
-  .text-right { text-align: right; }
+  /* Betraege nie umbrechen: bei negativen Werten (Gutschrift) wird der
+     String durch das Minus laenger und das Euro-Zeichen rutschte sonst
+     in die zweite Zeile. Gilt fuer alle rechtsbuendigen Zellen — neben den
+     Betrags-Spalten sind das die Summen-Labels im tfoot ("zzgl. USt. …"),
+     die ueber vier Spalten laufen und darum ohnehin nie umbrechen. */
+  .text-right { text-align: right; white-space: nowrap; }
   .total-row td {
     font-weight: bold;
     border-top: 2px solid {{ design.rule_color }};
@@ -99,12 +104,23 @@
   </div>
 </div>
 
+{% set is_credit = invoice.is_credit_note %}
+{# Rueckzahlbetrag: abgeleitet (Invoice.refund_amount), NICHT aus dem Offenen
+   Posten gelesen — den gibt es erst nach dem Versenden, ein Entwurfs-Ausdruck
+   haette sonst faelschlich „keine Rueckzahlung" behauptet. #}
+{% set refund_amount = invoice.refund_amount %}
 <div class="invoice-meta">
-  <strong>Rechnungsnummer:</strong> {{ invoice.invoice_number }}<br>
-  <strong>Rechnungsdatum:</strong> {{ invoice.date.strftime('%d.%m.%Y') }}<br>
-  <strong>Lieferdatum:</strong> {{ invoice.date.strftime('%d.%m.%Y') }}<br>
+  <strong>{{ 'Gutschriftsnummer' if is_credit else 'Rechnungsnummer' }}:</strong> {{ invoice.invoice_number }}<br>
+  <strong>{{ 'Gutschriftsdatum' if is_credit else 'Rechnungsdatum' }}:</strong> {{ invoice.date.strftime('%d.%m.%Y') }}<br>
+  {% if not is_credit %}<strong>Lieferdatum:</strong> {{ invoice.date.strftime('%d.%m.%Y') }}<br>{% endif %}
   {% if invoice.customer.customer_number %}<strong>Kundennummer:</strong> {{ invoice.customer.customer_number }}<br>{% endif %}
+  {% if is_credit %}
+  {# UStG § 11: die Gutschrift muss die stornierte Rechnung eindeutig benennen. #}
+  {% if invoice.cancels_invoice %}<strong>Storno zu Rechnung:</strong> {{ invoice.cancels_invoice.invoice_number }}
+    vom {{ invoice.cancels_invoice.date.strftime('%d.%m.%Y') }}<br>{% endif %}
+  {% else %}
   <strong>Fällig bis:</strong> {{ invoice.due_date.strftime('%d.%m.%Y') if invoice.due_date else '—' }}<br>
+  {% endif %}
   {% if invoice.billing_period %}<strong>Abrechnungsperiode:</strong> {{ invoice.billing_period.name }}<br>{% endif %}
 </div>
 
@@ -120,9 +136,17 @@
   {% endif %}
 </div>
 
-<h1>{% if invoice.invoice_kind == invoice.KIND_FINAL_SETTLEMENT %}Schlussrechnung{% else %}Rechnung{% endif %} {{ invoice.invoice_number }}</h1>
+<h1>{{ invoice.document_title }} {{ invoice.invoice_number }}</h1>
 
-{% if invoice.property %}
+{% if is_credit %}
+<p class="intro">
+  Wir stornieren
+  {% if invoice.cancels_invoice %}unsere Rechnung <strong>{{ invoice.cancels_invoice.invoice_number }}</strong>
+  vom {{ invoice.cancels_invoice.date.strftime('%d.%m.%Y') }}{% else %}die zugrunde liegende Rechnung{% endif %}
+  {% if invoice.property %}für die Liegenschaft <strong>„{{ invoice.property.address_display() or invoice.property.label() }}"</strong>{% endif %}
+  und schreiben Ihnen die folgenden Positionen gut:
+</p>
+{% elif invoice.property %}
 <p class="intro">Wir stellen für die Liegenschaft <strong>„{{ invoice.property.address_display() or invoice.property.label() }}"</strong> wie folgt in Rechnung:</p>
 {% else %}
 <p class="intro">Wir stellen wie folgt in Rechnung:</p>
@@ -175,6 +199,21 @@
 <p style="margin-top:0.5cm"><em>{{ invoice.notes }}</em></p>
 {% endif %}
 
+{% if is_credit %}
+<div class="payment-info">
+  <strong>Rückzahlung</strong><br>
+  {% if refund_amount and refund_amount > 0 %}
+  Der Gutschriftsbetrag von <strong>{{ refund_amount|de_number(2) }} €</strong> wird Ihnen auf
+  das uns bekannte Konto rücküberwiesen. Sollten sich Ihre Bankdaten geändert
+  haben, teilen Sie uns diese bitte mit.<br>
+  Verwendungszweck der Überweisung: <strong>{{ invoice.invoice_number }}</strong>
+  {% else %}
+  Es ergibt sich kein Rückzahlungsbetrag — die stornierte Rechnung war noch
+  nicht bezahlt. Bitte betrachten Sie die ursprüngliche Zahlungsaufforderung
+  als gegenstandslos.
+  {% endif %}
+</div>
+{% else %}
 <div class="payment-info">
   <strong>Zahlung</strong><br>
   Wir ersuchen Sie, den Rechnungsbetrag von <strong>{{ invoice.total_amount|de_number(2) }} €</strong>
@@ -184,6 +223,7 @@
   Empfänger: {{ wg.account_holder or wg.name }}<br>
   Verwendungszweck: <strong>{{ invoice.invoice_number }}</strong>
 </div>
+{% endif %}
 
 <p class="closing">Mit freundlichen Grüßen<br>{{ wg.name }}</p>
 

@@ -44,12 +44,61 @@ def _find_invoice_number(purpose: str) -> str | None:
     return None
 
 
+def _open_item_for_number(num: str, amount: Decimal):
+    """Offener Posten zur Belegnummer ``num``, passend zum Vorzeichen von ``amount``.
+
+    Zwei Faelle, die beide ueber den Verwendungszweck laufen:
+
+    * **Eingang (amount > 0)** — der Kunde zahlt, wir suchen seinen offenen
+      Posten mit positivem Saldo.
+    * **Ausgang (amount < 0)** — *wir* ueberweisen zurueck (Rueckzahlung aus
+      einer Storno-Rechnung). Dann passt der negative OP der Gutschrift.
+      Der Kassier tippt beim Ueberweisen aber gerne die **Original**-Nummer
+      statt der Gutschriftsnummer in den Verwendungszweck — deshalb wird bei
+      einem Ausgang zusaetzlich die Storno-Rechnung der gefundenen Rechnung
+      geprueft.
+
+    Gibt ``(invoice, open_item)`` zurueck oder ``(None, None)``.
+    """
+    inv = Invoice.query.filter_by(invoice_number=num).first()
+    if inv is None:
+        return None, None
+
+    outgoing = amount < 0
+    candidates = [inv]
+    if outgoing:
+        # Verwendungszweck nennt die Originalrechnung -> deren Gutschrift traegt
+        # den Rueckzahlungs-Posten.
+        credit = inv.active_credit_note
+        if credit is not None:
+            candidates.append(credit)
+
+    for cand in candidates:
+        op = cand.open_item
+        if op is None:
+            continue
+        if op.status not in (OpenItem.STATUS_OPEN, OpenItem.STATUS_PARTIAL):
+            continue
+        # Vorzeichen muss zusammenpassen: eine Rueckueberweisung darf niemals
+        # auf eine offene Forderung gebucht werden (und umgekehrt).
+        if (_as_decimal(op.open_balance) < 0) != outgoing:
+            continue
+        return cand, op
+
+    return None, None
+
+
 def match_line(line: BankStatementLine) -> None:
     """Automatisches Matching fuer eine Bankauszug-Zeile.
 
     Reihenfolge:
     1. Rechnungsnummer (Format YYYY-NNNNN) im Verwendungszweck
     2. Name des Absenders -> Kunde -> offene OPs (exakter Betrags-Match bevorzugt)
+
+    Gilt fuer **beide** Richtungen: Zahlungseingaenge auf offene Forderungen und
+    Rueckueberweisungen (negativer Betrag) auf die negativen Offenen Posten aus
+    einer Storno-Rechnung. Eine Zeile ohne Vorzeichen-Partner bleibt
+    unzugeordnet — der Nutzer waehlt dann in der Vorschau ein Konto.
 
     Aendert die Felder matched_invoice_id, matched_open_item_id,
     matched_customer_id, match_type und selected am Line-Objekt. Kein commit.
@@ -60,21 +109,19 @@ def match_line(line: BankStatementLine) -> None:
     # "manuell triagen".
     line.selected = True
 
-    if _as_decimal(line.amount) <= 0:
+    amount = _as_decimal(line.amount)
+    if amount == 0:
         return
 
     # 1) Rechnungsnummer im Verwendungszweck
     if line.purpose:
         num = _find_invoice_number(line.purpose)
         if num:
-            inv = Invoice.query.filter_by(invoice_number=num).first()
-            if inv and inv.open_item and inv.open_item.status in (
-                OpenItem.STATUS_OPEN,
-                OpenItem.STATUS_PARTIAL,
-            ):
+            inv, op = _open_item_for_number(num, amount)
+            if op is not None:
                 line.matched_invoice_id = inv.id
-                line.matched_open_item_id = inv.open_item.id
-                line.matched_customer_id = inv.customer_id
+                line.matched_open_item_id = op.id
+                line.matched_customer_id = op.customer_id
                 line.match_type = BankStatementLine.MATCH_INVOICE_NUMBER
                 line.selected = True
                 return
@@ -150,6 +197,12 @@ def _match_by_name_amount(line: BankStatementLine) -> None:
     2. Eindeutiger offener Posten mit exakt passendem Betrag -> direkt zuordnen.
     3. Sonst, wenn der Name eindeutig auf einen Kunden zeigt -> nur Kunde
        vormerken (User waehlt den OP im Dropdown).
+
+    Funktioniert in beide Richtungen: der exakte Betragsvergleich gegen
+    ``op.open_balance`` traegt das Vorzeichen mit, eine Rueckueberweisung
+    (-120,00) trifft also nur den Gutschrifts-OP (-120,00) und nie eine offene
+    Forderung. Bei einer Ausgangs-Zeile ist ``counterparty_name`` der
+    Empfaenger — also ebenfalls der Kunde.
     """
     bank_tokens = _normalize_name_tokens(line.counterparty_name)
     if len(bank_tokens) < 2:

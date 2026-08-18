@@ -4,6 +4,7 @@ from decimal import Decimal
 from app.accounting.services import (
     booking_group_from_invoice_payment,
     open_fiscal_year_error,
+    settlement_status,
 )
 from app.extensions import db
 from app.models import (
@@ -71,18 +72,13 @@ def _book_against_op(op, amount, line, stmt, user_id, account_override=None):
 
     db.session.flush()
 
-    balance = op.open_balance
-    if balance == 0:
-        op.status = OpenItem.STATUS_PAID
-        if invoice is not None:
-            invoice.status = Invoice.STATUS_PAID
-    elif balance < 0:
-        op.status = OpenItem.STATUS_CREDIT
-        if invoice is not None:
-            invoice.status = Invoice.STATUS_CREDIT
-    else:
-        op.status = OpenItem.STATUS_PARTIAL
-        # Invoice-Status nicht ueberschreiben (Versendet/Entwurf bleibt)
+    # Vorzeichen-bewusste Status-Ableitung (auch fuer negative Gutschrifts-Posten
+    # aus einer Storno-Rechnung) — siehe accounting.services.settlement_status.
+    op.status, new_invoice_status = settlement_status(op.amount, op.open_balance)
+    if invoice is not None and new_invoice_status is not None:
+        # Bei einer Teilzahlung liefert der Helfer None: der Rechnungs-Status
+        # bleibt wie er ist (Versendet/Entwurf).
+        invoice.status = new_invoice_status
 
     return group_id, booking_id
 
@@ -117,10 +113,17 @@ def _commit_split(line: BankStatementLine, stmt: BankStatement, user_id: int) ->
             f"Buchungsbetrag ({_as_decimal(line.amount)} €)."
         )
 
+    line_amount = _as_decimal(line.amount)
     for a in allocs:
         amt = _as_decimal(a.amount)
-        if amt <= 0:
-            raise ValueError("Teilbeträge müssen größer als 0 sein.")
+        # Vorzeichen-Pruefung statt "> 0": eine Rueckueberweisung (negative
+        # Zeile, z.B. mehrere Gutschriften in einer Sammelueberweisung) wird
+        # ebenfalls aufgeteilt — dann sind alle Teilbetraege negativ.
+        if amt == 0 or (amt < 0) != (line_amount < 0):
+            raise ValueError(
+                "Teilbeträge dürfen nicht 0 sein und müssen dasselbe Vorzeichen "
+                "wie der Buchungsbetrag haben."
+            )
         if a.open_item_id:
             op = OpenItem.query.get(a.open_item_id)
             if op is None:

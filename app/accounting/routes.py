@@ -1489,6 +1489,11 @@ def open_item_pay(item_id):
     if amount <= 0:
         flash("Betrag muss positiv sein.", "danger")
         return redirect(url_for("accounting.open_items"))
+    # Negativer Posten = Rueckzahlungspflicht aus einer Storno-Rechnung.
+    # Der Nutzer tippt weiterhin einen positiven Betrag, gebucht wird er
+    # negativ — sonst waere ein Vorzeichenfehler eine falsche Einnahme.
+    if Decimal(str(item.amount or 0)) < 0:
+        amount = -amount
 
     # Standard-Bankkonto verwenden
     default_ra = RealAccount.query.filter_by(is_default=True, active=True).first() \
@@ -1548,23 +1553,15 @@ def open_item_pay(item_id):
         ).scalar() or Decimal("0")
         balance = Decimal(str(item.amount)) - Decimal(str(paid_total))
 
-        if balance > Decimal("0"):
-            item.status = OpenItem.STATUS_PARTIAL
-        elif balance == Decimal("0"):
-            item.status = OpenItem.STATUS_PAID
-        else:
-            item.status = OpenItem.STATUS_CREDIT
+        # Vorzeichen-bewusst (negativer Posten = Rueckzahlung); None als
+        # Rechnungs-Status heisst Teilzahlung -> Rechnung bleibt „Versendet".
+        item.status, new_invoice_status = acc_svc.settlement_status(item.amount, balance)
 
         # Verknüpfte Rechnung synchronisieren
         if item.invoice_id:
             inv = db.session.get(Invoice, item.invoice_id)
             if inv:
-                if balance > Decimal("0"):
-                    inv.status = Invoice.STATUS_SENT
-                elif balance == Decimal("0"):
-                    inv.status = Invoice.STATUS_PAID
-                else:
-                    inv.status = Invoice.STATUS_CREDIT
+                inv.status = new_invoice_status or Invoice.STATUS_SENT
 
         db.session.commit()
     except ValueError as ve:
@@ -1576,10 +1573,19 @@ def open_item_pay(item_id):
         flash(f"Fehler bei der Zahlung – alle Änderungen wurden zurückgesetzt: {e}", "danger")
         return redirect(url_for("accounting.open_items"))
 
-    if balance > Decimal("0"):
+    # Vorzeichen-bewusste Meldung: bei einem negativen Posten ist die
+    # „Zahlung" eine Rueckzahlung an den Kunden.
+    is_refund = Decimal(str(item.amount or 0)) < 0
+    if balance == Decimal("0"):
+        if is_refund:
+            flash("R\u00fcckzahlung vollst\u00e4ndig gebucht — Posten ausgeglichen.", "success")
+        else:
+            flash("Offener Posten vollst\u00e4ndig bezahlt.", "success")
+    elif is_refund:
+        flash(f"Teil-R\u00fcckzahlung von {abs(amount):.2f} \u20ac gebucht. "
+              f"Offen: {abs(balance):.2f} \u20ac", "success")
+    elif balance > Decimal("0"):
         flash(f"Teilzahlung von {amount:.2f} \u20ac gebucht. Offener Restbetrag: {balance:.2f} \u20ac", "success")
-    elif balance == Decimal("0"):
-        flash("Offener Posten vollst\u00e4ndig bezahlt.", "success")
     else:
         flash(f"\u00dcberzahlung von {abs(balance):.2f} \u20ac. Offener Posten als Gutschrift markiert.", "info")
     return redirect(url_for("accounting.open_items"))

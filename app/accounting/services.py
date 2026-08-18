@@ -713,6 +713,39 @@ def _split_invoice_by_dimensions(invoice, gross_amount, fallback_account_id=None
     return result
 
 
+def settlement_status(target_amount, balance):
+    """Status-Paar ``(OpenItem, Invoice)`` nach einer Zahlung bzw. Rueckzahlung.
+
+    ``target_amount`` ist der Soll-Betrag (``OpenItem.amount`` bzw.
+    ``Invoice.total_amount``), ``balance`` der danach verbleibende Rest
+    (Soll minus Gebuchtes).
+
+    Das Vorzeichen entscheidet die Leserichtung: ein **positiver** Soll-Betrag
+    ist eine Forderung (der Kunde zahlt an uns), ein **negativer** eine
+    Verbindlichkeit aus einer Storno-Rechnung (wir zahlen an den Kunden
+    zurueck). Bei einer Gutschrift heisst ein Restsaldo darum NICHT
+    „Gutschrift"/„Ueberzahlung", sondern schlicht: noch nicht fertig
+    ausbezahlt.
+
+    Der zweite Rueckgabewert ist ``None``, wenn der Rechnungs-Status
+    unveraendert bleiben soll (Teilzahlung — die Rechnung bleibt „Versendet"
+    bzw. bei einer Gutschrift „Versendet" = ausgestellt).
+    """
+    from app.models import Invoice, OpenItem
+
+    target = Decimal(str(target_amount or 0))
+    balance = Decimal(str(balance or 0))
+
+    if balance == 0:
+        # Voll beglichen — bei einer Gutschrift heisst das: voll zurueckgezahlt.
+        return OpenItem.STATUS_PAID, Invoice.STATUS_PAID
+    if target < 0:
+        return OpenItem.STATUS_PARTIAL, None
+    if balance < 0:
+        return OpenItem.STATUS_CREDIT, Invoice.STATUS_CREDIT
+    return OpenItem.STATUS_PARTIAL, None
+
+
 def booking_group_from_invoice_payment(
     invoice,
     amount,

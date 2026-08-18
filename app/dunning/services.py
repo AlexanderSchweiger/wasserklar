@@ -216,6 +216,12 @@ def eligible_invoices_for_stage(policy, today=None):
             Invoice.status == Invoice.STATUS_SENT,
             Invoice.due_date != None,   # noqa: E711
             Invoice.due_date <= cutoff,
+            # Storno-Rechnungen (Gutschriften) sind Verbindlichkeiten, keine
+            # Forderungen — sie duerfen nie in einen Mahnlauf geraten. Der
+            # ``open_balance <= 0``-Filter unten faengt sie zwar ohnehin ab,
+            # aber ein explizites Kriterium ist billiger und dokumentiert die
+            # Absicht.
+            Invoice.invoice_kind != Invoice.KIND_CREDIT_NOTE,
         )
         .all()
     )

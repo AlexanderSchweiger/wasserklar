@@ -172,7 +172,13 @@
           </td>
 
           {# Gesamt #}
-          <td class="text-end" style="white-space:nowrap">{{ item.amount|de_number }} €</td>
+          <td class="text-end" style="white-space:nowrap">
+            {{ item.amount|de_number }} €
+            {% if item.amount < 0 %}
+            <span class="badge bg-orange-lt ms-1"
+                  title="Rückzahlung an den Kontakt (aus einer Storno-Rechnung)">Rückzahlung</span>
+            {% endif %}
+          </td>
 
           {# Offen #}
           <td class="text-end" style="white-space:nowrap">
@@ -185,10 +191,13 @@
             <form method="post" action="{{ url_for('accounting.open_item_pay', item_id=item.id) }}"
                   class="d-inline-flex align-items-center gap-1">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              {# Negativer Posten = Rueckzahlung aus einer Storno-Rechnung. Das
+                 Feld bleibt positiv (min=0.01); die Route dreht das Vorzeichen
+                 anhand von ``item.amount``. #}
               <input type="number" name="amount" step="0.01" min="0.01"
-                     value="{{ '%.2f'|format(bal) }}"
+                     value="{{ '%.2f'|format(bal|abs) }}"
                      class="form-control form-control-sm" style="width:90px"
-                     title="Zahlungsbetrag">
+                     title="{{ 'Rückzahlungsbetrag' if bal < 0 else 'Zahlungsbetrag' }}">
               {% if accounts %}
               <select name="account_id" class="form-select form-select-sm" style="width:160px" required
                       title="Buchungskonto">
@@ -200,9 +209,15 @@
                 {% endfor %}
               </select>
               {% endif %}
+              {% if bal < 0 %}
+              <button type="submit" class="btn btn-sm btn-warning" title="Rückzahlung buchen">
+                <i class="fas fa-undo me-1"></i> Rückzahlen
+              </button>
+              {% else %}
               <button type="submit" class="btn btn-sm btn-success" title="Zahlung buchen">
                 <i class="fas fa-check me-1"></i> Bezahlen
               </button>
+              {% endif %}
             </form>
             {% if not item.invoice_id %}
             <a href="{{ url_for('accounting.open_item_invoice', item_id=item.id) }}"

@@ -47,6 +47,8 @@
       <td><code>{{ inv.invoice_number }}</code>
         {% if inv.invoice_kind == inv.KIND_FINAL_SETTLEMENT %}
         <span class="badge bg-purple-lt ms-1" title="Schlussrechnung (Eigentümerwechsel)">SR</span>
+        {% elif inv.invoice_kind == inv.KIND_CREDIT_NOTE %}
+        <span class="badge bg-orange-lt ms-1" title="Storno-Rechnung (Gutschrift)">ST</span>
         {% endif %}
       </td>
       <td>

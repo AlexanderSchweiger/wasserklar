@@ -32,6 +32,24 @@
           {% if invoice.invoice_kind == invoice.KIND_FINAL_SETTLEMENT %}
           <dt class="col-sm-5">Art</dt>
           <dd class="col-sm-7"><span class="badge bg-purple-lt">Schlussrechnung (Eigentümerwechsel)</span></dd>
+          {% elif invoice.is_credit_note %}
+          <dt class="col-sm-5">Art</dt>
+          <dd class="col-sm-7"><span class="badge bg-orange-lt">Storno-Rechnung (Gutschrift)</span></dd>
+          {% endif %}
+          {% if invoice.cancels_invoice %}
+          <dt class="col-sm-5">Storno zu</dt>
+          <dd class="col-sm-7">
+            <a href="{{ url_for('invoices.detail', invoice_id=invoice.cancels_invoice_id) }}">
+              {{ invoice.cancels_invoice.invoice_number }}
+            </a>
+          </dd>
+          {% endif %}
+          {% set _cn = invoice.active_credit_note %}
+          {% if _cn %}
+          <dt class="col-sm-5">Storniert durch</dt>
+          <dd class="col-sm-7">
+            <a href="{{ url_for('invoices.detail', invoice_id=_cn.id) }}">{{ _cn.invoice_number }}</a>
+          </dd>
           {% endif %}
           <dt class="col-sm-5">Periode</dt>
           <dd class="col-sm-7">{{ invoice.billing_period.name if invoice.billing_period else '—' }}</dd>
@@ -62,7 +80,18 @@
       <div class="card-footer">
         {% if invoice.status != 'Entwurf' %}
         <div class="alert alert-warning py-1 px-2 mb-2 small">
-          <i class="fas fa-lock me-1"></i> Rechnung gesperrt – nur Stornierung möglich.
+          <i class="fas fa-lock me-1"></i>
+          {% if invoice.is_credit_note %}Gutschrift gesperrt – nur Stornierung möglich.
+          {% else %}Rechnung gesperrt – nur Stornierung möglich.{% endif %}
+        </div>
+        {% endif %}
+        {% if invoice.status == 'Storniert' and not credit_note_blocker %}
+        <div class="alert alert-info py-2 px-2 mb-2 small">
+          Für diese stornierte Rechnung wurde noch keine Storno-Rechnung ausgestellt.
+          <button type="button" class="btn btn-sm btn-outline-primary mt-2 w-100"
+                  data-bs-toggle="modal" data-bs-target="#creditNoteModal">
+            <i class="fas fa-file-invoice-dollar me-1"></i> Storno-Rechnung erstellen
+          </button>
         </div>
         {% endif %}
         {% if invoice.status == 'Entwurf' %}
@@ -113,7 +142,7 @@
       <div class="card-body">
         {% if allowed_targets %}
         <form method="post" action="{{ url_for('invoices.set_status', invoice_id=invoice.id) }}"
-              id="statusForm">
+              id="statusForm" hx-boost="false">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <div class="input-group input-group-sm mb-2">
             <select name="status" class="form-select tom-select" id="statusSelect">
@@ -293,6 +322,79 @@
 {% endblock %}
 
 {% block modals %}
+{# --- Storno-Dialog: wird beim Statuswechsel auf „Storniert" vorgeschaltet --- #}
+{% if 'Storniert' in invoice.ALLOWED_TRANSITIONS.get(invoice.status, []) %}
+<div class="modal fade" id="stornoModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <form method="post" action="{{ url_for('invoices.set_status', invoice_id=invoice.id) }}"
+          class="modal-content" hx-boost="false" id="stornoForm">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="status" value="Storniert">
+      <div class="modal-header">
+        <h5 class="modal-title">
+          <i class="fas fa-ban me-1"></i>
+          {{ 'Gutschrift' if invoice.is_credit_note else 'Rechnung' }}
+          {{ invoice.invoice_number }} stornieren
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small">
+          Die {{ 'Gutschrift' if invoice.is_credit_note else 'Rechnung' }} wird
+          storniert: verknüpfte Zahlungsbuchungen werden gegengebucht, der Offene
+          Posten geschlossen und aktive Mahnungen zurückgenommen. Der Beleg selbst
+          bleibt unverändert erhalten.
+        </p>
+        {% with suffix = '', with_toggle = not invoice.is_credit_note %}
+        {% include "invoices/_storno_form_body.html" %}
+        {% endwith %}
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+        <button type="submit" class="btn btn-danger">
+          <i class="fas fa-ban me-1"></i> Stornieren
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+{# --- Nachtraegliche Storno-Rechnung zu einer bereits stornierten Rechnung --- #}
+{% if invoice.status == 'Storniert' and not credit_note_blocker %}
+<div class="modal fade" id="creditNoteModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <form method="post" action="{{ url_for('invoices.credit_note', invoice_id=invoice.id) }}"
+          class="modal-content" hx-boost="false">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="modal-header">
+        <h5 class="modal-title">
+          <i class="fas fa-file-invoice-dollar me-1"></i>
+          Storno-Rechnung zu {{ invoice.invoice_number }}
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small">
+          Es wird ein eigener Beleg mit fortlaufender Rechnungsnummer und
+          gespiegelten (negativen) Positionen erstellt. Die Buchungen der
+          Originalrechnung sind bereits storniert und bleiben unberührt.
+        </p>
+        {% with suffix = 'Cn', with_toggle = False %}
+        {% include "invoices/_storno_form_body.html" %}
+        {% endwith %}
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+        <button type="submit" class="btn btn-primary">
+          <i class="fas fa-file-invoice-dollar me-1"></i> Storno-Rechnung erstellen
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
 {% if invoice.customer.wants_email %}
 <div class="modal fade" id="sendEmailModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
@@ -357,27 +459,65 @@
 </script>
 {% endif %}
 
-{% if invoice.status == 'Entwurf' %}
 <script>
-// Confirm-Dialog: Wenn der Nutzer den Status auf „Versendet" setzt, wird
-// automatisch ein Offener Posten über den aktuellen Rechnungsbetrag erzeugt.
+// Statuswechsel-Dialoge.
+//  * „Versendet“ → Hinweis, dass automatisch ein Offener Posten entsteht.
+//  * „Storniert“ → Modal statt Direkt-Submit: dort wählt der Nutzer, ob eine
+//    Storno-Rechnung (Gutschrift) ausgestellt wird und über welchen Betrag
+//    zurückgezahlt wird.
+// window.bootstrap defensiv prüfen: Bootstrap wird deferred geladen, dieses
+// Inline-Skript läuft beim harten Reload davor.
 (function () {
   const form = document.getElementById('statusForm');
   const select = document.getElementById('statusSelect');
   if (!form || !select) return;
+  const isDraft = {{ 'true' if invoice.status == 'Entwurf' else 'false' }};
+  const isCreditNote = {{ 'true' if invoice.is_credit_note else 'false' }};
+  const grossTotal = {{ (invoice_gross_total|de_number)|tojson }};
+  const refundAmount = {{ (invoice.refund_amount|de_number if invoice.refund_amount else '')|tojson }};
+
   form.addEventListener('submit', function (e) {
     const chosen = select.value;
-    if (chosen === 'Versendet') {
-      const betrag = "{{ invoice_gross_total|de_number }}";
-      const msg = "Die Rechnung wird auf „Versendet" gesetzt.\n\n" +
-                  "Dabei wird automatisch ein Offener Posten über " + betrag + " € erzeugt.\n\n" +
-                  "Fortfahren?";
+
+    if (chosen === 'Storniert') {
+      const modalEl = document.getElementById('stornoModal');
+      if (modalEl && window.bootstrap) {
+        e.preventDefault();
+        bootstrap.Modal.getOrCreateInstance(modalEl).show();
+      }
+      return;
+    }
+
+    if (chosen === 'Versendet' && isDraft) {
+      // Bei einer Gutschrift entsteht der Posten ueber den tatsaechlich
+      // zurueckzuzahlenden Betrag — nicht ueber die Belegsumme.
+      const msg = isCreditNote
+        ? (refundAmount
+            ? "Die Gutschrift wird auf „Versendet“ gesetzt.\n\n" +
+              "Dabei entsteht ein Rückzahlungs-Posten über " + refundAmount + " €.\n\n" +
+              "Fortfahren?"
+            : "Die Gutschrift wird auf „Versendet“ gesetzt.\n\n" +
+              "Es entsteht kein Rückzahlungs-Posten (die stornierte Rechnung war unbezahlt).\n\n" +
+              "Fortfahren?")
+        : "Die Rechnung wird auf „Versendet“ gesetzt.\n\n" +
+          "Dabei wird automatisch ein Offener Posten über " + grossTotal + " € erzeugt.\n\n" +
+          "Fortfahren?";
       if (!window.confirm(msg)) {
         e.preventDefault();
       }
     }
   });
 })();
+
+// Storno-Dialog: Rückzahlungs-Felder nur zeigen, wenn eine Gutschrift
+// ausgestellt wird — ohne Beleg gibt es auch keinen Rückzahlungs-Posten.
+(function () {
+  const toggle = document.getElementById('createCreditNote');
+  const fields = document.getElementById('creditNoteFields');
+  if (!toggle || !fields) return;
+  const sync = function () { fields.hidden = !toggle.checked; };
+  toggle.addEventListener('change', sync);
+  sync();
+})();
 </script>
-{% endif %}
 {% endblock %}

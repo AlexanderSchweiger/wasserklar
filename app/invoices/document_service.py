@@ -272,17 +272,34 @@ def generate_docx(invoice, wg: dict, design: dict | None = None,
     # PDF-Layout — ohne Tabelle rutscht der Empfängerblock unter den
     # gesamten Meta-Block statt daneben zu stehen.
     invoice_date_str = invoice.date.strftime("%d.%m.%Y")
-    meta_lines = [
-        ("Rechnungsnummer", invoice.invoice_number),
-        ("Rechnungsdatum", invoice_date_str),
-        ("Lieferdatum", invoice_date_str),
-    ]
-    if invoice.customer.customer_number:
-        meta_lines.append(("Kundennummer", str(invoice.customer.customer_number)))
-    meta_lines.append((
-        "Fällig bis",
-        invoice.due_date.strftime("%d.%m.%Y") if invoice.due_date else "—"
-    ))
+    # Storno-Rechnung (Gutschrift): eigene Beleg-Bezeichnung, Pflicht-Verweis
+    # auf die stornierte Rechnung (UStG § 11) statt Liefer-/Faelligkeitsdatum.
+    is_credit = invoice.is_credit_note
+    original = invoice.cancels_invoice if is_credit else None
+    if is_credit:
+        meta_lines = [
+            ("Gutschriftsnummer", invoice.invoice_number),
+            ("Gutschriftsdatum", invoice_date_str),
+        ]
+        if invoice.customer.customer_number:
+            meta_lines.append(("Kundennummer", str(invoice.customer.customer_number)))
+        if original is not None:
+            meta_lines.append((
+                "Storno zu Rechnung",
+                f"{original.invoice_number} vom {original.date.strftime('%d.%m.%Y')}",
+            ))
+    else:
+        meta_lines = [
+            ("Rechnungsnummer", invoice.invoice_number),
+            ("Rechnungsdatum", invoice_date_str),
+            ("Lieferdatum", invoice_date_str),
+        ]
+        if invoice.customer.customer_number:
+            meta_lines.append(("Kundennummer", str(invoice.customer.customer_number)))
+        meta_lines.append((
+            "Fällig bis",
+            invoice.due_date.strftime("%d.%m.%Y") if invoice.due_date else "—"
+        ))
     if invoice.billing_period:
         meta_lines.append(("Abrechnungsperiode", invoice.billing_period.name))
 
@@ -332,12 +349,27 @@ def generate_docx(invoice, wg: dict, design: dict | None = None,
         p.add_run(value)
 
     # ── Überschrift ───────────────────────────────────────────────────────
-    heading = doc.add_heading(f"Rechnung {invoice.invoice_number}", level=1)
+    heading = doc.add_heading(
+        f"{invoice.document_title} {invoice.invoice_number}", level=1)
     heading.runs[0].font.color.rgb = heading_rgb
     heading.runs[0].font.name = font_name
 
     # ── Einleitungstext ───────────────────────────────────────────────────
-    if invoice.property:
+    if is_credit:
+        p_intro = doc.add_paragraph()
+        p_intro.add_run("Wir stornieren ")
+        if original is not None:
+            p_intro.add_run("unsere Rechnung ")
+            p_intro.add_run(original.invoice_number).bold = True
+            p_intro.add_run(f" vom {original.date.strftime('%d.%m.%Y')}")
+        else:
+            p_intro.add_run("die zugrunde liegende Rechnung")
+        if invoice.property:
+            prop_display = invoice.property.address_display() or invoice.property.label()
+            p_intro.add_run(" für das Objekt ")
+            p_intro.add_run(f"„{prop_display}”").bold = True
+        p_intro.add_run(" und schreiben Ihnen die folgenden Positionen gut:")
+    elif invoice.property:
         p_intro = doc.add_paragraph()
         p_intro.add_run("Wir stellen für das Objekt ")
         prop_display = invoice.property.address_display() or invoice.property.label()
@@ -428,26 +460,45 @@ def generate_docx(invoice, wg: dict, design: dict | None = None,
     _set_cell_bg(payment_cell, payment_bg_hex)
 
     p_pay = payment_cell.paragraphs[0]
-    run_pay_lbl = p_pay.add_run("Zahlung")
+    run_pay_lbl = p_pay.add_run("Rückzahlung" if is_credit else "Zahlung")
     run_pay_lbl.bold = True
     run_pay_lbl.font.color.rgb = heading_rgb
 
-    p_pay2 = payment_cell.add_paragraph("Wir ersuchen Sie, den Rechnungsbetrag von ")
-    p_pay2.add_run(f"{_de_fmt(invoice.total_amount, 2)} €").bold = True
-    if invoice.due_date:
-        p_pay2.add_run(f" bis zum {invoice.due_date.strftime('%d.%m.%Y')}")
-    p_pay2.add_run(" auf unser Konto einzuzahlen:")
+    if is_credit:
+        # Abgeleitet (Invoice.refund_amount), NICHT aus dem Offenen Posten: den
+        # gibt es erst nach dem Versenden — ein Entwurfs-Ausdruck haette sonst
+        # faelschlich "keine Rueckzahlung" behauptet.
+        refund = invoice.refund_amount
+        if refund:
+            p_pay2 = payment_cell.add_paragraph("Der Gutschriftsbetrag von ")
+            p_pay2.add_run(f"{_de_fmt(refund, 2)} €").bold = True
+            p_pay2.add_run(
+                " wird Ihnen auf das uns bekannte Konto rücküberwiesen. Sollten "
+                "sich Ihre Bankdaten geändert haben, teilen Sie uns diese bitte mit.")
+            p_ref = payment_cell.add_paragraph("Verwendungszweck der Überweisung: ")
+            p_ref.add_run(invoice.invoice_number).bold = True
+        else:
+            payment_cell.add_paragraph(
+                "Es ergibt sich kein Rückzahlungsbetrag — die stornierte Rechnung "
+                "war noch nicht bezahlt. Bitte betrachten Sie die ursprüngliche "
+                "Zahlungsaufforderung als gegenstandslos.")
+    else:
+        p_pay2 = payment_cell.add_paragraph("Wir ersuchen Sie, den Rechnungsbetrag von ")
+        p_pay2.add_run(f"{_de_fmt(invoice.total_amount, 2)} €").bold = True
+        if invoice.due_date:
+            p_pay2.add_run(f" bis zum {invoice.due_date.strftime('%d.%m.%Y')}")
+        p_pay2.add_run(" auf unser Konto einzuzahlen:")
 
-    if wg.get("iban"):
-        p_iban = payment_cell.add_paragraph("IBAN: ")
-        p_iban.add_run(wg["iban"]).bold = True
-    if wg.get("bic"):
-        p_bic = payment_cell.add_paragraph("BIC: ")
-        p_bic.add_run(wg["bic"]).bold = True
-    payment_cell.add_paragraph(
-        f"Empfänger: {wg.get('account_holder') or wg.get('name', '')}")
-    p_ref = payment_cell.add_paragraph("Verwendungszweck: ")
-    p_ref.add_run(invoice.invoice_number).bold = True
+        if wg.get("iban"):
+            p_iban = payment_cell.add_paragraph("IBAN: ")
+            p_iban.add_run(wg["iban"]).bold = True
+        if wg.get("bic"):
+            p_bic = payment_cell.add_paragraph("BIC: ")
+            p_bic.add_run(wg["bic"]).bold = True
+        payment_cell.add_paragraph(
+            f"Empfänger: {wg.get('account_holder') or wg.get('name', '')}")
+        p_ref = payment_cell.add_paragraph("Verwendungszweck: ")
+        p_ref.add_run(invoice.invoice_number).bold = True
 
     doc.add_paragraph()  # Abstand
 

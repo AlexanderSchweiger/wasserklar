@@ -33,7 +33,22 @@ def invoice_period_year(invoice):
 
 
 def create_or_update_open_item(invoice, account_id=None):
-    """Erzeugt oder aktualisiert den verknüpften OpenItem wenn eine Rechnung versendet wird."""
+    """Erzeugt oder aktualisiert den verknüpften OpenItem wenn eine Rechnung versendet wird.
+
+    **Storno-Rechnungen (Gutschriften) laufen ueber einen eigenen Weg.** Ihr
+    Posten ist eine Verbindlichkeit ueber den tatsaechlich zurueckzuzahlenden
+    Betrag — und der ist NICHT die Belegsumme, sobald die stornierte Rechnung
+    nur teilweise bezahlt war. Die Weiche sitzt bewusst hier und nicht in den
+    Aufrufern: eine Rechnung wird an fuenf Stellen "versendet" (Statuswechsel,
+    Bulk-Statuswechsel, Mailversand einzeln und als Bulk, Sammel-PDF-Druck),
+    und jede einzelne haette den Sonderfall sonst selbst kennen muessen.
+    """
+    if invoice.is_credit_note:
+        # Lokaler Import: credit_note importiert seinerseits aus diesem Modul
+        # (invoice_period_year) — auf Modulebene waere das ein Zyklus.
+        from app.invoices.credit_note import create_refund_open_item
+        return create_refund_open_item(invoice, account_id=account_id)
+
     oi = invoice.open_item
     if oi is None:
         oi = OpenItem(

@@ -120,7 +120,8 @@ CATEGORIES = {
 # - InvoiceItem VOR DunningNotice (FK fee_invoice_item_id),
 #   ABER: InvoiceItem.dunning_notice_id verweist umgekehrt auf DunningNotice
 #   → wird in zweitem Pass nachgesetzt (siehe services.py).
-# - Booking.storno_of_id (Self-FK) → ebenfalls zweiter Pass.
+# - Booking.storno_of_id und Invoice.cancels_invoice_id (Self-FKs) → ebenfalls
+#   zweiter Pass.
 INSERT_ORDER = [
     # Rollen/Rechte zuerst — RolePermission.role_id → Role; sonst FK-frei.
     Role, RolePermission,
@@ -303,7 +304,8 @@ FOREIGN_KEYS = {
     OwnerChangeMeterValue: {"owner_change_id": OwnerChange, "meter_id": WaterMeter},
     BillingRun: {"billing_period_id": BillingPeriod},
     Invoice: {"customer_id": Customer, "property_id": Property, "billing_run_id": BillingRun,
-              "billing_period_id": BillingPeriod},
+              "billing_period_id": BillingPeriod,
+              "cancels_invoice_id": Invoice},  # Self-FK (Storno), zweiter Pass
     InvoiceItem: {"invoice_id": Invoice, "project_id": Project,
                   "dunning_notice_id": DunningNotice,        # zweiter Pass
                   "reading_correction_id": ReadingCorrection},  # zweiter Pass
@@ -361,6 +363,7 @@ FOREIGN_KEYS = {
 # erst spaeter inserted wird (zirkulaere oder Self-FKs).
 DEFERRED_FK_UPDATES = {
     Booking: ["storno_of_id"],
+    Invoice: ["cancels_invoice_id"],         # Self-FK (Storno-Rechnung -> Original)
     InvoiceItem: ["dunning_notice_id", "reading_correction_id"],
     NetworkPlan: ["source_plan_id"],         # Self-FK
     NetworkFeature: ["source_feature_id"],   # Self-FK

@@ -1,5 +1,14 @@
 {{ invoice.customer.salutation_line }},
+{% if invoice.is_credit_note %}
+anbei erhalten Sie unsere Gutschrift {{ invoice.invoice_number }} vom {{ invoice.date.strftime('%d.%m.%Y') }}{% if invoice.cancels_invoice %} zur Stornierung der Rechnung {{ invoice.cancels_invoice.invoice_number }} vom {{ invoice.cancels_invoice.date.strftime('%d.%m.%Y') }}{% endif %}.
 
+Gutschriftsbetrag: {{ invoice.total_amount|de_number }} Euro
+{% if invoice.refund_amount %}
+Wir überweisen Ihnen {{ invoice.refund_amount|de_number }} Euro auf das uns bekannte Konto zurück. Sollten sich Ihre Bankdaten geändert haben, teilen Sie uns diese bitte mit.
+{% else %}
+Die stornierte Rechnung war noch nicht bezahlt — bitte betrachten Sie die ursprüngliche Zahlungsaufforderung als gegenstandslos.
+{% endif %}
+{% else %}
 anbei erhalten Sie Ihre Rechnung {{ invoice.invoice_number }} vom {{ invoice.date.strftime('%d.%m.%Y') }}.
 
 Rechnungsbetrag: {{ invoice.total_amount|de_number }} Euro
@@ -7,6 +16,7 @@ Fälligkeitsdatum: {{ invoice.due_date.strftime('%d.%m.%Y') if invoice.due_date 
 {% if wg.iban %}
 IBAN: {{ wg.iban }}
 Verwendungszweck: {{ invoice.invoice_number }}
+{% endif %}
 {% endif %}
 
 Das PDF-Dokument finden Sie im Anhang.

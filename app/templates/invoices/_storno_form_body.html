@@ -1,0 +1,50 @@
+{# Gemeinsamer Formular-Rumpf fuer den Storno-Dialog (Rechnung stornieren) und
+   das nachtraegliche Ausstellen einer Storno-Rechnung.
+
+   Erwartet: invoice, refund_suggestion, suffix, with_toggle (bool).
+   ``with_toggle`` blendet die Auswahl „Gutschrift erstellen ja/nein" ein — beim
+   nachtraeglichen Ausstellen gibt es nichts zu waehlen.
+
+   Kein Betragsfeld: der Rueckzahlbetrag wird abgeleitet (was tatsaechlich auf
+   die Rechnung geflossen ist) und erst beim Versenden der Gutschrift zum
+   Offenen Posten. Hier steht er nur als Vorschau. #}
+<div class="mb-3">
+  <label class="form-label" for="stornoReason{{ suffix }}">Storno-Grund</label>
+  <textarea class="form-control" rows="2" id="stornoReason{{ suffix }}"
+            name="storno_reason"
+            placeholder="z. B. falscher Zählerstand verrechnet"></textarea>
+  <div class="form-hint">
+    Erscheint auf der Storno-Rechnung und als Grund bei den Storno-Buchungen.
+  </div>
+</div>
+
+{% if with_toggle %}
+<label class="form-check form-switch mb-3">
+  <input class="form-check-input" type="checkbox" name="create_credit_note"
+         value="1" id="createCreditNote{{ suffix }}" checked>
+  <span class="form-check-label">
+    <strong>Storno-Rechnung (Gutschrift) erstellen</strong>
+    <span class="d-block form-hint">
+      Eigener Beleg mit fortlaufender Nummer und gespiegelten Positionen —
+      wird als <strong>Entwurf</strong> angelegt, den Sie prüfen und wie eine
+      normale Rechnung versenden. Ohne Gutschrift wird die Rechnung nur intern
+      storniert.
+    </span>
+  </span>
+</label>
+{% endif %}
+
+<div id="creditNoteFields{{ suffix }}">
+  <div class="alert alert-info py-2 px-3 mb-0 small">
+    {% if refund_suggestion and refund_suggestion > 0 %}
+    <i class="fas fa-info-circle me-1"></i>
+    Auf die Rechnung wurden bereits <strong>{{ refund_suggestion|de_number }} €</strong>
+    bezahlt. Sobald Sie die Gutschrift versenden (Status „Versendet"), entsteht
+    dafür ein <strong>Rückzahlungs-Posten</strong> unter Offene Posten. Nach Ihrer
+    Rücküberweisung ordnet der Bankauszug-Import die Abbuchung automatisch zu.
+    {% else %}
+    <i class="fas fa-info-circle me-1"></i>
+    Die Rechnung wurde noch nicht bezahlt — es entsteht kein Rückzahlungs-Posten.
+    {% endif %}
+  </div>
+</div>

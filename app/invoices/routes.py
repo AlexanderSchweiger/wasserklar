@@ -72,6 +72,27 @@ from app.invoices.services import (  # noqa: E402
 )
 
 
+def _de_money(value):
+    """Betrag im deutschen Format ohne Jinja-Kontext (fuer Flash-Meldungen)."""
+    return current_app.jinja_env.filters["de_number"](value)
+
+
+def _credit_note_flash(credit_note):
+    """Erfolgsmeldung nach dem Erstellen einer Storno-Rechnung (Entwurf)."""
+    from app.invoices.credit_note import refund_amount_for
+    msg = (f"Storno-Rechnung {credit_note.invoice_number} über "
+           f"{_de_money(credit_note.total_amount)} € als Entwurf erstellt. "
+           f"Prüfen, dann versenden und auf „Versendet“ setzen")
+    refund = refund_amount_for(credit_note)
+    if refund > 0:
+        msg += (f" — dabei entsteht ein Rückzahlungs-Posten über "
+                f"{_de_money(refund)} €, dem der Bankauszug-Import Ihre "
+                f"Rücküberweisung automatisch zuordnet.")
+    else:
+        msg += " (keine Rückzahlung nötig — die Rechnung war unbezahlt)."
+    return msg
+
+
 def _status_response(invoice):
     """Einheitliche Antwort für ``set_status``: Fragment bei HTMX, sonst Redirect."""
     if request.headers.get("HX-Request"):
@@ -213,7 +234,9 @@ def _render_email_subject(invoice):
         )
     except Exception:
         rendered = ""
-    return rendered or f"Rechnung {invoice.invoice_number}"
+    # Fallback (und Storno-Rechnungen, deren Betreff die Vorlage nicht kennt):
+    # die Beleg-Bezeichnung statt eines pauschalen „Rechnung".
+    return rendered or f"{invoice.document_title} {invoice.invoice_number}"
 
 
 def _render_email_body(invoice):
@@ -984,6 +1007,9 @@ def detail(invoice_id):
         # Auch in Read-Only-Ansicht brauchen wir Projekte, damit bestehende
         # Items korrekt als hidden-Inputs gerendert werden (Backward-Compat).
         editor_projects = Project.query.order_by(Project.name).all()
+    # Storno-Dialog: darf eine Gutschrift ausgestellt werden, und ueber
+    # welchen Betrag? (Vorschlag = bereits geflossene Zahlung.)
+    from app.invoices.credit_note import credit_note_blocker, refund_suggestion
     return render_template(
         "invoices/detail.html",
         invoice=invoice,
@@ -995,6 +1021,11 @@ def detail(invoice_id):
         editor_projects=editor_projects,
         tax_summary=invoice.tax_breakdown,
         invoice_gross_total=invoice.total_amount,
+        credit_note_blocker=credit_note_blocker(invoice),
+        # Storno-Dialog: was beim Stornieren zurueckzuzahlen waere. (Was eine
+        # bestehende Gutschrift zurueckzahlt, liefert ``invoice.refund_amount``
+        # direkt im Template.)
+        refund_suggestion=refund_suggestion(invoice),
     )
 
 
@@ -1389,21 +1420,33 @@ def set_status(invoice_id):
         flash(msg, "danger")
         return _status_response(invoice)
 
+    credit_note = None
+    credit_note_skipped = None
     try:
         if new_status == Invoice.STATUS_SENT:
             form_account_id_raw = request.form.get("account_id") or None
             form_account_id = int(form_account_id_raw) if form_account_id_raw else None
             account_id = _resolve_open_item_account_id(invoice, form_account_id)
             invoice.status = new_status
+            # Gutschriften bekommen hier automatisch den Rueckzahlungs-Posten
+            # statt eines Postens ueber die Belegsumme — die Weiche sitzt in
+            # ``create_or_update_open_item`` und gilt damit fuer alle
+            # Versand-Wege (auch Mail- und Druck-Versand).
             _create_or_update_open_item(invoice, account_id=account_id)
 
         elif new_status == Invoice.STATUS_CANCELLED:
+            from app.invoices.credit_note import (
+                create_credit_note, credit_note_blocker,
+            )
+            storno_reason = (request.form.get("storno_reason") or "").strip()
+            want_credit_note = request.form.get("create_credit_note") == "1"
+
             # Verknüpfte Buchungen rückabwickeln, sonst bleibt eine zuvor
             # erzeugte Zahlungsbuchung als Phantom-Einnahme in den Auswertungen.
             from app.accounting import services as acc_svc
             err = acc_svc.storno_invoice_bookings(
                 invoice,
-                reason=f"Storno Rechnung {invoice.invoice_number}",
+                reason=storno_reason or f"Storno Rechnung {invoice.invoice_number}",
                 created_by_id=current_user.id,
             )
             if err:
@@ -1414,6 +1457,19 @@ def set_status(invoice_id):
             # ADR-003: Storno → alle aktiven Mahnungen der Rechnung stornieren
             from app.dunning.services import cancel_dunnings_for_invoice
             cancel_dunnings_for_invoice(invoice)
+
+            # Storno-Rechnung (Gutschrift) als eigenen Beleg ausstellen.
+            # Ein Blocker (z.B. Storno einer Storno-Rechnung) darf den Storno
+            # selbst NICHT scheitern lassen — die Rueckabwicklung ist der
+            # eigentliche Vorgang, die Gutschrift nur ein Zusatz.
+            if want_credit_note:
+                credit_note_skipped = credit_note_blocker(invoice)
+            if want_credit_note and not credit_note_skipped:
+                credit_note = create_credit_note(
+                    invoice,
+                    reason=storno_reason or None,
+                    created_by_id=current_user.id,
+                )
 
         elif new_status == Invoice.STATUS_PAID:
             invoice.status = new_status
@@ -1428,8 +1484,58 @@ def set_status(invoice_id):
         flash(f"Fehler beim Statuswechsel – alle Änderungen wurden zurückgesetzt: {e}", "danger")
         return _status_response(invoice)
 
-    flash(f"Status auf '{new_status}' gesetzt.", "success")
+    if credit_note is not None:
+        flash(_credit_note_flash(credit_note), "success")
+    else:
+        flash(f"Status auf '{new_status}' gesetzt.", "success")
+        if credit_note_skipped:
+            flash(f"Keine Storno-Rechnung erstellt: {credit_note_skipped}", "warning")
     return _status_response(invoice)
+
+
+@bp.route("/<int:invoice_id>/credit-note", methods=["POST"])
+@login_required
+def credit_note(invoice_id):
+    """Stellt nachtraeglich eine Storno-Rechnung zu einer bereits stornierten
+    Rechnung aus.
+
+    Der Regelweg laeuft ueber den Storno-Dialog in ``set_status``; diese Route
+    faengt den Fall ab, dass beim Stornieren „keine Gutschrift" gewaehlt wurde
+    und man es sich spaeter anders ueberlegt (oder dass die Rechnung noch aus
+    der Zeit vor diesem Feature stammt).
+
+    Der Rueckzahlbetrag kann hier nicht mehr aus den Buchungen abgeleitet
+    werden — die sind beim Stornieren bereits aufgehoben worden. Er kommt
+    darum aus dem Formular; die Vorbelegung im Dialog stammt aus den
+    stornierten Originalbuchungen (siehe ``credit_note.refund_suggestion``).
+    """
+    from app.invoices.credit_note import create_credit_note, credit_note_blocker
+
+    invoice = db.get_or_404(Invoice, invoice_id)
+    if invoice.status != Invoice.STATUS_CANCELLED:
+        flash("Eine Storno-Rechnung gibt es nur zu einer stornierten Rechnung.", "danger")
+        return redirect(url_for("invoices.detail", invoice_id=invoice.id))
+
+    blocker = credit_note_blocker(invoice)
+    if blocker:
+        flash(blocker, "danger")
+        return redirect(url_for("invoices.detail", invoice_id=invoice.id))
+
+    reason = (request.form.get("storno_reason") or "").strip()
+    try:
+        created = create_credit_note(
+            invoice,
+            reason=reason or None,
+            created_by_id=current_user.id,
+        )
+        db.session.commit()
+    except Exception as e:  # noqa: BLE001
+        db.session.rollback()
+        flash(f"Storno-Rechnung konnte nicht erstellt werden: {e}", "danger")
+        return redirect(url_for("invoices.detail", invoice_id=invoice.id))
+
+    flash(_credit_note_flash(created), "success")
+    return redirect(url_for("invoices.detail", invoice_id=created.id))
 
 
 @bp.route("/<int:invoice_id>/delete", methods=["POST"])
@@ -1508,7 +1614,13 @@ def delete(invoice_id):
 @bp.route("/<int:invoice_id>/pay", methods=["POST"])
 @login_required
 def pay(invoice_id):
-    """Zahlung (Teil- oder Vollzahlung) auf eine Rechnung buchen."""
+    """Zahlung (Teil- oder Vollzahlung) auf eine Rechnung buchen.
+
+    Bei einer Storno-Rechnung ist die „Zahlung" die **Rueckzahlung** an den
+    Kunden: der Nutzer gibt weiterhin einen positiven Betrag ein, gebucht wird
+    er negativ. Sonst muesste man im Formular Vorzeichen tippen — und ein
+    Vorzeichenfehler waere hier eine falsche Einnahme in der Auswertung.
+    """
     invoice = db.get_or_404(Invoice, invoice_id)
     amount_raw = request.form.get("amount", "0").replace(",", ".")
     try:
@@ -1519,6 +1631,8 @@ def pay(invoice_id):
     if amount <= 0:
         flash("Betrag muss positiv sein.", "danger")
         return redirect(url_for("accounting.open_items"))
+    if Decimal(str(invoice.total_amount or 0)) < 0:
+        amount = -amount
 
     # Offenes Buchungsjahr für das Zahlungsdatum prüfen
     from app.accounting import services as acc_svc
@@ -1553,21 +1667,13 @@ def pay(invoice_id):
         ).scalar() or Decimal("0")
         balance = Decimal(str(invoice.total_amount)) - Decimal(str(paid_total))
 
-        if balance > Decimal("0"):
-            invoice.status = Invoice.STATUS_SENT
-        elif balance == Decimal("0"):
-            invoice.status = Invoice.STATUS_PAID
-        else:
-            invoice.status = Invoice.STATUS_CREDIT
-
+        # Vorzeichen-bewusst (Gutschrift = negativer Soll-Betrag); None heisst
+        # Teilzahlung -> die Rechnung bleibt „Versendet".
+        oi_status, new_invoice_status = acc_svc.settlement_status(
+            invoice.total_amount, balance)
+        invoice.status = new_invoice_status or Invoice.STATUS_SENT
         if invoice.open_item:
-            oi = invoice.open_item
-            if balance > Decimal("0"):
-                oi.status = OpenItem.STATUS_PARTIAL
-            elif balance == Decimal("0"):
-                oi.status = OpenItem.STATUS_PAID
-            else:
-                oi.status = OpenItem.STATUS_CREDIT
+            invoice.open_item.status = oi_status
 
         db.session.commit()
     except ValueError as ve:
@@ -1579,10 +1685,19 @@ def pay(invoice_id):
         flash(f"Fehler bei der Zahlung – alle Änderungen wurden zurückgesetzt: {e}", "danger")
         return redirect(url_for("accounting.open_items"))
 
-    if balance > Decimal("0"):
+    # Vorzeichen-bewusste Meldung: bei einer Gutschrift ist die „Zahlung"
+    # eine Rueckzahlung an den Kunden.
+    is_refund = Decimal(str(invoice.total_amount or 0)) < 0
+    if balance == Decimal("0"):
+        if is_refund:
+            flash(f"Gutschrift {invoice.invoice_number} vollst\u00e4ndig zur\u00fcckgezahlt.", "success")
+        else:
+            flash(f"Rechnung {invoice.invoice_number} vollst\u00e4ndig bezahlt.", "success")
+    elif is_refund:
+        flash(f"Teil-R\u00fcckzahlung von {abs(amount):.2f} \u20ac gebucht. "
+              f"Offen: {abs(balance):.2f} \u20ac", "success")
+    elif balance > Decimal("0"):
         flash(f"Teilzahlung von {amount:.2f} \u20ac gebucht. Offener Restbetrag: {balance:.2f} \u20ac", "success")
-    elif balance == Decimal("0"):
-        flash(f"Rechnung {invoice.invoice_number} vollst\u00e4ndig bezahlt.", "success")
     else:
         flash(f"\u00dcberzahlung von {abs(balance):.2f} \u20ac. Rechnung als Gutschrift markiert.", "info")
     return redirect(url_for("accounting.open_items"))
@@ -2228,6 +2343,12 @@ def period_overview(period_id):
                 Invoice.date <= period.end_date,
             ),
         ))
+        # Storno-Rechnungen bleiben draussen: die stornierte Originalrechnung
+        # ist in den Summen ohnehin schon ausgeblendet (Status „Storniert"),
+        # ihre negative Spiegelung wuerde denselben Betrag ein zweites Mal
+        # abziehen. Der Beleg selbst ist ueber die Rechnungsliste und die
+        # Detailseite der Originalrechnung erreichbar.
+        .filter(Invoice.invoice_kind != Invoice.KIND_CREDIT_NOTE)
         .order_by(Invoice.invoice_number, Invoice.id)
         .all()
     )

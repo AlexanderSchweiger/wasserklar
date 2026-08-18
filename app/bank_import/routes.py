@@ -97,7 +97,10 @@ def _line_render_context(lines):
             diff = amt - bal
             if diff == 0:
                 kind = "match"
-            elif diff > 0:
+            elif (diff > 0) != (bal < 0):
+                # „Zuviel" heisst bei einer Forderung (bal > 0) mehr Eingang
+                # als offen, bei einem Rueckzahlungs-Posten (bal < 0) mehr
+                # Ausgang als geschuldet — das Vorzeichen dreht die Richtung.
                 kind = "over"
             else:
                 kind = "under"
@@ -414,7 +417,11 @@ def open_item_picker(statement_id, line_id):
         abort(404)
 
     q = (request.args.get("q") or "").strip()
-    target = _round2(abs(line.amount))
+    # Vorzeichenbehaftet: bei einer Rueckueberweisung (negative Zeile) ist der
+    # gesuchte Posten der NEGATIVE Gutschrifts-OP, nicht eine gleich hohe
+    # offene Forderung. Frueher stand hier abs() — damit sortierte der Picker
+    # bei Rueckzahlungen die falsche Seite nach oben.
+    target = _round2(line.amount)
 
     query = (
         OpenItem.query.filter(

@@ -4,3 +4,12 @@
 __pycache__/
 *.pyc
 instance/
+
+# Testcode gehoert nicht ins Produktionsimage. Das OSS-Dockerfile macht
+# "COPY . ." — ohne diese Zeilen landen tests/ und pytest.ini im Prod-Container.
+# Die OSS-Suite selbst ist harmlos (SQLite in-memory), aber Testcode auf einem
+# Produktivsystem ist grundsaetzlich unnoetige Angriffsflaeche: die
+# destruktiven conftests von SaaS und Platform wuerden dort ebenfalls landen,
+# sobald jemand die Layout-Annahme aendert. Kein Testcode = kein Restrisiko.
+tests/
+pytest.ini

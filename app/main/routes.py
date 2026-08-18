@@ -19,11 +19,18 @@ from datetime import date
 def dashboard():
     current_year = date.today().year
 
-    # Offene Posten
-    open_invoices = Invoice.query.filter_by(status=Invoice.STATUS_SENT).count()
+    # Offene Forderungen. Storno-Rechnungen bleiben draussen: sie stehen
+    # zwar auf „Versendet", sind aber Verbindlichkeiten (Rueckzahlung) und
+    # wuerden Zaehler wie Summe der offenen Forderungen verfaelschen. Die
+    # Rueckzahlungspflicht steht als negativer Posten unter Offene Posten.
+    _receivable = db.and_(
+        Invoice.status == Invoice.STATUS_SENT,
+        Invoice.invoice_kind != Invoice.KIND_CREDIT_NOTE,
+    )
+    open_invoices = Invoice.query.filter(_receivable).count()
     total_open = db.session.query(
         db.func.sum(Invoice.total_amount)
-    ).filter_by(status=Invoice.STATUS_SENT).scalar() or 0
+    ).filter(_receivable).scalar() or 0
 
     # Aktive Abrechnungsperiode: Zähler, Ablesungen, Gesamtverbrauch
     active_period = BillingPeriod.current()
@@ -79,6 +86,12 @@ def dashboard():
                     Invoice.date <= active_period.end_date,
                 ),
             ))
+            # Storno-Rechnungen bleiben draussen: die stornierte Original-
+            # rechnung ist in ``sum_total`` ohnehin schon ausgeblendet, ihre
+            # negative Spiegelung wuerde denselben Betrag ein zweites Mal
+            # abziehen (und den Bezahlt-Prozentsatz sprengen). Gleiche Regel
+            # wie in ``invoices.period_overview``.
+            .filter(Invoice.invoice_kind != Invoice.KIND_CREDIT_NOTE)
             .group_by(Invoice.status)
             .all()
         )
@@ -119,7 +132,7 @@ def dashboard():
     # NULL-due_date via portablem CASE-Präfix ans Ende (MySQL kennt kein NULLS LAST).
     open_invoices_list = (
         Invoice.query
-        .filter(Invoice.status == Invoice.STATUS_SENT)
+        .filter(_receivable)
         .order_by(
             case((Invoice.due_date.is_(None), 1), else_=0).asc(),
             Invoice.due_date.asc(),
