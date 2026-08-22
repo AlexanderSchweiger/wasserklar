@@ -1,5 +1,18 @@
 {% extends "base.html" %}
 {% from "_pagination.html" import render_pagination %}
+{% macro sort_header(key, label, extra_class='') %}
+  {% set active = sort == key %}
+  {% set new_dir = 'desc' if (active and dir == 'asc') else 'asc' %}
+  <a href="{{ url_for('accounting.open_items', status=status_filter, customer=f_customer or none, ref=f_ref or none, period=f_period or none, amount_min=f_amount_min or none, amount_max=f_amount_max or none, sort=key, dir=new_dir) }}"
+     class="text-reset text-decoration-none d-inline-flex align-items-center gap-1 {{ extra_class }}">
+    {{ label }}
+    {% if active %}
+      <i class="fas fa-sort-{{ 'down' if dir == 'desc' else 'up' }}"></i>
+    {% else %}
+      <i class="fas fa-sort text-muted"></i>
+    {% endif %}
+  </a>
+{% endmacro %}
 {% block title %}Offene Posten{% endblock %}
 {% block page_title %}<i class="fas fa-exclamation-circle me-2"></i> Offene Posten{% endblock %}
 {% block page_wrapper_class %}is-fill{% endblock %}
@@ -103,14 +116,14 @@
     <table class="table table-hover mb-0">
       <thead>
         <tr>
-          <th>Rechnungsnr. / Beschreibung</th>
-          <th>Kunde</th>
-          <th>Abr.Periode</th>
-          <th>Datum</th>
-          <th>Fällig</th>
-          <th>Status</th>
-          <th class="text-end">Gesamt</th>
-          <th class="text-end">Offen</th>
+          <th>{{ sort_header('ref', 'Rechnungsnr. / Beschreibung') }}</th>
+          <th>{{ sort_header('kunde', 'Kunde') }}</th>
+          <th>{{ sort_header('periode', 'Abr.Periode') }}</th>
+          <th>{{ sort_header('datum', 'Datum') }}</th>
+          <th>{{ sort_header('faellig', 'Fällig') }}</th>
+          <th>{{ sort_header('status', 'Status') }}</th>
+          <th class="text-end">{{ sort_header('betrag', 'Gesamt', 'justify-content-end') }}</th>
+          <th class="text-end">{{ sort_header('offen', 'Offen', 'justify-content-end') }}</th>
           <th class="col-actions"></th>
         </tr>
       </thead>
@@ -123,15 +136,11 @@
           {# Rechnungsnr. / Beschreibung #}
           <td>
             {% if item.invoice_id %}
-              <code>{{ item.description }}</code>
+              <a href="{{ url_for('invoices.detail', invoice_id=item.invoice_id) }}" class="text-reset">
+                <code>{{ item.description }}</code>
+              </a>
             {% else %}
               {{ item.description }}
-              {% if item.invoice %}
-              <a href="{{ url_for('invoices.detail', invoice_id=item.invoice_id) }}"
-                 class="badge bg-info text-white ms-1" title="Verknüpfte Rechnung">
-                <i class="fas fa-file-invoice"></i> RE
-              </a>
-              {% endif %}
             {% endif %}
           </td>
 

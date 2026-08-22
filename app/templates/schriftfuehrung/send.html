@@ -139,7 +139,7 @@ Einladungen versenden
         <div class="form-check">
           <input type="checkbox" class="form-check-input" id="email-testmode">
           <label class="form-check-label text-warning" for="email-testmode">
-            <i class="fas fa-flask me-1"></i> Testmodus (an die eigene Adresse)
+            <i class="fas fa-flask me-1"></i> Testmodus (an die eigene Adresse, max. 3 Mails)
           </label>
         </div>
         <div>
@@ -255,8 +255,14 @@ Einladungen versenden
     startBtn.disabled = true;
     const csrf = form.querySelector('input[name="csrf_token"]').value;
     const testMode = document.getElementById('email-testmode').checked;
-    const rows = Array.from(document.querySelectorAll('#email-rows tr[id^="em-row-"]'))
+    const TEST_MODE_LIMIT = 3;
+    const allRows = Array.from(document.querySelectorAll('#email-rows tr[id^="em-row-"]'))
       .map(tr => tr.id.replace('em-row-', ''));
+    const rows = testMode ? allRows.slice(0, TEST_MODE_LIMIT) : allRows;
+    allRows.slice(rows.length).forEach(cid => {
+      const icon = document.getElementById('em-icon-' + cid);
+      if (icon) { icon.className = 'fas fa-minus-circle text-muted'; icon.title = 'Im Testmodus übersprungen (Limit: ' + TEST_MODE_LIMIT + ')'; }
+    });
     for (let i = 0; i < rows.length; i++) {
       const cid = rows[i];
       const icon = document.getElementById('em-icon-' + cid);

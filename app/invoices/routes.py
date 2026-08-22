@@ -1010,6 +1010,19 @@ def detail(invoice_id):
     # Storno-Dialog: darf eine Gutschrift ausgestellt werden, und ueber
     # welchen Betrag? (Vorschlag = bereits geflossene Zahlung.)
     from app.invoices.credit_note import credit_note_blocker, refund_suggestion
+
+    # Aktions-Card: konkreter Grund, warum der E-Mail-Versand gerade nicht
+    # moeglich ist (fehlende Adresse / keine Einwilligung / Sperrliste) —
+    # dieselbe Reihenfolge wie die serverseitige Pruefung in ``send_email``.
+    email_blocked_reason = None
+    if not invoice.customer.email:
+        email_blocked_reason = "Kunde hat keine E-Mail-Adresse hinterlegt."
+    elif not invoice.customer.rechnung_per_email:
+        email_blocked_reason = "Kunde hat den Schriftverkehr per E-Mail nicht aktiviert."
+    else:
+        from app.email_suppression import suppression_notice
+        email_blocked_reason = suppression_notice(invoice.customer.email)
+
     return render_template(
         "invoices/detail.html",
         invoice=invoice,
@@ -1026,6 +1039,7 @@ def detail(invoice_id):
         # bestehende Gutschrift zurueckzahlt, liefert ``invoice.refund_amount``
         # direkt im Template.)
         refund_suggestion=refund_suggestion(invoice),
+        email_blocked_reason=email_blocked_reason,
     )
 
 
@@ -1770,9 +1784,14 @@ def _record_invoice_sent(invoice, msg, recipient):
     Wird sowohl von der klassischen send_email-Route als auch von send_email_ajax
     nach erfolgreichem ``send_mail(msg)`` aufgerufen. ``read_message_id`` liefert
     die Postmark-MessageID, sofern der SaaS-Hook sie vorbelegt hat — bei
-    reinem SMTP bleibt sie None.
+    reinem SMTP bleibt sie None. Der Status-Wechsel Entwurf→Versendet ist der
+    legitime Erstversand; ein Resend einer bereits Bezahlt/Guthaben/Storniert-
+    Rechnung (z.B. weil der Kunde seine Kopie verlegt hat) darf diesen Status
+    NICHT regressieren — Bookings/OpenItem blieben sonst unveraendert stehen,
+    waehrend `invoice.status` faelschlich wieder "Versendet" anzeigt.
     """
-    invoice.status = Invoice.STATUS_SENT
+    if invoice.status == Invoice.STATUS_DRAFT:
+        invoice.status = Invoice.STATUS_SENT
     record_email_sent(invoice, recipient, read_message_id(msg))
 
 

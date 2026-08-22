@@ -161,7 +161,7 @@
           <tbody>
             {% for inv in invoices %}
             <tr>
-              <td>{{ inv.invoice_number }}</td>
+              <td><a href="{{ url_for('invoices.detail', invoice_id=inv.id) }}" class="text-reset">{{ inv.invoice_number }}</a></td>
               <td>{{ inv.billing_period.name if inv.billing_period else '—' }}</td>
               <td>{{ inv.date.strftime('%d.%m.%Y') }}</td>
               <td class="text-end"><strong>{{ inv.total_amount|de_number }} €</strong></td>

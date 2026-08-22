@@ -77,90 +77,287 @@
         <p class="text-muted mb-0"><em>{{ invoice.notes }}</em></p>
         {% endif %}
       </div>
-      <div class="card-footer">
-        {% if invoice.status != 'Entwurf' %}
-        <div class="alert alert-warning py-1 px-2 mb-2 small">
-          <i class="fas fa-lock me-1"></i>
-          {% if invoice.is_credit_note %}Gutschrift gesperrt – nur Stornierung möglich.
-          {% else %}Rechnung gesperrt – nur Stornierung möglich.{% endif %}
-        </div>
-        {% endif %}
-        {% if invoice.status == 'Storniert' and not credit_note_blocker %}
-        <div class="alert alert-info py-2 px-2 mb-2 small">
-          Für diese stornierte Rechnung wurde noch keine Storno-Rechnung ausgestellt.
-          <button type="button" class="btn btn-sm btn-outline-primary mt-2 w-100"
-                  data-bs-toggle="modal" data-bs-target="#creditNoteModal">
-            <i class="fas fa-file-invoice-dollar me-1"></i> Storno-Rechnung erstellen
-          </button>
-        </div>
-        {% endif %}
-        {% if invoice.status == 'Entwurf' %}
-        <a href="{{ url_for('invoices.edit', invoice_id=invoice.id) }}"
-           class="btn btn-sm btn-secondary">
-          <i class="fas fa-edit me-1"></i> Bearbeiten
-        </a>
-        <form method="post" action="{{ url_for('invoices.delete', invoice_id=invoice.id) }}"
-              class="d-inline" id="deleteInvoiceForm">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button type="submit" class="btn btn-sm btn-outline-danger ms-1">
-            <i class="fas fa-trash me-1"></i> Löschen
-          </button>
-        </form>
-        {% endif %}
-        {% if doc_format in ('pdf', 'both') %}
-        <a href="{{ url_for('invoices.pdf', invoice_id=invoice.id) }}?fmt=pdf"
-           class="btn btn-sm btn-outline-danger {% if invoice.status == 'Entwurf' %}ms-1{% endif %}" target="_blank">
-          <i class="fas fa-file-pdf me-1"></i> PDF
-        </a>
-        {% endif %}
-        {% if doc_format in ('docx', 'both') %}
-        <a href="{{ url_for('invoices.pdf', invoice_id=invoice.id) }}?fmt=docx"
-           class="btn btn-sm btn-outline-secondary ms-1" target="_blank">
-          <i class="fas fa-file-word me-1"></i> Word
-        </a>
-        {% endif %}
-        {% if invoice.customer.wants_email %}
-        <button type="button" class="btn btn-sm btn-outline-primary ms-1"
-                data-bs-toggle="modal" data-bs-target="#sendEmailModal">
-          <i class="fas fa-envelope me-1"></i> E-Mail
-        </button>
-        {% else %}
-        <button type="button" class="btn btn-sm btn-outline-primary ms-1" disabled
-                title="{{ 'Kunde hat keine E-Mail-Adresse hinterlegt' if not invoice.customer.email else 'Kunde hat den Schriftverkehr per E-Mail nicht aktiviert' }}">
-          <i class="fas fa-envelope me-1"></i> E-Mail
-        </button>
-        {% endif %}
-      </div>
     </div>
 
-    <!-- Status setzen -->
+    <!-- Aktionen -->
     {% set allowed_targets = invoice.ALLOWED_TRANSITIONS.get(invoice.status, []) %}
-    <div class="card">
+    <div class="card mt-3">
       <div class="card-header">
-        <h3 class="card-title">Status ändern</h3>
+        <h3 class="card-title">Aktionen</h3>
       </div>
-      <div class="card-body">
-        {% if allowed_targets %}
-        <form method="post" action="{{ url_for('invoices.set_status', invoice_id=invoice.id) }}"
-              id="statusForm" hx-boost="false">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <div class="input-group input-group-sm mb-2">
-            <select name="status" class="form-select tom-select" id="statusSelect">
-              <option value="{{ invoice.status }}" selected>{{ invoice.status }} (aktuell)</option>
-              {% for s in allowed_targets %}
-              <option value="{{ s }}">{{ s }}</option>
-              {% endfor %}
-            </select>
-            <button type="submit" class="btn btn-outline-secondary">
-              <i class="fas fa-check"></i>
+      <div class="list-group list-group-flush">
+
+        <div class="list-group-item bg-light py-1 px-3">
+          <span class="text-muted small text-uppercase fw-bold">Dokument</span>
+        </div>
+
+        {% if invoice.cancels_invoice %}
+        <!-- Gutschrift -> Original -->
+        <div class="list-group-item d-flex align-items-center justify-content-between gap-3 py-2 px-3">
+          <div class="fw-medium">Ursprüngliche Rechnung</div>
+          <a href="{{ url_for('invoices.detail', invoice_id=invoice.cancels_invoice_id) }}"
+             class="btn btn-sm btn-outline-secondary">
+            <i class="fas fa-arrow-left me-1"></i> {{ invoice.cancels_invoice.invoice_number }}
+          </a>
+        </div>
+        {% endif %}
+
+        <!-- Bearbeiten -->
+        <div class="list-group-item d-flex align-items-start justify-content-between gap-3 py-2 px-3">
+          <div>
+            <div class="fw-medium">Bearbeiten</div>
+            {% if invoice.status != 'Entwurf' %}
+            <div class="text-muted small">
+              <i class="fas fa-lock me-1"></i>
+              Nur Entwürfe können bearbeitet werden – Positionen sind nach dem Versand fixiert.
+            </div>
+            {% endif %}
+          </div>
+          <div class="text-nowrap">
+            {% if invoice.status == 'Entwurf' %}
+            <a href="{{ url_for('invoices.edit', invoice_id=invoice.id) }}" class="btn btn-sm btn-secondary">
+              <i class="fas fa-edit me-1"></i> Bearbeiten
+            </a>
+            {% else %}
+            <button type="button" class="btn btn-sm btn-outline-secondary" disabled>
+              <i class="fas fa-edit me-1"></i> Bearbeiten
+            </button>
+            {% endif %}
+          </div>
+        </div>
+
+        <!-- Löschen -->
+        <div class="list-group-item d-flex align-items-start justify-content-between gap-3 py-2 px-3">
+          <div>
+            <div class="fw-medium">Löschen</div>
+            {% if invoice.status != 'Entwurf' %}
+            <div class="text-muted small">
+              <i class="fas fa-lock me-1"></i>
+              Nur Entwürfe können gelöscht werden – versendete Belege werden storniert statt gelöscht.
+            </div>
+            {% endif %}
+          </div>
+          <div class="text-nowrap">
+            {% if invoice.status == 'Entwurf' %}
+            <form method="post" action="{{ url_for('invoices.delete', invoice_id=invoice.id) }}" id="deleteInvoiceForm">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-sm btn-outline-danger">
+                <i class="fas fa-trash me-1"></i> Löschen
+              </button>
+            </form>
+            {% else %}
+            <button type="button" class="btn btn-sm btn-outline-secondary" disabled>
+              <i class="fas fa-trash me-1"></i> Löschen
+            </button>
+            {% endif %}
+          </div>
+        </div>
+
+        {% if doc_format in ('pdf', 'both') %}
+        <!-- PDF -->
+        <div class="list-group-item d-flex align-items-center justify-content-between gap-3 py-2 px-3">
+          <div class="fw-medium">PDF ansehen</div>
+          <a href="{{ url_for('invoices.pdf', invoice_id=invoice.id) }}?fmt=pdf"
+             class="btn btn-sm btn-outline-danger" target="_blank">
+            <i class="fas fa-file-pdf me-1"></i> PDF
+          </a>
+        </div>
+        {% endif %}
+
+        {% if doc_format in ('docx', 'both') %}
+        <!-- Word -->
+        <div class="list-group-item d-flex align-items-center justify-content-between gap-3 py-2 px-3">
+          <div class="fw-medium">Word ansehen</div>
+          <a href="{{ url_for('invoices.pdf', invoice_id=invoice.id) }}?fmt=docx"
+             class="btn btn-sm btn-outline-secondary" target="_blank">
+            <i class="fas fa-file-word me-1"></i> Word
+          </a>
+        </div>
+        {% endif %}
+
+        <!-- E-Mail -->
+        <div class="list-group-item d-flex align-items-start justify-content-between gap-3 py-2 px-3">
+          <div>
+            <div class="fw-medium">Per E-Mail versenden</div>
+            {% if email_blocked_reason %}
+            <div class="text-muted small">
+              <i class="fas fa-lock me-1"></i>{{ email_blocked_reason }}
+              {% if not invoice.customer.email or not invoice.customer.rechnung_per_email %}
+              <a href="{{ url_for('customers.detail', customer_id=invoice.customer_id) }}">Kunde bearbeiten</a>
+              {% endif %}
+            </div>
+            {% else %}
+            <div class="text-muted small">
+              Sendet {{ 'PDF' if doc_format == 'pdf' else ('Word' if doc_format == 'docx' else 'PDF/Word') }}
+              an {{ invoice.customer.email }} und setzt den Status auf „Versendet“.
+            </div>
+            {% endif %}
+          </div>
+          <div class="text-nowrap">
+            {% if not email_blocked_reason %}
+            <button type="button" class="btn btn-sm btn-outline-primary"
+                    data-bs-toggle="modal" data-bs-target="#sendEmailModal">
+              <i class="fas fa-envelope me-1"></i> E-Mail
+            </button>
+            {% else %}
+            <button type="button" class="btn btn-sm btn-outline-secondary" disabled>
+              <i class="fas fa-envelope me-1"></i> E-Mail
+            </button>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="list-group-item bg-light py-1 px-3">
+          <span class="text-muted small text-uppercase fw-bold">Status</span>
+        </div>
+
+        {% if invoice.status == 'Entwurf' and 'Versendet' in allowed_targets %}
+        <!-- Entwurf -> Versendet, ohne Mail -->
+        <div class="list-group-item d-flex align-items-start justify-content-between gap-3 py-2 px-3">
+          <div>
+            <div class="fw-medium">Ohne E-Mail auf „Versendet“ setzen</div>
+            <div class="text-muted small">
+              Erzeugt einen Offenen Posten über {{ invoice_gross_total|de_number }} € –
+              es wird keine E-Mail verschickt.
+            </div>
+          </div>
+          <div class="text-nowrap">
+            <form method="post" action="{{ url_for('invoices.set_status', invoice_id=invoice.id) }}"
+                  hx-boost="false" id="directSendForm">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="status" value="Versendet">
+              <button type="submit" class="btn btn-sm btn-outline-info">
+                <i class="fas fa-share me-1"></i> Auf „Versendet“ setzen
+              </button>
+            </form>
+          </div>
+        </div>
+        {% endif %}
+
+        {% if invoice.status != 'Entwurf' and 'Versendet' in allowed_targets %}
+        <!-- Bezahlt/Guthaben -> Versendet, Korrektur -->
+        <div class="list-group-item d-flex align-items-start justify-content-between gap-3 py-2 px-3">
+          <div>
+            <div class="fw-medium">Zurück auf „Versendet“ setzen</div>
+            <div class="text-muted small">Korrektur – öffnet den zugehörigen Offenen Posten wieder.</div>
+          </div>
+          <div class="text-nowrap">
+            <form method="post" action="{{ url_for('invoices.set_status', invoice_id=invoice.id) }}" hx-boost="false">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="status" value="Versendet">
+              <button type="submit" class="btn btn-sm btn-outline-info">
+                <i class="fas fa-rotate-left me-1"></i> Auf „Versendet“ setzen
+              </button>
+            </form>
+          </div>
+        </div>
+        {% endif %}
+
+        {% if 'Bezahlt' in allowed_targets %}
+        <!-- -> Bezahlt -->
+        <div class="list-group-item d-flex align-items-start justify-content-between gap-3 py-2 px-3">
+          <div>
+            <div class="fw-medium">Als „Bezahlt“ markieren</div>
+            <div class="text-muted small">
+              Legt bei Bedarf automatisch eine Zahlungsbuchung im ersten aktiven Einnahmenkonto an.
+            </div>
+          </div>
+          <div class="text-nowrap">
+            <form method="post" action="{{ url_for('invoices.set_status', invoice_id=invoice.id) }}" hx-boost="false">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="status" value="Bezahlt">
+              <button type="submit" class="btn btn-sm btn-outline-success">
+                <i class="fas fa-euro-sign me-1"></i> Bezahlt
+              </button>
+            </form>
+          </div>
+        </div>
+        {% endif %}
+
+        {% if 'Guthaben' in allowed_targets %}
+        <!-- -> Guthaben -->
+        <div class="list-group-item d-flex align-items-start justify-content-between gap-3 py-2 px-3">
+          <div>
+            <div class="fw-medium">Auf „Guthaben“ setzen</div>
+            <div class="text-muted small">Markiert die Rechnung als durch Kundenguthaben gedeckt.</div>
+          </div>
+          <div class="text-nowrap">
+            <form method="post" action="{{ url_for('invoices.set_status', invoice_id=invoice.id) }}" hx-boost="false">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="status" value="Guthaben">
+              <button type="submit" class="btn btn-sm btn-outline-purple">
+                <i class="fas fa-piggy-bank me-1"></i> Guthaben
+              </button>
+            </form>
+          </div>
+        </div>
+        {% endif %}
+
+        {% if 'Storniert' in allowed_targets %}
+        <!-- -> Storniert -->
+        <div class="list-group-item d-flex align-items-start justify-content-between gap-3 py-2 px-3">
+          <div>
+            <div class="fw-medium">Stornieren</div>
+            <div class="text-muted small">
+              Bucht Zahlungen zurück, schließt den Offenen Posten und storniert aktive Mahnungen –
+              optional inkl. Storno-Rechnung (Gutschrift).
+            </div>
+          </div>
+          <div class="text-nowrap">
+            <button type="button" class="btn btn-sm btn-outline-danger"
+                    data-bs-toggle="modal" data-bs-target="#stornoModal">
+              <i class="fas fa-ban me-1"></i> Stornieren
             </button>
           </div>
-        </form>
-        {% else %}
-        <p class="text-muted small mb-0">
-          Status „{{ invoice.status }}“ ist endgültig – ein weiterer Wechsel ist nicht möglich.
-        </p>
+        </div>
         {% endif %}
+
+        {% if not allowed_targets %}
+        <div class="list-group-item py-2 px-3">
+          <span class="text-muted small">
+            <i class="fas fa-flag-checkered me-1"></i>
+            Status „{{ invoice.status }}“ ist endgültig – ein weiterer Wechsel ist nicht möglich.
+          </span>
+        </div>
+        {% endif %}
+
+        {% if invoice.status == 'Storniert' %}
+        {% set _existing_cn = invoice.active_credit_note %}
+        <!-- Storno-Rechnung -->
+        <div class="list-group-item d-flex align-items-start justify-content-between gap-3 py-2 px-3">
+          <div>
+            <div class="fw-medium">Storno-Rechnung</div>
+            {% if _existing_cn %}
+            <div class="text-muted small">
+              Bereits ausgestellt als <a href="{{ url_for('invoices.detail', invoice_id=_existing_cn.id) }}">{{ _existing_cn.invoice_number }}</a>.
+            </div>
+            {% elif credit_note_blocker %}
+            <div class="text-muted small"><i class="fas fa-lock me-1"></i>{{ credit_note_blocker }}</div>
+            {% else %}
+            <div class="text-muted small">
+              Eigener Beleg mit fortlaufender Nummer und gespiegelten Positionen (entsteht als Entwurf).
+            </div>
+            {% endif %}
+          </div>
+          <div class="text-nowrap">
+            {% if _existing_cn %}
+            <a href="{{ url_for('invoices.detail', invoice_id=_existing_cn.id) }}" class="btn btn-sm btn-outline-primary">
+              <i class="fas fa-arrow-right me-1"></i> {{ _existing_cn.invoice_number }}
+            </a>
+            {% elif not credit_note_blocker %}
+            <button type="button" class="btn btn-sm btn-outline-primary"
+                    data-bs-toggle="modal" data-bs-target="#creditNoteModal">
+              <i class="fas fa-file-invoice-dollar me-1"></i> Storno-Rechnung
+            </button>
+            {% else %}
+            <button type="button" class="btn btn-sm btn-outline-secondary" disabled>
+              <i class="fas fa-file-invoice-dollar me-1"></i> Storno-Rechnung
+            </button>
+            {% endif %}
+          </div>
+        </div>
+        {% endif %}
+
       </div>
     </div>
   </div>
@@ -460,51 +657,33 @@
 {% endif %}
 
 <script>
-// Statuswechsel-Dialoge.
-//  * „Versendet“ → Hinweis, dass automatisch ein Offener Posten entsteht.
-//  * „Storniert“ → Modal statt Direkt-Submit: dort wählt der Nutzer, ob eine
-//    Storno-Rechnung (Gutschrift) ausgestellt wird und über welchen Betrag
-//    zurückgezahlt wird.
-// window.bootstrap defensiv prüfen: Bootstrap wird deferred geladen, dieses
-// Inline-Skript läuft beim harten Reload davor.
+// „Ohne E-Mail auf Versendet setzen“ (nur beim Entwurf sichtbar) legt
+// automatisch einen Offenen Posten an — das bestaetigt der Nutzer hier
+// noch einmal, da dieser Weg (anders als der E-Mail-Versand) keinen
+// weiteren Zwischenschritt hat.
 (function () {
-  const form = document.getElementById('statusForm');
-  const select = document.getElementById('statusSelect');
-  if (!form || !select) return;
-  const isDraft = {{ 'true' if invoice.status == 'Entwurf' else 'false' }};
+  const form = document.getElementById('directSendForm');
+  if (!form) return;
   const isCreditNote = {{ 'true' if invoice.is_credit_note else 'false' }};
   const grossTotal = {{ (invoice_gross_total|de_number)|tojson }};
   const refundAmount = {{ (invoice.refund_amount|de_number if invoice.refund_amount else '')|tojson }};
 
   form.addEventListener('submit', function (e) {
-    const chosen = select.value;
-
-    if (chosen === 'Storniert') {
-      const modalEl = document.getElementById('stornoModal');
-      if (modalEl && window.bootstrap) {
-        e.preventDefault();
-        bootstrap.Modal.getOrCreateInstance(modalEl).show();
-      }
-      return;
-    }
-
-    if (chosen === 'Versendet' && isDraft) {
-      // Bei einer Gutschrift entsteht der Posten ueber den tatsaechlich
-      // zurueckzuzahlenden Betrag — nicht ueber die Belegsumme.
-      const msg = isCreditNote
-        ? (refundAmount
-            ? "Die Gutschrift wird auf „Versendet“ gesetzt.\n\n" +
-              "Dabei entsteht ein Rückzahlungs-Posten über " + refundAmount + " €.\n\n" +
-              "Fortfahren?"
-            : "Die Gutschrift wird auf „Versendet“ gesetzt.\n\n" +
-              "Es entsteht kein Rückzahlungs-Posten (die stornierte Rechnung war unbezahlt).\n\n" +
-              "Fortfahren?")
-        : "Die Rechnung wird auf „Versendet“ gesetzt.\n\n" +
-          "Dabei wird automatisch ein Offener Posten über " + grossTotal + " € erzeugt.\n\n" +
-          "Fortfahren?";
-      if (!window.confirm(msg)) {
-        e.preventDefault();
-      }
+    // Bei einer Gutschrift entsteht der Posten ueber den tatsaechlich
+    // zurueckzuzahlenden Betrag — nicht ueber die Belegsumme.
+    const msg = isCreditNote
+      ? (refundAmount
+          ? "Die Gutschrift wird auf „Versendet“ gesetzt.\n\n" +
+            "Dabei entsteht ein Rückzahlungs-Posten über " + refundAmount + " €.\n\n" +
+            "Fortfahren?"
+          : "Die Gutschrift wird auf „Versendet“ gesetzt.\n\n" +
+            "Es entsteht kein Rückzahlungs-Posten (die stornierte Rechnung war unbezahlt).\n\n" +
+            "Fortfahren?")
+      : "Die Rechnung wird auf „Versendet“ gesetzt.\n\n" +
+        "Dabei wird automatisch ein Offener Posten über " + grossTotal + " € erzeugt.\n\n" +
+        "Fortfahren?";
+    if (!window.confirm(msg)) {
+      e.preventDefault();
     }
   });
 })();

@@ -373,7 +373,7 @@
               data-brutto="{{ amt.gross }}"
               data-status="{{ inv.status }}"
               data-mailstatus="{{ inv.last_email_status_de or '' }}">
-            <td><code>{{ inv.invoice_number }}</code></td>
+            <td><a href="{{ url_for('invoices.detail', invoice_id=inv.id) }}" class="text-reset"><code>{{ inv.invoice_number }}</code></a></td>
             <td>
               <a href="{{ url_for('customers.detail', customer_id=inv.customer_id) }}">
                 {{ inv.customer.name }}

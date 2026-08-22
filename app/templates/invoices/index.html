@@ -333,7 +333,7 @@
         <div class="form-check">
           <input type="checkbox" class="form-check-input" id="massenmail-testmode">
           <label class="form-check-label text-warning" for="massenmail-testmode">
-            <i class="fas fa-flask me-1"></i> Testmodus (Mails an Admin-Adresse)
+            <i class="fas fa-flask me-1"></i> Testmodus (Mails an Admin-Adresse, max. 3 Mails)
           </label>
         </div>
         <div>
@@ -695,11 +695,17 @@ async function startMassenmail() {
   document.getElementById('massenmail-start-btn').disabled = true;
   const csrfToken = document.querySelector('#bulk-form input[name="csrf_token"]').value;
   const testMode = document.getElementById('massenmail-testmode').checked;
-  const eligible = [];
+  const TEST_MODE_LIMIT = 3;
+  const allEligible = [];
   document.querySelectorAll('#massenmail-rows tr[id^="mm-row-"]').forEach(tr => {
     const id = tr.id.replace('mm-row-', '');
     const icon = document.getElementById('mm-icon-' + id);
-    if (icon) eligible.push({ id, icon });
+    if (icon) allEligible.push({ id, icon });
+  });
+  const eligible = testMode ? allEligible.slice(0, TEST_MODE_LIMIT) : allEligible;
+  allEligible.slice(eligible.length).forEach(({ icon }) => {
+    icon.className = 'fas fa-minus-circle text-muted';
+    icon.title = 'Im Testmodus übersprungen (Limit: ' + TEST_MODE_LIMIT + ')';
   });
   for (let i = 0; i < eligible.length; i++) {
     const { id, icon } = eligible[i];

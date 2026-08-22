@@ -159,7 +159,7 @@
             <div class="form-check mb-0">
               <input type="checkbox" class="form-check-input" id="dn-mail-testmode">
               <label class="form-check-label text-warning small" for="dn-mail-testmode">
-                <i class="fas fa-flask me-1"></i> Testmodus (an die eigene Adresse)
+                <i class="fas fa-flask me-1"></i> Testmodus (an die eigene Adresse, max. 3 Mails)
               </label>
             </div>
             <span class="text-success small fw-semibold" id="dn-mail-msg"></span>
@@ -510,7 +510,13 @@
     btn.disabled = true;
     const csrfToken = dnCsrf();
     const testMode = document.getElementById('dn-mail-testmode').checked;
-    const rows = Array.from(document.querySelectorAll('#dn-mail-rows tr[id^="dn-mm-row-"]'));
+    const TEST_MODE_LIMIT = 3;
+    const allRows = Array.from(document.querySelectorAll('#dn-mail-rows tr[id^="dn-mm-row-"]'));
+    const rows = testMode ? allRows.slice(0, TEST_MODE_LIMIT) : allRows;
+    allRows.slice(rows.length).forEach(tr => {
+      const icon = document.getElementById('dn-mm-icon-' + tr.dataset.id);
+      if (icon) { icon.className = 'fas fa-minus-circle text-muted'; icon.title = 'Im Testmodus übersprungen (Limit: ' + TEST_MODE_LIMIT + ')'; }
+    });
     let ok = 0, fail = 0;
     for (let i = 0; i < rows.length; i++) {
       const id = rows[i].dataset.id;

@@ -160,7 +160,15 @@
           <tbody>
             {% for item in open_items %}
             <tr>
-              <td>{{ item.description }}</td>
+              <td>
+                {% if item.invoice_id %}
+                <a href="{{ url_for('invoices.detail', invoice_id=item.invoice_id) }}" class="text-reset">
+                  <code>{{ item.description }}</code>
+                </a>
+                {% else %}
+                {{ item.description }}
+                {% endif %}
+              </td>
               <td>{{ item.customer.name }}</td>
               <td>{{ item.due_date.strftime('%d.%m.%Y') if item.due_date else '—' }}</td>
               <td>

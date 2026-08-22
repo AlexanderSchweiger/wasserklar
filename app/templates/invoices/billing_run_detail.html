@@ -222,7 +222,7 @@
               data-brutto="{{ amt.gross }}"
               data-status="{{ inv.status }}"
               data-mailstatus="{{ inv.last_email_status_de or '' }}">
-            <td><code>{{ inv.invoice_number }}</code></td>
+            <td><a href="{{ url_for('invoices.detail', invoice_id=inv.id) }}" class="text-reset"><code>{{ inv.invoice_number }}</code></a></td>
             <td>
               <a href="{{ url_for('customers.detail', customer_id=inv.customer_id) }}">
                 {{ inv.customer.name }}
@@ -371,7 +371,7 @@
           <div class="form-check mb-0">
             <input type="checkbox" class="form-check-input" id="br-mail-testmode">
             <label class="form-check-label text-warning small" for="br-mail-testmode">
-              <i class="fas fa-flask me-1"></i> Testmodus (an Admin-Adresse)
+              <i class="fas fa-flask me-1"></i> Testmodus (an Admin-Adresse, max. 3 Mails)
             </label>
           </div>
           <span class="text-success small fw-semibold" id="br-mail-msg"></span>
@@ -515,7 +515,13 @@
     if (!btn) return;
     btn.disabled = true;
     const testMode = document.getElementById('br-mail-testmode').checked;
-    const rows = Array.from(document.querySelectorAll('#versendenModal tr[id^="br-mm-"]'));
+    const TEST_MODE_LIMIT = 3;
+    const allRows = Array.from(document.querySelectorAll('#versendenModal tr[id^="br-mm-"]'));
+    const rows = testMode ? allRows.slice(0, TEST_MODE_LIMIT) : allRows;
+    allRows.slice(rows.length).forEach(tr => {
+      const icon = document.getElementById('br-mm-icon-' + tr.dataset.id);
+      if (icon) { icon.className = 'fas fa-minus-circle text-muted'; icon.title = 'Im Testmodus übersprungen (Limit: ' + TEST_MODE_LIMIT + ')'; }
+    });
     let ok = 0, fail = 0;
     for (let i = 0; i < rows.length; i++) {
       const id = rows[i].dataset.id;

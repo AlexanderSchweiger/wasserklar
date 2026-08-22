@@ -511,7 +511,7 @@
           <tbody>
             {% for inv in invoices %}
             <tr>
-              <td>{{ inv.invoice_number }}</td>
+              <td><a href="{{ url_for('invoices.detail', invoice_id=inv.id) }}" class="text-reset">{{ inv.invoice_number }}</a></td>
               <td>
                 <a href="{{ url_for('customers.detail', customer_id=inv.customer_id) }}">
                   {{ inv.customer.name }}

@@ -1336,6 +1336,50 @@ def booking_group_stornieren(group_id):
 # Offene Posten
 # ---------------------------------------------------------------------------
 
+# Erlaubte Sort-Keys der Offene-Posten-Liste. Sortierung laeuft bewusst in
+# Python auf der bereits vollstaendig geladenen ``all_items``-Liste (siehe
+# unten) statt per SQL-ORDER-BY — "periode" und "offen" haben keine simple
+# Spalten-Entsprechung (Periode haengt an der verknuepften Rechnung,
+# open_balance ist eine berechnete Property mit eigener Booking-Summenabfrage).
+_OPEN_ITEM_SORT_KEYS = {"ref", "kunde", "periode", "datum", "faellig", "status", "betrag", "offen"}
+_OPEN_ITEM_DEFAULT_SORT = "faellig"
+
+
+def _sort_open_items(items, sort: str, direction: str):
+    """Sortiert die Offene-Posten-Liste passend zum gewaehlten Spalten-Sort.
+
+    NULL-Werte (v.a. Faelligkeitsdatum, Periode) wandern in beiden Richtungen
+    ans Ende, damit "desc" nicht ploetzlich die unvollstaendigen Posten nach
+    vorne holt.
+    """
+    desc = direction == "desc"
+
+    def period_key(item):
+        if item.invoice and item.invoice.billing_period:
+            return item.invoice.billing_period.start_date
+        if item.period_year:
+            return date(item.period_year, 1, 1)
+        return None
+
+    key_funcs = {
+        "ref": lambda i: (i.description or "").lower(),
+        "kunde": lambda i: (i.customer.name or "").lower(),
+        "periode": period_key,
+        "datum": lambda i: i.date,
+        "faellig": lambda i: i.due_date,
+        "status": lambda i: i.status,
+        "betrag": lambda i: i.amount,
+        "offen": lambda i: i.open_balance,
+    }
+    key_func = key_funcs.get(sort, key_funcs[_OPEN_ITEM_DEFAULT_SORT])
+
+    def sort_key(item):
+        value = key_func(item)
+        return (value is None, value if value is not None else 0)
+
+    return sorted(items, key=sort_key, reverse=desc)
+
+
 @bp.route("/open-items")
 @login_required
 def open_items():
@@ -1344,6 +1388,12 @@ def open_items():
     if status_filter not in ("open", "closed", "all"):
         # Rückwärtskompatibel: alte Links/Bookmarks mit ?show_closed=1 zeigten alle Posten.
         status_filter = "all" if request.args.get("show_closed") == "1" else "open"
+    sort = request.args.get("sort", _OPEN_ITEM_DEFAULT_SORT)
+    if sort not in _OPEN_ITEM_SORT_KEYS:
+        sort = _OPEN_ITEM_DEFAULT_SORT
+    sort_dir = request.args.get("dir", "asc")
+    if sort_dir not in ("asc", "desc"):
+        sort_dir = "asc"
     amount_min_raw = request.args.get("amount_min", "").strip()
     amount_max_raw = request.args.get("amount_max", "").strip()
     customer_q = request.args.get("customer", "").strip()
@@ -1385,8 +1435,9 @@ def open_items():
             pass
 
     # Total ueber ALLE gefilterten Posten — unabhaengig von der Pagination.
-    all_items = item_q.order_by(OpenItem.due_date).all()
+    all_items = item_q.all()
     total_open = sum(item.open_balance for item in all_items)
+    all_items = _sort_open_items(all_items, sort, sort_dir)
 
     pagination = paginate_list(all_items, page_key="open_items")
     accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
@@ -1404,6 +1455,8 @@ def open_items():
         total_open=total_open,
         today=date.today(),
         status_filter=status_filter,
+        sort=sort,
+        dir=sort_dir,
         has_filter=has_filter,
         f_customer=customer_q,
         f_ref=ref_q,
