@@ -11,7 +11,8 @@ import pytest
 from app.extensions import db
 from app.models import (
     Account, BillingPeriod, BillingRun, Customer, FiscalYear, Invoice,
-    MeterReading, Property, PropertyOwnership, User, WaterMeter, WaterTariff,
+    MeterReading, Project, Property, PropertyOwnership, User, WaterMeter,
+    WaterTariff,
 )
 from tests.conftest import _ensure_role
 
@@ -43,12 +44,18 @@ def billing_setup(app):
         name="2024", start_date=date(2024, 1, 1), end_date=date(2024, 12, 31),
         active=True)
     db.session.add(period)
+    account = Account(name="Wasser")
+    account_base = Account(name="Grundgebühren")
+    db.session.add_all([account, account_base])
+    db.session.flush()
     tariff = WaterTariff(
         name="T", valid_from=2024, base_fee=Decimal("30"),
-        price_per_m3=Decimal("2"))
+        price_per_m3=Decimal("2"),
+        price_per_m3_account_id=account.id,
+        base_fee_account_id=account_base.id)
     db.session.add(tariff)
-    account = Account(name="Wasser")
-    db.session.add(account)
+    project = Project(name="Wasserzins 2024", code="WZ4")
+    db.session.add(project)
     cust = Customer(name="Kunde", customer_number=1)
     db.session.add(cust)
     db.session.flush()
@@ -66,7 +73,8 @@ def billing_setup(app):
         value=Decimal("150"), consumption=Decimal("50"),
         reading_date=date(2024, 12, 31)))
     db.session.commit()
-    return {"period": period, "tariff": tariff, "account": account}
+    return {"period": period, "tariff": tariff, "account": account,
+            "account_base": account_base, "project": project}
 
 
 class TestBillingRun:
@@ -240,3 +248,89 @@ class TestBillingRunInReport:
         html = r.get_data(as_text=True)
         assert "Rechnungsläufe" in html
         assert f"/invoices/billing-runs/{run.id}" in html
+
+
+class TestBillingRunKontierung:
+    """Der Lauf kontiert die Positionen aus dem Tarif und setzt ein Lauf-Projekt."""
+
+    def test_items_get_tariff_accounts(self, client, admin, billing_setup):
+        _login(client)
+        client.post("/invoices/generate", data={
+            "billing_period_id": str(billing_setup["period"].id),
+            "tariff_id": str(billing_setup["tariff"].id),
+            "due_days": "30",
+        })
+        inv = Invoice.query.one()
+        by_unit = {i.unit: i for i in inv.items}
+        assert by_unit["m³"].account_id == billing_setup["account"].id
+        assert by_unit["Pauschal"].account_id == billing_setup["account_base"].id
+
+    def test_run_project_lands_on_every_item(self, client, admin, billing_setup):
+        _login(client)
+        project = billing_setup["project"]
+        client.post("/invoices/generate", data={
+            "billing_period_id": str(billing_setup["period"].id),
+            "tariff_id": str(billing_setup["tariff"].id),
+            "project_id": str(project.id),
+            "due_days": "30",
+        })
+        run = BillingRun.query.one()
+        assert run.project_id == project.id
+        inv = Invoice.query.one()
+        assert len(inv.items) > 0
+        assert all(i.project_id == project.id for i in inv.items)
+
+    def test_without_project_items_stay_unassigned(self, client, admin, billing_setup):
+        _login(client)
+        client.post("/invoices/generate", data={
+            "billing_period_id": str(billing_setup["period"].id),
+            "tariff_id": str(billing_setup["tariff"].id),
+            "due_days": "30",
+        })
+        assert BillingRun.query.one().project_id is None
+        assert all(i.project_id is None for i in Invoice.query.one().items)
+
+    def test_generated_invoice_is_payable_without_dialog(self, client, admin,
+                                                         billing_setup):
+        """Ende-zu-Ende: Tarif kontiert -> Versendet -> Bezahlt ohne Konto-Abfrage."""
+        from app.models import Booking, BookingGroup
+        _login(client)
+        client.post("/invoices/generate", data={
+            "billing_period_id": str(billing_setup["period"].id),
+            "tariff_id": str(billing_setup["tariff"].id),
+            "due_days": "30",
+        })
+        inv_id = Invoice.query.one().id
+        client.post(f"/invoices/{inv_id}/status", data={"status": Invoice.STATUS_SENT})
+        client.post(f"/invoices/{inv_id}/status", data={"status": Invoice.STATUS_PAID})
+
+        assert db.session.get(Invoice, inv_id).status == Invoice.STATUS_PAID
+        bookings = Booking.query.filter_by(invoice_id=inv_id).all()
+        # Zwei Konten (m3 + Grundgebuehr) -> Sammelbuchung mit zwei Kindern
+        assert len(bookings) == 2
+        assert {b.account_id for b in bookings} == {
+            billing_setup["account"].id, billing_setup["account_base"].id}
+        assert BookingGroup.query.count() == 1
+
+    def test_single_account_tariff_stays_one_booking(self, client, admin,
+                                                     billing_setup):
+        """Alles auf ein Konto -> normale Einzelbuchung, keine Sammelbuchung."""
+        from app.models import Booking, BookingGroup
+        tariff = billing_setup["tariff"]
+        tariff.base_fee_account_id = billing_setup["account"].id
+        db.session.commit()
+
+        _login(client)
+        client.post("/invoices/generate", data={
+            "billing_period_id": str(billing_setup["period"].id),
+            "tariff_id": str(tariff.id),
+            "due_days": "30",
+        })
+        inv_id = Invoice.query.one().id
+        client.post(f"/invoices/{inv_id}/status", data={"status": Invoice.STATUS_SENT})
+        client.post(f"/invoices/{inv_id}/status", data={"status": Invoice.STATUS_PAID})
+
+        bookings = Booking.query.filter_by(invoice_id=inv_id).all()
+        assert len(bookings) == 1
+        assert bookings[0].account_id == billing_setup["account"].id
+        assert BookingGroup.query.count() == 0

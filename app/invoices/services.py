@@ -32,8 +32,16 @@ def invoice_period_year(invoice):
     return None
 
 
-def create_or_update_open_item(invoice, account_id=None):
+def create_or_update_open_item(invoice):
     """Erzeugt oder aktualisiert den verknüpften OpenItem wenn eine Rechnung versendet wird.
+
+    **Der Posten bekommt bewusst KEIN eigenes Buchungskonto.** Seit der
+    Kontierung pro Rechnungsposition (v1.43.0) haengt das Konto an den
+    ``InvoiceItem``s — eine Rechnung kann mehrere Konten betreffen, ein
+    einzelnes Feld am Posten koennte das gar nicht abbilden. Beim Ausgleichen
+    liest ``booking_group_from_invoice_payment`` die Konten von den Positionen;
+    fehlt dort eines, fragt die Oberflaeche danach. ``OpenItem.account_id``
+    bleibt damit ausschliesslich den **manuell** angelegten Posten vorbehalten.
 
     **Storno-Rechnungen (Gutschriften) laufen ueber einen eigenen Weg.** Ihr
     Posten ist eine Verbindlichkeit ueber den tatsaechlich zurueckzuzahlenden
@@ -47,7 +55,7 @@ def create_or_update_open_item(invoice, account_id=None):
         # Lokaler Import: credit_note importiert seinerseits aus diesem Modul
         # (invoice_period_year) — auf Modulebene waere das ein Zyklus.
         from app.invoices.credit_note import create_refund_open_item
-        return create_refund_open_item(invoice, account_id=account_id)
+        return create_refund_open_item(invoice)
 
     oi = invoice.open_item
     if oi is None:
@@ -60,24 +68,24 @@ def create_or_update_open_item(invoice, account_id=None):
             period_year=invoice_period_year(invoice),
             status=OpenItem.STATUS_OPEN,
             invoice_id=invoice.id,
-            account_id=account_id,
         )
         db.session.add(oi)
     else:
         oi.amount = invoice.total_amount
         oi.due_date = invoice.due_date
         oi.period_year = invoice_period_year(invoice)
-        if account_id is not None:
-            oi.account_id = account_id
 
 
 def create_fee_invoice(*, customer, property, description, amount,
-                       tax_rate=None, created_by_id=None, notes=None):
+                       tax_rate=None, created_by_id=None, notes=None,
+                       account_id=None, project_id=None):
     """Entwurfs-Rechnung mit genau einer Pauschal-Position (z.B.
     Zaehlertausch-Pauschale).
 
     ``amount`` ist der NETTO-Positionsbetrag; ``recalculate_total()`` rechnet
     die USt gemaess ``tax_rate`` dazu (None = nicht umsatzsteuerpflichtig).
+    ``account_id``/``project_id`` kontieren die Position vor; ohne sie fragt
+    der Bezahlt-Dialog das Konto ab.
     Flusht (damit ``invoice.id`` verfuegbar ist), committet NICHT — der
     Aufrufer entscheidet ueber die Transaktionsgrenze.
     """
@@ -102,6 +110,8 @@ def create_fee_invoice(*, customer, property, description, amount,
         unit_price=amount,
         amount=amount,
         tax_rate=tax_rate,
+        account_id=account_id,
+        project_id=project_id,
     ))
     inv.recalculate_total()
     return inv

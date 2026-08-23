@@ -1,11 +1,12 @@
 """Integration-Tests für Sammelbuchung (ADR-002): booking_group_from_invoice_payment + Storno.
 
 Die Sammelbuchung splittet die Zahlung einer Rechnung nach den Dimensionen
-``(project_id, tax_rate)`` ihrer Positionen; das Buchungskonto ist für alle
-Splits einheitlich und stammt aus ``fallback_account_id`` (bzw.
-``OpenItem.account_id``). Liefert der Split genau eine Zeile, entsteht eine
-flache Einzelbuchung ohne ``BookingGroup``-Header; bei ≥ 2 Zeilen ein
-Gruppen-Header plus je Split-Zeile ein Kind.
+``(account_id, project_id, tax_rate)`` ihrer Positionen. Das Konto kommt primär
+von der Position selbst (``InvoiceItem.account_id``, gesetzt vom Tarif im
+Rechnungslauf oder von Hand im Positions-Editor); Positionen ohne eigenes Konto
+erben ``fallback_account_id`` bzw. ``OpenItem.account_id``. Liefert der Split
+genau eine Zeile, entsteht eine flache Einzelbuchung ohne ``BookingGroup``-
+Header; bei >= 2 Zeilen ein Gruppen-Header plus je Split-Zeile ein Kind.
 """
 from datetime import date
 from decimal import Decimal
@@ -57,6 +58,7 @@ def _make_invoice(customer_id, items_data, number="2024-00001"):
             unit_price=Decimal(str(it["amount"])),
             amount=Decimal(str(it["amount"])),
             tax_rate=it.get("tax_rate"),
+            account_id=it.get("account_id"),
             project_id=it.get("project_id"),
         ))
     db.session.commit()
@@ -229,3 +231,112 @@ class TestSammelbuchungStorno:
         db.session.commit()
         partners2 = storno_booking_group(group, reason="Nochmal", created_by_id=user.id)
         assert partners2 == []
+
+
+class TestKontoDimension:
+    """Konto als dritte Split-Dimension (v1.43.0).
+
+    Deckt die Kernanforderung ab: unterschiedliche Konten erzeugen eine
+    Sammelbuchung, ein einheitliches Konto (bei gleichem Projekt und
+    Steuersatz) dagegen eine ganz normale Einzelbuchung.
+    """
+
+    def test_two_accounts_create_group(self, user, account, account2, real_account, customer):
+        inv = _make_invoice(customer.id, [
+            {"desc": "Wasserverbrauch", "amount": "80.00", "account_id": account.id},
+            {"desc": "Grundgebühr", "amount": "20.00", "account_id": account2.id},
+        ])
+        group, children = booking_group_from_invoice_payment(
+            invoice=inv, amount=Decimal("100.00"),
+            payment_date=PAYMENT_DATE,
+            real_account_id=real_account.id,
+            created_by_id=user.id,
+        )
+        db.session.commit()
+        assert group is not None
+        assert len(children) == 2
+        assert {c.account_id for c in children} == {account.id, account2.id}
+        assert sum(c.amount for c in children) == Decimal("100.00")
+
+    def test_same_account_and_project_stays_single_booking(
+            self, user, account, project, real_account, customer):
+        """Alles auf dasselbe Konto + Projekt → normale Buchung, keine Gruppe."""
+        inv = _make_invoice(customer.id, [
+            {"desc": "Wasserverbrauch", "amount": "80.00",
+             "account_id": account.id, "project_id": project.id},
+            {"desc": "Grundgebühr", "amount": "20.00",
+             "account_id": account.id, "project_id": project.id},
+        ])
+        group, children = booking_group_from_invoice_payment(
+            invoice=inv, amount=Decimal("100.00"),
+            payment_date=PAYMENT_DATE,
+            real_account_id=real_account.id,
+            created_by_id=user.id,
+        )
+        db.session.commit()
+        assert group is None
+        assert len(children) == 1
+        assert children[0].account_id == account.id
+        assert children[0].project_id == project.id
+        assert children[0].amount == Decimal("100.00")
+        assert BookingGroup.query.count() == 0
+
+    def test_item_account_wins_over_fallback(self, user, account, account2,
+                                             real_account, customer):
+        """Kontierte Position ignoriert den Fallback, unkontierte erbt ihn."""
+        inv = _make_invoice(customer.id, [
+            {"desc": "Wasserverbrauch", "amount": "80.00", "account_id": account.id},
+            {"desc": "Sonstiges", "amount": "20.00"},
+        ])
+        group, children = booking_group_from_invoice_payment(
+            invoice=inv, amount=Decimal("100.00"),
+            payment_date=PAYMENT_DATE,
+            real_account_id=real_account.id,
+            created_by_id=user.id,
+            fallback_account_id=account2.id,
+        )
+        db.session.commit()
+        assert group is not None
+        by_account = {c.account_id: c.amount for c in children}
+        assert by_account == {account.id: Decimal("80.00"), account2.id: Decimal("20.00")}
+
+    def test_without_any_account_raises(self, user, real_account, customer):
+        """Ohne Kontierung und ohne Fallback bleibt die Buchung unmöglich."""
+        inv = _make_invoice(customer.id, [{"desc": "Wasser", "amount": "100.00"}])
+        with pytest.raises(ValueError):
+            booking_group_from_invoice_payment(
+                invoice=inv, amount=Decimal("100.00"),
+                payment_date=PAYMENT_DATE,
+                real_account_id=real_account.id,
+                created_by_id=user.id,
+            )
+
+
+class TestInvoiceMissingAccount:
+    """``invoice_missing_account`` entscheidet, ob der Bezahlt-Dialog nötig ist."""
+
+    def test_true_without_any_account(self, app, customer):
+        from app.accounting.services import invoice_missing_account
+        inv = _make_invoice(customer.id, [{"desc": "Wasser", "amount": "100.00"}])
+        assert invoice_missing_account(inv) is True
+
+    def test_false_when_all_items_contexted(self, app, account, customer):
+        from app.accounting.services import invoice_missing_account
+        inv = _make_invoice(customer.id, [
+            {"desc": "Wasser", "amount": "80.00", "account_id": account.id},
+            {"desc": "Grundgebühr", "amount": "20.00", "account_id": account.id},
+        ])
+        assert invoice_missing_account(inv) is False
+
+    def test_true_when_one_item_uncontexted(self, app, account, customer):
+        from app.accounting.services import invoice_missing_account
+        inv = _make_invoice(customer.id, [
+            {"desc": "Wasser", "amount": "80.00", "account_id": account.id},
+            {"desc": "Sonstiges", "amount": "20.00"},
+        ])
+        assert invoice_missing_account(inv) is True
+
+    def test_false_with_explicit_fallback(self, app, account, customer):
+        from app.accounting.services import invoice_missing_account
+        inv = _make_invoice(customer.id, [{"desc": "Wasser", "amount": "100.00"}])
+        assert invoice_missing_account(inv, fallback_account_id=account.id) is False

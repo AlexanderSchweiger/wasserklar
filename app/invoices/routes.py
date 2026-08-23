@@ -53,16 +53,6 @@ def _render_pdf_html(invoice, *, for_email=False):
     )
 
 
-def _resolve_open_item_account_id(invoice, form_account_id=None):
-    """Ermittelt das Buchungskonto für einen aus einer Rechnung erzeugten Offenen Posten.
-
-    Das Konto wird ausschließlich pro Offenem Posten gefuehrt (``OpenItem.account_id``);
-    der Rechnungslauf traegt kein eigenes Konto mehr. Es zaehlt daher allein der
-    Formularwert; ist keiner gesetzt, bleibt das Konto offen (``None``).
-    """
-    return form_account_id
-
-
 # Nach app/invoices/services.py extrahiert (wiederverwendet von den
 # Zaehlertausch-Touren); Alias-Rückbindung haelt alle bestehenden Aufrufer
 # und Test-Monkeypatches auf die Underscore-Namen stabil.
@@ -100,12 +90,17 @@ def _status_response(invoice):
     return redirect(url_for("invoices.detail", invoice_id=invoice.id))
 
 
-def _book_invoice_payment_if_needed(invoice):
+def _book_invoice_payment_if_needed(invoice, fallback_account_id=None):
     """Legt beim Markieren als 'Bezahlt' eine Zahlungsbuchung an – aber nur, wenn
     noch keine wirksame Buchung für die Rechnung existiert.
 
     Verhindert Doppelbuchungen, wenn die Rechnung bereits über die Zahlungs-
     erfassung (``pay``) oder einen früheren Bezahlt-Wechsel verbucht wurde.
+
+    ``fallback_account_id`` ist das im Bezahlt-Dialog gewaehlte Konto. Es greift
+    nur fuer Positionen ohne eigene Kontierung — Positionen mit ``account_id``
+    (aus dem Tarif oder dem Positions-Editor) behalten ihres, sodass weiterhin
+    je Konto eine Buchungszeile entsteht.
     """
     from app.accounting import services as acc_svc
     existing = (
@@ -133,6 +128,7 @@ def _book_invoice_payment_if_needed(invoice):
         created_by_id=current_user.id,
         open_item=invoice.open_item,
         reference=invoice.invoice_number,
+        fallback_account_id=fallback_account_id,
     )
     if invoice.open_item:
         invoice.open_item.status = OpenItem.STATUS_PAID
@@ -469,6 +465,12 @@ def generate():
         sort_order = request.form.get("sort_order", "customer_name")
         if sort_order not in valid_sort_orders:
             sort_order = "customer_name"
+        # Ein Projekt fuer den ganzen Lauf (z.B. "Wasserzins 2026") — wird unten
+        # auf jede erzeugte Position geschrieben. Konto kommt dagegen je
+        # Gebuehrenart aus dem Tarif; der m3-Kontierung dient zusaetzlich als
+        # Lauf-Default fuer Positionen, die nicht aus dem Tarif stammen.
+        run_project_id = request.form.get("project_id", type=int) or None
+        run_account_id = tariff.price_per_m3_account_id
 
         # Rechnungsdatum für den Rechnungslauf ist heute.
         invoice_date = date.today()
@@ -510,6 +512,7 @@ def generate():
             tariff_price_per_m3=tariff.price_per_m3,
             tariff_notes=tariff.notes,
             sort_order=sort_order,
+            project_id=run_project_id,
         )
         db.session.add(billing_run)
         db.session.flush()
@@ -640,6 +643,8 @@ def generate():
                         unit_price=tariff.price_per_m3,
                         amount=amount,
                         tax_rate=water_tax,
+                        account_id=tariff.price_per_m3_account_id,
+                        project_id=run_project_id,
                         is_estimated=bool(getattr(reading, "is_estimated", False)),
                     ))
             else:
@@ -670,6 +675,8 @@ def generate():
                     unit_price=tariff.price_per_m3,
                     amount=amount,
                     tax_rate=water_tax,
+                    account_id=tariff.price_per_m3_account_id,
+                    project_id=run_project_id,
                     is_estimated=is_any_estimated,
                 ))
 
@@ -699,6 +706,8 @@ def generate():
                     unit_price=base_amount,
                     amount=base_amount,
                     tax_rate=water_tax,
+                    account_id=tariff.base_fee_account_id,
+                    project_id=run_project_id,
                 ))
 
             # Zusatzgebühr (nur wenn explizit hinterlegt, auch 0 erzeugt eine Position)
@@ -712,6 +721,8 @@ def generate():
                     unit_price=add_amount,
                     amount=add_amount,
                     tax_rate=water_tax,
+                    account_id=tariff.additional_fee_account_id,
+                    project_id=run_project_id,
                 ))
 
             # Damit USt (sofern vorhanden) im Gesamtbetrag berücksichtigt wird:
@@ -733,6 +744,20 @@ def generate():
                 meter_id=prop_readings[0].meter_id, period_id=period.id,
                 tax_rate=water_tax, created_by_id=current_user.id,
             )
+
+            # Kontierung nachziehen: ``apply_corrections_to_invoice`` und
+            # ``cap_invoice_at_zero`` haengen eigene Positionen an die Rechnung.
+            # Ein Sweep hier faengt sie alle ab — das ist die einzige Stelle, an
+            # der die Rechnung fertig ist, und erspart es, das Lauf-Projekt durch
+            # zwei fremde Service-Funktionen durchzureichen. Fachlich passt das
+            # m3-Konto: Schaetz-Korrekturen und Null-Kappung sind
+            # Verbrauchskorrekturen.
+            if run_project_id or run_account_id:
+                for it in inv.items:
+                    if it.project_id is None:
+                        it.project_id = run_project_id
+                    if it.account_id is None:
+                        it.account_id = run_account_id
 
             created += 1
 
@@ -760,6 +785,7 @@ def generate():
         periods=_billing_period_list(),
         active_period=BillingPeriod.current(),
         sort_order_choices=BillingRun.SORT_ORDER_CHOICES,
+        projects=Project.query.filter_by(closed=False).order_by(Project.name).all(),
     )
 
 
@@ -777,6 +803,7 @@ def new():
     customers = Customer.query.order_by(Customer.name).all()
     tariffs = WaterTariff.query.order_by(WaterTariff.valid_from.desc()).all()
     editor_projects = Project.query.filter_by(closed=False).order_by(Project.name).all()
+    editor_accounts = _active_accounts()
 
     if request.method == "POST":
         customer_id_raw = request.form.get("customer_id", "").strip()
@@ -859,6 +886,7 @@ def new():
         customers=customers,
         tariffs=tariffs,
         today=date.today(),
+        editor_accounts=editor_accounts,
         editor_projects=editor_projects,
     )
 
@@ -877,6 +905,7 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
     row_units = form.getlist("row_unit[]")
     row_unit_prices = form.getlist("row_unit_price[]")
     row_tax_rates = form.getlist("row_tax_rate[]")
+    row_account_ids = form.getlist("row_account_id[]")
     row_project_ids = form.getlist("row_project_id[]")
 
     def _dec(lst, idx, default="0"):
@@ -900,6 +929,10 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
     water_tax = Decimal("10") if is_vat_liable_year else None
 
     for i, rtype in enumerate(row_types):
+        # Dimensionen gelten pro UI-Zeile. Beim Typ "tariff" erzeugt eine Zeile
+        # drei Positionen; das Konto kommt dann je Position aus dem Tarif,
+        # sofern die Zeile nicht explizit eines vorgibt.
+        row_account_id = _int_or_none(row_account_ids, i)
         row_project_id = _int_or_none(row_project_ids, i)
 
         if rtype == "tariff":
@@ -924,6 +957,7 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
                 unit_price=tariff.price_per_m3,
                 amount=amount,
                 tax_rate=water_tax,
+                account_id=row_account_id or tariff.price_per_m3_account_id,
                 project_id=row_project_id,
             ))
             if tariff.base_fee is not None:
@@ -935,6 +969,7 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
                     unit_price=tariff.base_fee,
                     amount=tariff.base_fee,
                     tax_rate=water_tax,
+                    account_id=row_account_id or tariff.base_fee_account_id,
                     project_id=row_project_id,
                 ))
             if tariff.additional_fee is not None:
@@ -946,6 +981,7 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
                     unit_price=tariff.additional_fee,
                     amount=tariff.additional_fee,
                     tax_rate=water_tax,
+                    account_id=row_account_id or tariff.additional_fee_account_id,
                     project_id=row_project_id,
                 ))
         elif rtype == "water":
@@ -965,6 +1001,7 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
                 unit_price=unit_price,
                 amount=amount,
                 tax_rate=water_tax,
+                account_id=row_account_id,
                 project_id=row_project_id,
             ))
         else:  # free
@@ -984,6 +1021,7 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
                 unit_price=unit_price,
                 amount=amount,
                 tax_rate=tax_rate if tax_rate > 0 else None,
+                account_id=row_account_id,
                 project_id=row_project_id,
             ))
 
@@ -1007,6 +1045,7 @@ def detail(invoice_id):
         # Auch in Read-Only-Ansicht brauchen wir Projekte, damit bestehende
         # Items korrekt als hidden-Inputs gerendert werden (Backward-Compat).
         editor_projects = Project.query.order_by(Project.name).all()
+    editor_accounts = accounts
     # Storno-Dialog: darf eine Gutschrift ausgestellt werden, und ueber
     # welchen Betrag? (Vorschlag = bereits geflossene Zahlung.)
     from app.invoices.credit_note import credit_note_blocker, refund_suggestion
@@ -1023,14 +1062,21 @@ def detail(invoice_id):
         from app.email_suppression import suppression_notice
         email_blocked_reason = suppression_notice(invoice.customer.email)
 
+    # Braucht der „Bezahlt"-Button vorher ein Konto? Genau dann, wenn mindestens
+    # eine Position unkontiert ist und auch der Offene Posten keines traegt —
+    # sonst scheitert die Buchung und der Statuswechsel wird zurueckgerollt.
+    needs_pay_account = acc_svc.invoice_missing_account(invoice)
+
     return render_template(
         "invoices/detail.html",
         invoice=invoice,
         accounts=accounts,
+        needs_pay_account=needs_pay_account,
         doc_format=doc_format,
         fy_vat_liable=fy_vat_liable,
         tax_rates=tax_rates,
         tariffs=tariffs,
+        editor_accounts=editor_accounts,
         editor_projects=editor_projects,
         tax_summary=invoice.tax_breakdown,
         invoice_gross_total=invoice.total_amount,
@@ -1153,25 +1199,64 @@ def bulk_action():
         bulk_account_id_raw = request.form.get("account_id") or None
         bulk_account_id = int(bulk_account_id_raw) if bulk_account_id_raw else None
         changed = 0
+        # Rechnungen, die der Statuswechsel nicht mitnehmen kann. Beim
+        # Bezahlt-Setzen darf eine fehlende Kontierung NICHT den ganzen Stapel
+        # zurueckrollen — die betroffene Rechnung bleibt unveraendert und wird
+        # gemeldet, der Rest wird gebucht.
+        blocked_transition = []
+        blocked_account = []
         try:
             for inv in invoices:
-                inv.status = action
-                if action == Invoice.STATUS_SENT:
-                    account_id = _resolve_open_item_account_id(inv, bulk_account_id)
-                    _create_or_update_open_item(inv, account_id=account_id)
-                elif action == Invoice.STATUS_CANCELLED:
-                    if inv.open_item:
-                        inv.open_item.status = OpenItem.STATUS_PAID
-                    # ADR-003: Storno → alle aktiven Mahnungen der Rechnung stornieren
-                    from app.dunning.services import cancel_dunnings_for_invoice
-                    cancel_dunnings_for_invoice(inv)
+                if action == Invoice.STATUS_PAID:
+                    # Beim Bezahlt-Setzen gilt die State-Machine auch im Stapel:
+                    # ein Entwurf ist noch nicht bezahlbar, und ohne diesen Check
+                    # wuerde gleich darauf die Buchung auf einer Rechnung ohne
+                    # Offenen Posten aufsetzen. (Die uebrigen Statuswechsel
+                    # bleiben bewusst ungeprueft — das war schon vorher so.)
+                    if action not in Invoice.ALLOWED_TRANSITIONS.get(inv.status, []):
+                        blocked_transition.append(inv.invoice_number)
+                        continue
+                    # Gleiche Buchungslogik wie der Einzel-Button auf der
+                    # Rechnung; ohne sie waere die Rechnung "Bezahlt", aber
+                    # nirgends verbucht.
+                    savepoint = db.session.begin_nested()
+                    try:
+                        inv.status = action
+                        _book_invoice_payment_if_needed(
+                            inv, fallback_account_id=bulk_account_id)
+                        savepoint.commit()
+                    except ValueError:
+                        savepoint.rollback()
+                        blocked_account.append(inv.invoice_number)
+                        continue
+                else:
+                    inv.status = action
+                    if action == Invoice.STATUS_SENT:
+                        _create_or_update_open_item(inv)
+                    elif action == Invoice.STATUS_CANCELLED:
+                        if inv.open_item:
+                            inv.open_item.status = OpenItem.STATUS_PAID
+                        # ADR-003: Storno → alle aktiven Mahnungen der Rechnung stornieren
+                        from app.dunning.services import cancel_dunnings_for_invoice
+                        cancel_dunnings_for_invoice(inv)
                 changed += 1
             db.session.commit()
         except Exception as e:
             db.session.rollback()
             flash(f"Fehler beim Statuswechsel – alle Änderungen wurden zurückgesetzt: {e}", "danger")
             return redirect(url_for("invoices.index"))
-        flash(f"{changed} Rechnung(en) auf '{action}' gesetzt.", "success")
+        flash(f"{changed} Rechnung(en) auf '{action}' gesetzt.",
+              "success" if changed else "warning")
+        if blocked_transition:
+            flash(f"{len(blocked_transition)} Rechnung(en) übersprungen – der Wechsel auf "
+                  f"„{action}“ ist aus ihrem aktuellen Status nicht zulässig: "
+                  f"{', '.join(blocked_transition[:10])}"
+                  f"{' …' if len(blocked_transition) > 10 else ''}", "warning")
+        if blocked_account:
+            flash(f"{len(blocked_account)} Rechnung(en) übersprungen – keine Kontierung und "
+                  f"kein Konto gewählt. Bitte ein Konto im Dialog wählen oder die Rechnungen "
+                  f"einzeln buchen: {', '.join(blocked_account[:10])}"
+                  f"{' …' if len(blocked_account) > 10 else ''}", "warning")
 
     elif action == "set-date":
         new_date_raw = request.form.get("new_date", "")
@@ -1438,15 +1523,12 @@ def set_status(invoice_id):
     credit_note_skipped = None
     try:
         if new_status == Invoice.STATUS_SENT:
-            form_account_id_raw = request.form.get("account_id") or None
-            form_account_id = int(form_account_id_raw) if form_account_id_raw else None
-            account_id = _resolve_open_item_account_id(invoice, form_account_id)
             invoice.status = new_status
             # Gutschriften bekommen hier automatisch den Rueckzahlungs-Posten
             # statt eines Postens ueber die Belegsumme — die Weiche sitzt in
             # ``create_or_update_open_item`` und gilt damit fuer alle
             # Versand-Wege (auch Mail- und Druck-Versand).
-            _create_or_update_open_item(invoice, account_id=account_id)
+            _create_or_update_open_item(invoice)
 
         elif new_status == Invoice.STATUS_CANCELLED:
             from app.invoices.credit_note import (
@@ -1486,8 +1568,11 @@ def set_status(invoice_id):
                 )
 
         elif new_status == Invoice.STATUS_PAID:
+            paid_account_id_raw = request.form.get("account_id") or None
+            paid_account_id = int(paid_account_id_raw) if paid_account_id_raw else None
             invoice.status = new_status
-            _book_invoice_payment_if_needed(invoice)
+            _book_invoice_payment_if_needed(
+                invoice, fallback_account_id=paid_account_id)
 
         else:  # STATUS_CREDIT
             invoice.status = new_status
@@ -1637,6 +1722,10 @@ def pay(invoice_id):
     """
     invoice = db.get_or_404(Invoice, invoice_id)
     amount_raw = request.form.get("amount", "0").replace(",", ".")
+    # Konto aus dem Zahlungsformular — greift nur fuer Positionen ohne eigene
+    # Kontierung (siehe ``_book_invoice_payment_if_needed``).
+    pay_account_id_raw = request.form.get("account_id") or None
+    pay_account_id = int(pay_account_id_raw) if pay_account_id_raw else None
     try:
         amount = Decimal(amount_raw)
     except Exception:
@@ -1673,6 +1762,7 @@ def pay(invoice_id):
             created_by_id=current_user.id,
             open_item=invoice.open_item,
             reference=invoice.invoice_number,
+            fallback_account_id=pay_account_id,
         )
 
         from sqlalchemy import func
@@ -1891,10 +1981,7 @@ def send_email(invoice_id):
     if pdf_path:
         invoice.pdf_path = pdf_path
 
-    form_account_id_raw = request.form.get("account_id") or None
-    form_account_id = int(form_account_id_raw) if form_account_id_raw else None
-    account_id = _resolve_open_item_account_id(invoice, form_account_id)
-    _create_or_update_open_item(invoice, account_id=account_id)
+    _create_or_update_open_item(invoice)
     db.session.commit()
     flash(f"Rechnung an {recipient} versendet.", "success")
     return redirect(url_for("invoices.detail", invoice_id=invoice.id))
@@ -1982,10 +2069,7 @@ def send_email_ajax(invoice_id):
                 invoice.doc_path = doc_path
             if pdf_path:
                 invoice.pdf_path = pdf_path
-            ajax_account_id_raw = request.form.get("account_id") or None
-            ajax_account_id = int(ajax_account_id_raw) if ajax_account_id_raw else None
-            account_id = _resolve_open_item_account_id(invoice, ajax_account_id)
-            _create_or_update_open_item(invoice, account_id=account_id)
+            _create_or_update_open_item(invoice)
             db.session.commit()
 
         return jsonify({"ok": True, "invoice_number": invoice.invoice_number,
@@ -2557,8 +2641,7 @@ def billing_run_post_bulk(run_id):
         # Nur Entwürfe auf „Versendet" setzen; Offenen Posten wie beim Mailversand anlegen.
         if invoice.status == Invoice.STATUS_DRAFT:
             invoice.status = Invoice.STATUS_SENT
-            account_id = _resolve_open_item_account_id(invoice, None)
-            _create_or_update_open_item(invoice, account_id=account_id)
+            _create_or_update_open_item(invoice)
         writer.append(io.BytesIO(pdf_bytes))
     db.session.commit()
     writer.compress_identical_objects()
@@ -2759,22 +2842,46 @@ def _parse_tariff_form():
     except (InvalidOperation, ValueError):
         return None, "Ungültiger Betrag — bitte Zahlen eingeben."
 
+    def _account_or_none(field):
+        v = request.form.get(field, "").strip()
+        if not v:
+            return None
+        try:
+            return int(v)
+        except ValueError:
+            return None
+
     return dict(
         name=name,
         valid_from=valid_from,
         valid_to=valid_to,
         base_fee=base_fee,
         base_fee_label=request.form.get("base_fee_label", "").strip() or "Grundgebühr",
+        base_fee_account_id=_account_or_none("base_fee_account_id"),
         additional_fee=additional_fee,
         additional_fee_label=request.form.get("additional_fee_label", "").strip() or "Zusatzgebühr",
+        additional_fee_account_id=_account_or_none("additional_fee_account_id"),
         price_per_m3=price_per_m3,
+        price_per_m3_account_id=_account_or_none("price_per_m3_account_id"),
         notes=request.form.get("notes", ""),
     ), None
 
 
+def _active_accounts():
+    """Aktive Konten fuer die Kontierungs-Dropdowns (Tarif, Positions-Editor, Dialoge)."""
+    return Account.query.filter_by(active=True).order_by(Account.name).all()
+
+
 def _tariff_body(tariff, form):
     """Rendert den Tarifformular-Body fuer das Modal."""
-    return render_template("invoices/_tariff_form_body.html", tariff=tariff, form=form)
+    return render_template("invoices/_tariff_form_body.html", tariff=tariff, form=form,
+                           accounts=_active_accounts())
+
+
+def _tariff_page(tariff, form):
+    """Rendert die Tarifformular-Vollseite (Fallback ohne Modal)."""
+    return render_template("invoices/tariff_form.html", tariff=tariff, form=form,
+                           accounts=_active_accounts())
 
 
 def _tariff_modal_saved(tariff_id):
@@ -2796,7 +2903,7 @@ def tariff_new():
         if err:
             flash(err, "danger")
             return _tariff_body(None, request.form) if is_modal else \
-                render_template("invoices/tariff_form.html", tariff=None, form=request.form)
+                _tariff_page(None, request.form)
         t = WaterTariff(**data)
         db.session.add(t)
         db.session.commit()
@@ -2813,7 +2920,7 @@ def tariff_new():
     prefill = request.args if request.args else None
     if is_modal:
         return _tariff_body(None, prefill)
-    return render_template("invoices/tariff_form.html", tariff=None, form=prefill)
+    return _tariff_page(None, prefill)
 
 
 @bp.route("/tariffs/<int:tariff_id>/edit", methods=["GET", "POST"])
@@ -2826,7 +2933,7 @@ def tariff_edit(tariff_id):
         if err:
             flash(err, "danger")
             return _tariff_body(t, request.form) if is_modal else \
-                render_template("invoices/tariff_form.html", tariff=t, form=request.form)
+                _tariff_page(t, request.form)
         for field, value in data.items():
             setattr(t, field, value)
         db.session.commit()
@@ -2836,7 +2943,7 @@ def tariff_edit(tariff_id):
         return redirect(url_for("invoices.tariffs"))
     if is_modal:
         return _tariff_body(t, None)
-    return render_template("invoices/tariff_form.html", tariff=t, form=None)
+    return _tariff_page(t, None)
 
 
 # ---------------------------------------------------------------------------

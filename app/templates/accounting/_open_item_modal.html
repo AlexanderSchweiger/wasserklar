@@ -1,0 +1,74 @@
+{# Modal-Skelett fuer Offenen Posten anlegen/bearbeiten. Body wird per HTMX
+   (X-From-Modal-GET) geladen, Submit nativ via htmx → 204 + HX-Trigger
+   (closeOpenItemModal + openItemSaved). #}
+<div class="modal fade" id="openItemModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">
+          <i class="fas fa-exclamation-circle me-2"></i>
+          <span data-modal-title-text>Offener Posten</span>
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <form id="openItemForm" method="post" hx-headers='{"X-From-Modal": "1"}'>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-body" id="openItemModalBody">
+          <div class="text-center text-muted py-4">
+            <div class="spinner-border spinner-border-sm" role="status"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+            <i class="fas fa-times me-1"></i> Abbrechen
+          </button>
+          <button type="submit" class="btn btn-primary">
+            <i class="fas fa-save me-1"></i> Speichern
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+{# Konto-Abfrage beim Ausgleichen. Erscheint nur, wenn weder der Posten noch
+   die Rechnungspositionen ein Buchungskonto liefern — sonst bucht der Button
+   direkt. Gleiche Logik wie ``payAccountModal`` auf der Rechnungs-Detailseite. #}
+<div class="modal fade" id="opPayAccountModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <form method="post" class="modal-content" hx-boost="false" id="opPayAccountForm">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="modal-header">
+        <h5 class="modal-title">
+          <i class="fas fa-euro-sign me-2"></i> <span id="opPayTitle">Zahlung buchen</span>
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted" id="opPayHint"></p>
+        <div class="row g-2">
+          <div class="col-6">
+            <label class="form-label">Betrag (€) <span class="text-danger">*</span></label>
+            <input type="number" name="amount" id="opPayAmount" class="form-control"
+                   step="0.01" min="0.01" required>
+          </div>
+          <div class="col-6">
+            <label class="form-label">Buchungskonto <span class="text-danger">*</span></label>
+            <select name="account_id" id="opPayAccount" class="form-select" required>
+              <option value="">— Konto wählen —</option>
+              {% for a in accounts %}
+              <option value="{{ a.id }}">{% if a.code %}{{ a.code }} – {% endif %}{{ a.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+        <button type="submit" class="btn btn-success" id="opPaySubmit">
+          <i class="fas fa-check me-1"></i> Buchen
+        </button>
+      </div>
+    </form>
+  </div>
+</div>

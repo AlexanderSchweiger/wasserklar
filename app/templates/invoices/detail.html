@@ -259,10 +259,22 @@
           <div>
             <div class="fw-medium">Als „Bezahlt“ markieren</div>
             <div class="text-muted small">
-              Legt bei Bedarf automatisch eine Zahlungsbuchung im ersten aktiven Einnahmenkonto an.
+              {% if needs_pay_account %}
+              Legt die Zahlungsbuchung an. Mindestens eine Position hat noch kein Buchungskonto —
+              das wird beim Klick abgefragt.
+              {% else %}
+              Legt die Zahlungsbuchung nach der Kontierung der Positionen an — bei mehreren
+              Konten, Projekten oder Steuersätzen als Sammelbuchung.
+              {% endif %}
             </div>
           </div>
           <div class="text-nowrap">
+            {% if needs_pay_account %}
+            <button type="button" class="btn btn-sm btn-outline-success"
+                    data-bs-toggle="modal" data-bs-target="#payAccountModal">
+              <i class="fas fa-euro-sign me-1"></i> Bezahlt
+            </button>
+            {% else %}
             <form method="post" action="{{ url_for('invoices.set_status', invoice_id=invoice.id) }}" hx-boost="false">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input type="hidden" name="status" value="Bezahlt">
@@ -270,6 +282,7 @@
                 <i class="fas fa-euro-sign me-1"></i> Bezahlt
               </button>
             </form>
+            {% endif %}
           </div>
         </div>
         {% endif %}
@@ -413,12 +426,28 @@
             </tr>
           </thead>
           <tbody>
+            {# Der „kein Konto"-Hinweis nur solange die Rechnung noch zu bezahlen
+               ist — bei einer bereits verbuchten Rechnung waere er irrefuehrend. #}
+            {% set show_missing_account = needs_pay_account
+                 and 'Bezahlt' in invoice.ALLOWED_TRANSITIONS.get(invoice.status, []) %}
             {% for item in invoice.items %}
             <tr>
               <td>
                 {{ item.description }}
                 {% if item.is_estimated %}
                 <span class="badge bg-yellow text-dark ms-1" title="Verbrauch geschätzt">geschätzt</span>
+                {% endif %}
+                {% if item.account or item.project %}
+                <div class="small text-muted">
+                  <i class="fas fa-tags me-1"></i>
+                  {% if item.account %}{% if item.account.code %}{{ item.account.code }} – {% endif %}{{ item.account.name }}
+                  {% else %}<span class="text-warning">kein Konto</span>{% endif %}
+                  {% if item.project %} · {% if item.project.code %}{{ item.project.code }} – {% endif %}{{ item.project.name }}{% endif %}
+                </div>
+                {% elif show_missing_account %}
+                <div class="small text-muted">
+                  <i class="fas fa-tags me-1"></i><span class="text-warning">kein Konto</span>
+                </div>
                 {% endif %}
               </td>
               <td class="text-end">{{ item.quantity|de_number(0) }}</td>
@@ -519,6 +548,54 @@
 {% endblock %}
 
 {% block modals %}
+{# --- Bezahlt-Dialog: nur wenn mindestens eine Position unkontiert ist ---
+   Ohne Buchungskonto kann keine Buchung entstehen (Booking.account_id ist
+   NOT NULL). Statt den Nutzer in den Rollback laufen zu lassen, fragen wir
+   das Konto hier ab. Es gilt NUR fuer Positionen ohne eigene Kontierung —
+   Positionen mit Konto (aus dem Tarif oder dem Positions-Editor) behalten
+   ihres, es entsteht also weiterhin je Konto eine Buchungszeile. #}
+{% if needs_pay_account and 'Bezahlt' in invoice.ALLOWED_TRANSITIONS.get(invoice.status, []) %}
+<div class="modal fade" id="payAccountModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <form method="post" action="{{ url_for('invoices.set_status', invoice_id=invoice.id) }}"
+          class="modal-content" hx-boost="false">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="status" value="Bezahlt">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="fas fa-euro-sign me-2"></i>Rechnung als bezahlt buchen</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted">
+          Mindestens eine Position dieser Rechnung hat kein Buchungskonto hinterlegt.
+          Bitte wählen, auf welches Konto der Betrag gebucht wird.
+        </p>
+        <div class="mb-2">
+          <label class="form-label">Buchungskonto <span class="text-danger">*</span></label>
+          <select name="account_id" class="form-select" required>
+            <option value="">— Konto wählen —</option>
+            {% for a in accounts %}
+            <option value="{{ a.id }}">{% if a.code %}{{ a.code }} – {% endif %}{{ a.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-text">
+          Gilt nur für Positionen ohne eigene Kontierung. Damit das künftig entfällt:
+          Konten am <a href="{{ url_for('invoices.tariffs') }}">Tarif</a> hinterlegen oder
+          je Position im Positions-Editor setzen.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+        <button type="submit" class="btn btn-success">
+          <i class="fas fa-euro-sign me-1"></i> Bezahlt buchen
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
 {# --- Storno-Dialog: wird beim Statuswechsel auf „Storniert" vorgeschaltet --- #}
 {% if 'Storniert' in invoice.ALLOWED_TRANSITIONS.get(invoice.status, []) %}
 <div class="modal fade" id="stornoModal" tabindex="-1" aria-hidden="true">

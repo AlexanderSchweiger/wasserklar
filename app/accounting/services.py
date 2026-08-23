@@ -628,11 +628,15 @@ def recompute_group_total(group_id):
 
 
 def _split_invoice_by_dimensions(invoice, gross_amount, fallback_account_id=None):
-    """Splittet den Brutto-Zahlbetrag einer Rechnung nach (project_id, tax_rate).
+    """Splittet den Brutto-Zahlbetrag einer Rechnung nach (account_id, project_id, tax_rate).
 
-    Das Buchungskonto gilt einheitlich für alle Splits: expliziter Parameter,
-    sonst OpenItem.account_id. Der letzte Split-Eintrag gleicht Rundungs-
-    differenzen aus, damit die Summe exakt dem Zahlbetrag entspricht.
+    Die Rechnungs-Positionen werden über ihren Nettobetrag gewichtet, der
+    letzte Split-Eintrag gleicht Rundungsdifferenzen aus, damit die Summe
+    exakt dem Zahlbetrag entspricht.
+
+    Das Konto kommt primär von der Position selbst (``InvoiceItem.account_id``,
+    gesetzt vom Tarif im Rechnungslauf oder von Hand im Positions-Editor).
+    Positionen ohne eigenes Konto erben das Default-Konto.
 
     Liefert eine Liste ``[{account_id, project_id, tax_rate, amount, description}, ...]``
     mit den gruppierten Zeilen (Reihenfolge stabil nach Einfügen). ``description``
@@ -641,14 +645,16 @@ def _split_invoice_by_dimensions(invoice, gross_amount, fallback_account_id=None
     """
     gross_amount = Decimal(str(gross_amount))
 
-    # Konto: expliziter Parameter > OpenItem.account_id.
+    # Default-Konto fuer Positionen ohne eigene Kontierung:
+    # expliziter Parameter > OpenItem.account_id.
     default_account_id = fallback_account_id
     if not default_account_id and invoice.open_item and invoice.open_item.account_id:
         default_account_id = invoice.open_item.account_id
 
-    # Positionen gruppieren, Netto & Brutto je (project_id, tax_rate) sammeln.
+    # Positionen gruppieren, Netto & Brutto je (account_id, project_id, tax_rate) sammeln.
     groups = OrderedDict()
     for item in invoice.items:
+        acc_id = item.account_id or default_account_id
         proj_id = item.project_id
         rate = item.tax_rate if item.tax_rate is not None else Decimal("0")
         net = Decimal(str(item.amount or 0))
@@ -656,10 +662,10 @@ def _split_invoice_by_dimensions(invoice, gross_amount, fallback_account_id=None
             gross = net + (net * Decimal(str(rate)) / Decimal("100")).quantize(Decimal("0.01"))
         else:
             gross = net
-        key = (proj_id, Decimal(str(rate)))
+        key = (acc_id, proj_id, Decimal(str(rate)))
         if key not in groups:
             groups[key] = {
-                "account_id": default_account_id,
+                "account_id": acc_id,
                 "project_id": proj_id,
                 "tax_rate": Decimal(str(rate)),
                 "net": Decimal("0"),
@@ -713,6 +719,21 @@ def _split_invoice_by_dimensions(invoice, gross_amount, fallback_account_id=None
     return result
 
 
+def invoice_missing_account(invoice, fallback_account_id=None):
+    """True, wenn die Zahlung dieser Rechnung an einer fehlenden Kontierung scheitern wuerde.
+
+    Prueft mit derselben Aufloesung, die ``booking_group_from_invoice_payment``
+    verwendet (Position > OpenItem > Fallback), ob mindestens ein Split ohne
+    Buchungskonto bliebe. Die UI entscheidet damit vorab, ob der „Bezahlt"-
+    Button direkt buchen darf oder erst ein Konto abfragen muss — statt den
+    Nutzer in den Rollback mit ``ValueError`` laufen zu lassen.
+    """
+    splits = _split_invoice_by_dimensions(
+        invoice, invoice.total_amount or 0, fallback_account_id=fallback_account_id,
+    )
+    return any(s["account_id"] is None for s in splits)
+
+
 def settlement_status(target_amount, balance):
     """Status-Paar ``(OpenItem, Invoice)`` nach einer Zahlung bzw. Rueckzahlung.
 
@@ -758,7 +779,7 @@ def booking_group_from_invoice_payment(
 ):
     """Erzeugt (bei Bedarf) eine Sammelbuchung für eine Rechnungs-Zahlung.
 
-    Regel (ADR-002): Liefert der Split nach ``(project_id, tax_rate)``
+    Regel (ADR-002): Liefert der Split nach ``(account_id, project_id, tax_rate)``
     genau eine Zeile, wird eine einfache Einzelbuchung angelegt (kein
     ``BookingGroup``-Eintrag). Bei ≥ 2 Zeilen wird ein Gruppen-Header plus
     pro Split-Zeile ein Kind angelegt.

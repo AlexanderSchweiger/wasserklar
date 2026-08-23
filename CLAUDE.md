@@ -152,7 +152,7 @@ Das Modell ist deutlich gewachsen (~58 Tabellen). Die Kerngruppen:
 
 **Abrechnung (Perioden statt Kalenderjahr):**
 - **BillingPeriod** — **zentraler Gruppierungsschluessel** fuer Ablesungen, Zählertausche und Rechnungslaeufe; ersetzt die fruehere Kalenderjahr-Verdrahtung. `start_date`/`end_date` (z.B. Juni–Juni), `name` (z.B. "2025/26"). **Genau eine ist immer aktiv** — applikationsseitig erzwungen (`activate()` setzt alle anderen inaktiv; `BillingPeriod.current()`), kein portabler Partial-Index ueber alle drei Dialekte.
-- **WaterTariff** — base_fee + additional_fee + price_per_m3, valid for year range; fee overrides on Customer/Property take priority
+- **WaterTariff** — base_fee + additional_fee + price_per_m3, valid for year range; fee overrides on Customer/Property take priority. Je Gebuehrenart ein optionales **Buchungskonto** (`base_fee_account_id`, `additional_fee_account_id`, `price_per_m3_account_id`, alle nullable → siehe "Kontierung" unten).
 - **BillingRun** — **historisierter Massen-Rechnungslauf**: bei jeder Massenabrechnung gespeichert, haelt einen **Snapshot des verwendeten Tarifs** (Kopie aller `tariff_*`-Felder), zaehlt `invoices_created`/`invoices_skipped`, kennt eine `sort_order` fuer die PDF-Reihenfolge. `Invoice.billing_run` verlinkt zurueck.
 - **Invoice** (erbt `EmailTrackableMixin`) → linked to Customer + optional Property + optional **BillingRun**; has many **InvoiceItem**; statuses: Entwurf → Versendet → Bezahlt → Storniert / Guthaben; invoice_number format `YYYY-NNNNN` (via `InvoiceCounter`). E-Mail-Versand-Status wird ueber **EmailEvent** getrackt (siehe E-Mail-Tracking).
 - **Storno-Rechnung / Gutschrift (v1.42.0):** Beim Stornieren einer versendeten oder bezahlten Rechnung fragt ein Dialog, ob ein Gegenbeleg ausgestellt wird. Der entsteht als **eigene** `Invoice` mit `invoice_kind='credit_note'`, eigener fortlaufender Nummer, gespiegelten (negativen) Positionen und `cancels_invoice_id` → Original (UStG-§11-Pflichtverweis); Original bleibt unveraendert. Logik in [app/invoices/credit_note.py](app/invoices/credit_note.py). Die Gutschrift entsteht als **Entwurf** — der Nutzer prueft und versendet sie selbst. Erst der Wechsel auf `Versendet` legt (wie bei jeder Rechnung) den Offenen Posten an: einen **negativen `OpenItem`** ueber den Rueckzahlbetrag, wenn die Rechnung bezahlt war, sonst gar keinen. Der Betrag wird **abgeleitet statt gespeichert** (`credit_note.refund_amount_for` liest die auf `Storniert` gesetzten Originalbuchungen) — das ist auch bei Teilzahlung korrekt, wo Belegsumme und Rueckzahlbetrag auseinanderfallen. Die Rueckueberweisung wird vom `bank_import` als negative Zeile automatisch diesem Posten zugeordnet (Vorzeichen wird ueberall mitgeprueft; `accounting.services.settlement_status` leitet die Status vorzeichenbewusst ab). Gutschriften sind aus Forderungs-Aggregaten (Dashboard, Perioden-Uebersicht, Mahnlauf) **ausgeschlossen** — die stornierte Originalrechnung ist dort schon ausgeblendet, sonst wuerde derselbe Betrag zweimal abgezogen.
@@ -203,7 +203,57 @@ Das Modell ist deutlich gewachsen (~58 Tabellen). Die Kerngruppen:
 - **MeetingInvitation** (erbt `EmailTrackableMixin`) + **MeetingDeliveryLog** — Einladungsversand pro Empfänger + Zustell-Audit.
 - **SchriftverkehrDocument** — eigenständiges Korrespondenz-Dokument (eingehend/ausgehend) im Jahr-Archiv; DB hält nur Metadaten, Datei im Schriftverkehr-Ordner (Geschwister von `PDF_DIR`).
 
-Setting invoice status to "Bezahlt" auto-creates a Booking in the first active income account.
+### Kontierung (Konto pro Rechnungsposition, v1.43.0)
+
+`Booking.account_id` ist `NOT NULL` — jede Zahlung braucht ein Buchungskonto. Woher es
+kommt, entscheidet eine dreistufige Kaskade in
+[`_split_invoice_by_dimensions`](app/accounting/services.py):
+
+1. **`InvoiceItem.account_id`** — gesetzt vom Tarif (Rechnungslauf) oder von Hand im
+   Positions-Editor.
+2. **`OpenItem.account_id`** — nur bei **manuell** angelegten Posten (siehe unten).
+3. **expliziter Fallback** — das im Bezahlt-Dialog bzw. beim OP-Ausgleich gewaehlte Konto.
+
+**Zwei Quellen, strikt getrennt** (`OpenItem.account_id`):
+
+* **Manueller Posten** — traegt sein eigenes Konto, im Anlage-/Bearbeiten-Modal waehlbar
+  (`accounting/_open_item_form_body.html`). Leer = wird beim Ausgleichen abgefragt.
+* **Posten aus einer Rechnung** — bekommt **nie** ein Konto (`create_or_update_open_item`
+  hat dafuer gar keinen Parameter mehr). Eine Rechnung kann mehrere Konten betreffen; ein
+  einzelnes Feld am Posten koennte das nicht abbilden und waere eine zweite,
+  konkurrierende Wahrheit. Auch `open_item_pay` schreibt das Dialog-Konto in diesem Fall
+  NICHT auf den Posten zurueck.
+
+`_open_item_needs_account(item)` entscheidet pro Zeile, ob der Bezahlen/Rueckzahlen-Button
+direkt bucht oder erst den Konto-Dialog oeffnet — bei Rechnungs-Posten ueber
+`invoice_missing_account(item.invoice)`, bei manuellen ueber `item.account_id`.
+Die frueher vorhandene **Massen-Kontosetzung** auf der OP-Seite ist entfallen (das Konto
+gehoert an den Tarif bzw. die Position), ebenso das Konto-Dropdown in der Zeile.
+
+Die Zahlung wird nach **`(account_id, project_id, tax_rate)`** gesplittet. Ergibt der Split
+genau eine Zeile, entsteht eine **normale Einzelbuchung**; ab zwei Zeilen ein
+`BookingGroup`-Header plus je Zeile ein Kind (**Sammelbuchung**, ADR-002). Einheitliches
+Konto + Projekt + Steuersatz ⇒ bewusst *keine* Sammelbuchung.
+
+Bleibt nach der Kaskade ein Split ohne Konto, wirft der Service `ValueError`. Damit der
+Nutzer nicht in einen Rollback laeuft, prueft die UI vorher mit
+`acc_svc.invoice_missing_account(invoice)`: nur dann zeigt der „Bezahlt"-Button den
+Konto-Dialog (`payAccountModal`), sonst bucht er direkt. Die Sammelaktion in der
+Rechnungsliste fragt das Konto einmal fuer den Stapel ab und **ueberspringt** Rechnungen,
+die danach immer noch unkontiert sind, statt den ganzen Lauf zurueckzurollen.
+
+Der Rechnungslauf (`/invoices/generate`) kontiert seine Positionen aus dem Tarif
+(m³ / Grundgebuehr / Zusatzgebuehr je eigenes Konto) und setzt optional **ein Projekt fuer
+den ganzen Lauf** (`BillingRun.project_id`) auf alle Positionen. Ein Sweep am Ende jeder
+Rechnung faengt auch die Positionen ab, die `apply_corrections_to_invoice` und
+`cap_invoice_at_zero` nachtraeglich anhaengen.
+
+**Historie:** Diese Struktur gab es schon einmal und wurde in v1.7.0 (Migration
+`e3b1f7a2c9d4`) ausgebaut — nicht aus fachlichen Gruenden, sondern weil das Konto-Dropdown
+als 9. Feld die Positionszeile sprengte (es hinterliess ein `col-md-0`). Seit v1.43.0 stehen
+Konto und Projekt deshalb in einer **zweiten Zeile** („Kontierung") innerhalb derselben
+Positions-Box; wer dort ein Feld ergaenzt, gehoert in diese zweite Zeile, nicht in die
+Betragszeile.
 
 ### Rechte-System (Rollen & Permissions)
 

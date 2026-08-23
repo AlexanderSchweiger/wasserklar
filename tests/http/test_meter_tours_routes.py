@@ -82,6 +82,12 @@ def _owner(prop, name="Huber Anna", email=None, rechnung_per_email=False):
     return c
 
 
+def _due_table(client):
+    """Nur das Tabellen-Fragment der Faelligen-Liste (ohne Layout/CSRF-Token)."""
+    return client.get("/meters/tours/due",
+                      headers={"HX-Request": "true"}).data
+
+
 def _create_tour(client, meter_ids, **extra):
     data = {"name": "Test-Tour", "meter_ids": [str(i) for i in meter_ids]}
     data.update(extra)
@@ -103,7 +109,7 @@ class TestFeatureGate:
         _seed_due_meter()
         r = client.get("/meters/tours/due")
         assert r.status_code == 200
-        assert "M1".encode() in r.data
+        assert b"M1" in _due_table(client)
 
 
 class TestPermissions:
@@ -222,13 +228,14 @@ class TestTourLifecycle:
         prop, m = _seed_due_meter()
         _create_tour(client, [m.id])
         tour = MeterTour.query.first()
-        r = client.get("/meters/tours/due")
-        assert b"M1" not in r.data   # in offener Tour -> ausgeblendet
+        # Gegen das Tabellen-Fragment pruefen, nicht gegen die ganze Seite: ein
+        # nacktes "M1" trifft sonst auch das zufaellige CSRF-Token im Layout
+        # (base64 enthaelt haeufig "M1") — das machte den Test flaky.
+        assert b"M1" not in _due_table(client)   # in offener Tour -> ausgeblendet
         client.post(f"/meters/tours/{tour.id}/close")
         db.session.refresh(tour)
         assert tour.status == MeterTour.STATUS_DONE
-        r = client.get("/meters/tours/due")
-        assert b"M1" in r.data       # offener Stop wieder faellig
+        assert b"M1" in _due_table(client)       # offener Stop wieder faellig
 
     def test_delete_only_planned_or_cancelled(self, client, admin_user, tours_enabled):
         client.get("/auth/logout")

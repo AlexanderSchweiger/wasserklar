@@ -347,3 +347,47 @@ class TestTariffModal:
         r = client.get("/invoices/tariffs/new")
         assert r.status_code == 200
         assert "<html" in r.get_data(as_text=True).lower()
+
+    def test_modal_body_offers_account_selects(self, client, admin):
+        """Kontierung je Gebuehrenart (v1.43.0) — auch im Modal-Fragment."""
+        _login(client)
+        a = Account(name="Wassererlöse", code="W01")
+        db.session.add(a)
+        db.session.commit()
+        html = client.get("/invoices/tariffs/new", headers=MODAL).get_data(as_text=True)
+        for field in ("base_fee_account_id", "additional_fee_account_id",
+                      "price_per_m3_account_id"):
+            assert f'name="{field}"' in html
+        assert "Wassererlöse" in html
+
+    def test_modal_saves_accounts(self, client, admin):
+        _login(client)
+        a1 = Account(name="Wasser", code="W01")
+        a2 = Account(name="Grundgebühren", code="G01")
+        db.session.add_all([a1, a2])
+        db.session.commit()
+        r = client.post("/invoices/tariffs/new", headers=MODAL,
+                        data={"name": "Kontiert", "valid_from": "2026",
+                              "base_fee": "50,00", "price_per_m3": "1,20",
+                              "price_per_m3_account_id": str(a1.id),
+                              "base_fee_account_id": str(a2.id),
+                              "additional_fee_account_id": ""})
+        assert r.status_code == 204
+        t = WaterTariff.query.filter_by(name="Kontiert").one()
+        assert t.price_per_m3_account_id == a1.id
+        assert t.base_fee_account_id == a2.id
+        assert t.additional_fee_account_id is None
+
+    def test_edit_modal_prefills_selected_account(self, client, admin):
+        _login(client)
+        a = Account(name="Wasser", code="W01")
+        db.session.add(a)
+        db.session.flush()
+        t = WaterTariff(name="Vorbelegt", valid_from=2024,
+                        price_per_m3=Decimal("1.00"),
+                        price_per_m3_account_id=a.id)
+        db.session.add(t)
+        db.session.commit()
+        html = client.get(f"/invoices/tariffs/{t.id}/edit",
+                          headers=MODAL).get_data(as_text=True)
+        assert f'value="{a.id}" selected' in html

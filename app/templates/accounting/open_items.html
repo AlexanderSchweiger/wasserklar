@@ -87,28 +87,12 @@
     <h3 class="card-title"><i class="fas fa-exclamation-circle me-1"></i> Offene Posten</h3>
     <div class="card-options d-flex align-items-center gap-2">
       <span class="me-2 text-muted">Gesamt offen: <strong class="{{ 'text-danger' if total_open > 0 else 'text-success' }}">{{ total_open|de_number }} €</strong></span>
-      {% if accounts %}
-      <form method="post" action="{{ url_for('accounting.open_items_set_account') }}"
-            class="d-inline-flex align-items-center gap-1"
-            hx-boost="false"
-            onsubmit="return confirm('Buchungskonto auf allen offenen Posten setzen?');">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <select name="account_id" class="form-select form-select-sm" style="width:200px" required
-                title="Buchungskonto für alle offenen Posten setzen">
-          <option value="">— Konto für alle setzen —</option>
-          {% for a in accounts %}
-          <option value="{{ a.id }}">{% if a.code %}[{{ a.code }}] {% endif %}{{ a.name }}</option>
-          {% endfor %}
-        </select>
-        <button type="submit" class="btn btn-sm btn-outline-secondary"
-                title="Auf alle offenen Posten anwenden">
-          <i class="fas fa-check"></i>
-        </button>
-      </form>
-      {% endif %}
-      <a href="{{ url_for('accounting.open_item_new') }}" class="btn btn-primary">
+      <button type="button" class="btn btn-primary"
+              data-url="{{ url_for('accounting.open_item_new') }}"
+              data-modal-title="Neuer offener Posten"
+              onclick="openOpenItemModal(this)">
         <i class="fas fa-plus me-1"></i> Neuer OP
-      </a>
+      </button>
     </div>
   </div>
   <div class="table-fill">
@@ -129,120 +113,9 @@
       </thead>
       <tbody>
         {% for item in items %}
-        {% set bal = item.open_balance %}
-        {% set is_closed = item.status in ('Bezahlt', 'Gutschrift') %}
-        <tr class="{{ 'table-secondary' if is_closed else ('table-warning' if item.due_date and item.due_date < today) }}">
-
-          {# Rechnungsnr. / Beschreibung #}
-          <td>
-            {% if item.invoice_id %}
-              <a href="{{ url_for('invoices.detail', invoice_id=item.invoice_id) }}" class="text-reset">
-                <code>{{ item.description }}</code>
-              </a>
-            {% else %}
-              {{ item.description }}
-            {% endif %}
-          </td>
-
-          {# Kunde #}
-          <td>
-            <a href="{{ url_for('customers.detail', customer_id=item.customer_id) }}">
-              {{ item.customer.name }}
-            </a>
-          </td>
-
-          {# Abrechnungsperiode #}
-          <td>
-            {%- if item.invoice and item.invoice.billing_period -%}
-              {{ item.invoice.billing_period.name }}
-            {%- elif item.period_year -%}
-              {{ item.period_year }}
-            {%- else -%}—{%- endif -%}
-          </td>
-
-          {# Datum #}
-          <td>{{ item.date.strftime('%d.%m.%Y') }}</td>
-
-          {# Fällig #}
-          <td>
-            {{ item.due_date.strftime('%d.%m.%Y') if item.due_date else '—' }}
-            {% if item.due_date and item.due_date < today and not is_closed %}
-            <span class="badge bg-danger text-white ms-1">überfällig</span>
-            {% endif %}
-          </td>
-
-          {# Status #}
-          <td>
-            {% if item.status == 'Offen' %}<span class="badge bg-warning text-dark">Offen</span>
-            {% elif item.status == 'Teilbezahlt' %}<span class="badge bg-info text-white">Teilbezahlt</span>
-            {% elif item.status == 'Bezahlt' %}<span class="badge bg-success text-white">Bezahlt</span>
-            {% elif item.status == 'Gutschrift' %}<span class="badge bg-secondary text-white">Gutschrift</span>
-            {% endif %}
-          </td>
-
-          {# Gesamt #}
-          <td class="text-end" style="white-space:nowrap">
-            {{ item.amount|de_number }} €
-            {% if item.amount < 0 %}
-            <span class="badge bg-orange-lt ms-1"
-                  title="Rückzahlung an den Kontakt (aus einer Storno-Rechnung)">Rückzahlung</span>
-            {% endif %}
-          </td>
-
-          {# Offen #}
-          <td class="text-end" style="white-space:nowrap">
-            <strong class="{{ 'text-danger' if bal < 0 }}">{{ bal|de_number }} €</strong>
-          </td>
-
-          {# Aktionen #}
-          <td class="text-end col-actions" style="white-space:nowrap">
-            {% if not is_closed %}
-            <form method="post" action="{{ url_for('accounting.open_item_pay', item_id=item.id) }}"
-                  class="d-inline-flex align-items-center gap-1">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              {# Negativer Posten = Rueckzahlung aus einer Storno-Rechnung. Das
-                 Feld bleibt positiv (min=0.01); die Route dreht das Vorzeichen
-                 anhand von ``item.amount``. #}
-              <input type="number" name="amount" step="0.01" min="0.01"
-                     value="{{ '%.2f'|format(bal|abs) }}"
-                     class="form-control form-control-sm" style="width:90px"
-                     title="{{ 'Rückzahlungsbetrag' if bal < 0 else 'Zahlungsbetrag' }}">
-              {% if accounts %}
-              <select name="account_id" class="form-select form-select-sm" style="width:160px" required
-                      title="Buchungskonto">
-                <option value="">— Konto —</option>
-                {% for a in accounts %}
-                <option value="{{ a.id }}" {{ 'selected' if item.account_id == a.id }}>
-                  {% if a.code %}[{{ a.code }}] {% endif %}{{ a.name }}
-                </option>
-                {% endfor %}
-              </select>
-              {% endif %}
-              {% if bal < 0 %}
-              <button type="submit" class="btn btn-sm btn-warning" title="Rückzahlung buchen">
-                <i class="fas fa-undo me-1"></i> Rückzahlen
-              </button>
-              {% else %}
-              <button type="submit" class="btn btn-sm btn-success" title="Zahlung buchen">
-                <i class="fas fa-check me-1"></i> Bezahlen
-              </button>
-              {% endif %}
-            </form>
-            {% if not item.invoice_id %}
-            <a href="{{ url_for('accounting.open_item_invoice', item_id=item.id) }}"
-               class="btn btn-sm btn-outline-primary me-1" title="Rechnung erstellen">
-              <i class="fas fa-file-invoice"></i>
-            </a>
-            {% endif %}
-            {% endif %}
-            {% if item.invoice_id %}
-            <a href="{{ url_for('invoices.detail', invoice_id=item.invoice_id) }}"
-               class="btn btn-sm btn-outline-secondary" title="Rechnung anzeigen">
-              <i class="fas fa-eye"></i>
-            </a>
-            {% endif %}
-          </td>
-        </tr>
+        {% with needs_account = needs_account_map.get(item.id, True) %}
+        {% include "accounting/_open_item_row.html" %}
+        {% endwith %}
         {% else %}
         <tr>
           <td colspan="9" class="text-center text-muted py-3">
@@ -257,4 +130,62 @@
   </div>
 </div>
 
+{% endblock %}
+
+{% block modals %}
+{{ super() }}
+{% include "accounting/_open_item_modal.html" %}
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+{% include "_modal_edit_helpers.html" %}
+<script>
+// Konto-Dialog beim Ausgleichen: nur fuer Posten, bei denen weder der Posten
+// selbst noch die Rechnungspositionen ein Buchungskonto liefern.
+window.openOpPayModal = function (btn) {
+  var form   = document.getElementById('opPayAccountForm');
+  var amount = document.getElementById('opPayAmount');
+  var acc    = document.getElementById('opPayAccount');
+  var refund = btn.dataset.refund === '1';
+  form.action = btn.dataset.action;
+  amount.value = btn.dataset.amount || '';
+  acc.value = '';
+  document.getElementById('opPayTitle').textContent =
+    refund ? 'Rückzahlung buchen' : 'Zahlung buchen';
+  document.getElementById('opPayHint').textContent =
+    'Für „' + (btn.dataset.label || '') + '" ist kein Buchungskonto hinterlegt. ' +
+    'Bitte wählen, auf welches Konto gebucht wird.';
+  var submit = document.getElementById('opPaySubmit');
+  submit.className = 'btn ' + (refund ? 'btn-warning' : 'btn-success');
+  if (window.bootstrap) {
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('opPayAccountModal')).show();
+  }
+};
+
+// Nach dem Speichern nur die betroffene Zeile tauschen — ein Full-Reload
+// verlöre die aktiven Filter/Sortierung/Seite der Liste.
+window.onOpenItemSaved = function (detail) {
+  detail = detail || {};
+  if (!window.htmx) { window.location.reload(); return; }
+  // Neuanlage: die Zeile gibt es noch nicht -> ganze Liste mit aktueller URL neu holen.
+  if (detail.created) { window.location.reload(); return; }
+  var id = detail.open_item_id;
+  var rowEl = id ? document.getElementById('open-item-row-' + id) : null;
+  if (!rowEl) { window.location.reload(); return; }
+  htmx.ajax('GET', '{{ url_for("accounting.open_items") }}/' + id + '/row', {
+    target: '#open-item-row-' + id, swap: 'outerHTML',
+  });
+};
+
+setupEditModal({
+  formId: 'openItemForm',
+  bodyId: 'openItemModalBody',
+  modalId: 'openItemModal',
+  openFn: 'openOpenItemModal',
+  closeEvent: 'closeOpenItemModal',
+  savedEvent: 'openItemSaved',
+  savedHandler: 'onOpenItemSaved',
+});
+</script>
 {% endblock %}

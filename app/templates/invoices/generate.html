@@ -51,6 +51,20 @@
                 <div class="form-text">Bestimmt die Reihenfolge der Rechnungsnummern.</div>
               </div>
             </div>
+            <div class="col-md-6">
+              <div class="mb-3">
+                <label class="form-label">Projekt <small class="text-muted">(optional)</small></label>
+                <select name="project_id" class="form-select tom-select">
+                  <option value="">– kein Projekt –</option>
+                  {% for p in projects %}
+                  <option value="{{ p.id }}">{% if p.code %}{{ p.code }} – {% endif %}{{ p.name }}</option>
+                  {% endfor %}
+                </select>
+                <div class="form-text">
+                  Wird auf allen Positionen dieses Laufs gesetzt (z.&nbsp;B. „Wasserzins 2026“).
+                </div>
+              </div>
+            </div>
           </div>
           <div class="mb-3">
             <label class="form-label">Tarif <span class="text-danger">*</span></label>
@@ -66,6 +80,10 @@
               <option disabled>Kein Tarif vorhanden – bitte zuerst anlegen</option>
               {% endfor %}
             </select>
+          </div>
+          <div class="form-text mb-3">
+            Die Buchungskonten der Positionen kommen aus dem Tarif (je eigenes Konto für
+            Grundgebühr, Zusatzgebühr und Preis&nbsp;pro&nbsp;m³).
           </div>
           {% if not tariffs %}
           <div class="alert alert-warning">

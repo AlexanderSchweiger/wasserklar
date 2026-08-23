@@ -10,18 +10,70 @@
        aktiviert/deaktiviert je nachdem ob mindestens eine Position existiert
      - form_name_prefix (optional, default '') — Präfix für Feldnamen,
        z.B. wenn der Editor neben anderen Formularen auf derselben Seite steht
+     - editor_accounts (optional): Liste der Account-Objekte für das
+       Konto-Dropdown pro Zeile (ADR-002).
      - editor_projects (optional): Liste der Project-Objekte für das
        Projekt-Dropdown pro Zeile (ADR-002).
 
    Das Partial liefert die Button-Leiste, den Row-Container und alle
    Row-Templates. Der Caller muss den Submit-Button selbst rendern und
    seine ID als submit_btn_id angeben.
+
+   Layout-Hinweis: Konto und Projekt stehen bewusst in einer ZWEITEN Zeile
+   innerhalb derselben Positions-Box. Beide zusätzlich in die Betragszeile zu
+   quetschen sprengt das 12-Spalten-Raster — genau daran ist die erste Fassung
+   dieser Funktion gescheitert (sie hinterliess ein `col-md-0`, das es in
+   Bootstrap gar nicht gibt).
 #}
 {% set _container = container_id|default('rowsContainer') %}
 {% set _submit = submit_btn_id|default('submitBtn') %}
 {% set _prefix = form_name_prefix|default('') %}
+{% set _accounts = editor_accounts|default([]) %}
 {% set _projects = editor_projects|default([]) %}
-{% set _show_dims = _projects|length > 0 %}
+{% set _show_dims = _accounts|length > 0 or _projects|length > 0 %}
+
+{# Zweite Zeile einer Position: die Buchungsdimensionen. `acc_placeholder`
+   unterscheidet die Zeilentypen — eine Tarif-Zeile erzeugt drei Positionen mit
+   je eigenem Tarif-Konto, ein hier gewähltes Konto überschreibt alle drei.
+   Kontext-Variablen werden bewusst als Parameter durchgereicht, damit das
+   Makro nicht von der Scope-Aufloesung des Templates abhaengt. #}
+{% macro kontierung(prefix, accounts, projects, acc_placeholder, sel_account=0, sel_project=0) %}
+<div class="row g-2 align-items-center mt-2 pt-2 border-top">
+  <div class="col-auto">
+    <span class="small text-muted"><i class="fas fa-tags me-1"></i>Kontierung</span>
+  </div>
+  <div class="col-md-4 col-sm-6">
+    {% if accounts %}
+    <select name="{{ prefix }}row_account_id[]" class="form-select form-select-sm"
+            aria-label="Buchungskonto">
+      <option value="">{{ acc_placeholder }}</option>
+      {% for a in accounts %}
+      <option value="{{ a.id }}" {{ 'selected' if sel_account == a.id }}>
+        {% if a.code %}{{ a.code }} – {% endif %}{{ a.name }}
+      </option>
+      {% endfor %}
+    </select>
+    {% else %}
+    <input type="hidden" name="{{ prefix }}row_account_id[]" value="{{ sel_account or '' }}">
+    {% endif %}
+  </div>
+  <div class="col-md-4 col-sm-6">
+    {% if projects %}
+    <select name="{{ prefix }}row_project_id[]" class="form-select form-select-sm"
+            aria-label="Projekt">
+      <option value="">– kein Projekt –</option>
+      {% for p in projects %}
+      <option value="{{ p.id }}" {{ 'selected' if sel_project == p.id }}>
+        {% if p.code %}{{ p.code }} – {% endif %}{{ p.name }}
+      </option>
+      {% endfor %}
+    </select>
+    {% else %}
+    <input type="hidden" name="{{ prefix }}row_project_id[]" value="{{ sel_project or '' }}">
+    {% endif %}
+  </div>
+</div>
+{% endmacro %}
 
 <div id="{{ _container }}">
   {# Bestehende Positionen als vorkonfigurierte „Freie Position"-Zeilen
@@ -35,7 +87,7 @@
     <input type="hidden" name="{{ _prefix }}row_consumption_m3[]" value="">
     <input type="hidden" name="{{ _prefix }}existing_item_id[]" value="{{ item.id }}">
     <div class="row align-items-end g-2">
-      <div class="col-md-{% if _show_dims %}4{% else %}5{% endif %}">
+      <div class="col-md-4">
         <label class="small">Beschreibung</label>
         <input type="text" name="{{ _prefix }}row_description[]" class="form-control form-control-sm"
                value="{{ item.description }}" required>
@@ -50,7 +102,7 @@
         <input type="text" name="{{ _prefix }}row_unit[]" class="form-control form-control-sm"
                value="{{ item.unit or '' }}">
       </div>
-      <div class="col-md-1">
+      <div class="col-md-2">
         <label class="small">Preis €</label>
         <input type="number" name="{{ _prefix }}row_unit_price[]" class="form-control form-control-sm free-price"
                step="0.01" value="{{ item.unit_price }}" required onchange="itemsEditorCalcFree(this)">
@@ -60,22 +112,7 @@
         <input type="number" name="{{ _prefix }}row_tax_rate[]" class="form-control form-control-sm"
                step="0.01" min="0" max="100" value="{{ item.tax_rate or '' }}">
       </div>
-      {% if _show_dims %}
       <div class="col-md-2">
-        <label class="small">Projekt</label>
-        <select name="{{ _prefix }}row_project_id[]" class="form-select form-select-sm">
-          <option value="">–</option>
-          {% for p in _projects %}
-          <option value="{{ p.id }}" {{ 'selected' if item.project_id == p.id }}>
-            {% if p.code %}{{ p.code }} – {% endif %}{{ p.name }}
-          </option>
-          {% endfor %}
-        </select>
-      </div>
-      {% else %}
-      <input type="hidden" name="{{ _prefix }}row_project_id[]" value="{{ item.project_id or '' }}">
-      {% endif %}
-      <div class="col-md-{% if _show_dims %}1{% else %}2{% endif %}">
         <label class="small">Betrag</label>
         <input type="text" class="form-control form-control-sm amount-display" readonly
                value="{{ '%.2f'|format(item.amount or 0) }} €">
@@ -88,6 +125,8 @@
       </div>
       {% endif %}
     </div>
+    {{ kontierung(_prefix, _accounts, _projects, '– Standard –',
+                  item.account_id or 0, item.project_id or 0) }}
   </div>
   {% endfor %}
   {% endif %}
@@ -106,6 +145,16 @@
     <i class="fas fa-plus me-1"></i> Freie Position
   </button>
 </div>
+{% if _show_dims %}
+<div class="form-text mt-2">
+  <strong>Kontierung:</strong> Ein Tarif-Paket erbt die Konten des Tarifs (Grundgebühr,
+  Zusatzgebühr und Preis&nbsp;pro&nbsp;m³ können auf verschiedene Konten laufen) — ein hier
+  gewähltes Konto überschreibt alle drei. Bleibt bei den übrigen Zeilen
+  „Standard“ stehen, wird das Konto beim Bezahlen abgefragt. Weichen Konto, Projekt oder
+  Steuersatz zwischen den Positionen ab, entsteht bei der Zahlung automatisch eine
+  Sammelbuchung, sonst eine normale Buchung.
+</div>
+{% endif %}
 
 {# Row-Templates #}
 <template id="tmplTariff">
@@ -116,7 +165,7 @@
     <input type="hidden" name="{{ _prefix }}row_unit[]" value="">
     <input type="hidden" name="{{ _prefix }}row_tax_rate[]" value="0">
     <div class="row align-items-end g-2">
-      <div class="col-md-{% if _show_dims %}4{% else %}5{% endif %}">
+      <div class="col-md-5">
         <label class="small">Tarif <span class="text-danger">*</span></label>
         <select name="{{ _prefix }}row_tariff_id[]" class="form-control form-control-sm tariff-select" required onchange="itemsEditorUpdateTariffPrice(this)">
           <option value="">— Tarif wählen —</option>
@@ -140,66 +189,6 @@
         <input type="text" name="{{ _prefix }}row_unit_price[]" class="form-control form-control-sm price-display"
                readonly placeholder="—">
       </div>
-      {% if _show_dims %}
-      <div class="col-md-2">
-        <label class="small">Projekt</label>
-        <select name="{{ _prefix }}row_project_id[]" class="form-select form-select-sm">
-          <option value="">–</option>
-          {% for p in _projects %}
-          <option value="{{ p.id }}">{% if p.code %}{{ p.code }} – {% endif %}{{ p.name }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      {% else %}
-      <input type="hidden" name="{{ _prefix }}row_project_id[]" value="">
-      {% endif %}
-      <div class="col-md-2">
-        <label class="small">Betrag (ca.)</label>
-        <input type="text" class="form-control form-control-sm amount-display" readonly placeholder="—">
-      </div>
-      <div class="col-md-{% if _show_dims %}0{% else %}1{% endif %} d-flex align-items-end">
-        <button type="button" class="btn btn-sm btn-outline-danger" onclick="itemsEditorRemoveRow(this)">
-          <i class="fas fa-times"></i>
-        </button>
-      </div>
-    </div>
-  </div>
-</template>
-
-<template id="tmplWater">
-  <div class="row-item border rounded p-2 mb-2 bg-light">
-    <input type="hidden" name="{{ _prefix }}row_type[]" value="water">
-    <input type="hidden" name="{{ _prefix }}row_tariff_id[]" value="">
-    <input type="hidden" name="{{ _prefix }}row_tax_rate[]" value="0">
-    <div class="row align-items-end g-2">
-      <div class="col-md-{% if _show_dims %}3{% else %}4{% endif %}">
-        <label class="small">Beschreibung</label>
-        <input type="text" name="{{ _prefix }}row_description[]" class="form-control form-control-sm"
-               placeholder="Wasserverbrauch (leer = automatisch)">
-      </div>
-      <div class="col-md-2">
-        <label class="small">Menge (m³) <span class="text-danger">*</span></label>
-        <input type="number" name="{{ _prefix }}row_consumption_m3[]" class="form-control form-control-sm water-consumption"
-               step="0.001" min="0" placeholder="0.000" required onchange="itemsEditorCalcWater(this)">
-      </div>
-      <div class="col-md-2">
-        <label class="small">Preis/m³ € <span class="text-danger">*</span></label>
-        <input type="number" name="{{ _prefix }}row_unit_price[]" class="form-control form-control-sm water-price"
-               step="0.0001" min="0" placeholder="0.0000" required onchange="itemsEditorCalcWater(this)">
-      </div>
-      {% if _show_dims %}
-      <div class="col-md-2">
-        <label class="small">Projekt</label>
-        <select name="{{ _prefix }}row_project_id[]" class="form-select form-select-sm">
-          <option value="">–</option>
-          {% for p in _projects %}
-          <option value="{{ p.id }}">{% if p.code %}{{ p.code }} – {% endif %}{{ p.name }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      {% else %}
-      <input type="hidden" name="{{ _prefix }}row_project_id[]" value="">
-      {% endif %}
       <div class="col-md-2">
         <label class="small">Betrag (ca.)</label>
         <input type="text" class="form-control form-control-sm amount-display" readonly placeholder="—">
@@ -210,6 +199,42 @@
         </button>
       </div>
     </div>
+    {{ kontierung(_prefix, _accounts, _projects, '– laut Tarif –') }}
+  </div>
+</template>
+
+<template id="tmplWater">
+  <div class="row-item border rounded p-2 mb-2 bg-light">
+    <input type="hidden" name="{{ _prefix }}row_type[]" value="water">
+    <input type="hidden" name="{{ _prefix }}row_tariff_id[]" value="">
+    <input type="hidden" name="{{ _prefix }}row_tax_rate[]" value="0">
+    <div class="row align-items-end g-2">
+      <div class="col-md-5">
+        <label class="small">Beschreibung</label>
+        <input type="text" name="{{ _prefix }}row_description[]" class="form-control form-control-sm"
+               placeholder="Wasserverbrauch (leer = automatisch)">
+      </div>
+      <div class="col-md-2">
+        <label class="small">Menge (m³) <span class="text-danger">*</span></label>
+        <input type="number" name="{{ _prefix }}row_consumption_m3[]" class="form-control form-control-sm water-consumption"
+               step="0.001" placeholder="0.000" required onchange="itemsEditorCalcWater(this)">
+      </div>
+      <div class="col-md-2">
+        <label class="small">Preis/m³ € <span class="text-danger">*</span></label>
+        <input type="number" name="{{ _prefix }}row_unit_price[]" class="form-control form-control-sm water-price"
+               step="0.0001" min="0" placeholder="0.0000" required onchange="itemsEditorCalcWater(this)">
+      </div>
+      <div class="col-md-2">
+        <label class="small">Betrag (ca.)</label>
+        <input type="text" class="form-control form-control-sm amount-display" readonly placeholder="—">
+      </div>
+      <div class="col-md-1 d-flex align-items-end">
+        <button type="button" class="btn btn-sm btn-outline-danger" onclick="itemsEditorRemoveRow(this)">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+    </div>
+    {{ kontierung(_prefix, _accounts, _projects, '– Standard –') }}
   </div>
 </template>
 
@@ -219,7 +244,7 @@
     <input type="hidden" name="{{ _prefix }}row_tariff_id[]" value="">
     <input type="hidden" name="{{ _prefix }}row_consumption_m3[]" value="">
     <div class="row align-items-end g-2">
-      <div class="col-md-{% if _show_dims %}3{% else %}4{% endif %}">
+      <div class="col-md-4">
         <label class="small">Beschreibung <span class="text-danger">*</span></label>
         <input type="text" name="{{ _prefix }}row_description[]" class="form-control form-control-sm" required
                placeholder="z.B. Mahngebühr">
@@ -243,20 +268,7 @@
         <input type="number" name="{{ _prefix }}row_tax_rate[]" class="form-control form-control-sm"
                step="0.01" min="0" max="100" placeholder="0">
       </div>
-      {% if _show_dims %}
       <div class="col-md-2">
-        <label class="small">Projekt</label>
-        <select name="{{ _prefix }}row_project_id[]" class="form-select form-select-sm">
-          <option value="">–</option>
-          {% for p in _projects %}
-          <option value="{{ p.id }}">{% if p.code %}{{ p.code }} – {% endif %}{{ p.name }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      {% else %}
-      <input type="hidden" name="{{ _prefix }}row_project_id[]" value="">
-      {% endif %}
-      <div class="col-md-{% if _show_dims %}1{% else %}2{% endif %}">
         <label class="small">Betrag (ca.)</label>
         <input type="text" class="form-control form-control-sm amount-display" readonly placeholder="—">
       </div>
@@ -266,6 +278,7 @@
         </button>
       </div>
     </div>
+    {{ kontierung(_prefix, _accounts, _projects, '– Standard –') }}
   </div>
 </template>
 

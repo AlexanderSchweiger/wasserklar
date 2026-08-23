@@ -61,7 +61,10 @@ def draft(app):
     db.session.add(InvoiceItem(
         invoice_id=inv.id, description="Wasserverbrauch", quantity=Decimal("40"),
         unit="m3", unit_price=Decimal("2.5"), amount=Decimal("100"),
-        tax_rate=Decimal("20")))
+        tax_rate=Decimal("20"),
+        # Kontierung seit v1.43.0 an der Position — der Offene Posten aus einer
+        # Rechnung traegt kein eigenes Konto mehr.
+        account_id=acc.id))
     db.session.flush()
     inv.recalculate_total()
     db.session.commit()
@@ -77,7 +80,7 @@ def _set(client, inv_id, status, **extra):
 
 def _issue(client, inv):
     """Entwurf -> Versendet (legt den Offenen Posten an)."""
-    return _set(client, inv.id, Invoice.STATUS_SENT, account_id=str(inv._acc_id))
+    return _set(client, inv.id, Invoice.STATUS_SENT)
 
 
 def _credit_note_of(invoice_id):

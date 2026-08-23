@@ -302,11 +302,14 @@ FOREIGN_KEYS = {
     OwnerChange: {"property_id": Property, "billing_period_id": BillingPeriod,
                   "settlement_invoice_id": Invoice},
     OwnerChangeMeterValue: {"owner_change_id": OwnerChange, "meter_id": WaterMeter},
-    BillingRun: {"billing_period_id": BillingPeriod},
+    WaterTariff: {"base_fee_account_id": Account,
+                  "additional_fee_account_id": Account,
+                  "price_per_m3_account_id": Account},
+    BillingRun: {"billing_period_id": BillingPeriod, "project_id": Project},
     Invoice: {"customer_id": Customer, "property_id": Property, "billing_run_id": BillingRun,
               "billing_period_id": BillingPeriod,
               "cancels_invoice_id": Invoice},  # Self-FK (Storno), zweiter Pass
-    InvoiceItem: {"invoice_id": Invoice, "project_id": Project,
+    InvoiceItem: {"invoice_id": Invoice, "account_id": Account, "project_id": Project,
                   "dunning_notice_id": DunningNotice,        # zweiter Pass
                   "reading_correction_id": ReadingCorrection},  # zweiter Pass
     OpenItem: {"customer_id": Customer, "invoice_id": Invoice, "account_id": Account},

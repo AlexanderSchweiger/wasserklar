@@ -23,6 +23,7 @@
           <th>Gültig bis</th>
           <th class="text-end">Grundgebühr</th>
           <th class="text-end">Preis/m³</th>
+          <th>Konten</th>
           <th></th>
         </tr>
       </thead>
@@ -34,6 +35,25 @@
           <td>{{ t.valid_to or '<span class="badge bg-success text-white">aktuell</span>' | safe }}</td>
           <td class="text-end">{{ t.base_fee|de_number }} €</td>
           <td class="text-end">{{ t.price_per_m3|de_number(4) }} €</td>
+          <td class="small">
+            {# Kontierung je Gebuehrenart — macht unkontierte Tarife sofort sichtbar,
+               weil die dann beim Bezahlen einen Konto-Dialog ausloesen. #}
+            {% set accs = [] %}
+            {% if t.base_fee is not none %}
+              {% set _ = accs.append(('Grundgeb.', t.base_fee_account)) %}
+            {% endif %}
+            {% if t.additional_fee is not none %}
+              {% set _ = accs.append(('Zusatzgeb.', t.additional_fee_account)) %}
+            {% endif %}
+            {% set _ = accs.append(('m³', t.price_per_m3_account)) %}
+            {% for label, acc in accs %}
+            <div class="text-nowrap">
+              <span class="text-muted">{{ label }}:</span>
+              {% if acc %}{% if acc.code %}{{ acc.code }} – {% endif %}{{ acc.name }}
+              {% else %}<span class="badge bg-yellow text-dark">kein Konto</span>{% endif %}
+            </div>
+            {% endfor %}
+          </td>
           <td class="text-end">
             <button type="button" data-url="{{ url_for('invoices.tariff_edit', tariff_id=t.id) }}"
                     data-modal-title="Tarif bearbeiten"
@@ -45,7 +65,7 @@
         </tr>
         {% else %}
         <tr>
-          <td colspan="6" class="text-center text-muted py-3">Noch keine Tarife.</td>
+          <td colspan="7" class="text-center text-muted py-3">Noch keine Tarife.</td>
         </tr>
         {% endfor %}
       </tbody>

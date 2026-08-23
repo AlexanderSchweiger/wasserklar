@@ -22,8 +22,9 @@ _ENDPOINT_PERMS = {
     "fiscal_year_reopen": PERM_STAMMDATEN,
     # Rechnungen / OP: Offene Posten
     "open_items": PERM_RECHNUNGEN,
-    "open_items_set_account": PERM_RECHNUNGEN,
     "open_item_new": PERM_RECHNUNGEN,
+    "open_item_edit": PERM_RECHNUNGEN,
+    "open_item_row": PERM_RECHNUNGEN,
     "open_item_pay": PERM_RECHNUNGEN,
     "open_item_invoice": PERM_RECHNUNGEN,
     # Auswertungen: Jahresbericht, USt-Voranmeldung, Kundenauswertung

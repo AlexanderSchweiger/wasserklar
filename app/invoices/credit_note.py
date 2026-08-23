@@ -177,6 +177,9 @@ def create_credit_note(original, *, reason=None, created_by_id=None,
             unit_price=item.unit_price,
             amount=-Decimal(str(item.amount or 0)),
             tax_rate=item.tax_rate,
+            # Kontierung spiegeln: die Rueckzahlung muss dasselbe Erloeskonto
+            # entlasten, das die Originalrechnung bebucht hat.
+            account_id=item.account_id,
             project_id=item.project_id,
             # Schaetz-Marker und Korrektur-Verweis bewusst nicht uebernehmen:
             # ``reverse_corrections_for_invoice`` wuerde die Korrektur sonst
@@ -211,7 +214,7 @@ def refund_amount_for(credit):
     return min(paid, cap)
 
 
-def create_refund_open_item(credit, *, account_id=None, created_by_id=None):
+def create_refund_open_item(credit, *, created_by_id=None):
     """Legt den negativen Offenen Posten zur Gutschrift ``credit`` an.
 
     Wird beim Statuswechsel der Gutschrift auf „Versendet" aufgerufen —
@@ -233,14 +236,10 @@ def create_refund_open_item(credit, *, account_id=None, created_by_id=None):
         return existing
 
     original = credit.cancels_invoice
-    if account_id is None and original is not None and original.open_item is not None:
-        account_id = original.open_item.account_id
 
     if existing is not None:
         existing.amount = -refund
         existing.due_date = credit.due_date
-        if account_id is not None:
-            existing.account_id = account_id
         return existing
 
     oi = OpenItem(
@@ -254,7 +253,6 @@ def create_refund_open_item(credit, *, account_id=None, created_by_id=None):
         period_year=invoice_period_year(credit),
         status=OpenItem.STATUS_OPEN,
         invoice_id=credit.id,
-        account_id=account_id,
         created_by_id=created_by_id,
     )
     db.session.add(oi)

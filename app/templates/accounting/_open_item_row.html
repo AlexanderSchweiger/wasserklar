@@ -1,0 +1,135 @@
+{# Eine Zeile der Offene-Posten-Liste.
+
+   Eigenes Partial, damit das Bearbeiten-Modal die Zeile per HTMX in-place
+   tauschen kann (``/open-items/<id>/row``) statt die Seite neu zu laden —
+   sonst gingen Filter, Sortierung und Seitenzahl verloren.
+
+   Erwartet: item, today, needs_account (bool). #}
+{% set bal = item.open_balance %}
+{% set is_closed = item.status in ('Bezahlt', 'Gutschrift') %}
+<tr id="open-item-row-{{ item.id }}"
+    class="{{ 'table-secondary' if is_closed else ('table-warning' if item.due_date and item.due_date < today) }}">
+
+  {# Rechnungsnr. / Beschreibung #}
+  <td>
+    {% if item.invoice_id %}
+      <a href="{{ url_for('invoices.detail', invoice_id=item.invoice_id) }}" class="text-reset">
+        <code>{{ item.description }}</code>
+      </a>
+    {% else %}
+      {{ item.description }}
+      {% if item.account %}
+      <div class="small text-muted">
+        <i class="fas fa-tags me-1"></i>{% if item.account.code %}{{ item.account.code }} – {% endif %}{{ item.account.name }}
+      </div>
+      {% endif %}
+    {% endif %}
+  </td>
+
+  {# Kunde #}
+  <td>
+    <a href="{{ url_for('customers.detail', customer_id=item.customer_id) }}">
+      {{ item.customer.name }}
+    </a>
+  </td>
+
+  {# Abrechnungsperiode #}
+  <td>
+    {%- if item.invoice and item.invoice.billing_period -%}
+      {{ item.invoice.billing_period.name }}
+    {%- elif item.period_year -%}
+      {{ item.period_year }}
+    {%- else -%}—{%- endif -%}
+  </td>
+
+  {# Datum #}
+  <td>{{ item.date.strftime('%d.%m.%Y') }}</td>
+
+  {# Fällig #}
+  <td>
+    {{ item.due_date.strftime('%d.%m.%Y') if item.due_date else '—' }}
+    {% if item.due_date and item.due_date < today and not is_closed %}
+    <span class="badge bg-danger text-white ms-1">überfällig</span>
+    {% endif %}
+  </td>
+
+  {# Status #}
+  <td>
+    {% if item.status == 'Offen' %}<span class="badge bg-warning text-dark">Offen</span>
+    {% elif item.status == 'Teilbezahlt' %}<span class="badge bg-info text-white">Teilbezahlt</span>
+    {% elif item.status == 'Bezahlt' %}<span class="badge bg-success text-white">Bezahlt</span>
+    {% elif item.status == 'Gutschrift' %}<span class="badge bg-secondary text-white">Gutschrift</span>
+    {% endif %}
+  </td>
+
+  {# Gesamt #}
+  <td class="text-end" style="white-space:nowrap">
+    {{ item.amount|de_number }} €
+    {% if item.amount < 0 %}
+    <span class="badge bg-orange-lt ms-1"
+          title="Rückzahlung an den Kontakt (aus einer Storno-Rechnung)">Rückzahlung</span>
+    {% endif %}
+  </td>
+
+  {# Offen #}
+  <td class="text-end" style="white-space:nowrap">
+    <strong class="{{ 'text-danger' if bal < 0 }}">{{ bal|de_number }} €</strong>
+  </td>
+
+  {# Aktionen #}
+  <td class="text-end col-actions" style="white-space:nowrap">
+    {% if not is_closed %}
+      {% set is_refund = bal < 0 %}
+      {% if needs_account %}
+      {# Kein Konto ermittelbar → erst fragen. Betrag steckt im Dialog. #}
+      <button type="button"
+              class="btn btn-sm {{ 'btn-warning' if is_refund else 'btn-success' }}"
+              data-action="{{ url_for('accounting.open_item_pay', item_id=item.id) }}"
+              data-amount="{{ '%.2f'|format(bal|abs) }}"
+              data-refund="{{ '1' if is_refund else '0' }}"
+              data-label="{{ item.description }}"
+              onclick="openOpPayModal(this)"
+              title="{{ 'Rückzahlung buchen' if is_refund else 'Zahlung buchen' }} – Konto wählen">
+        <i class="fas {{ 'fa-undo' if is_refund else 'fa-check' }} me-1"></i>
+        {{ 'Rückzahlen' if is_refund else 'Bezahlen' }}
+      </button>
+      {% else %}
+      {# Kontierung steht (am Posten oder an den Rechnungspositionen) → direkt buchen. #}
+      <form method="post" action="{{ url_for('accounting.open_item_pay', item_id=item.id) }}"
+            class="d-inline-flex align-items-center gap-1">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        {# Negativer Posten = Rueckzahlung aus einer Storno-Rechnung. Das
+           Feld bleibt positiv (min=0.01); die Route dreht das Vorzeichen
+           anhand von ``item.amount``. #}
+        <input type="number" name="amount" step="0.01" min="0.01"
+               value="{{ '%.2f'|format(bal|abs) }}"
+               class="form-control form-control-sm" style="width:90px"
+               title="{{ 'Rückzahlungsbetrag' if is_refund else 'Zahlungsbetrag' }}">
+        <button type="submit" class="btn btn-sm {{ 'btn-warning' if is_refund else 'btn-success' }}"
+                title="{{ 'Rückzahlung buchen' if is_refund else 'Zahlung buchen' }}">
+          <i class="fas {{ 'fa-undo' if is_refund else 'fa-check' }} me-1"></i>
+          {{ 'Rückzahlen' if is_refund else 'Bezahlen' }}
+        </button>
+      </form>
+      {% endif %}
+      {% if not item.invoice_id %}
+      <a href="{{ url_for('accounting.open_item_invoice', item_id=item.id) }}"
+         class="btn btn-sm btn-outline-primary" title="Rechnung erstellen">
+        <i class="fas fa-file-invoice"></i>
+      </a>
+      {% endif %}
+    {% endif %}
+    <button type="button" class="btn btn-sm btn-outline-secondary"
+            data-url="{{ url_for('accounting.open_item_edit', item_id=item.id) }}"
+            data-modal-title="Offenen Posten bearbeiten"
+            onclick="openOpenItemModal(this)" title="Bearbeiten">
+      <i class="fas fa-edit"></i>
+    </button>
+    {% if item.invoice_id %}
+    <a href="{{ url_for('invoices.detail', invoice_id=item.invoice_id) }}"
+       class="btn btn-sm btn-outline-secondary" title="Rechnung anzeigen">
+      <i class="fas fa-eye"></i>
+    </a>
+    {% endif %}
+  </td>
+</tr>

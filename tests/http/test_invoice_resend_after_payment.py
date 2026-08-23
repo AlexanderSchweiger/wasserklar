@@ -70,7 +70,9 @@ def paid_invoice(app):
     db.session.add(InvoiceItem(
         invoice_id=inv.id, description="Wasserverbrauch", quantity=Decimal("40"),
         unit="m3", unit_price=Decimal("2.5"), amount=Decimal("100"),
-        tax_rate=Decimal("20")))
+        tax_rate=Decimal("20"),
+        # Kontierung seit v1.43.0 an der Position, nicht am Offenen Posten.
+        account_id=acc.id))
     db.session.flush()
     inv.recalculate_total()
     db.session.commit()
@@ -83,8 +85,7 @@ class TestResendAfterPayment:
     def _setup(self, client, admin, paid_invoice):
         _login(client)
         # Entwurf -> Versendet (legt den Offenen Posten an) -> Bezahlt
-        _set(client, paid_invoice.id, Invoice.STATUS_SENT,
-            account_id=str(paid_invoice._acc_id))
+        _set(client, paid_invoice.id, Invoice.STATUS_SENT)
         _set(client, paid_invoice.id, Invoice.STATUS_PAID)
         self.iid = paid_invoice.id
         self.client = client

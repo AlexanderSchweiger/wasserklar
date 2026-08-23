@@ -142,6 +142,9 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="new_date" id="bulk-new-date">
     <input type="hidden" name="new_due_date" id="bulk-new-due-date">
+    {# Fallback-Konto fuer den Stapel: greift nur bei Positionen ohne eigene
+       Kontierung (siehe payAccountModal auf der Rechnungs-Detailseite). #}
+    <input type="hidden" name="account_id" id="bulk-account-id">
     <div id="bulk-toolbar" class="px-3 py-2 border-bottom bg-light d-none"
          style="display:flex; align-items:center; gap:12px; flex-wrap:wrap">
       <span class="text-muted" id="bulk-count">0 ausgewählt</span>
@@ -240,6 +243,46 @@
 </div>
 
 <!-- Rechnungsdatum setzen Modal -->
+<!-- Bezahlt-Stapel: Konto fuer unkontierte Positionen -->
+<div class="modal fade" id="bulkPayAccountModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">
+          <i class="fas fa-euro-sign me-2"></i> Als bezahlt buchen
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted mb-3">
+          <strong id="bulkPayCount">0</strong> Rechnung(en) werden auf „Bezahlt“ gesetzt und
+          verbucht. Positionen mit eigener Kontierung (aus dem Tarif oder dem Positions-Editor)
+          behalten ihr Konto — die Auswahl hier gilt nur für die übrigen.
+        </p>
+        <div class="mb-2">
+          <label class="form-label">Konto für Positionen ohne Kontierung</label>
+          <select class="form-select" id="bulkPayAccountSelect">
+            <option value="">— keines (nur kontierte Rechnungen buchen) —</option>
+            {% for a in accounts %}
+            <option value="{{ a.id }}">{% if a.code %}{{ a.code }} – {% endif %}{{ a.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-text">
+          Rechnungen, die danach noch ohne Konto sind, werden übersprungen und am Ende
+          gemeldet — der Rest wird trotzdem gebucht.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+        <button type="button" class="btn btn-success" onclick="confirmBulkPay()">
+          <i class="fas fa-check me-1"></i> Bezahlt buchen
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="modal fade" id="setDateModal" tabindex="-1">
   <div class="modal-dialog">
     <div class="modal-content">
@@ -423,6 +466,10 @@ function handleBulkAction() {
   if (count === 0) { alert('Keine Rechnungen ausgewählt.'); return; }
   if (action === 'massenmail') {
     openMassenmailModal();
+    return;
+  }
+  if (action === 'Bezahlt') {
+    openBulkPayModal();
     return;
   }
   if (action === 'set-date') {
@@ -620,6 +667,19 @@ function checkSetDateFuture() {
   } else {
     warn.classList.add('d-none');
   }
+}
+
+function openBulkPayModal() {
+  const count = document.querySelectorAll('.invoice-cb:checked').length;
+  document.getElementById('bulkPayCount').textContent = count;
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('bulkPayAccountModal')).show();
+}
+
+function confirmBulkPay() {
+  document.getElementById('bulk-account-id').value =
+    document.getElementById('bulkPayAccountSelect').value;
+  document.getElementById('bulk-action-select').value = 'Bezahlt';
+  document.getElementById('bulk-form').submit();
 }
 
 function openSetDateModal() {

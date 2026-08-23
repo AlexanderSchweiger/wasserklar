@@ -1,0 +1,128 @@
+{# Form-Body fuers Offene-Posten-Modal — per HTMX in openItemModalBody geladen.
+   Geteilt von Neuanlage und Bearbeitung (Modal-first-Konvention).
+
+   Erwartet: item (oder None), customers, accounts, today,
+             optional form (nach Validierungsfehler).
+
+   Ein Posten AUS EINER RECHNUNG ist nur eingeschraenkt editierbar: Kunde,
+   Beschreibung und Betrag stammen dort aus der Rechnung (``_sync_open_item``
+   zieht den Betrag bei jeder Positionsaenderung nach) — sie hier zu aendern
+   erzeugte eine stille Abweichung zum Beleg. Ebenso traegt so ein Posten kein
+   eigenes Buchungskonto: das haengt an den Rechnungspositionen. #}
+{% include "_flash_inline.html" %}
+{% set from_invoice = item is not none and item.invoice_id is not none %}
+{% if form %}
+  {% set val_customer = form.get('customer_id', '')|int(0) %}
+  {% set val_description = form.get('description', '') %}
+  {% set val_amount = form.get('amount', '') %}
+  {% set val_date = form.get('date', '') %}
+  {% set val_due_date = form.get('due_date', '') %}
+  {% set val_notes = form.get('notes', '') %}
+  {% set val_account = form.get('account_id', '')|int(0) %}
+{% elif item %}
+  {% set val_customer = item.customer_id %}
+  {% set val_description = item.description %}
+  {% set val_amount = '%.2f'|format(item.amount) %}
+  {% set val_date = item.date.isoformat() %}
+  {% set val_due_date = item.due_date.isoformat() if item.due_date else '' %}
+  {% set val_notes = item.notes or '' %}
+  {% set val_account = item.account_id or 0 %}
+{% else %}
+  {% set val_customer = 0 %}
+  {% set val_description = '' %}
+  {% set val_amount = '' %}
+  {% set val_date = today.isoformat() %}
+  {% set val_due_date = '' %}
+  {% set val_notes = '' %}
+  {% set val_account = 0 %}
+{% endif %}
+
+{% if from_invoice %}
+<div class="alert alert-info py-2 mb-3">
+  <i class="fas fa-info-circle me-1"></i>
+  Dieser Posten gehört zur Rechnung
+  <a href="{{ url_for('invoices.detail', invoice_id=item.invoice_id) }}"><code>{{ item.description }}</code></a>.
+  Kunde, Beschreibung und Betrag kommen von dort und ändern sich mit der Rechnung.
+  Das Buchungskonto hängt an den Rechnungspositionen — hier ist es deshalb nicht wählbar.
+</div>
+{% endif %}
+
+<div class="mb-3">
+  <label class="form-label">Kunde <span class="text-danger">*</span></label>
+  {% if from_invoice %}
+  <input type="text" class="form-control" disabled value="{{ item.customer.name }}">
+  {% else %}
+  <select name="customer_id" class="form-select tom-select" required>
+    <option value="">— Kunde auswählen —</option>
+    {% for c in customers %}
+    <option value="{{ c.id }}" {{ 'selected' if val_customer == c.id }}>{{ c.name }}</option>
+    {% endfor %}
+  </select>
+  {% endif %}
+</div>
+
+<div class="mb-3">
+  <label class="form-label">Beschreibung / Verwendungszweck <span class="text-danger">*</span></label>
+  {% if from_invoice %}
+  <input type="text" class="form-control" disabled value="{{ val_description }}">
+  {% else %}
+  <input type="text" name="description" class="form-control" required
+         value="{{ val_description }}" placeholder="z.B. Nachzahlung 2024">
+  {% endif %}
+</div>
+
+<div class="row g-2">
+  <div class="col-md-6">
+    <div class="mb-3">
+      <label class="form-label">Betrag (€) <span class="text-danger">*</span></label>
+      {% if from_invoice %}
+      <input type="text" class="form-control" disabled value="{{ val_amount }}">
+      {% else %}
+      {# Negative Betraege sind erlaubt: ein Rueckzahlungs-Posten. Deshalb
+         KEIN min="0.01" — das sperrte den Fall im Browser aus. #}
+      <input type="number" name="amount" class="form-control" step="0.01" required
+             value="{{ val_amount }}" placeholder="0.00">
+      <div class="form-text">Negativ = Rückzahlung an den Kontakt.</div>
+      {% endif %}
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="mb-3">
+      <label class="form-label">Buchungskonto</label>
+      {% if from_invoice %}
+      <input type="text" class="form-control" disabled value="laut Rechnungspositionen">
+      {% else %}
+      <select name="account_id" class="form-select">
+        <option value="">— beim Bezahlen fragen —</option>
+        {% for a in accounts %}
+        <option value="{{ a.id }}" {{ 'selected' if val_account == a.id }}>
+          {% if a.code %}{{ a.code }} – {% endif %}{{ a.name }}
+        </option>
+        {% endfor %}
+      </select>
+      <div class="form-text">Leer lassen = das Konto wird beim Ausgleichen abgefragt.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="row g-2">
+  <div class="col-md-6">
+    <div class="mb-3">
+      <label class="form-label">Datum <span class="text-danger">*</span></label>
+      <input type="date" name="date" class="form-control" required value="{{ val_date }}">
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="mb-3">
+      <label class="form-label">Fällig bis</label>
+      <input type="date" name="due_date" class="form-control" value="{{ val_due_date }}">
+    </div>
+  </div>
+</div>
+
+<div class="mb-3">
+  <label class="form-label">Notizen</label>
+  <textarea name="notes" class="form-control" rows="3"
+            placeholder="Interne Notizen (nicht auf Rechnung)">{{ val_notes }}</textarea>
+</div>

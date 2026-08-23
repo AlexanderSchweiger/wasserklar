@@ -1350,6 +1350,20 @@ class WaterTariff(db.Model):
     price_per_m3 = db.Column(db.Numeric(10, 4), nullable=False)  # Preis pro m³ (4 Nachkommastellen)
     notes = db.Column(db.Text)
 
+    # Buchungskonto je Gebuehrenart. Der Rechnungslauf schreibt es auf die
+    # erzeugten Positionen (InvoiceItem.account_id); von dort splittet die
+    # Zahlung in eine Sammelbuchung. None = keine Vorbelegung, das Konto wird
+    # dann beim Bezahlen abgefragt.
+    base_fee_account_id = db.Column(db.Integer, db.ForeignKey("accounts.id"), nullable=True)
+    additional_fee_account_id = db.Column(db.Integer, db.ForeignKey("accounts.id"), nullable=True)
+    price_per_m3_account_id = db.Column(db.Integer, db.ForeignKey("accounts.id"), nullable=True)
+
+    # foreign_keys ist Pflicht: drei FKs auf dieselbe Tabelle sind sonst nicht
+    # aufloesbar (AmbiguousForeignKeysError).
+    base_fee_account = db.relationship("Account", foreign_keys=[base_fee_account_id])
+    additional_fee_account = db.relationship("Account", foreign_keys=[additional_fee_account_id])
+    price_per_m3_account = db.relationship("Account", foreign_keys=[price_per_m3_account_id])
+
     def __repr__(self):
         return f"<WaterTariff {self.name} {self.valid_from}>"
 
@@ -1584,6 +1598,11 @@ class BillingRun(db.Model):
     invoices_skipped = db.Column(db.Integer, default=0, nullable=False)
     sort_order = db.Column(db.String(20), nullable=True)
 
+    # Ein Projekt fuer den gesamten Lauf (z.B. "Wasserzins 2026"). Wird beim
+    # Erzeugen auf JEDE Position der Rechnungen dieses Laufs geschrieben —
+    # hier nur als Metadatum fuer die Lauf-Uebersicht gehalten.
+    project_id = db.Column(db.Integer, db.ForeignKey("projects.id"), nullable=True)
+
     SORT_ORDER_CHOICES = [
         ("customer_name",   "Kundenname"),
         ("customer_number", "Kundennummer"),
@@ -1594,6 +1613,7 @@ class BillingRun(db.Model):
     created_by = db.relationship("User", foreign_keys=[created_by_id])
     invoices = db.relationship("Invoice", backref="billing_run", lazy="dynamic")
     billing_period = db.relationship("BillingPeriod")
+    project = db.relationship("Project", foreign_keys=[project_id])
 
     def __repr__(self):
         return f"<BillingRun {self.billing_period_id} {self.created_at}>"
@@ -1995,6 +2015,12 @@ class InvoiceItem(db.Model):
     unit_price = db.Column(db.Numeric(10, 4), nullable=False)
     amount = db.Column(db.Numeric(10, 2), nullable=False)
     tax_rate = db.Column(db.Numeric(5, 2), nullable=True)  # MwSt in %; None = keine MwSt
+    # Buchungsdimensionen der Position. Bei der Zahlung splittet
+    # ``_split_invoice_by_dimensions`` nach (account_id, project_id, tax_rate);
+    # ergibt das mehr als eine Zeile, entsteht eine Sammelbuchung.
+    # Leeres account_id erbt das Konto vom OpenItem bzw. dem beim Bezahlen
+    # gewaehlten Konto, leeres project_id bleibt NULL.
+    account_id = db.Column(db.Integer, db.ForeignKey("accounts.id"), nullable=True)
     project_id = db.Column(db.Integer, db.ForeignKey("projects.id"), nullable=True)
 
     # Schaetzung-Marker: True = die Verbrauchsposition beruht (ganz oder teils)
@@ -2018,6 +2044,7 @@ class InvoiceItem(db.Model):
     is_dunning_fee = db.Column(db.Integer, default=0, nullable=False)
     dunning_notice_id = db.Column(db.Integer, db.ForeignKey("dunning_notices.id"), nullable=True)
 
+    account = db.relationship("Account", foreign_keys=[account_id])
     project = db.relationship("Project", foreign_keys=[project_id])
 
     def __repr__(self):

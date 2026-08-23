@@ -231,14 +231,27 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     # Konten (3 Einnahme, 3 Ausgabe)
     # ------------------------------------------------------------------
     acc_wasser = Account(code="100", name="Wasserumsatz", description="Wassergebühren")
+    acc_grund = Account(code="101", name="Grund- und Zusatzgebühren",
+                        description="Jährliche Bereitstellungsgebühren")
     acc_anschluss = Account(code="110", name="Anschlussgebühren", description="Einmalige Anschlussgebühren")
     acc_mahn = Account(code="120", name="Mahngebühren", description="Vereinnahmte Mahnspesen")
     acc_reparatur = Account(code="200", name="Reparaturen", description="Reparatur- und Wartungskosten")
     acc_buero = Account(code="210", name="Bürobedarf", description="Verwaltungs-Material")
     acc_bank = Account(code="220", name="Bankkosten", description="Kontoführungs- und Kreditzinsen")
-    db.session.add_all([acc_wasser, acc_anschluss, acc_mahn, acc_reparatur, acc_buero, acc_bank])
+    db.session.add_all([acc_wasser, acc_grund, acc_anschluss, acc_mahn,
+                        acc_reparatur, acc_buero, acc_bank])
     db.session.flush()
-    counts["accounts"] = 6
+    counts["accounts"] = 7
+
+    # Tarife kontieren (Konten existieren erst jetzt). Verbrauch und
+    # Bereitstellungsgebühren laufen bewusst auf verschiedene Konten — so zeigt
+    # der Demo-Mandant den Regelfall: beim Bezahlen entsteht eine Sammelbuchung
+    # mit einer Zeile je Konto, ohne dass jemand ein Konto eintippen muss.
+    for t in (t_prev, t_curr):
+        t.price_per_m3_account_id = acc_wasser.id
+        t.base_fee_account_id = acc_grund.id
+        t.additional_fee_account_id = acc_grund.id
+    db.session.flush()
 
     # ------------------------------------------------------------------
     # Projekte (5 mit Farben)
@@ -622,6 +635,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
             quantity=Decimal("1"), unit="Stk",
             unit_price=base, amount=base,
             tax_rate=Decimal("10.00"),
+            account_id=acc_grund.id,
         ))
         db.session.add(InvoiceItem(
             invoice_id=inv.id,
@@ -629,6 +643,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
             quantity=verbrauch, unit="m³",
             unit_price=t_prev.price_per_m3, amount=wasser,
             tax_rate=Decimal("10.00"),
+            account_id=acc_wasser.id,
         ))
         if with_repair:
             db.session.add(InvoiceItem(
@@ -637,6 +652,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
                 quantity=Decimal("1"), unit="Stk",
                 unit_price=repair_net, amount=repair_net,
                 tax_rate=Decimal("20.00"),
+                account_id=acc_anschluss.id,
                 project_id=projects[rng.randint(0, len(projects) - 1)].id,
             ))
         db.session.flush()
@@ -645,9 +661,10 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         if status == Invoice.STATUS_SENT:
             sent_invoices.append(inv)
 
-        # Fuer PAID-Rechnungen: Zahlungsbuchung als normale Buchung (keine
-        # Sammelbuchung — die braucht es real erst ab 2 Positionen mit
-        # unterschiedlichen Steuersaetzen, siehe accounting/services.py).
+        # Fuer PAID-Rechnungen: Zahlungsbuchung als normale Buchung. Der
+        # Service splittet real nach (Konto, Projekt, Steuersatz) — hier wird
+        # bewusst eine flache Buchung geschrieben, damit der Seed nicht von der
+        # Split-Logik abhaengt (siehe accounting/services.py).
         if status == Invoice.STATUS_PAID:
             pay_date = inv_date + timedelta(days=14)
             b = Booking(

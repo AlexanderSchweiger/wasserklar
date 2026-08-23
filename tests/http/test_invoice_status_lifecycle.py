@@ -68,7 +68,10 @@ def draft(app):
     db.session.flush()
     db.session.add(InvoiceItem(
         invoice_id=inv.id, description="Pos", quantity=Decimal("1"),
-        unit="Stk", unit_price=Decimal("100"), amount=Decimal("100")))
+        unit="Stk", unit_price=Decimal("100"), amount=Decimal("100"),
+        # Kontierung sitzt seit v1.43.0 auf der Position (Tarif/Positions-Editor);
+        # der Offene Posten traegt kein eigenes Konto mehr.
+        account_id=acc.id))
     db.session.commit()
     inv._acc_id = acc.id
     return inv
@@ -114,7 +117,7 @@ class TestTransitionGuards:
     def test_draft_to_sent_allowed(self, client, admin, draft):
         _login(client)
         iid = draft.id
-        _set(client, iid, Invoice.STATUS_SENT, account_id=str(draft._acc_id))
+        _set(client, iid, Invoice.STATUS_SENT)
         inv = db.session.get(Invoice, iid)
         assert inv.status == Invoice.STATUS_SENT
         assert inv.open_item is not None
@@ -123,7 +126,7 @@ class TestTransitionGuards:
         """Eine stornierte Rechnung laesst sich nicht reaktivieren."""
         _login(client)
         iid = draft.id
-        _set(client, iid, Invoice.STATUS_SENT, account_id=str(draft._acc_id))
+        _set(client, iid, Invoice.STATUS_SENT)
         _set(client, iid, Invoice.STATUS_CANCELLED)
         assert db.session.get(Invoice, iid).status == Invoice.STATUS_CANCELLED
         # Reaktivierungs-Versuche prallen ab.
@@ -134,7 +137,7 @@ class TestTransitionGuards:
     def test_no_revert_to_draft(self, client, admin, draft):
         _login(client)
         iid = draft.id
-        _set(client, iid, Invoice.STATUS_SENT, account_id=str(draft._acc_id))
+        _set(client, iid, Invoice.STATUS_SENT)
         _set(client, iid, Invoice.STATUS_DRAFT)
         assert db.session.get(Invoice, iid).status == Invoice.STATUS_SENT
 
@@ -147,7 +150,7 @@ class TestBookingSideEffects:
     def test_paid_creates_single_booking(self, client, admin, draft):
         _login(client)
         iid = draft.id
-        _set(client, iid, Invoice.STATUS_SENT, account_id=str(draft._acc_id))
+        _set(client, iid, Invoice.STATUS_SENT)
         _set(client, iid, Invoice.STATUS_PAID)
         inv = db.session.get(Invoice, iid)
         assert inv.status == Invoice.STATUS_PAID
@@ -158,10 +161,9 @@ class TestBookingSideEffects:
         """Bezahlt -> Versendet -> Bezahlt darf keine zweite Buchung erzeugen."""
         _login(client)
         iid = draft.id
-        acc_id = str(draft._acc_id)
-        _set(client, iid, Invoice.STATUS_SENT, account_id=acc_id)
+        _set(client, iid, Invoice.STATUS_SENT)
         _set(client, iid, Invoice.STATUS_PAID)
-        _set(client, iid, Invoice.STATUS_SENT, account_id=acc_id)
+        _set(client, iid, Invoice.STATUS_SENT)
         _set(client, iid, Invoice.STATUS_PAID)
         assert len(_active_bookings(iid)) == 1
 
@@ -169,7 +171,7 @@ class TestBookingSideEffects:
         """Storno einer bezahlten Rechnung wickelt die Buchung ab (keine Phantom-Einnahme)."""
         _login(client)
         iid = draft.id
-        _set(client, iid, Invoice.STATUS_SENT, account_id=str(draft._acc_id))
+        _set(client, iid, Invoice.STATUS_SENT)
         _set(client, iid, Invoice.STATUS_PAID)
         assert len(_active_bookings(iid)) == 1
         _set(client, iid, Invoice.STATUS_CANCELLED)
@@ -185,7 +187,7 @@ class TestBookingSideEffects:
         """Storno einer nur versendeten (unbezahlten) Rechnung: OP wird geschlossen."""
         _login(client)
         iid = draft.id
-        _set(client, iid, Invoice.STATUS_SENT, account_id=str(draft._acc_id))
+        _set(client, iid, Invoice.STATUS_SENT)
         _set(client, iid, Invoice.STATUS_CANCELLED)
         inv = db.session.get(Invoice, iid)
         assert inv.status == Invoice.STATUS_CANCELLED
@@ -208,7 +210,7 @@ class TestDeleteDraft:
     def test_delete_non_draft_blocked(self, client, admin, draft):
         _login(client)
         iid = draft.id
-        _set(client, iid, Invoice.STATUS_SENT, account_id=str(draft._acc_id))
+        _set(client, iid, Invoice.STATUS_SENT)
         client.post(f"/invoices/{iid}/delete", follow_redirects=True)
         assert db.session.get(Invoice, iid) is not None
 

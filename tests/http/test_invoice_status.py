@@ -1,9 +1,11 @@
 """HTTP-Tests fuer den Rechnungs-Statuswechsel (``/invoices/<id>/status``).
 
 Regression: Eine aus einem Rechnungslauf stammende Rechnung (``billing_run_id``
-gesetzt) liess sich nicht auf 'Versendet' setzen, weil
-``_resolve_open_item_account_id`` auf ``billing_run.account_id`` zugriff — diese
-Spalte gibt es seit der Konto-Verlagerung auf den Offenen Posten nicht mehr.
+gesetzt) liess sich nicht auf 'Versendet' setzen, weil die Konto-Aufloesung auf
+``billing_run.account_id`` zugriff — diese Spalte gab es da schon nicht mehr.
+
+Seit v1.43.0 gibt es gar keine Konto-Aufloesung mehr: der Posten aus einer
+Rechnung bleibt kontenlos, die Kontierung sitzt auf den Rechnungspositionen.
 """
 from datetime import date
 from decimal import Decimal
@@ -87,8 +89,14 @@ class TestSetStatusBillingRunInvoice:
         assert inv.open_item.amount == Decimal("100")
         assert inv.open_item.account_id is None
 
-    def test_sent_uses_form_account_id(self, client, admin, billing_run_invoice):
-        """Das Konto kommt jetzt ausschliesslich aus dem Formular (OpenItem-Konto)."""
+    def test_sent_never_sets_open_item_account(self, client, admin,
+                                               billing_run_invoice):
+        """Ein Posten AUS EINER RECHNUNG traegt nie ein eigenes Buchungskonto.
+
+        Die Kontierung haengt seit v1.43.0 an den Rechnungspositionen — ein
+        Konto am Posten waere eine zweite, konkurrierende Wahrheit. Selbst ein
+        mitgeschicktes ``account_id`` darf daran nichts aendern.
+        """
         client.get("/auth/logout")
         _login(client)
         account = Account(name="Wasser", code="W01")
@@ -105,4 +113,4 @@ class TestSetStatusBillingRunInvoice:
 
         inv = db.session.get(Invoice, inv_id)
         assert inv.open_item is not None
-        assert inv.open_item.account_id == acc_id
+        assert inv.open_item.account_id is None

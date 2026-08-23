@@ -23,6 +23,7 @@
           <th>Benutzer</th>
           <th>Periode</th>
           <th>Tarif</th>
+          <th>Projekt</th>
           <th class="text-end">Preis/m³</th>
           <th class="text-end">Erstellt</th>
           <th class="text-end">Übersprungen</th>
@@ -52,6 +53,11 @@
               ({{ run.tariff_valid_from }}{% if run.tariff_valid_to %}–{{ run.tariff_valid_to }}{% else %} aktuell{% endif %})
             </small>
           </td>
+          <td>
+            {% if run.project %}
+            <span class="badge bg-blue-lt">{% if run.project.code %}{{ run.project.code }} – {% endif %}{{ run.project.name }}</span>
+            {% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
           <td class="text-end">{{ run.tariff_price_per_m3 | de_number(4) }} €</td>
           <td class="text-end">
             <span class="badge bg-success text-white">{{ run.invoices_created }}</span>
@@ -77,7 +83,7 @@
         </tr>
         {% else %}
         <tr>
-          <td colspan="8" class="text-center text-muted py-4">
+          <td colspan="9" class="text-center text-muted py-4">
             Noch keine Rechnungsläufe vorhanden.
             <a href="{{ url_for('invoices.generate') }}">Jetzt ersten Rechnungslauf starten →</a>
           </td>

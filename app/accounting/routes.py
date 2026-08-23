@@ -1380,6 +1380,24 @@ def _sort_open_items(items, sort: str, direction: str):
     return sorted(items, key=sort_key, reverse=desc)
 
 
+def _open_item_needs_account(item):
+    """True, wenn beim Ausgleichen dieses Postens ein Konto abgefragt werden muss.
+
+    Zwei Faelle, zwei Quellen:
+
+    * **Posten aus einer Rechnung** — das Konto haengt an den Rechnungs-
+      positionen. Traegt mindestens eine keines, kann die Buchung nicht
+      entstehen (``Booking.account_id`` ist NOT NULL) → fragen.
+    * **Manueller Posten** — hier ist ``OpenItem.account_id`` die Quelle.
+
+    Die Oberflaeche entscheidet damit VOR dem Klick, ob der Bezahlen-Button
+    direkt bucht oder erst den Konto-Dialog oeffnet.
+    """
+    if item.invoice_id and item.invoice is not None:
+        return acc_svc.invoice_missing_account(item.invoice)
+    return item.account_id is None
+
+
 @bp.route("/open-items")
 @login_required
 def open_items():
@@ -1466,57 +1484,159 @@ def open_items():
         pagination=pagination,
         accounts=accounts,
         billing_periods=billing_periods,
+        needs_account_map={i.id: _open_item_needs_account(i) for i in pagination.items},
     )
 
 
-@bp.route("/open-items/set-account", methods=["POST"])
-@login_required
-def open_items_set_account():
-    """Setzt das Buchungskonto auf allen noch nicht abgeschlossenen Posten."""
-    account_id_raw = request.form.get("account_id") or None
-    if not account_id_raw:
-        flash("Bitte ein Buchungskonto wählen.", "warning")
-        return redirect(url_for("accounting.open_items"))
-    account_id = int(account_id_raw)
-    updated = OpenItem.query.filter(
-        OpenItem.status.in_([OpenItem.STATUS_OPEN, OpenItem.STATUS_PARTIAL])
-    ).update({OpenItem.account_id: account_id}, synchronize_session=False)
-    db.session.commit()
-    flash(f"Buchungskonto für {updated} offene(n) Posten gesetzt.", "success")
-    return redirect(url_for("accounting.open_items"))
+def _open_item_form_ctx():
+    """Auswahllisten fuer das Offene-Posten-Formular (Neu + Bearbeiten)."""
+    return dict(
+        customers=Customer.query.filter_by(active=True).order_by(Customer.name).all(),
+        accounts=Account.query.filter_by(active=True).order_by(Account.name).all(),
+        today=date.today(),
+    )
+
+
+def _open_item_body(item, form):
+    """Rendert den Formular-Body fuers Modal."""
+    return render_template("accounting/_open_item_form_body.html",
+                           item=item, form=form, **_open_item_form_ctx())
+
+
+def _open_item_page(item, form):
+    """Vollseiten-Fallback (Direktaufruf der URL ohne Modal)."""
+    return render_template("accounting/open_item_form.html",
+                           item=item, form=form, **_open_item_form_ctx())
+
+
+def _open_item_modal_saved(item_id, created=False):
+    """204 + HX-Trigger fuers Offene-Posten-Modal (schliessen + Zeile tauschen)."""
+    resp = make_response("", 204)
+    resp.headers["HX-Trigger"] = json.dumps({
+        "closeOpenItemModal": True,
+        "openItemSaved": {"open_item_id": item_id, "created": created},
+    })
+    return resp
+
+
+def _parse_open_item_form(item=None):
+    """Liest und validiert das Offene-Posten-Formular.
+
+    Gibt ``(data, error)`` zurueck. Bei einem Posten AUS EINER RECHNUNG sind
+    Kunde/Beschreibung/Betrag/Konto nicht editierbar — sie stammen vom Beleg
+    (das Formular rendert sie dort als ``disabled``, was der Browser gar nicht
+    erst mitsendet; hier wird es zusaetzlich serverseitig durchgesetzt, damit
+    ein manuell gebauter POST sie nicht doch aendert).
+    """
+    from decimal import Decimal, InvalidOperation
+
+    from_invoice = item is not None and item.invoice_id is not None
+
+    try:
+        item_date = date.fromisoformat(request.form["date"])
+    except (KeyError, ValueError):
+        return None, "Bitte ein gültiges Datum angeben."
+    fy_error = acc_svc.open_fiscal_year_error(item_date)
+    if fy_error:
+        return None, f"{fy_error} Offener Posten wurde nicht gespeichert."
+
+    due_raw = request.form.get("due_date", "").strip()
+    try:
+        due_date = date.fromisoformat(due_raw) if due_raw else None
+    except ValueError:
+        return None, "Bitte ein gültiges Fälligkeitsdatum angeben."
+
+    data = dict(
+        date=item_date,
+        due_date=due_date,
+        notes=request.form.get("notes", "").strip(),
+    )
+
+    if not from_invoice:
+        description = request.form.get("description", "").strip()
+        if not description:
+            return None, "Bitte eine Beschreibung angeben."
+        customer_raw = request.form.get("customer_id", "").strip()
+        if not customer_raw:
+            return None, "Bitte einen Kunden auswählen."
+        try:
+            customer_id = int(customer_raw)
+        except ValueError:
+            return None, "Ungültiger Kunde."
+        amount_raw = request.form.get("amount", "").strip().replace(",", ".")
+        try:
+            amount = Decimal(amount_raw)
+        except (InvalidOperation, ValueError):
+            return None, "Ungültiger Betrag — bitte eine Zahl eingeben."
+        if amount == 0:
+            return None, "Der Betrag darf nicht 0 sein."
+        account_raw = request.form.get("account_id", "").strip()
+        try:
+            account_id = int(account_raw) if account_raw else None
+        except ValueError:
+            account_id = None
+        data.update(customer_id=customer_id, description=description,
+                    amount=amount, account_id=account_id)
+
+    return data, None
 
 
 @bp.route("/open-items/new", methods=["GET", "POST"])
 @login_required
 def open_item_new():
-    customers = Customer.query.filter_by(active=True).order_by(Customer.name).all()
+    is_modal = bool(request.headers.get("X-From-Modal"))
     if request.method == "POST":
-        from decimal import Decimal
-        item_date = date.fromisoformat(request.form["date"])
-        fy_error = acc_svc.open_fiscal_year_error(item_date)
-        if fy_error:
-            flash(f"{fy_error} Offener Posten wurde nicht gespeichert.", "danger")
-            return render_template(
-                "accounting/open_item_form.html",
-                item=None, customers=customers, today=date.today(),
-                form_data=request.form,
-            )
-        amount_raw = request.form.get("amount", "0").replace(",", ".")
-        item = OpenItem(
-            customer_id=int(request.form["customer_id"]),
-            description=request.form["description"].strip(),
-            notes=request.form.get("notes", "").strip(),
-            amount=Decimal(amount_raw),
-            date=item_date,
-            due_date=date.fromisoformat(request.form["due_date"]) if request.form.get("due_date") else None,
-            status=OpenItem.STATUS_OPEN,
-            created_by_id=current_user.id,
-        )
+        data, err = _parse_open_item_form()
+        if err:
+            flash(err, "danger")
+            return _open_item_body(None, request.form) if is_modal                 else _open_item_page(None, request.form)
+        item = OpenItem(status=OpenItem.STATUS_OPEN,
+                        created_by_id=current_user.id, **data)
         db.session.add(item)
         db.session.commit()
         flash("Offener Posten angelegt.", "success")
+        if is_modal:
+            return _open_item_modal_saved(item.id, created=True)
         return redirect(url_for("accounting.open_items"))
-    return render_template("accounting/open_item_form.html", item=None, customers=customers, today=date.today())
+    if is_modal:
+        return _open_item_body(None, None)
+    return _open_item_page(None, None)
+
+
+@bp.route("/open-items/<int:item_id>/edit", methods=["GET", "POST"])
+@login_required
+def open_item_edit(item_id):
+    item = db.get_or_404(OpenItem, item_id)
+    is_modal = bool(request.headers.get("X-From-Modal"))
+    if request.method == "POST":
+        data, err = _parse_open_item_form(item)
+        if err:
+            flash(err, "danger")
+            return _open_item_body(item, request.form) if is_modal                 else _open_item_page(item, request.form)
+        for field, value in data.items():
+            setattr(item, field, value)
+        db.session.commit()
+        flash("Offener Posten aktualisiert.", "success")
+        if is_modal:
+            return _open_item_modal_saved(item.id)
+        return redirect(url_for("accounting.open_items"))
+    if is_modal:
+        return _open_item_body(item, None)
+    return _open_item_page(item, None)
+
+
+@bp.route("/open-items/<int:item_id>/row")
+@login_required
+def open_item_row(item_id):
+    """Einzelne Tabellenzeile — fuer den In-Place-Swap nach dem Modal-Speichern.
+
+    Ohne das wuerde ein Full-Reload die aktiven Filter/Sortierung der Liste
+    verlieren.
+    """
+    item = db.get_or_404(OpenItem, item_id)
+    return render_template("accounting/_open_item_row.html",
+                           item=item, today=date.today(),
+                           needs_account=_open_item_needs_account(item))
 
 
 @bp.route("/open-items/<int:item_id>/pay", methods=["POST"])
@@ -1562,8 +1682,9 @@ def open_item_pay(item_id):
             if invoice is None:
                 flash("Verknüpfte Rechnung nicht gefunden.", "danger")
                 return redirect(url_for("accounting.open_items"))
-            if form_account_id and item.account_id != form_account_id:
-                item.account_id = form_account_id
+            # Das Konto NICHT auf den Posten zurueckschreiben: bei einer
+            # Rechnung liegt die Kontierung auf den Positionen, ein Konto am
+            # Posten waere eine zweite, konkurrierende Wahrheit.
             group, children = acc_svc.booking_group_from_invoice_payment(
                 invoice=invoice,
                 amount=amount,
@@ -1576,16 +1697,17 @@ def open_item_pay(item_id):
             )
         else:
             # Manueller OpenItem ohne Rechnung → einfache Einzelbuchung.
-            account_id_to_use = form_account_id or item.account_id
-            if account_id_to_use:
-                acc = Account.query.get(account_id_to_use)
-            else:
-                acc = Account.query.filter_by(active=True).first()
+            # Konto: das am Posten hinterlegte, sonst das im Dialog gewaehlte.
+            # Kein stilles Ausweichen auf "irgendein aktives Konto" mehr — das
+            # verbuchte frueher auf einem willkuerlichen Konto.
+            account_id_to_use = item.account_id or form_account_id
+            acc = db.session.get(Account, account_id_to_use) if account_id_to_use else None
+            if not acc:
+                flash("Für diesen Posten ist kein Buchungskonto hinterlegt — "
+                      "bitte im Dialog eines wählen.", "danger")
+                return redirect(url_for("accounting.open_items"))
             if form_account_id and item.account_id != form_account_id:
                 item.account_id = form_account_id
-            if not acc:
-                flash("Kein aktives Konto gefunden.", "danger")
-                return redirect(url_for("accounting.open_items"))
 
             booking = Booking(
                 date=payment_date,
@@ -1651,6 +1773,7 @@ def open_item_invoice(item_id):
     item = db.get_or_404(OpenItem, item_id)
     tariffs = WaterTariff.query.order_by(WaterTariff.valid_from.desc()).all()
     editor_projects = Project.query.filter_by(closed=False).order_by(Project.name).all()
+    editor_accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
 
     if request.method == "POST":
         from app.models import Invoice
@@ -1695,6 +1818,7 @@ def open_item_invoice(item_id):
         item=item,
         tariffs=tariffs,
         today=date.today(),
+        editor_accounts=editor_accounts,
         editor_projects=editor_projects,
     )
 

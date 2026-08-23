@@ -32,6 +32,7 @@ def _invoice(items, open_item_account=None):
     """Mock-Invoice mit Items für Split-Tests."""
     mock_items = [
         types.SimpleNamespace(
+            account_id=it.get("account_id"),
             project_id=it.get("project_id"),
             tax_rate=Decimal(str(it["tax_rate"])) if it.get("tax_rate") is not None else None,
             amount=Decimal(str(it.get("amount", "0"))),
@@ -213,3 +214,50 @@ class TestSplitInvoiceByDimensions:
         result = _split_invoice_by_dimensions(inv, gross)
         assert len(result) == 2
         assert sum(r["amount"] for r in result) == gross
+
+    # -- Konto als dritte Split-Dimension (v1.43.0) ------------------------
+
+    def test_two_accounts_two_splits(self):
+        """Verschiedene Positions-Konten splitten, auch bei gleichem Projekt/Steuersatz."""
+        inv = _invoice([
+            {"account_id": 3, "amount": "60.00", "description": "Wasser"},
+            {"account_id": 4, "amount": "40.00", "description": "Grundgebühr"},
+        ])
+        result = _split_invoice_by_dimensions(inv, Decimal("100.00"))
+        assert len(result) == 2
+        assert {r["account_id"] for r in result} == {3, 4}
+        assert sum(r["amount"] for r in result) == Decimal("100.00")
+
+    def test_same_account_merged_into_one(self):
+        """Gleiches Konto + Projekt + Steuersatz → EINE Zeile (keine Sammelbuchung)."""
+        inv = _invoice([
+            {"account_id": 3, "project_id": 7, "amount": "60.00"},
+            {"account_id": 3, "project_id": 7, "amount": "40.00"},
+        ])
+        result = _split_invoice_by_dimensions(inv, Decimal("100.00"))
+        assert len(result) == 1
+        assert result[0]["account_id"] == 3
+        assert result[0]["project_id"] == 7
+        assert result[0]["amount"] == Decimal("100.00")
+
+    def test_item_account_beats_open_item_and_fallback(self):
+        """Ein Positions-Konto schlaegt OpenItem UND expliziten Fallback."""
+        inv = _invoice([{"account_id": 3, "amount": "100.00"}], open_item_account=77)
+        result = _split_invoice_by_dimensions(inv, Decimal("100.00"), fallback_account_id=99)
+        assert result[0]["account_id"] == 3
+
+    def test_uncontexted_item_inherits_fallback(self):
+        """Position ohne Konto erbt den Fallback — die kontierte behaelt ihres."""
+        inv = _invoice([
+            {"account_id": 3, "amount": "60.00", "description": "Wasser"},
+            {"amount": "40.00", "description": "Sonstiges"},
+        ])
+        result = _split_invoice_by_dimensions(inv, Decimal("100.00"), fallback_account_id=99)
+        assert len(result) == 2
+        assert {r["account_id"] for r in result} == {3, 99}
+
+    def test_no_account_anywhere_stays_none(self):
+        """Ohne jede Kontierung bleibt account_id None — der Aufrufer muss fragen."""
+        inv = _invoice([{"amount": "100.00"}])
+        result = _split_invoice_by_dimensions(inv, Decimal("100.00"))
+        assert result[0]["account_id"] is None
