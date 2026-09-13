@@ -588,6 +588,12 @@ tr.overdue { background-color: #fff3cd !important; }
 .technik-measure-main { font-weight: 500; }
 .technik-measure-sub { display: block; font-size: .78rem; margin-top: .1rem; }
 
+/* Waehrend des Zeichnens: bestehende Punkt-Marker klick-transparent machen.
+   Leaflet-Marker lassen Klicks nicht zur Karte durchblubbern — ohne das liesse
+   sich eine Leitung nicht auf einem Element beginnen/beenden. Geomans eigene
+   Stuetzpunkt-Marker (.marker-icon, Klick = Leitung abschliessen) bleiben aktiv. */
+.technik-drawing .technik-marker-wrap { pointer-events: none !important; }
+
 /* --- Karten-Container + Floating "Meine Position" ------------------------- */
 .technik-map-wrap { position: relative; }
 #technik-map { height: 72vh; min-height: 460px; }

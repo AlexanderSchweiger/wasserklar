@@ -800,7 +800,11 @@
         .catch(function (err) { console.error("Geometrie speichern fehlgeschlagen", err); });
     }
 
-    var storeOpts = { onSelect: showDetail, onGeometry: persistGeometry };
+    // Klick auf ein Element waehrend des Zeichnens ist ein Stuetzpunkt, keine Auswahl.
+    var storeOpts = {
+      onSelect: function (id) { if (!pending) showDetail(id); },
+      onGeometry: persistGeometry,
+    };
 
     // Bestehende Features laden
     fetchFeatures(T.featuresUrl).then(function (fc) {
@@ -813,28 +817,71 @@
     });
 
     // --- Zeichnen ueber die Typ-Palette ---
-    function cancelDraw() {
+    // Waehrend des Zeichnens muessen bestehende Elemente den Klick an Geoman
+    // durchreichen, damit eine Leitung auf einem Element beginnen/enden kann
+    // (Geoman snappt den Stuetzpunkt dann exakt aufs Element):
+    //  - Global-Edit pausieren: dessen Vertex-Handles + ziehbare Marker fangen
+    //    den Klick sonst ab (v.a. an Leitungsenden).
+    //  - Punkt-Marker per CSS klick-transparent (.technik-drawing, app.css).
+    //  - Canvas-Linien nicht-interaktiv (der Canvas-Renderer prueft
+    //    options.interactive bei jedem Hit-Test).
+    var editPausedForDraw = false;
+    function setFeaturesInteractive(on) {
+      map.getContainer().classList.toggle("technik-drawing", !on);
+      store.lineGroup.eachLayer(function (l) { l.options.interactive = on; });
+    }
+    function drawShape() { return pending && pending.geometry === "line" ? "Line" : "Marker"; }
+
+    // keepSession: nur das Werkzeug wechseln (neuer Palettenklick) — Edit-Modus
+    // bleibt pausiert, statt ihn fuer einen Augenblick wieder einzuschalten.
+    function cancelDraw(keepSession) {
       pending = null;
       if (map.pm) map.pm.disableDraw();
       document.querySelectorAll(".technik-add.active").forEach(function (b) { b.classList.remove("active"); });
       var cancelBtn = document.getElementById("technik-cancel-draw");
       if (cancelBtn) cancelBtn.style.display = "none";
+      if (keepSession === true) return;
+      setFeaturesInteractive(true);
+      if (editPausedForDraw) {
+        editPausedForDraw = false;
+        if (editMode && map.pm) map.pm.enableGlobalEditMode();
+      }
     }
 
     document.querySelectorAll(".technik-add").forEach(function (btn) {
       btn.addEventListener("click", function () {
         if (!map.pm) { alert("Zeichen-Bibliothek nicht geladen."); return; }
-        cancelDraw();
+        cancelDraw(true);
         pending = { feature_type: btn.getAttribute("data-feature-type"), geometry: btn.getAttribute("data-geometry") };
         btn.classList.add("active");
         var cancelBtn = document.getElementById("technik-cancel-draw");
         if (cancelBtn) cancelBtn.style.display = "";
-        map.pm.enableDraw(pending.geometry === "line" ? "Line" : "Marker", { continueDrawing: false });
+        if (map.pm.globalEditModeEnabled()) {
+          map.pm.disableGlobalEditMode();
+          editPausedForDraw = true;
+        }
+        setFeaturesInteractive(false);
+        map.pm.enableDraw(drawShape(), { continueDrawing: false });
       });
     });
 
     var cancelBtn = document.getElementById("technik-cancel-draw");
-    if (cancelBtn) cancelBtn.addEventListener("click", cancelDraw);
+    if (cancelBtn) cancelBtn.addEventListener("click", function () { cancelDraw(); });
+
+    // ESC waehrend des Zeichnens: eine begonnene Leitung verwerfen, das Werkzeug
+    // bleibt aktiv (sofort neu ansetzen). Ohne gesetzten Stuetzpunkt (bzw. beim
+    // Punkt-Werkzeug) beendet ESC das Zeichnen ganz.
+    document.addEventListener("keydown", function (e) {
+      if (e.key !== "Escape" || !pending || !map.pm) return;
+      if (!document.body.contains(map.getContainer())) return;   // Seite per hx-boost verlassen
+      e.preventDefault();
+      if (drawShape() === "Line" && placedPts.length) {
+        map.pm.disableDraw();   // verwirft die Arbeitslinie, legt nichts an
+        map.pm.enableDraw("Line", { continueDrawing: false });
+      } else {
+        cancelDraw();
+      }
+    });
 
     // Bootstrap-Tooltips fuer die Typ-Palette (Beschreibungen je Feature-Typ).
     // Das title-Attribut bleibt als Fallback, falls Bootstrap nicht geladen ist.
