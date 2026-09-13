@@ -25,14 +25,11 @@ Einladungen versenden
             <i class="fas fa-paper-plane me-1"></i> Ausgewählte per E-Mail senden
             <span class="badge bg-white text-primary ms-1" id="emailCountBadge">0</span>
           </button>
-          <button type="submit" name="post_only" value="1"
-                  formaction="{{ url_for('schriftfuehrung.invitations_print', meeting_id=meeting.id) }}"
-                  class="btn btn-primary">
+          <button type="button" class="btn btn-primary js-print-invitations" data-post-only="1">
             <i class="fas fa-print me-1"></i> Ausgewählte per Post senden
             <span class="badge bg-white text-primary ms-1" id="postCountBadge">0</span>
           </button>
-          <button type="submit" formaction="{{ url_for('schriftfuehrung.invitations_print', meeting_id=meeting.id) }}"
-                  class="btn btn-outline-secondary">
+          <button type="button" class="btn btn-outline-secondary js-print-invitations" data-post-only="0">
             <i class="fas fa-print me-1"></i> Alle Einladungen drucken (PDF)
           </button>
         </div>
@@ -119,6 +116,36 @@ Einladungen versenden
 {% endblock %}
 
 {% block modals %}
+{# Spinner-Dialog für den Einladungs-Druck (OSS-Standalone rendert synchron).
+   Die SaaS-Schicht ersetzt window.sfPrintInvitations durch die Job-Queue und
+   bringt ihren eigenen Auftrags-Dialog mit. #}
+<div class="modal fade" id="printModal" tabindex="-1" aria-hidden="true"
+     data-bs-backdrop="static" data-bs-keyboard="false">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="printModalTitle">Einladungen werden erstellt …</h5>
+      </div>
+      <div class="modal-body">
+        <div id="printModalSpinner" class="d-flex align-items-center">
+          <div class="spinner-border text-primary me-3" role="status"></div>
+          <div>
+            <div id="printModalText">Die Einladungen werden erstellt …</div>
+            <div class="text-secondary small">Das kann bei vielen Empfängern einen Moment dauern. Bitte die Seite nicht schließen.</div>
+          </div>
+        </div>
+        <div id="printModalDone" class="d-none text-center py-2">
+          <div class="mb-2 text-success"><i class="fas fa-check-circle fa-2x"></i></div>
+          <p class="mb-0">Das PDF wurde heruntergeladen.</p>
+        </div>
+        <div id="printModalError" class="d-none alert alert-danger mb-0"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary d-none" id="printModalClose" data-bs-dismiss="modal">Schließen</button>
+      </div>
+    </div>
+  </div>
+</div>
 <div class="modal fade" id="emailModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-centered">
     <div class="modal-content">
@@ -162,6 +189,8 @@ Einladungen versenden
   const form = document.getElementById('sendForm');
   if (!form) return;
   const ajaxUrl = "{{ url_for('schriftfuehrung.invitations_email_ajax', meeting_id=meeting.id) }}";
+  // Versand/Druck laufen ausschließlich über die Buttons (JS) — kein nativer Submit.
+  form.addEventListener('submit', function (e) { e.preventDefault(); });
 
   function rowMethod(tr) {
     const sel = tr.querySelector('.row-method');
@@ -293,6 +322,79 @@ Einladungen versenden
     document.getElementById('email-done-btn').classList.remove('d-none');
   }
   document.getElementById('email-start-btn').addEventListener('click', startEmailSend);
+
+  // ── Druck (Post / alle) ──
+  // Standard (OSS): synchron per fetch rendern, währenddessen Spinner-Dialog.
+  // Die SaaS-Schicht überschreibt window.sfPrintInvitations und reiht große
+  // Mengen als Hintergrund-Auftrag ein (gleiche Signatur).
+  const printUrl = "{{ url_for('schriftfuehrung.invitations_print', meeting_id=meeting.id) }}";
+
+  function printModalState(state, msg) {
+    document.getElementById('printModalSpinner').classList.toggle('d-none', state !== 'busy');
+    document.getElementById('printModalDone').classList.toggle('d-none', state !== 'done');
+    const err = document.getElementById('printModalError');
+    err.classList.toggle('d-none', state !== 'error');
+    err.textContent = state === 'error' ? (msg || 'Die Einladungen konnten nicht erstellt werden.') : '';
+    document.getElementById('printModalClose').classList.toggle('d-none', state === 'busy');
+  }
+
+  window.sfPrintInvitations = async function (sel) {
+    const modalEl = document.getElementById('printModal');
+    const modal = window.bootstrap ? bootstrap.Modal.getOrCreateInstance(modalEl) : null;
+    document.getElementById('printModalTitle').textContent = sel.title;
+    document.getElementById('printModalText').textContent =
+      sel.ids.length + ' Einladung' + (sel.ids.length === 1 ? '' : 'en') + ' werden erstellt …';
+    printModalState('busy');
+    if (modal) modal.show();
+    const fd = new FormData(form);
+    if (sel.postOnly) fd.append('post_only', '1');
+    try {
+      const resp = await fetch(printUrl, { method: 'POST', body: fd });
+      const ct = (resp.headers.get('Content-Type') || '').toLowerCase();
+      if (resp.ok && ct.indexOf('pdf') !== -1) {
+        const disp = resp.headers.get('Content-Disposition') || '';
+        const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disp);
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = m ? decodeURIComponent(m[1]) : 'Einladungen.pdf';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+        printModalState('done');
+      } else if (resp.redirected) {
+        window.location.href = resp.url;  // Server hat per Flash-Meldung abgelehnt
+      } else {
+        printModalState('error', 'Die Einladungen konnten nicht erstellt werden (Status ' + resp.status + ').');
+      }
+    } catch (err) {
+      printModalState('error', 'Verbindungsfehler. Bitte erneut versuchen.');
+    }
+  };
+
+  document.querySelectorAll('.js-print-invitations').forEach(btn => {
+    btn.addEventListener('click', function () {
+      const postOnly = btn.dataset.postOnly === '1';
+      const rows = postOnly ? postRows() : selectedRows();
+      if (!rows.length) {
+        alert(postOnly ? 'Keine Empfänger mit Versandart „Post“ ausgewählt.' : 'Keine Empfänger ausgewählt.');
+        return;
+      }
+      const methods = {};
+      selectedRows().forEach(tr => { methods[tr.dataset.cid] = rowMethod(tr); });
+      window.sfPrintInvitations({
+        meetingId: {{ meeting.id }},
+        postOnly: postOnly,
+        ids: rows.map(tr => tr.dataset.cid),
+        selectedIds: selectedRows().map(tr => tr.dataset.cid),
+        methods: methods,
+        title: postOnly ? 'Einladungen per Post werden erstellt' : 'Alle Einladungen werden erstellt',
+        btn: btn,
+      });
+    });
+  });
 
   refreshSelection();
 })();

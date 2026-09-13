@@ -11,6 +11,7 @@ from html import unescape
 from flask import render_template
 
 from app.models import AppSetting
+from app.schriftfuehrung import constants
 from app.invoices.design import get_design
 from app.settings_service import (
     wg_settings, get_contact_info, get_contact_info_font_size,
@@ -25,10 +26,15 @@ def current_design():
 # ── PDF (WeasyPrint-HTML) ────────────────────────────────────────────────────
 
 def render_invitation_html(meeting, customer, agenda_items):
-    """HTML einer einzelnen Einladung (für WeasyPrint), im Rechnungs-Stil."""
+    """HTML einer einzelnen Einladung (für WeasyPrint), im Rechnungs-Stil.
+
+    Die Labels werden explizit übergeben (nicht nur über den Blueprint-Context-
+    Processor): der Druck läuft in der SaaS auch außerhalb von
+    ``/schriftfuehrung``-Requests (Job-Dispatch bzw. Worker)."""
     return render_template(
         "schriftfuehrung/pdf/invitation.html",
         meeting=meeting, customer=customer, agenda_items=agenda_items,
+        sf_meeting_type_labels=constants.MEETING_TYPE_LABELS,
         design=current_design(),
         contact_info=get_contact_info(),
         contact_info_font_size=get_contact_info_font_size(),

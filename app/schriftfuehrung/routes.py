@@ -553,28 +553,37 @@ def _merged_invitation_docx(meeting, customers):
     return merge_docx_files(sources)
 
 
-@bp.route("/meetings/<int:meeting_id>/invitations/print", methods=["POST"])
-@login_required
-def invitations_print(meeting_id):
-    meeting = _get_meeting(meeting_id)
-    selected_ids, methods = _read_selection(request.form)
+class InvitationPrintError(Exception):
+    """Einladungs-Druck nicht möglich (keine Empfänger / WeasyPrint fehlt) —
+    ``str(exc)`` ist die deutsche Nutzer-Meldung."""
+
+
+def print_invitations(meeting, selected_ids, methods, post_only, user_id):
+    """Einladungs-Druck request-unabhängig: Auswahl synchronisieren, gemergtes PDF
+    rendern, Post-Versand + Druck-Log vermerken, committen.
+
+    Gibt ``(pdf_bytes, download_name)`` zurück. Wird von der OSS-Route UND vom
+    SaaS-Job-Renderer (``saas/jobs/renderers.py``) aufgerufen — daher kein
+    ``request``/``current_user``/``flash``. Wirft ``InvitationPrintError`` vor
+    dem Commit (Aufrufer rollt zurück).
+
+    ``post_only``: „Ausgewählte per Post senden" druckt nur die Post-Empfänger;
+    „Alle Einladungen drucken" (ohne Flag) druckt die ganze Auswahl.
+    """
     invitations = _sync_invitations(meeting, selected_ids, methods)
-    # „Ausgewählte per Post senden" druckt nur die Post-Empfänger; der
-    # „Alle Einladungen drucken"-Button (ohne Flag) druckt die ganze Auswahl.
-    post_only = request.form.get("post_only") == "1"
     if post_only:
         invitations = [inv for inv in invitations
                        if inv.delivery_method == MeetingInvitation.METHOD_POST]
     customers = [inv.customer for inv in invitations if inv.customer]
     if not customers:
-        flash("Keine Empfänger mit Versandart „Post“ ausgewählt." if post_only
-              else "Keine Empfänger ausgewählt.", "warning")
-        return redirect(url_for("schriftfuehrung.send", meeting_id=meeting.id))
+        raise InvitationPrintError(
+            "Keine Empfänger mit Versandart „Post“ ausgewählt." if post_only
+            else "Keine Empfänger ausgewählt.")
 
     pdf_bytes = _merged_invitation_pdf(meeting, customers)
     if pdf_bytes is None:
-        flash("WeasyPrint ist nicht installiert — Druck-PDF nur im Docker-Container verfügbar.", "danger")
-        return redirect(url_for("schriftfuehrung.send", meeting_id=meeting.id))
+        raise InvitationPrintError(
+            "WeasyPrint ist nicht installiert — Druck-PDF nur im Docker-Container verfügbar.")
 
     now = datetime.utcnow()
     for inv in invitations:
@@ -586,15 +595,30 @@ def invitations_print(meeting_id):
             recipient_email=inv.customer.email if inv.customer else None,
             method=MeetingDeliveryLog.METHOD_POST,
             action=MeetingDeliveryLog.ACTION_PRINTED,
-            user_id=current_user.id,
+            user_id=user_id,
         ))
     if meeting.status == Meeting.STATUS_PLANNING:
         meeting.status = Meeting.STATUS_INVITED
     db.session.commit()
+    return pdf_bytes, f"{_invitation_basename(meeting)}.pdf"
+
+
+@bp.route("/meetings/<int:meeting_id>/invitations/print", methods=["POST"])
+@login_required
+def invitations_print(meeting_id):
+    meeting = _get_meeting(meeting_id)
+    selected_ids, methods = _read_selection(request.form)
+    post_only = request.form.get("post_only") == "1"
+    try:
+        pdf_bytes, name = print_invitations(
+            meeting, selected_ids, methods, post_only, current_user.id)
+    except InvitationPrintError as exc:
+        db.session.rollback()
+        flash(str(exc), "warning")
+        return redirect(url_for("schriftfuehrung.send", meeting_id=meeting.id))
 
     return send_file(io.BytesIO(pdf_bytes), as_attachment=True,
-                     download_name=f"{_invitation_basename(meeting)}.pdf",
-                     mimetype="application/pdf")
+                     download_name=name, mimetype="application/pdf")
 
 
 @bp.route("/meetings/<int:meeting_id>/invitations/download")
