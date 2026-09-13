@@ -24,6 +24,12 @@ class Config:
     # Plattform-Relay: wenn aktiv, laeuft der Versand ueber den app.config-SMTP
     # statt ueber per-Tenant-mail.*-Overrides. OSS-Standalone: aus, SaaS: an.
     MAIL_PLATFORM_RELAY = os.environ.get("MAIL_PLATFORM_RELAY", "false").lower() == "true"
+    # Mails an Platzhalter-Adressen (*@example.<tld>, .test/.invalid/...) nicht
+    # zustellen, sondern stumm als versendet behandeln (Demo-/Testdaten).
+    # Abschalten z.B. fuer lokales Mailpit, das diese Adressen sehen soll.
+    MAIL_SKIP_PLACEHOLDER_ADDRESSES = (
+        os.environ.get("MAIL_SKIP_PLACEHOLDER_ADDRESSES", "true").lower() == "true"
+    )
 
     # Fernet-Key fuer das in der DB gespeicherte SMTP-Passwort. Bewusst separat
     # vom SECRET_KEY: SMTP-Secrets duerfen nicht entschluesselt werden, wenn
@@ -142,6 +148,8 @@ class TestingConfig(Config):
     # Fester Test-Key (32-Byte urlsafe-base64) — Tests duerfen nicht von der
     # User-.env abhaengen.
     WASSERKLAR_MAIL_KEY = "Q3hUYjBkbGRZWG41ZXM0SUtYRG1MRzJaRWxudFYzeTI="
+    # Tests versenden bewusst an example.test-Adressen in die Flask-Mail-Outbox.
+    MAIL_SKIP_PLACEHOLDER_ADDRESSES = False
 
 
 class StagingConfig(Config):

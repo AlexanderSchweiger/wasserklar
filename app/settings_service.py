@@ -406,6 +406,36 @@ def apply_mail_settings():
                 pass
 
 
+# RFC 2606 / RFC 6761: Top-Level-Domains, die nie zustellbar sind.
+_PLACEHOLDER_TLDS = {'example', 'test', 'invalid', 'localhost'}
+
+
+def _address_of(recipient):
+    """Reine Adresse aus ``"a@b"``, ``"Name <a@b>"`` oder ``("Name", "a@b")``."""
+    from email.utils import parseaddr
+    if isinstance(recipient, (tuple, list)):
+        recipient = recipient[1] if len(recipient) > 1 else (recipient[0] if recipient else '')
+    return parseaddr(str(recipient or ''))[1].strip().lower()
+
+
+def is_placeholder_address(recipient):
+    """True fuer Platzhalter-Adressen aus Demo-/Testdaten.
+
+    Erfasst ``*@example.<tld>`` (auch Subdomains wie ``mail.example.at``) und
+    die reservierten TLDs ``.example``/``.test``/``.invalid``/``.localhost``.
+    Hintergrund: nur ``example.com/.net/.org`` sind reserviert — Laender-Domains
+    wie ``example.at`` sind echt registriert und haben einen Mailserver, der
+    Demo-Mails annimmt ("Delivered" bei Postmark).
+    """
+    addr = _address_of(recipient)
+    if '@' not in addr:
+        return False
+    labels = addr.rsplit('@', 1)[1].rstrip('.').split('.')
+    if labels[-1] in _PLACEHOLDER_TLDS:
+        return True
+    return len(labels) >= 2 and labels[-2] == 'example'
+
+
 def send_mail(msg):
     """Sendet eine flask_mail.Message.
 
@@ -432,6 +462,29 @@ def send_mail(msg):
 
     msg.extra_headers = getattr(msg, 'extra_headers', {}) or {}
     msg.extra_headers['X-PM-Message-Stream'] = 'outbound'
+
+    # Platzhalter-Adressen (Demo-Seed, Testdaten) nie wirklich zustellen. Der
+    # Aufrufer merkt davon nichts — Rechnung/Mahnung/Rundschreiben gilt als
+    # "Versendet", damit sich die Demo-Daten wie echte verhalten, ohne einen
+    # fremden Mailserver oder das Versand-Kontingent zu belasten.
+    if current_app.config.get('MAIL_SKIP_PLACEHOLDER_ADDRESSES', True):
+        skipped = [r for field in ('recipients', 'cc', 'bcc')
+                   for r in (getattr(msg, field, None) or [])
+                   if is_placeholder_address(r)]
+        if skipped:
+            for field in ('recipients', 'cc', 'bcc'):
+                current = getattr(msg, field, None)
+                if current:
+                    setattr(msg, field,
+                            [r for r in current if not is_placeholder_address(r)])
+            if not (msg.recipients or getattr(msg, 'cc', None)
+                    or getattr(msg, 'bcc', None)):
+                current_app.logger.info(
+                    "send_mail: nur Platzhalter-Empfaenger (%s) — Versand simuliert",
+                    skipped)
+                return
+            current_app.logger.info(
+                "send_mail: Platzhalter-Empfaenger uebersprungen: %s", skipped)
 
     # Sperrliste als letztes Netz: gesperrte Empfaenger gar nicht erst
     # anschreiben (schuetzt die Versand-Reputation, faengt JEDEN Pfad — auch

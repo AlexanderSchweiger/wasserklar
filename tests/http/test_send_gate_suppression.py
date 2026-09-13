@@ -119,3 +119,54 @@ class TestChokepointNet:
                 body="x"))
         assert len(outbox) == 1
         assert outbox[0].recipients == ["live@example.test"]
+
+
+class TestPlaceholderAddresses:
+    """Demo-/Testadressen (``*@example.<tld>``, reservierte TLDs) werden nicht
+    zugestellt — ``send_mail`` kehrt stumm zurueck, als waere versendet."""
+
+    @pytest.fixture(autouse=True)
+    def _enable(self, app):
+        app.config["MAIL_SKIP_PLACEHOLDER_ADDRESSES"] = True
+        yield
+        app.config["MAIL_SKIP_PLACEHOLDER_ADDRESSES"] = False
+
+    @pytest.mark.parametrize("addr", [
+        "otto.aigner001@example.at", "x@example.com", "x@mail.example.de",
+        "Otto <x@EXAMPLE.AT>", "x@foo.test", "x@foo.invalid", "x@foo.example",
+    ])
+    def test_detects_placeholder(self, addr):
+        from app.settings_service import is_placeholder_address
+        assert is_placeholder_address(addr)
+
+    @pytest.mark.parametrize("addr", [
+        "otto@gmx.at", "x@examples.at", "x@myexample.com", "admin@test.local",
+        ("Otto", "otto@gmx.at"), "",
+    ])
+    def test_ignores_real_address(self, addr):
+        from app.settings_service import is_placeholder_address
+        assert not is_placeholder_address(addr)
+
+    def test_only_placeholders_sends_nothing(self, app):
+        from flask_mail import Message
+        with mail.record_messages() as outbox:
+            send_mail(Message("Betreff", recipients=["a@example.at"], body="x"))
+        assert outbox == []
+
+    def test_mixed_keeps_real_recipients(self, app):
+        from flask_mail import Message
+        with mail.record_messages() as outbox:
+            send_mail(Message(
+                "Betreff", recipients=["a@example.at", "real@gmx.at"],
+                cc=["c@example.com"], bcc=["b@gmx.at"], body="x"))
+        assert len(outbox) == 1
+        assert outbox[0].recipients == ["real@gmx.at"]
+        assert outbox[0].cc == []
+        assert outbox[0].bcc == ["b@gmx.at"]
+
+    def test_disabled_flag_sends(self, app):
+        from flask_mail import Message
+        app.config["MAIL_SKIP_PLACEHOLDER_ADDRESSES"] = False
+        with mail.record_messages() as outbox:
+            send_mail(Message("Betreff", recipients=["a@example.at"], body="x"))
+        assert len(outbox) == 1
