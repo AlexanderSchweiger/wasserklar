@@ -184,6 +184,7 @@ Einladungen versenden
 {% endblock %}
 
 {% block scripts %}
+{% include "_bulk_send_helpers.html" %}
 <script>
 (function () {
   const form = document.getElementById('sendForm');
@@ -280,45 +281,17 @@ Einladungen versenden
   document.getElementById('openEmailModalBtn').addEventListener('click', openEmailModal);
 
   async function startEmailSend() {
-    const startBtn = document.getElementById('email-start-btn');
-    startBtn.disabled = true;
-    const csrf = form.querySelector('input[name="csrf_token"]').value;
-    const testMode = document.getElementById('email-testmode').checked;
-    const TEST_MODE_LIMIT = 3;
-    const allRows = Array.from(document.querySelectorAll('#email-rows tr[id^="em-row-"]'))
-      .map(tr => tr.id.replace('em-row-', ''));
-    const rows = testMode ? allRows.slice(0, TEST_MODE_LIMIT) : allRows;
-    allRows.slice(rows.length).forEach(cid => {
-      const icon = document.getElementById('em-icon-' + cid);
-      if (icon) { icon.className = 'fas fa-minus-circle text-muted'; icon.title = 'Im Testmodus übersprungen (Limit: ' + TEST_MODE_LIMIT + ')'; }
+    document.getElementById('email-start-btn').disabled = true;
+    await wkSerialSend({
+      rows: Array.from(document.querySelectorAll('#email-rows tr[id^="em-row-"]'), tr => {
+        const cid = tr.id.replace('em-row-', '');
+        return { id: cid, icon: document.getElementById('em-icon-' + cid) };
+      }),
+      url: () => ajaxUrl,
+      params: cid => ({ customer_id: cid }),
+      csrf: form.querySelector('input[name="csrf_token"]').value,
+      testMode: document.getElementById('email-testmode').checked,
     });
-    for (let i = 0; i < rows.length; i++) {
-      const cid = rows[i];
-      const icon = document.getElementById('em-icon-' + cid);
-      if (icon) icon.className = 'fas fa-spinner fa-spin text-primary';
-      try {
-        let body = 'csrf_token=' + encodeURIComponent(csrf) + '&customer_id=' + encodeURIComponent(cid);
-        if (testMode) body += '&test_mode=1';
-        const resp = await fetch(ajaxUrl, {
-          method: 'POST',
-          headers: { 'X-CSRFToken': csrf, 'Content-Type': 'application/x-www-form-urlencoded' },
-          body,
-        });
-        const json = await resp.json();
-        if (json.ok) {
-          icon.className = json.test_mode ? 'fas fa-check-circle text-warning' : 'fas fa-check-circle text-success';
-          icon.title = json.test_mode ? ('Testmail an ' + json.email) : ('Gesendet an ' + json.email);
-        } else {
-          const td = icon.closest('td');
-          if (td) td.innerHTML = '<i class="fas fa-times-circle text-danger me-1"></i><small class="text-danger">' + (json.error || 'Fehler') + '</small>';
-        }
-      } catch (err) {
-        if (icon) { icon.className = 'fas fa-times-circle text-danger'; icon.title = 'Netzwerkfehler'; }
-      }
-      if (i < rows.length - 1) {
-        await new Promise(r => setTimeout(r, {{ bulk_mail_delay_ms }}));  // 0 = Relay (Vollgas), sonst SMTP-Drossel
-      }
-    }
     document.getElementById('email-done-btn').classList.remove('d-none');
   }
   document.getElementById('email-start-btn').addEventListener('click', startEmailSend);

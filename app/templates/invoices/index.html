@@ -393,6 +393,7 @@
 {% endblock %}
 
 {% block scripts %}
+{% include "_bulk_send_helpers.html" %}
 <script>
 (function () {
   // Toolbar-Status aus dem AKTUELLEN DOM ableiten. Liest live per Selektor,
@@ -753,55 +754,15 @@ function openMassenmailModal() {
 
 async function startMassenmail() {
   document.getElementById('massenmail-start-btn').disabled = true;
-  const csrfToken = document.querySelector('#bulk-form input[name="csrf_token"]').value;
-  const testMode = document.getElementById('massenmail-testmode').checked;
-  const TEST_MODE_LIMIT = 3;
-  const allEligible = [];
-  document.querySelectorAll('#massenmail-rows tr[id^="mm-row-"]').forEach(tr => {
-    const id = tr.id.replace('mm-row-', '');
-    const icon = document.getElementById('mm-icon-' + id);
-    if (icon) allEligible.push({ id, icon });
+  await wkSerialSend({
+    rows: Array.from(document.querySelectorAll('#massenmail-rows tr[id^="mm-row-"]'), tr => {
+      const id = tr.id.replace('mm-row-', '');
+      return { id, icon: document.getElementById('mm-icon-' + id) };
+    }),
+    url: id => '/invoices/' + id + '/send-email-ajax',
+    csrf: document.querySelector('#bulk-form input[name="csrf_token"]').value,
+    testMode: document.getElementById('massenmail-testmode').checked,
   });
-  const eligible = testMode ? allEligible.slice(0, TEST_MODE_LIMIT) : allEligible;
-  allEligible.slice(eligible.length).forEach(({ icon }) => {
-    icon.className = 'fas fa-minus-circle text-muted';
-    icon.title = 'Im Testmodus übersprungen (Limit: ' + TEST_MODE_LIMIT + ')';
-  });
-  for (let i = 0; i < eligible.length; i++) {
-    const { id, icon } = eligible[i];
-    icon.className = 'fas fa-spinner fa-spin text-primary';
-    try {
-      let body = 'csrf_token=' + encodeURIComponent(csrfToken);
-      if (testMode) body += '&test_mode=1';
-      const resp = await fetch('/invoices/' + id + '/send-email-ajax', {
-        method: 'POST',
-        headers: {
-          'X-CSRFToken': csrfToken,
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body,
-      });
-      const json = await resp.json();
-      if (json.ok) {
-        icon.className = json.test_mode
-          ? 'fas fa-check-circle text-warning'
-          : 'fas fa-check-circle text-success';
-        if (json.test_mode) icon.title = 'Testmail gesendet an ' + json.email;
-      } else {
-        const td = icon.closest('td');
-        if (td) {
-          td.innerHTML = '<i class="fas fa-times-circle text-danger me-1"></i>'
-            + '<small class="text-danger">' + (json.error || 'Fehler') + '</small>';
-        }
-      }
-    } catch (err) {
-      icon.className = 'fas fa-times-circle text-danger';
-      icon.title = 'Netzwerkfehler';
-    }
-    if (i < eligible.length - 1) {
-      await new Promise(r => setTimeout(r, {{ bulk_mail_delay_ms }}));  // 0 = Relay (Vollgas), sonst SMTP-Drossel
-    }
-  }
 }
 </script>
 {% endblock %}

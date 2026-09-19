@@ -381,7 +381,6 @@
               <i class="fas fa-flask me-1"></i> Testmodus (an Admin-Adresse, max. 3 Mails)
             </label>
           </div>
-          <span class="text-success small fw-semibold" id="br-mail-msg"></span>
         </div>
         <div class="table-responsive" style="max-height:240px;overflow:auto">
           <table class="table table-sm mb-0">
@@ -437,6 +436,7 @@
 {% endblock %}
 
 {% block scripts %}
+{% include "_bulk_send_helpers.html" %}
 <script>
 // In EINE IIFE gewickelt: hx-boost tauscht <body> aus und fuehrt dieses Inline-
 // Skript bei jeder geboosteten Navigation erneut aus. Top-level `const`/`let`
@@ -521,51 +521,14 @@
     const btn = document.getElementById('br-mail-start');
     if (!btn) return;
     btn.disabled = true;
-    const testMode = document.getElementById('br-mail-testmode').checked;
-    const TEST_MODE_LIMIT = 3;
-    const allRows = Array.from(document.querySelectorAll('#versendenModal tr[id^="br-mm-"]'));
-    const rows = testMode ? allRows.slice(0, TEST_MODE_LIMIT) : allRows;
-    allRows.slice(rows.length).forEach(tr => {
-      const icon = document.getElementById('br-mm-icon-' + tr.dataset.id);
-      if (icon) { icon.className = 'fas fa-minus-circle text-muted'; icon.title = 'Im Testmodus übersprungen (Limit: ' + TEST_MODE_LIMIT + ')'; }
+    const res = await wkSerialSend({
+      rows: Array.from(document.querySelectorAll('#versendenModal tr[id^="br-mm-"]'), tr => (
+        { id: tr.dataset.id, icon: document.getElementById('br-mm-icon-' + tr.dataset.id) })),
+      url: id => '/invoices/' + id + '/send-email-ajax',
+      csrf: BR_CSRF,
+      testMode: document.getElementById('br-mail-testmode').checked,
     });
-    let ok = 0, fail = 0;
-    for (let i = 0; i < rows.length; i++) {
-      const id = rows[i].dataset.id;
-      const icon = document.getElementById('br-mm-icon-' + id);
-      if (icon) icon.className = 'fas fa-spinner fa-spin text-primary';
-      try {
-        let body = 'csrf_token=' + encodeURIComponent(BR_CSRF);
-        if (testMode) body += '&test_mode=1';
-        const resp = await fetch('/invoices/' + id + '/send-email-ajax', {
-          method: 'POST',
-          headers: { 'X-CSRFToken': BR_CSRF, 'Content-Type': 'application/x-www-form-urlencoded' },
-          body,
-        });
-        const json = await resp.json();
-        if (json.ok) {
-          ok++;
-          if (icon) icon.className = json.test_mode
-            ? 'fas fa-check-circle text-warning'
-            : 'fas fa-check-circle text-success';
-          if (!json.test_mode) brVersandDirty = true;
-        } else {
-          fail++;
-          const td = icon ? icon.closest('td') : null;
-          if (td) td.innerHTML = '<i class="fas fa-times-circle text-danger" title="'
-            + (json.error || 'Fehler') + '"></i>';
-        }
-      } catch (err) {
-        fail++;
-        if (icon) icon.className = 'fas fa-times-circle text-danger';
-      }
-      if (i < rows.length - 1) {
-        await new Promise(r => setTimeout(r, {{ bulk_mail_delay_ms }}));  // 0 = Relay (Vollgas), sonst SMTP-Drossel
-      }
-    }
-    const msg = document.getElementById('br-mail-msg');
-    if (msg) msg.textContent = 'Fertig: ' + ok + ' versendet'
-      + (fail ? ', ' + fail + ' fehlgeschlagen' : '') + '.';
+    if (res.sent) brVersandDirty = true;
   }
   const mailStartBtn = document.getElementById('br-mail-start');
   if (mailStartBtn) mailStartBtn.addEventListener('click', brStartMail);

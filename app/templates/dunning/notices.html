@@ -162,7 +162,6 @@
                 <i class="fas fa-flask me-1"></i> Testmodus (an die eigene Adresse, max. 3 Mails)
               </label>
             </div>
-            <span class="text-success small fw-semibold" id="dn-mail-msg"></span>
           </div>
           <div class="table-responsive" style="max-height:240px;overflow:auto">
             <table class="table table-sm mb-0">
@@ -214,6 +213,7 @@
 {% endblock %}
 
 {% block scripts %}
+{% include "_bulk_send_helpers.html" %}
 <script>
 // Das GESAMTE Seiten-Skript liegt in EINER IIFE: hx-boost tauscht <body> aus und
 // fuehrt dieses Inline-Skript bei jeder geboosteten Navigation erneut aus. Ein
@@ -231,7 +231,6 @@
   const BULK_PRINT_MAX = {{ config.get('BULK_PRINT_MAX', 100) }};
   const DN_SEND_URL = '{{ url_for("dunning.notice_send_email", notice_id=0) }}';
   const DN_POST_URL = '{{ url_for("dunning.bulk_post_pdf") }}';
-  const DN_MAIL_DELAY = {{ bulk_mail_delay_ms }};  // 0 = Relay (Vollgas), sonst SMTP-Drossel
   let dnVersandDirty = false;
 
   function dnCsrf() {
@@ -470,7 +469,6 @@
     const mailBtn = document.getElementById('dn-mail-start');
     mailBtn.disabled = mail.length === 0;
     mailBtn.innerHTML = '<i class="fas fa-paper-plane me-1"></i> Alle ' + mail.length + ' per Mail versenden';
-    document.getElementById('dn-mail-msg').textContent = '';
     document.getElementById('dn-mail-section').classList.toggle('d-none', mail.length === 0);
     document.getElementById('dn-mail-empty').classList.toggle('d-none', mail.length !== 0);
 
@@ -504,63 +502,17 @@
     bootstrap.Modal.getOrCreateInstance(document.getElementById('dnVersandModal')).show();
   }
 
-  // Serieller Mailversand mit Status-Icon pro Zeile — analog zum Rechnungsversand.
+  // Serieller Mailversand (zentral: _bulk_send_helpers.html).
   async function dnStartMail() {
-    const btn = document.getElementById('dn-mail-start');
-    btn.disabled = true;
-    const csrfToken = dnCsrf();
-    const testMode = document.getElementById('dn-mail-testmode').checked;
-    const TEST_MODE_LIMIT = 3;
-    const allRows = Array.from(document.querySelectorAll('#dn-mail-rows tr[id^="dn-mm-row-"]'));
-    const rows = testMode ? allRows.slice(0, TEST_MODE_LIMIT) : allRows;
-    allRows.slice(rows.length).forEach(tr => {
-      const icon = document.getElementById('dn-mm-icon-' + tr.dataset.id);
-      if (icon) { icon.className = 'fas fa-minus-circle text-muted'; icon.title = 'Im Testmodus übersprungen (Limit: ' + TEST_MODE_LIMIT + ')'; }
+    document.getElementById('dn-mail-start').disabled = true;
+    const res = await wkSerialSend({
+      rows: Array.from(document.querySelectorAll('#dn-mail-rows tr[id^="dn-mm-row-"]'), tr => (
+        { id: tr.dataset.id, icon: document.getElementById('dn-mm-icon-' + tr.dataset.id) })),
+      url: id => DN_SEND_URL.replace('/0/', '/' + id + '/'),
+      csrf: dnCsrf(),
+      testMode: document.getElementById('dn-mail-testmode').checked,
     });
-    let ok = 0, fail = 0;
-    for (let i = 0; i < rows.length; i++) {
-      const id = rows[i].dataset.id;
-      const icon = document.getElementById('dn-mm-icon-' + id);
-      if (icon) icon.className = 'fas fa-spinner fa-spin text-primary';
-      try {
-        let body = 'csrf_token=' + encodeURIComponent(csrfToken);
-        if (testMode) body += '&test_mode=1';
-        const resp = await fetch(DN_SEND_URL.replace('/0/', '/' + id + '/'), {
-          method: 'POST',
-          headers: {
-            'X-CSRFToken': csrfToken,
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          body,
-        });
-        const json = await resp.json();
-        if (json.ok) {
-          ok++;
-          if (icon) {
-            icon.className = json.test_mode
-              ? 'fas fa-check-circle text-warning'
-              : 'fas fa-check-circle text-success';
-            icon.title = json.test_mode ? 'Testmail gesendet an ' + json.email
-                                        : 'Gesendet an ' + json.email;
-          }
-          if (!json.test_mode) dnVersandDirty = true;
-        } else {
-          fail++;
-          if (icon) {
-            icon.className = 'fas fa-times-circle text-danger';
-            icon.title = json.error || 'Fehler';   // Servertext, nie als Markup
-          }
-        }
-      } catch (err) {
-        fail++;
-        if (icon) { icon.className = 'fas fa-times-circle text-danger'; icon.title = 'Netzwerkfehler'; }
-      }
-      if (i < rows.length - 1) {
-        await new Promise(r => setTimeout(r, DN_MAIL_DELAY));
-      }
-    }
-    document.getElementById('dn-mail-msg').textContent = 'Fertig: ' + ok + ' versendet'
-      + (fail ? ', ' + fail + ' fehlgeschlagen' : '') + '.';
+    if (res.sent) dnVersandDirty = true;
   }
 
   // Post-Gruppe herunterladen — der Server markiert die enthaltenen Mahnungen

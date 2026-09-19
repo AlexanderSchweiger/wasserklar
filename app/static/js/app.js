@@ -342,8 +342,13 @@
   document.addEventListener('htmx:afterRequest',  spinnerEnd);
 
   // fetch()-Monkey-Patch (fuer E-Mail-Versand, Test-Mail etc.)
+  // Opt-out per `fetch(url, {..., spinner: false})` fuer Aufrufe mit eigenem
+  // Fortschritts-UI (Serienversand, siehe _bulk_send_helpers.html) — sonst
+  // liegt das Vollbild-Overlay ueber genau der Tabelle, die den Fortschritt
+  // zeigt. Der unbekannte Init-Key wird vom nativen fetch ignoriert.
   var _fetch = window.fetch;
-  window.fetch = function () {
+  window.fetch = function (input, init) {
+    if (init && init.spinner === false) return _fetch.apply(this, arguments);
     spinnerStart();
     return _fetch.apply(this, arguments).finally(spinnerEnd);
   };

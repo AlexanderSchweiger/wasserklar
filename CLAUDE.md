@@ -304,6 +304,7 @@ Der zweite Import-Wizard im Repo, `app/import_csv/` (Stammdaten — Kunden/Objek
 - `{{ wg.name }}` etc. — always available via context processor
 - Enhanced `<select>` elements need `class="form-select tom-select"` (or `form-control tom-select`) to activate TomSelect
 - **UI size convention**: filter bars use `form-control-sm` / `form-select-sm` / `btn-sm`; card-header action buttons use `btn-sm`; main form submit buttons and inputs use the default (non-sm) size
+- **Serienversand (Massenmail)**: nie eine eigene Sende-Schleife schreiben — `{% include "_bulk_send_helpers.html" %}` im scripts-Block und `await wkSerialSend({rows, url, csrf, params?, testMode?})` aufrufen. Der Helfer macht Drossel (`bulk_mail_delay_ms`), Testmodus-Limit (3), Status-Icons, Fortschrittsbalken statt globalem Spinner (`fetch(..., {spinner: false})`), Abbruch bei abgelaufener Sitzung; Endpoints antworten `{ok, error?, email?, test_mode?}`. Bewusst Inline-Partial statt `app.js`: `app.js` wird bei hx-boost nicht neu geladen, ein offener Tab haette nach einem Deploy den alten Stand.
 
 ## Datenbank
 

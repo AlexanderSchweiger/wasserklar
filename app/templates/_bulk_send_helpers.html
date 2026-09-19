@@ -1,0 +1,185 @@
+{# Serienversand (Massenmail) — EINE Implementierung fuer alle Versand-Dialoge
+   (Rechnungen, Rechnungslauf, Mahnungen, Sitzungseinladungen, Rundschreiben,
+   Zaehlertausch-Tour, SaaS-Selbstablesung). Einbinden im scripts-Block VOR dem
+   Seiten-Skript: {% include "_bulk_send_helpers.html" %}
+
+   Bewusst ein Inline-Partial statt app.js: app.js liegt im <head> und wird bei
+   hx-boost-Navigation nicht neu geladen — ein nach einem Deploy offener Tab
+   haette sonst den alten Stand. Das Partial kommt mit jeder Seite frisch mit.
+
+   Versendet seriell, eine Anfrage pro Empfaenger, dazwischen die SMTP-Drossel
+   (bulk_mail_delay_ms: 0 beim Plattform-Relay, sonst die konfigurierte Pause).
+   Statt des globalen Lade-Spinners zeigt ein Fortschrittsbalken ueber der
+   Tabelle "x von n", Fehler und Restzeit.
+
+   const res = await wkSerialSend({
+     rows,        // [{ id, icon }] — icon = Status-<i> der Zeile
+     url,         // function (id) -> Endpoint-URL
+     csrf,        // CSRF-Token
+     params,      // optional: function (id) -> { feld: wert } (zusaetzliche Form-Felder)
+     testMode,    // optional: max. TEST_LIMIT Mails, Rest wird als uebersprungen markiert
+   });
+   // res = { ok, fail, sent }  — sent = echte (Nicht-Test-)Versendungen
+
+   Endpoints antworten mit JSON { ok, error?, email?, test_mode? }. Eine
+   Nicht-JSON-Antwort unter 500 (Login-Redirect nach abgelaufener Sitzung,
+   CSRF-Fehler) bricht den Lauf ab — sonst scheitert jede weitere Zeile gleich.
+#}
+<script>
+(function () {
+  var DELAY_MS = {{ bulk_mail_delay_ms | int }};  // 0 = Relay (Vollgas), sonst SMTP-Drossel
+  var TEST_LIMIT = 3;
+
+  function setIcon(icon, cls, title, text) {
+    if (!icon) return;
+    icon.className = cls;
+    icon.title = title || '';
+    // Fehlertext sichtbar neben dem Icon (textContent — Servertext nie als Markup)
+    var note = icon.nextElementSibling;
+    if (note && note.classList.contains('wk-send-note')) note.remove();
+    if (text) {
+      note = document.createElement('small');
+      note.className = 'wk-send-note text-danger ms-1';
+      note.textContent = text;
+      icon.after(note);
+    }
+  }
+
+  function progressBar(anchor, total) {
+    // Liegt die Tabelle in einem Scroll-Container (.table-responsive mit
+    // max-height), den Balken darueber setzen — sonst scrollt er mit weg.
+    if (anchor && anchor.parentNode && anchor.parentNode.classList.contains('table-responsive')) {
+      anchor = anchor.parentNode;
+    }
+    var parent = anchor && anchor.parentNode;
+    if (!parent) return { step: function () {}, done: function () {} };
+    var old = parent.querySelector(':scope > .wk-bulk-progress');
+    if (old) old.remove();
+
+    var box = document.createElement('div');
+    box.className = 'wk-bulk-progress mb-3';
+    box.innerHTML =
+      '<div class="d-flex justify-content-between small mb-1">' +
+        '<span class="wk-bp-label"></span><span class="wk-bp-meta"></span>' +
+      '</div>' +
+      '<div class="progress progress-sm">' +
+        '<div class="progress-bar" role="progressbar" style="width:0%"></div>' +
+      '</div>';
+    parent.insertBefore(box, anchor);
+    var label = box.querySelector('.wk-bp-label');
+    var meta = box.querySelector('.wk-bp-meta');
+    var bar = box.querySelector('.progress-bar');
+    var done = 0, fail = 0, started = Date.now();
+
+    function render(finished, aborted) {
+      label.textContent = aborted ? 'Abgebrochen: ' + (done - fail) + ' von ' + total + ' versendet'
+        : finished ? 'Fertig: ' + (done - fail) + ' von ' + total + ' versendet'
+        : 'Versende … ' + done + ' von ' + total;
+      var parts = [];
+      if (fail) parts.push(fail + ' fehlgeschlagen');
+      if (!finished && done > 0 && done < total) {
+        var rest = Math.round((Date.now() - started) / done * (total - done) / 1000);
+        parts.push(rest < 60 ? 'noch ca. ' + Math.max(rest, 1) + ' s'
+                             : 'noch ca. ' + Math.round(rest / 60) + ' min');
+      }
+      meta.textContent = parts.join(' · ');
+      meta.className = 'wk-bp-meta ' + (fail ? 'text-danger' : 'text-secondary');
+      bar.style.width = (total ? Math.round(done / total * 100) : 100) + '%';
+      // Inline statt Klasse: das SaaS-Theme faerbt .progress-bar global um.
+      if (finished) {
+        bar.style.backgroundColor = aborted ? 'var(--tblr-danger)'
+          : fail ? 'var(--tblr-warning)' : 'var(--tblr-success)';
+      }
+    }
+    render(false);
+    return {
+      step: function (ok) { done++; if (!ok) fail++; render(false); },
+      done: function (aborted) {
+        render(true, aborted);
+        // Im Modal: Ergebnis stehen lassen, bis der Dialog zugeht — beim
+        // naechsten Oeffnen bauen die Seiten die Zeilen neu, der alte Balken
+        // waere dann veraltet.
+        var modal = box.closest('.modal');
+        if (!modal) return;
+        if (!modal.classList.contains('show')) { box.remove(); return; }
+        modal.addEventListener('hidden.bs.modal', function () { box.remove(); }, { once: true });
+      },
+    };
+  }
+
+  window.wkSerialSend = async function (opts) {
+    var all = (opts.rows || []).filter(function (r) { return r && r.icon; });
+    var rows = opts.testMode ? all.slice(0, TEST_LIMIT) : all;
+    all.slice(rows.length).forEach(function (r) {
+      setIcon(r.icon, 'fas fa-minus-circle text-muted',
+              'Im Testmodus übersprungen (Limit: ' + TEST_LIMIT + ')');
+    });
+    var res = { ok: 0, fail: 0, sent: 0 };
+    if (!rows.length) return res;
+
+    var progress = progressBar(rows[0].icon.closest('table'), rows.length);
+    function onUnload(e) { e.preventDefault(); e.returnValue = ''; }
+    window.addEventListener('beforeunload', onUnload);
+
+    var aborted = false;
+    try {
+      for (var i = 0; i < rows.length; i++) {
+        var r = rows[i];
+        var tr = r.icon.closest('tr');
+        if (tr) tr.scrollIntoView({ block: 'nearest' });
+        setIcon(r.icon, 'fas fa-spinner fa-spin text-primary');
+
+        var body = new URLSearchParams();
+        body.set('csrf_token', opts.csrf);
+        if (opts.testMode) body.set('test_mode', '1');
+        var extra = opts.params ? opts.params(r.id) : null;
+        if (extra) Object.keys(extra).forEach(function (k) { body.set(k, extra[k]); });
+
+        var ok = false;
+        try {
+          var resp = await fetch(opts.url(r.id), {
+            spinner: false,  // eigener Fortschritt statt globalem Overlay (app.js)
+            method: 'POST',
+            headers: { 'X-CSRFToken': opts.csrf, 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: body.toString(),
+          });
+          var json = null;
+          try { json = await resp.json(); } catch (e) { /* keine JSON-Antwort */ }
+          if (!json) {
+            aborted = resp.status < 500;
+            setIcon(r.icon, 'fas fa-times-circle text-danger', '', aborted
+              ? 'Sitzung abgelaufen? Seite neu laden.'
+              : 'Unerwartete Antwort (HTTP ' + resp.status + ')');
+          } else if (json.ok) {
+            ok = true;
+            res.ok++;
+            if (!json.test_mode) res.sent++;
+            setIcon(r.icon,
+              json.test_mode ? 'fas fa-check-circle text-warning' : 'fas fa-check-circle text-success',
+              json.email ? (json.test_mode ? 'Testmail gesendet an ' : 'Gesendet an ') + json.email : '');
+          } else {
+            setIcon(r.icon, 'fas fa-times-circle text-danger', '', json.error || 'Fehler');
+          }
+        } catch (err) {
+          setIcon(r.icon, 'fas fa-times-circle text-danger', '', 'Netzwerkfehler');
+        }
+        if (!ok) res.fail++;
+        progress.step(ok);
+        if (aborted) {
+          rows.slice(i + 1).forEach(function (rest) {
+            setIcon(rest.icon, 'fas fa-minus-circle text-muted', 'Nicht versendet (abgebrochen)');
+          });
+          break;
+        }
+        if (i < rows.length - 1 && DELAY_MS > 0) {
+          await new Promise(function (resolve) { setTimeout(resolve, DELAY_MS); });
+        }
+      }
+    } finally {
+      window.removeEventListener('beforeunload', onUnload);
+      progress.done(aborted);
+    }
+    return res;
+  };
+})();
+</script>
