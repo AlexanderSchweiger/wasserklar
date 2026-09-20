@@ -17,8 +17,8 @@
 <div class="alert alert-info">
   <i class="fas fa-info-circle me-1"></i>
   Ziehe mit dem Rechteck- oder Polygon-Werkzeug (oben links) einen Bereich auf — alle Liegenschaften darin werden
-  ausgewählt. Einzelne Punkte kannst du zusätzlich per Klick an- oder abwählen. „Übernehmen“ fügt die Eigentümer
-  zur Empfängerliste hinzu.
+  ausgewählt. Ein Klick auf einen Hausanschluss zeigt Details und Eigentümer; im Popup lässt er sich einzeln
+  an- oder abwählen. „Übernehmen“ fügt die Eigentümer zur Empfängerliste hinzu.
 </div>
 
 <div class="card">
@@ -41,6 +41,14 @@
       </div>
     </div>
     {% endif %}
+    {% if cfg.showIncidents %}
+    {# Störungen als eigene Ebene — standardmäßig an (Notfall-Kontext), per
+       Schalter ausblendbar. Ohne Recht „Störungsjournal“ fehlt der Schalter. #}
+    <label class="form-check form-switch mb-0" title="Offene Störungen auf der Karte anzeigen">
+      <input class="form-check-input" type="checkbox" id="circ-show-incidents" checked>
+      <span class="form-check-label"><i class="fas fa-exclamation-triangle text-danger me-1"></i>Störungen</span>
+    </label>
+    {% endif %}
     <div class="ms-auto btn-list">
       <button type="button" class="btn btn-sm" id="circ-map-clear">Auswahl leeren</button>
       <form method="post" action="{{ url_for('circulars.recipients_from_map', circular_id=circular.id) }}" id="circ-map-form">
@@ -53,17 +61,69 @@
     </div>
   </div>
   <div class="card-body p-0">
-    <div id="circ-map" hx-boost="false" style="height:70vh; min-height:420px;"></div>
+    <div class="row g-0">
+      {# Links die laufende Auswahl (Eigentümer je Liegenschaft), rechts die Karte.
+         Auf Mobile rutscht die Liste unter die Karte (order-*). #}
+      <div class="col-lg-4 col-12 border-end order-2 order-lg-1" id="circ-sel-col">
+        <div class="d-flex align-items-center p-2 border-bottom">
+          <strong class="me-auto"><i class="fas fa-users me-1 text-secondary"></i>Gewählte Eigentümer</strong>
+          <span class="badge bg-blue-lt" id="circ-sel-badge">0</span>
+        </div>
+        <div id="circ-sel-list" class="list-group list-group-flush circ-sel-scroll"></div>
+        <div id="circ-sel-empty" class="text-secondary small text-center p-4">
+          <i class="fas fa-hand-pointer fa-2x mb-2 d-block opacity-50"></i>
+          Noch nichts ausgewählt — Bereich aufziehen oder einen Hausanschluss anklicken.
+        </div>
+        <div class="border-top p-2 small text-secondary d-flex flex-wrap" style="gap:.75rem">
+          <span><span class="circ-legend-dot" style="background:#2f9e44"></span>Hausanschluss</span>
+          <span><span class="circ-legend-dot" style="background:#868e96"></span>nur geocodet</span>
+          {% if cfg.showIncidents %}<span><span class="circ-legend-dot" style="background:#c92a2a"></span>Störung</span>{% endif %}
+        </div>
+      </div>
+      <div class="col-lg-8 col-12 order-1 order-lg-2">
+        {# hx-boost="false": sonst boostet htmx die von Leaflet erzeugten Anker
+           (Popup-Schließen-„x“, Layer-Control) und der Klick navigiert. #}
+        <div id="circ-map" hx-boost="false" style="height:70vh; min-height:420px;"></div>
+      </div>
+    </div>
   </div>
 </div>
+
+<style>
+  .circ-sel-scroll { max-height: calc(70vh - 6.5rem); overflow-y: auto; }
+  .circ-legend-dot { display:inline-block; width:.75rem; height:.75rem; border-radius:50%; vertical-align:middle; margin-right:.25rem; }
+  /* Ausgewählter Hausanschluss: blauer Ring + leicht vergrößert (das Symbol
+     selbst bleibt das Netz-Symbol aus technik-map.js). */
+  .circ-marker-selected .technik-marker {
+    box-shadow: 0 0 0 3px #1c7ed6, 0 1px 4px rgba(0, 0, 0, .4);
+    transform: scale(1.15);
+  }
+  /* Störungs-Marker — identisch zur Störungs-Karte (incidents/map.html). */
+  .incident-marker { display:flex; align-items:center; justify-content:center; width:26px; height:26px; border-radius:50%; color:#fff; border:3px solid #fff; box-shadow:0 0 0 1px rgba(0,0,0,.3); }
+  .incident-marker-wrap { background: transparent; border: 0; }
+</style>
 {% endblock %}
 
 {% block scripts %}
 <script>
+  window.CIRC_MAP = {{ cfg|tojson }};
+  // technik-map.js liest window.TECHNIK beim Laden — Vokabular + Liegenschafts-
+  // URL sind alles, was pointIcon()/popupHtml() brauchen. Die Datei startet hier
+  // keinen Editor (kein #technik-map auf der Seite).
+  window.TECHNIK = { vocab: window.CIRC_MAP.vocab, propertyUrl: window.CIRC_MAP.propertyUrl };
+</script>
+<script src="{{ url_for('static', filename='js/technik-map.js', v=oss_version) }}"></script>
+<script>
   (function () {
-    var CENTER = {{ center | tojson }};
-    var DATA_URL = {{ url_for('circulars.map_data', circular_id=circular.id) | tojson }};
-    var LINES_URL = {{ url_for('circulars.map_lines', circular_id=circular.id) | tojson }};
+    var C = window.CIRC_MAP || {};
+    var CENTER = C.center;
+    var INCIDENT_STATUS_COLOR = { offen: "#c92a2a", in_bearbeitung: "#f59f00", behoben: "#2b8a3e" };
+
+    function escapeHtml(s) {
+      return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+      });
+    }
 
     function pointInRing(lat, lng, ring) {
       // Ray-casting; ring = [[lng,lat], ...] (GeoJSON-Reihenfolge).
@@ -79,18 +139,18 @@
     }
 
     function init() {
-      if (!window.L) return;
-      var map = L.map('circ-map', { center: CENTER || [47.59, 14.14], zoom: CENTER ? 15 : 7 });
-      L.tileLayer(
-        "https://mapsneu.wien.gv.at/basemap/geolandbasemap/normal/google3857/{z}/{y}/{x}.png",
-        { maxZoom: 19, subdomains: ["", "1", "2", "3", "4"],
-          attribution: 'Datenquelle: <a href="https://www.basemap.at" target="_blank" rel="noopener">basemap.at</a>' }
-      ).addTo(map);
+      if (!window.L || !window.TECHNIK_MAP) return;
+      // createMap liefert die Basiskarten-Umschaltung (basemap.at Standard/grau/
+      // Orthofoto + OpenStreetMap) und den Maßstab wie im Leitungsplan.
+      var map = window.TECHNIK_MAP.createMap('circ-map');
+      map.setView(CENTER || [47.59, 14.14], CENTER ? 15 : 7);
 
       var selected = {};    // property_id -> target
       var markers = {};     // property_id -> marker
       var targets = [];
       var lineLayers = {};  // plan_id -> L.GeoJSON
+
+      // --- Leitungen der gewählten Pläne (Hintergrund) ---------------------
 
       function lineStyle(feature) {
         var color = (feature.properties && feature.properties.color) || "#868e96";
@@ -99,7 +159,7 @@
 
       function loadPlanLines(pid) {
         if (lineLayers[pid]) return;
-        fetch(LINES_URL + "?plan=" + pid, { headers: { "X-Requested-With": "XMLHttpRequest" } })
+        fetch(C.linesUrl + "?plan=" + pid, { headers: { "X-Requested-With": "XMLHttpRequest" } })
           .then(function (r) { return r.json(); })
           .then(function (gj) {
             var layer = L.geoJSON(gj, { style: lineStyle, interactive: false }).addTo(map);
@@ -122,10 +182,107 @@
         });
       });
 
-      function styleFor(pid) {
-        return selected[pid]
-          ? { radius: 8, color: "#1c7ed6", fillColor: "#1c7ed6", fillOpacity: 0.85, weight: 2 }
-          : { radius: 6, color: "#666", fillColor: "#adb5bd", fillOpacity: 0.7, weight: 1 };
+      // --- Störungs-Ebene (ein-/ausblendbar) -------------------------------
+
+      var incidentLayer = L.layerGroup();
+      var incidentsLoaded = false;
+
+      function incidentIcon(props) {
+        var fa = props.type_icon || "fa-exclamation-triangle";
+        return L.divIcon({
+          className: "incident-marker-wrap",
+          html: '<span class="incident-marker" style="background:' +
+                (INCIDENT_STATUS_COLOR[props.status] || "#868e96") + ";border-color:" +
+                (props.severity_color || "#fff") + '"><i class="fas ' + fa + '"></i></span>',
+          iconSize: [26, 26], iconAnchor: [13, 13], popupAnchor: [0, -14],
+        });
+      }
+
+      function incidentPopup(props) {
+        var html = '<strong>' + escapeHtml(props.title || props.type_label) + '</strong>';
+        html += '<br><span class="text-secondary">' + escapeHtml(props.type_label) + '</span>';
+        html += '<br>Status: ' + escapeHtml(props.status_label) + ' · ' + escapeHtml(props.severity_label);
+        if (props.detected_at) html += '<br>Erkannt: ' + escapeHtml(props.detected_at);
+        if (props.detail_url) {
+          html += '<br><a href="' + props.detail_url + '" hx-boost="false" target="_blank" rel="noopener">Details öffnen</a>';
+        }
+        return html;
+      }
+
+      function loadIncidents() {
+        if (incidentsLoaded || !C.incidentsUrl) return;
+        incidentsLoaded = true;
+        fetch(C.incidentsUrl, { headers: { "X-Requested-With": "XMLHttpRequest" } })
+          .then(function (r) { return r.json(); })
+          .then(function (fc) {
+            (fc.features || []).forEach(function (f) {
+              var props = f.properties || {};
+              var ll = [f.geometry.coordinates[1], f.geometry.coordinates[0]];
+              L.marker(ll, { icon: incidentIcon(props), zIndexOffset: 500 })
+                .bindPopup(incidentPopup(props))
+                .addTo(incidentLayer);
+            });
+          })
+          .catch(function () { incidentsLoaded = false; });
+      }
+
+      var incidentToggle = document.getElementById('circ-show-incidents');
+      if (incidentToggle) {
+        if (incidentToggle.checked) { incidentLayer.addTo(map); loadIncidents(); }
+        incidentToggle.addEventListener('change', function () {
+          if (incidentToggle.checked) {
+            incidentLayer.addTo(map);
+            loadIncidents();
+          } else {
+            map.removeLayer(incidentLayer);
+          }
+        });
+      }
+
+      // --- Auswahl ---------------------------------------------------------
+
+      function markSelected(pid) {
+        var m = markers[pid];
+        if (!m || !m.getElement) return;
+        var el = m.getElement();
+        if (el) el.classList.toggle('circ-marker-selected', !!selected[pid]);
+      }
+
+      function popupContent(t) {
+        // Gleiches Popup wie im Leitungsplan (inkl. Adresse + Eigentümer),
+        // ergänzt um den Auswahl-Button.
+        var html = window.TECHNIK_MAP.popupHtml(t.props || {});
+        var isSel = !!selected[t.property_id];
+        html += '<hr class="my-1">';
+        html += '<button type="button" class="btn btn-sm w-100 circ-popup-toggle ' +
+          (isSel ? 'btn-outline-danger' : 'btn-primary') + '" data-pid="' + t.property_id + '">' +
+          (isSel ? '<i class="fas fa-times me-1"></i>Aus Auswahl entfernen'
+                 : '<i class="fas fa-check me-1"></i>Zur Auswahl hinzufügen') + '</button>';
+        return html;
+      }
+
+      function renderList() {
+        var box = document.getElementById('circ-sel-list');
+        var empty = document.getElementById('circ-sel-empty');
+        var pids = Object.keys(selected);
+        box.innerHTML = '';
+        empty.style.display = pids.length ? 'none' : '';
+        pids.map(function (pid) { return selected[pid]; })
+          .sort(function (a, b) { return String(a.label).localeCompare(String(b.label), 'de'); })
+          .forEach(function (t) {
+            var names = t.owners.map(function (o) { return escapeHtml(o.name); }).join(', ');
+            var item = document.createElement('div');
+            item.className = 'list-group-item d-flex align-items-start';
+            item.innerHTML =
+              '<div class="me-auto">' +
+                '<div class="fw-bold"><i class="fas fa-user text-secondary me-1"></i>' + names + '</div>' +
+                '<div class="text-secondary small">' + escapeHtml(t.label) + '</div>' +
+              '</div>' +
+              '<button type="button" class="btn btn-sm btn-ghost-danger btn-icon circ-sel-remove" ' +
+                'data-pid="' + t.property_id + '" title="Aus Auswahl entfernen">' +
+                '<i class="fas fa-times"></i></button>';
+            box.appendChild(item);
+          });
       }
 
       function refresh() {
@@ -134,6 +291,7 @@
         pids.forEach(function (pid) { owners += selected[pid].owners.length; });
         document.getElementById('circ-map-count').textContent =
           pids.length + ' Liegenschaften · ' + owners + ' Eigentümer';
+        document.getElementById('circ-sel-badge').textContent = owners;
         var box = document.getElementById('circ-map-inputs');
         box.innerHTML = '';
         pids.forEach(function (pid) {
@@ -142,12 +300,12 @@
           box.appendChild(inp);
         });
         document.getElementById('circ-map-submit').disabled = pids.length === 0;
+        renderList();
       }
 
-      function toggle(t) {
-        if (selected[t.property_id]) delete selected[t.property_id];
-        else selected[t.property_id] = t;
-        markers[t.property_id].setStyle(styleFor(t.property_id));
+      function setSelected(t, on) {
+        if (on) selected[t.property_id] = t; else delete selected[t.property_id];
+        markSelected(t.property_id);
         refresh();
       }
 
@@ -160,22 +318,49 @@
           var hit = rings.some(function (ring) { return pointInRing(t.lat, t.lng, ring); });
           if (hit && !selected[t.property_id]) {
             selected[t.property_id] = t;
-            markers[t.property_id].setStyle(styleFor(t.property_id));
+            markSelected(t.property_id);
           }
         });
         refresh();
       }
 
-      fetch(DATA_URL, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+      // Auswahl-Button im Popup (der Inhalt wird bei jedem Öffnen neu gebaut,
+      // daher wird der Listener hier und nicht einmalig verdrahtet).
+      map.on('popupopen', function (e) {
+        var el = e.popup.getElement();
+        if (!el) return;
+        var btn = el.querySelector('.circ-popup-toggle');
+        if (!btn) return;
+        btn.addEventListener('click', function () {
+          var t = targets.filter(function (x) { return String(x.property_id) === btn.dataset.pid; })[0];
+          if (!t) return;
+          setSelected(t, !selected[t.property_id]);
+          map.closePopup();
+        });
+      });
+
+      // Entfernen aus der Liste (delegiert — die Liste wird neu gerendert).
+      document.getElementById('circ-sel-list').addEventListener('click', function (ev) {
+        var btn = ev.target.closest('.circ-sel-remove');
+        if (!btn) return;
+        var t = selected[btn.dataset.pid];
+        if (t) setSelected(t, false);
+      });
+
+      // --- Liegenschaften / Hausanschlüsse laden ---------------------------
+
+      fetch(C.dataUrl, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
         .then(function (r) { return r.json(); })
         .then(function (data) {
           targets = data.targets || [];
           var bounds = [];
           targets.forEach(function (t) {
-            var m = L.circleMarker([t.lat, t.lng], styleFor(t.property_id)).addTo(map);
+            // Gleiches Symbol wie im Leitungsplan (Hausanschluss grün mit Haus-
+            // Glyph); rein geocodete Liegenschaften fallen auf den neutralen Pin.
+            var m = L.marker([t.lat, t.lng], { icon: window.TECHNIK_MAP.pointIcon(t.props || {}) }).addTo(map);
             var names = t.owners.map(function (o) { return o.name; }).join(', ');
             m.bindTooltip(t.label + (names ? ' — ' + names : ''));
-            m.on('click', function () { toggle(t); });
+            m.bindPopup(function () { return popupContent(t); });
             markers[t.property_id] = m;
             bounds.push([t.lat, t.lng]);
           });
@@ -199,10 +384,12 @@
       document.getElementById('circ-map-clear').addEventListener('click', function () {
         Object.keys(selected).forEach(function (pid) {
           delete selected[pid];
-          if (markers[pid]) markers[pid].setStyle(styleFor(pid));
+          markSelected(pid);
         });
         refresh();
       });
+
+      refresh();
     }
 
     document.addEventListener('DOMContentLoaded', init);

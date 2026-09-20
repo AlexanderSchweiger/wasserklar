@@ -7,11 +7,12 @@ from sqlalchemy.orm import joinedload
 
 from app.extensions import db
 from app.models import (
-    Customer, NetworkFeature, NetworkPlan, Property,
+    Customer, Incident, NetworkFeature, NetworkPlan, Property,
     Circular, CircularRecipient,
 )
 from app.email_suppression import is_suppressed, suppression_notice
 from app.meter_tours.services import owners_by_property
+from app.incidents import services as incident_services
 from app.network import services as network_services
 
 
@@ -180,10 +181,18 @@ def map_targets(plan):
     Koordinate bevorzugt aus dem Hausanschluss-Punkt (präzise Anschlussstelle),
     sonst aus dem BEV-Geocode der Liegenschaft. Nur Liegenschaften MIT Koordinate
     UND mindestens einem aktiven Eigentümer. Jedes Ziel trägt seine Eigentümer
-    (mehrere möglich — Ehepaare/Erbengemeinschaften)."""
+    (mehrere möglich — Ehepaare/Erbengemeinschaften).
+
+    ``source`` unterscheidet die Herkunft der Koordinate (``hausanschluss`` vs.
+    ``property``) — die Karte zeichnet Hausanschlüsse mit dem Netz-Symbol, rein
+    geocodete Liegenschaften mit einem neutralen Pin. ``props`` sind die
+    GeoJSON-Properties für das Popup: bei Hausanschlüssen exakt die des
+    Leitungsplans (``feature_to_geojson``), damit das Popup identisch aussieht;
+    sonst ein schlankes Äquivalent aus den Liegenschaftsdaten."""
     if plan is None:
         return []
-    coords = {}  # property_id -> (lat, lng)
+    coords = {}          # property_id -> (lat, lng)
+    feature_by_pid = {}  # property_id -> NetworkFeature (Hausanschluss)
     hausanschluesse = (
         NetworkFeature.query
         .filter(NetworkFeature.plan_id == plan.id,
@@ -194,7 +203,10 @@ def map_targets(plan):
         .all()
     )
     for f in hausanschluesse:
-        coords.setdefault(f.property_id, (f.lat, f.lng))
+        if f.property_id in coords:
+            continue
+        coords[f.property_id] = (f.lat, f.lng)
+        feature_by_pid[f.property_id] = f
 
     geocoded = (Property.query
                 .filter(Property.lat.isnot(None), Property.lng.isnot(None))
@@ -209,6 +221,17 @@ def map_targets(plan):
         for p in Property.query.filter(Property.id.in_(missing)).all():
             prop_by_id[p.id] = p
 
+    # Popup-Properties der Hausanschlüsse gebündelt über die Netz-Serialisierung
+    # (batcht Liegenschaft/Eigentümer/Zählungen — kein N+1 pro Feature).
+    props_by_pid = {}
+    if feature_by_pid:
+        collection = network_services.collection_geojson(list(feature_by_pid.values()))
+        by_feature_id = {f["id"]: f["properties"] for f in collection["features"]}
+        for pid, f in feature_by_pid.items():
+            props = by_feature_id.get(f.id)
+            if props is not None:
+                props_by_pid[pid] = props
+
     owners = owners_by_property(list(coords.keys()))
     targets = []
     for pid, (lat, lng) in coords.items():
@@ -216,14 +239,45 @@ def map_targets(plan):
         olist = [o for o in owners.get(pid, []) if o and o.active]
         if not prop or not olist:
             continue
+        props = props_by_pid.get(pid)
+        if props is None:
+            # Kein Hausanschluss-Punkt — Popup aus den Liegenschaftsdaten.
+            # ``feature_type: None`` -> neutraler grauer Pin im Karten-JS.
+            props = {
+                "feature_type": None,
+                "type_label": "Liegenschaft (Adress-Geokodierung)",
+                "name": prop.label(),
+                "property_id": pid,
+                "property_label": prop.label(),
+                "property_address": prop.address_display(),
+                "owner_names": [o.letter_name for o in olist],
+            }
         targets.append({
             "property_id": pid,
             "lat": lat,
             "lng": lng,
+            "source": "hausanschluss" if pid in props_by_pid else "property",
             "label": _property_label(prop),
             "owners": [{"id": o.id, "name": o.letter_name} for o in olist],
+            "props": props,
         })
     return targets
+
+
+def map_incidents_geojson(circular=None):
+    """Störungen für die Karten-Auswahl (eigene, ein-/ausblendbare Ebene).
+
+    Gezeigt wird die aktuelle Lage — offene und in Bearbeitung befindliche
+    Störungen MIT Position. Die Störung, aus der das Rundschreiben erzeugt
+    wurde, kommt immer mit, auch wenn sie bereits behoben ist (die Entwarnung
+    ist selbst ein Rundschreiben)."""
+    query = Incident.query.filter(Incident.lat.isnot(None), Incident.lng.isnot(None))
+    conditions = [Incident.status != Incident.STATUS_RESOLVED]
+    if circular is not None and circular.incident_id:
+        conditions.append(Incident.id == circular.incident_id)
+    query = query.filter(db.or_(*conditions))
+    feats = [incident_services.incident_to_geojson(inc) for inc in query.all()]
+    return {"type": "FeatureCollection", "features": [f for f in feats if f]}
 
 
 def resolve_customers_from_properties(property_ids):

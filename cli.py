@@ -949,7 +949,7 @@ def register_commands(app):
         Leitungsnetz-Datensatz: aktiver Plan als zusammenhaengendes Netz mit
         allen Elementtypen — 3 Quellen (historische Schuettungs-Messreihen mit
         Trockenperioden), Sammelschacht, Hochbehaelter, Pumpe, Entlueftung,
-        Materialwechsel, Druckminderschacht, Leitungen inkl. Notverbund, ~30
+        Materialwechsel, Druckminderschacht, Leitungen inkl. Notverbund, ~100
         Hausanschluessen mit Anbohrschellen (grossteils zugeordnet + geocodet),
         Strangenden (Endhydrant/Endkappe/Entleerung), Hydranten (Ueber-/
         Unterflur)/Schiebern mit teils faelligen Pruef-Logs und 9

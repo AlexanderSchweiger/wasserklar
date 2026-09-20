@@ -15,6 +15,7 @@ from flask import (
 )
 from flask_login import login_required, current_user
 
+from app.auth.permissions import PERM_INCIDENTS
 from app.circulars import bp, constants, services, documents
 from app.circulars.send_email_hooks import run_before_send, read_message_id
 from app.extensions import db
@@ -24,6 +25,7 @@ from app.models import (
     WaterSample, Incident,
 )
 from app.email_tracking import record_email_sent
+from app.network import vocab as network_vocab
 from app.settings_service import send_mail
 
 _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -290,6 +292,24 @@ def recipients(circular_id):
     return render_template("circulars/recipients.html", circular=circular, rows=rows)
 
 
+def _map_select_config(circular, center):
+    """Konfig für das Karten-JS der Empfänger-Auswahl (window.CIRC_MAP).
+
+    Enthält das Netz-Vokabular und die Liegenschafts-Basis-URL, weil die Karte
+    Symbol und Popup des Leitungsplans wiederverwendet (``technik-map.js``:
+    ``TECHNIK_MAP.pointIcon`` / ``popupHtml``). ``showIncidents`` schaltet die
+    Störungs-Ebene ab, wenn der User das Störungsjournal nicht sehen darf."""
+    return {
+        "center": center,
+        "dataUrl": url_for("circulars.map_data", circular_id=circular.id),
+        "linesUrl": url_for("circulars.map_lines", circular_id=circular.id),
+        "incidentsUrl": url_for("circulars.map_incidents", circular_id=circular.id),
+        "propertyUrl": url_for("properties.detail", property_id=0).rsplit("/", 1)[0] + "/",
+        "showIncidents": bool(current_user.has_permission(PERM_INCIDENTS)),
+        "vocab": network_vocab.as_client_dict(),
+    }
+
+
 @bp.route("/<int:circular_id>/map-select")
 @login_required
 def map_select(circular_id):
@@ -302,7 +322,8 @@ def map_select(circular_id):
     plans = services.all_plans()
     default_plan = services.active_plan()
     return render_template("circulars/map_select.html", circular=circular, center=center,
-                           plans=plans, default_plan=default_plan)
+                           plans=plans, default_plan=default_plan,
+                           cfg=_map_select_config(circular, center))
 
 
 @bp.route("/<int:circular_id>/map-data.json")
@@ -335,6 +356,20 @@ def map_lines(circular_id):
         default_plan = services.active_plan()
         plan_ids = [default_plan.id] if default_plan else []
     return jsonify(services.plan_lines_geojson(plan_ids))
+
+
+@bp.route("/<int:circular_id>/map-incidents.json")
+@login_required
+def map_incidents(circular_id):
+    """Störungen als eigene, ein-/ausblendbare Karten-Ebene (offene + die des
+    Rundschreibens, siehe ``services.map_incidents_geojson``).
+
+    Ohne das Recht ``incidents`` kommt eine leere Collection statt 403 — die
+    Karten-Auswahl bleibt dann einfach ohne Störungen benutzbar."""
+    circular = _get_circular(circular_id)
+    if not current_user.has_permission(PERM_INCIDENTS):
+        return jsonify({"type": "FeatureCollection", "features": []})
+    return jsonify(services.map_incidents_geojson(circular))
 
 
 @bp.route("/<int:circular_id>/recipients/from-map", methods=["POST"])

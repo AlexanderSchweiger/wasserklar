@@ -7,13 +7,14 @@ Buchungen mit Projekten und verschiedenen Steuersaetzen, passende Tarife.
 
 Dazu ein kompletter **Leitungsnetz**-Datensatz: ein aktiver Leitungsplan als
 **zusammenhaengendes Netz** (Quellen -> Sammelschacht -> Hochbehaelter ->
-Hauptleitung -> Ortsverteiler -> Versorgungsstraenge), das **alle
+Hauptleitung -> Ortsverteiler -> Versorgungsstraenge) auf **realer Geometrie**
+(Strassenachsen und Gebaeude aus ``app/seed/demo_geo.py``), das **alle
 Vokabular-Elementtypen** verwendet: 3 Quellen (inkl. historischer
 Schuettungs-Messreihen mit Trockenperioden), Hochbehaelter, Pumpe, Verteiler,
 Entlueftung, Materialwechsel, Druckminderschacht (sonstiges), Zubringer-/
-Haupt-/Versorgungs-/Hausanschluss-/sonstige Leitungen (Notverbund), ~30
+Haupt-/Versorgungs-/Hausanschluss-/sonstige Leitungen (Notverbund), ~100
 Hausanschluesse jeweils mit **Anbohrschelle** + Stichleitung (grossteils
-Liegenschaften zugeordnet + geocodet, einige bewusst unzugeordnet zum Testen
+Liegenschaften zugeordnet + geocodet, sechs bewusst unzugeordnet zum Testen
 der Zuordnen-Funktion), Strangenden als Endhydrant/Endkappe/Entleerung,
 Hydranten (Ueber-/Unterflur)/Schieber mit Wartungs-/Pruef-Logs (teils
 faellig), drei **Probenahmestellen** mit quartalsweisen **Wasserproben/
@@ -767,7 +768,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     # 3 davon auf Kreditkonto (Reparatur / Bankgebuehren / Wartung)
     booking_plan = [
         # (date, description, account, project_index, tax_rate, amount, real_account)
-        (date(prev_year, 3, 10), "Reparatur Hydrant Dorfstraße", acc_reparatur, 2, Decimal("20.00"), Decimal("-450.00"), giro),
+        (date(prev_year, 3, 10), "Reparatur Hydrant Kirchenplatz", acc_reparatur, 2, Decimal("20.00"), Decimal("-450.00"), giro),
         (date(prev_year, 5, 22), "Büromaterial Q2", acc_buero, 3, Decimal("20.00"), Decimal("-89.50"), giro),
         (date(prev_year, 6, 15), "Wartung Druckkessel", acc_reparatur, 4, Decimal("20.00"), Decimal("-1250.00"), kredit),
         (date(prev_year, 9, 5), "Bankkosten Q3", acc_bank, None, None, Decimal("-32.40"), giro),
@@ -828,27 +829,38 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     import json
     import math
     from app.network import services as net_svc
+    from app.seed import demo_geo as geo
 
-    # Koordinaten-Helfer: Meter-Offsets (Nord/Ost) ab einem Ortsmittelpunkt in
-    # WGS84 umrechnen. Synthetischer Ort rund um Hagenberg im Muehlkreis.
-    BASE_LAT, BASE_LNG = 48.3680, 14.5120
+    # Die Geometrie kommt komplett aus ``demo_geo``: Versorgungsleitungen folgen
+    # echten Strassenachsen, Hausanschluesse sitzen auf echten Gebaeuden, die
+    # Hauptleitung ist eine echte Route vom Hochbehaelter ins Ortsnetz. Hier
+    # bekommt sie nur noch Namen, Material, Baujahre und Notizen. Koordinaten
+    # sind ueberall ``(lng, lat)`` — GeoJSON-Reihenfolge.
     M_PER_DEG_LAT = 111320.0
-    _cos_lat = math.cos(math.radians(BASE_LAT))
+    _cos_lat = math.cos(math.radians(geo.CENTER[1]))
 
-    def ll(north_m, east_m):
-        """(Nord-, Ost-Offset in m) -> (lat, lng)."""
-        lat = BASE_LAT + north_m / M_PER_DEG_LAT
-        lng = BASE_LNG + east_m / (M_PER_DEG_LAT * _cos_lat)
-        return lat, lng
+    def dist_m(a, b):
+        """Abstand zweier (lng, lat)-Punkte in Metern (lokal-planare Naeherung)."""
+        return math.hypot((b[0] - a[0]) * M_PER_DEG_LAT * _cos_lat,
+                          (b[1] - a[1]) * M_PER_DEG_LAT)
+
+    def lerp(a, b, t):
+        """Punkt auf der Strecke ``a``->``b`` bei ``t`` in [0, 1]."""
+        return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
+
+    def toward(a, b, meters):
+        """``a`` um ``meters`` in Richtung ``b`` verschieben."""
+        d = dist_m(a, b)
+        return lerp(a, b, meters / d) if d > 0.01 else (a[0], a[1])
 
     plan = NetworkPlan(
         name="Leitungsnetz (Demo)",
         status=NetworkPlan.STATUS_ACTIVE,
         maintenance_enabled=True,
         description="Demonstrations-Leitungsplan: Quellen, Sammelschacht, "
-                    "Hochbehälter, Versorgungsnetz, Hausanschlüsse mit "
-                    "Anbohrschellen, Hydranten, Schieber, Entlüftung, "
-                    "Entleerung und Notverbund rund um den Demo-Ort.",
+                    "Hochbehälter, Versorgungsnetz entlang der Straßenzüge, "
+                    "Hausanschlüsse mit Anbohrschellen, Hydranten, Schieber, "
+                    "Entlüftung, Entleerung und Notverbund.",
         created_by_id=admin.id, updated_by_id=admin.id,
     )
     db.session.add(plan)
@@ -857,23 +869,21 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
 
     net_features: list = []
 
-    def add_point(ftype, name, north, east, **kw):
-        lat, lng = ll(north, east)
+    def add_point(ftype, name, pt, **kw):
+        """``pt`` ist ein (lng, lat)-Tupel; laengere Tupel (mit Strassen-Label)
+        werden vorne abgeschnitten."""
         f = NetworkFeature(
             plan_id=plan.id, feature_type=ftype, name=name, created_by_id=admin.id,
         )
-        net_svc.apply_geometry(f, {"type": "Point", "coordinates": [lng, lat]})
+        net_svc.apply_geometry(f, {"type": "Point", "coordinates": [pt[0], pt[1]]})
         for k, v in kw.items():
             setattr(f, k, v)
         db.session.add(f)
         net_features.append(f)
         return f
 
-    def add_line(ftype, name, waypoints, **kw):
-        coords = []
-        for (n, e) in waypoints:
-            la, lo = ll(n, e)
-            coords.append([lo, la])
+    def add_line(ftype, name, points, **kw):
+        coords = [[p[0], p[1]] for p in points]
         f = NetworkFeature(
             plan_id=plan.id, feature_type=ftype, name=name, created_by_id=admin.id,
         )
@@ -888,69 +898,65 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     # Netz-Topologie (alles haengt zusammen, Punkte liegen AUF den Leitungen):
     #   3 Quellen --Zubringer--> Quellsammelschacht --Zubringer (Pumpe)-->
     #   Hochbehaelter --Hauptleitung (2 Abschnitte, geteilt am Material-
-    #   wechsel)--> Ortsverteiler --> 4 Versorgungsstraenge (Hausanschluesse
-    #   via Anbohrschelle + Stichleitung; Strangenden: Endhydrant, Endkappe,
-    #   Entleerung bzw. Notverbund zum Nachbarversorger).
-    behaelter_pos = (520, 90)
-    sammel_pos = (700, 90)          # Quellsammelschacht
-    hochpunkt_pos = (460, 95)       # Entlueftung am Hochpunkt der Hauptleitung
-    matwechsel_pos = (300, 108)     # GGG->PE-Uebergang, teilt die Hauptleitung
-    druckminderer_pos = (155, 114)  # auf dem sanierten Ortsabschnitt
-    verteiler_pos = (10, 120)       # Ortsverteiler, Startpunkt aller Straenge
-
-    def lerp(a, b, t):
-        """Punkt auf der Strecke ``a``->``b`` (Meter-Offsets) bei ``t`` in [0,1]."""
-        return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
-
+    #   wechsel)--> Ortsverteiler --> Versorgungsleitungen je Strassenzug
+    #   (Hausanschluesse via Anbohrschelle + Stichleitung; Strangenden:
+    #   Endhydrant, Endkappe, Entleerung bzw. Notverbund zum Nachbarversorger).
     behaelter = add_point(
-        "behaelter", "Hochbehälter Sonnberg", *behaelter_pos,
+        "behaelter", "Hochbehälter Sonnberg", geo.RESERVOIR,
         accuracy="exakt", material="Beton", year_built=1987,
-        ground_level_m=512.0, notes="Nutzinhalt 150 m³, zwei Kammern.",
+        ground_level_m=geo.RESERVOIR_ELEVATION,
+        notes="Nutzinhalt 150 m³, zwei Kammern.",
     )
-    add_point("verteiler", "Quellsammelschacht", *sammel_pos,
+    add_point("verteiler", "Quellsammelschacht", geo.COLLECTOR,
               accuracy="exakt", year_built=1987,
+              ground_level_m=geo.COLLECTOR_ELEVATION,
               notes="Sammelt die drei Quellzubringer.")
     pumpe = add_point(
-        "pumpe", "Druckerhöhung Sonnberg", *lerp(sammel_pos, behaelter_pos, 0.5),
+        "pumpe", "Druckerhöhung Sonnberg", lerp(geo.COLLECTOR, geo.RESERVOIR, 0.45),
         accuracy="exakt", year_built=2009, manufacturer="Grundfos",
-        notes="Fördert vom Sammelschacht in den Hochbehälter.")
-    add_point("verteiler", "Ortsverteiler", *verteiler_pos, accuracy="gut",
-              notes="Knoten Hauptleitung → vier Versorgungsstränge.")
-    add_point("entlueftung", "Entlüftung Hochpunkt Sonnberg", *hochpunkt_pos,
+        notes="Fördert vom Sammelschacht in den 36 m höher liegenden Hochbehälter.")
+    add_point("verteiler", "Ortsverteiler", geo.DISTRIBUTOR, accuracy="gut",
+              ground_level_m=geo.DISTRIBUTOR_ELEVATION,
+              notes="Knoten Hauptleitung → Ortsnetz.")
+    add_point("entlueftung", "Entlüftung Hochpunkt Sonnberg", geo.AIR_VALVE,
               accuracy="gut", year_built=1992,
               notes="Automatischer Be-/Entlüfter am Hochpunkt der Hauptleitung.")
-    add_point("materialwechsel", "Materialwechsel GGG → PE", *matwechsel_pos,
+    add_point("materialwechsel", "Materialwechsel GGG → PE", geo.MATERIAL_CHANGE,
               accuracy="gut",
               notes="Übergang Duktilguss DN 150 auf PE DN 125 (Teilsanierung 2014).")
-    add_point("sonstiges", "Druckminderschacht Ortseingang", *druckminderer_pos,
-              accuracy="gut", year_built=2014, manufacturer="HAWLE",
-              notes="Druckminderer, reduziert auf 4,5 bar fürs Ortsnetz.")
+    add_point("sonstiges", f"Druckminderschacht {geo.PRESSURE_REDUCER[2]}",
+              geo.PRESSURE_REDUCER, accuracy="gut", year_built=2014,
+              manufacturer="HAWLE",
+              notes="Druckminderer am Eintritt in die tiefer liegende Unterortszone.")
     probe_behaelter = add_point(
         "probenahme", "Probenahmestelle Behälterabgang",
-        *lerp(behaelter_pos, hochpunkt_pos, 0.1), accuracy="gut",
+        toward(geo.RESERVOIR, geo.MAIN_LINE[1], 25.0), accuracy="gut",
         notes="Reinwasser-Beprobung am Behälterabgang.")
     probe_ortsnetz = add_point(
-        "probenahme", "Probenahmestelle Ortsnetz", 10, 150, accuracy="gut",
-        notes="Zapfstelle am Versorgungsstrang Dorfstraße (Ortsnetz).")
+        "probenahme", "Probenahmestelle Ortsnetz", geo.SAMPLING_NETWORK,
+        accuracy="gut",
+        notes=f"Zapfstelle am Versorgungsstrang {geo.SUPPLY_LINES[0][0]} (Ortsnetz).")
 
-    # 3 Quellen mit je (Position, Basis-Schuettung l/s, Saison-Amplitude,
-    # Sommer-Trockenheitsfaktor) — Steinbründl faellt im Trockensommer fast trocken.
+    # 3 Quellen mit je (Basis-Schuettung l/s, Saison-Amplitude, Sommer-
+    # Trockenheitsfaktor) — Steinbruendl faellt im Trockensommer fast trocken.
     spring_cfg = [
-        ("Quelle Brunnertal",  (900, -300), 2.40, 0.28, 0.62),
-        ("Quelle Lärchwald",   (1010, 220), 1.10, 0.34, 0.48),
-        ("Quelle Steinbründl", (840, 600),  0.50, 0.42, 0.28),
+        ("Quelle Brunnertal",  2.40, 0.28, 0.62),
+        ("Quelle Lärchwald",   1.10, 0.34, 0.48),
+        ("Quelle Steinbründl", 0.50, 0.42, 0.28),
     ]
     springs = []
-    for sp_name, sp_pos, base, amp, drought in spring_cfg:
+    for (sp_name, base, amp, drought), sp_pos, sp_elev in zip(
+            spring_cfg, geo.SPRINGS, geo.SPRING_ELEVATIONS):
         sp = add_point(
-            "quelle", sp_name, *sp_pos, accuracy="exakt",
-            year_built=rng.randint(1958, 1992), notes="Gefasste Hangquelle.",
+            "quelle", sp_name, sp_pos, accuracy="exakt",
+            year_built=rng.randint(1958, 1992), ground_level_m=sp_elev,
+            notes="Gefasste Hangquelle.",
         )
         springs.append({"f": sp, "pos": sp_pos, "base": base, "amp": amp,
                         "drought": drought})
     probe_quelle = add_point(
         "probenahme", "Probenahmestelle Quelle Brunnertal",
-        *lerp(springs[0]["pos"], sammel_pos, 0.03), accuracy="gut",
+        toward(geo.SPRINGS[0], geo.COLLECTOR, 12.0), accuracy="gut",
         notes="Rohwasser-Beprobung an der Quellfassung.")
 
     # --- Transport-/Zubringerleitungen (Linien) -----------------------
@@ -958,169 +964,136 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     # Pumpe auf der Strecke) zum Hochbehaelter — keine ueberlagerten Linien.
     for sp in springs:
         add_line("zubringer", f"Zubringer {sp['f'].name}",
-                 [sp["pos"], sammel_pos],
+                 [sp["pos"], geo.COLLECTOR],
                  accuracy="geschaetzt", material="PE",
                  dimension_dn=rng.choice([80, 100]), year_built=rng.randint(1985, 2010),
                  pressure_rating="PN 10")
     add_line("zubringer", "Zubringer Sammelschacht–Hochbehälter",
-             [sammel_pos, behaelter_pos],
+             [geo.COLLECTOR, geo.RESERVOIR],
              accuracy="gut", material="PE", dimension_dn=125,
              year_built=2009, pressure_rating="PN 16")
 
     # Hauptleitung in zwei Abschnitten, am Materialwechsel-Punkt geteilt
-    # (Alt-Bestand Duktilguss, sanierter PE-Abschnitt Richtung Ort).
+    # (Alt-Bestand Duktilguss, sanierter PE-Abschnitt Richtung Ort). Der
+    # geteilte Vertex liegt in beiden Geometrien -> Netz bleibt zusammenhaengend.
+    _mc = geo.MATERIAL_CHANGE_INDEX
     hauptleitung = add_line(
         "hauptleitung", "Hauptleitung Hochbehälter–Ortseingang",
-        [behaelter_pos, hochpunkt_pos, matwechsel_pos],
+        geo.MAIN_LINE[:_mc + 1],
         accuracy="gut", material="Duktilguss (GGG)", dimension_dn=150,
         year_built=1992, pressure_rating="PN 10",
     )
     add_line(
         "hauptleitung", "Hauptleitung Ortseingang–Ortsverteiler",
-        [matwechsel_pos, druckminderer_pos, verteiler_pos],
+        geo.MAIN_LINE[_mc:],
         accuracy="gut", material="PE", dimension_dn=125,
         year_built=2014, pressure_rating="PN 10",
     )
 
-    # --- Versorgungsstraenge + Hausanschluesse ------------------------
-    # Je Strasse eine Versorgungsleitung AB dem Ortsverteiler (das Netz haengt
-    # zusammen); entlang sechs Hausanschluesse — jeweils Anbohrschelle auf der
-    # Leitung, Stichleitung und geocodete Liegenschaft (BEV-Treffer simuliert).
-    streets = [
-        ("Dorfstraße",  (10, 120),  (0, 27)),     # nach Osten
-        ("Hauptstraße", (-40, 116), (-26, 3)),    # nach Suedwesten
-        ("Birkenweg",   (16, 124),  (21, 21)),    # nach Nordosten
-        ("Quellweg",    (4, 116),   (9, -25)),    # nach Westen
-    ]
-    assigned_props = properties[:24]
-    versorg_lines = []
-    street_ends = []
-    ha_stub_example = None
-    ha_idx = 0
-    geocoded_count = 0
-    geocode_ts = datetime(current_year, 3, 15, 9, 0, 0)
-
-    for st_name, (s_n, s_e), (d_n, d_e) in streets:
-        n_houses = 6
-        end = (s_n + d_n * (n_houses + 1), s_e + d_e * (n_houses + 1))
-        # Die Anbohrschellen-Punkte liegen als (kollineare) Zwischen-Vertices
-        # in der Leitungsgeometrie — Stichleitungen teilen sich damit einen
-        # Vertex mit der Versorgungsleitung (explizit zusammenhaengende
-        # Topologie, Rendering unveraendert).
-        taps = [(s_n + d_n * j, s_e + d_e * j) for j in range(1, n_houses + 1)]
-        waypoints = [(s_n, s_e), *taps, end]
-        if (s_n, s_e) != verteiler_pos:
-            waypoints.insert(0, verteiler_pos)   # Anbindung an den Ortsverteiler
+    # --- Versorgungsleitungen entlang der Strassenzuege ---------------
+    # Die Achsen kommen aus ``demo_geo.SUPPLY_LINES`` und enthalten die
+    # Anbohrschellen bereits als Vertices — Stichleitung und Versorgungsleitung
+    # teilen sich damit je einen Punkt (explizit zusammenhaengende Topologie).
+    versorg_by_street: dict = {}
+    for street, section, coords in geo.SUPPLY_LINES:
+        label = street if not section else f"{street} (Abschnitt {section})"
         vleitung = add_line(
-            "versorgungsleitung", f"Versorgungsleitung {st_name}",
-            waypoints, accuracy="gut",
+            "versorgungsleitung", f"Versorgungsleitung {label}", coords,
+            accuracy="gut",
             material=rng.choice(["PE", "Guss (GG)", "PVC"]),
             dimension_dn=rng.choice([80, 100, 100, 125]),
             year_built=rng.randint(1978, 2016), pressure_rating="PN 10",
         )
-        versorg_lines.append(vleitung)
-        street_ends.append(end)
-        # Einheits-Perpendikular (Meter) fuer den seitlichen Hausversatz.
-        mag = math.hypot(d_n, d_e)
-        pn, pe = d_e / mag, -d_n / mag
-        for j, (base_n, base_e) in enumerate(taps, start=1):
-            side = 1 if j % 2 else -1
-            ha_n, ha_e = base_n + side * 14 * pn, base_e + side * 14 * pe
-            prop = assigned_props[ha_idx]
-            # Ein DN je Haus: Anbohrschelle, Stichleitung und Hausanschluss
-            # gehoeren technisch zusammen.
-            dn = rng.choice([25, 32, 40])
-            add_point("anbohrschelle", None, base_n, base_e, accuracy="gut",
-                      dimension_dn=dn,
-                      manufacturer=rng.choice(["HAWLE", "VONROLL"]))
-            add_point("hausanschluss", None, ha_n, ha_e, accuracy="gut",
-                      material="PE", dimension_dn=dn,
-                      year_built=rng.randint(1980, 2020), property_id=prop.id)
-            stub = add_line("hausanschlussleitung", None,
-                            [(base_n, base_e), (ha_n, ha_e)],
-                            accuracy="geschaetzt", material="PE", dimension_dn=dn)
-            if ha_stub_example is None:
-                ha_stub_example = stub
-            # Liegenschaft ~4 m neben dem Hausanschluss geocoden (BEV-Treffer).
-            plat, plng = ll(ha_n + rng.uniform(-4, 4), ha_e + rng.uniform(-4, 4))
-            prop.lat, prop.lng = round(plat, 6), round(plng, 6)
-            prop.geocoded_at = geocode_ts
-            geocoded_count += 1
-            ha_idx += 1
+        versorg_by_street.setdefault(street, vleitung)
+
+    # --- Hausanschluesse ----------------------------------------------
+    # Je Anschluss: Anbohrschelle auf der Leitung, Stichleitung zum Gebaeude und
+    # der Anschlusspunkt selbst. Die Liegenschaft wird auf den Gebaeude-
+    # Mittelpunkt geocodet (simulierter BEV-Treffer), der Anschlusspunkt sitzt
+    # 3 m strassenseitig davor — so bleibt die Stichleitung sichtbar.
+    assigned_props = properties[:len(geo.HOUSE_CONNECTIONS)]
+    ha_stub_example = None
+    geocoded_count = 0
+    geocode_ts = datetime(current_year, 3, 15, 9, 0, 0)
+
+    for prop, (h_lng, h_lat, t_lng, t_lat) in zip(assigned_props,
+                                                  geo.HOUSE_CONNECTIONS):
+        house, tap = (h_lng, h_lat), (t_lng, t_lat)
+        # Ein DN je Haus: Anbohrschelle, Stichleitung und Hausanschluss
+        # gehoeren technisch zusammen.
+        dn = rng.choice([25, 32, 40])
+        add_point("anbohrschelle", None, tap, accuracy="gut", dimension_dn=dn,
+                  manufacturer=rng.choice(["HAWLE", "VONROLL"]))
+        ha_pt = toward(house, tap, 3.0)
+        add_point("hausanschluss", None, ha_pt, accuracy="gut",
+                  material="PE", dimension_dn=dn,
+                  year_built=rng.randint(1980, 2020), property_id=prop.id)
+        stub = add_line("hausanschlussleitung", None, [tap, ha_pt],
+                        accuracy="geschaetzt", material="PE", dimension_dn=dn)
+        if ha_stub_example is None:
+            ha_stub_example = stub
+        prop.lat, prop.lng = round(h_lat, 6), round(h_lng, 6)
+        prop.geocoded_at = geocode_ts
+        geocoded_count += 1
 
     # --- Strangenden: Endkappe, Entleerung, Notverbund ----------------
-    # Dorfstrasse endet im Endhydranten H01 (siehe Hydranten unten), der
-    # Birkenweg in einer Endkappe, der Quellweg in einer Entleerung; die
-    # Hauptstrasse geht in den normal geschlossenen Notverbund zum
-    # Nachbarversorger ueber (sonstige Leitung + Uebergabeschieber S06).
-    add_point("leitungsende", "Endkappe Birkenweg", *street_ends[2],
+    add_point("leitungsende", f"Endkappe {geo.END_CAP[2]}", geo.END_CAP,
               accuracy="gut",
               notes="Blindes Leitungsende — Spülpunkt, bei Netzspülung "
                     "mitspülen (Stagnationsgefahr).")
-    add_point("auslauf", "Entleerung Quellweg", *street_ends[3],
+    add_point("auslauf", f"Entleerung {geo.DRAIN[2]}", geo.DRAIN,
               accuracy="gut", dimension_dn=50,
-              notes="Entleerung in den Vorfluter (Quellbach).")
+              notes="Entleerung am Tiefpunkt des Netzes in den Vorfluter.")
     add_line("sonstige_leitung", "Notverbund Nachbarversorger",
-             [street_ends[1],
-              (street_ends[1][0] - 78, street_ends[1][1] + 9)],
+             [geo.TIE_IN, geo.TIE_IN_END],
              accuracy="geschaetzt", material="PE", dimension_dn=100,
              notes="Verbindungsleitung zur Nachbargenossenschaft — "
                    "Übergabeschieber normal geschlossen.")
 
     # 3 unzugeordnete Hausanschluesse NAHE je einer freien geocodeten
     # Liegenschaft -> per „Zuordnen"-Button (assign-hausanschluss) loesbar.
-    for k, prop in enumerate(properties[24:27]):
-        base_n, base_e = [(-30, 60), (-58, 72), (44, -78)][k]
-        plat, plng = ll(base_n, base_e)
-        prop.lat, prop.lng = round(plat, 6), round(plng, 6)
+    _free_start = len(assigned_props)
+    free_props = properties[_free_start:_free_start + len(geo.UNASSIGNED_NEAR)]
+    for prop, (h_lng, h_lat, t_lng, t_lat) in zip(free_props, geo.UNASSIGNED_NEAR):
+        prop.lat, prop.lng = round(h_lat, 6), round(h_lng, 6)
         prop.geocoded_at = geocode_ts
         geocoded_count += 1
-        add_point("hausanschluss", None, base_n + 12, base_e + 4, accuracy="gut",
-                  material="PE", dimension_dn=32, property_id=None)
+        add_point("hausanschluss", None,
+                  toward((h_lng, h_lat), (t_lng, t_lat), 3.0),
+                  accuracy="gut", material="PE", dimension_dn=32, property_id=None)
 
     # 3 unzugeordnete Hausanschluesse ohne Liegenschaft im Umkreis -> bleiben
     # auch nach dem Zuordnen-Lauf grell markiert (kein Kandidat im Radius).
-    for k in range(3):
-        add_point("hausanschluss", None, -380 - k * 25, 540 + k * 18,
-                  accuracy="geschaetzt", material="PE", dimension_dn=25,
-                  property_id=None)
+    for pt in geo.UNASSIGNED_FAR:
+        add_point("hausanschluss", None, pt, accuracy="geschaetzt",
+                  material="PE", dimension_dn=25, property_id=None)
 
     # --- Hydranten & Schieber (auf den Leitungsachsen) ----------------
-    # Positionen liegen exakt AUF den Leitungen (Punkte der Strassenachse
-    # bzw. lerp auf einem Segment) — der Plan liest sich als ein Netz.
-    hydrant_specs = [
-        # (Position, Bauart, Notiz)
-        (street_ends[0], "ueberflur", "Endhydrant Dorfstraße — Spülpunkt."),
-        ((-92, 122), "unterflur", None),                # Hauptstraße
-        ((79, 187), "ueberflur", None),                 # Birkenweg
-        ((31, 41), "unterflur", None),                  # Quellweg
-        (lerp(hochpunkt_pos, matwechsel_pos, 0.5), "ueberflur", None),  # Hauptleitung
-        ((10, 140), "ueberflur", None),                 # Dorfstraße / Ortsmitte
-    ]
+    # Positionen liegen exakt AUF den Leitungen (~150 m Abstand entlang der
+    # Versorgungs-, ~280 m entlang der Hauptleitung) — der Plan liest sich als
+    # ein Netz und taugt als Hydrantenregister fuer den Feuerwehr-Ausdruck.
     hydranten = []
-    for i, ((hn, he), htype, hnote) in enumerate(hydrant_specs, start=1):
+    for i, hyd in enumerate(geo.HYDRANTS, start=1):
         hydranten.append(add_point(
-            "hydrant", f"Hydrant H{i:02d}", hn, he, accuracy="gut",
-            hydrant_type=htype, year_built=rng.randint(1990, 2021),
+            "hydrant", f"Hydrant H{i:02d}", hyd, accuracy="gut",
+            hydrant_type=("unterflur" if i % 3 == 0 else "ueberflur"),
+            year_built=rng.randint(1990, 2021),
             manufacturer=rng.choice(["HAWLE", "VONROLL", "Düker"]),
-            notes=hnote))
+            notes=f"Standort {hyd[2]}."))
 
-    schieber_specs = [
-        # (Position, Name, Notiz)
-        (lerp(behaelter_pos, hochpunkt_pos, 0.15), "Schieber Behälterabgang", None),
-        ((10, 126), "Schieber Dorfstraße", None),
-        (lerp(verteiler_pos, (-40, 116), 0.4), "Schieber Hauptstraße", None),
-        (lerp((16, 124), street_ends[2], 0.15), "Schieber Birkenweg", None),
-        (lerp((4, 116), street_ends[3], 0.2), "Schieber Quellweg", None),
-        (street_ends[1], "Übergabeschieber Notverbund",
-         "Normal geschlossen — Übergabe an den Nachbarversorger."),
-    ]
     schieber = []
-    for (sn, se), s_name, s_note in schieber_specs:
+    _valve_seq: dict = {}
+    for val in geo.VALVES:
+        n = _valve_seq[val[2]] = _valve_seq.get(val[2], 0) + 1
+        s_name = f"Schieber {val[2]}" + (f" {n}" if n > 1 else "")
         schieber.append(add_point(
-            "schieber", s_name, sn, se, accuracy="gut",
+            "schieber", s_name, val, accuracy="gut",
             dimension_dn=rng.choice([80, 100, 125]),
-            manufacturer=rng.choice(["HAWLE", "VONROLL"]), notes=s_note))
+            manufacturer=rng.choice(["HAWLE", "VONROLL"])))
+    schieber.append(add_point(
+        "schieber", "Übergabeschieber Notverbund", geo.TIE_IN, accuracy="gut",
+        dimension_dn=100, manufacturer=rng.choice(["HAWLE", "VONROLL"]),
+        notes="Normal geschlossen — Übergabe an den Nachbarversorger."))
 
     db.session.flush()  # alle Features -> IDs
     counts["network_features"] = len(net_features)
@@ -1246,18 +1219,19 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         repair="Rohrabschnitt (3 m) getauscht, Bettung erneuert, Fahrbahn "
                "provisorisch verschlossen.")
     add_incident(
-        title="Undichtheit Versorgungsleitung Dorfstraße", itype=Incident.TYPE_UNDICHTHEIT,
+        title="Undichtheit Versorgungsleitung Gruberstraße", itype=Incident.TYPE_UNDICHTHEIT,
         sev=Incident.SEVERITY_MEDIUM, status=Incident.STATUS_RESOLVED,
-        cause="korrosion", detected_off=300, repair_days=3, feature=versorg_lines[0],
+        cause="korrosion", detected_off=300, repair_days=3,
+        feature=versorg_by_street["Gruberstraße"],
         water_loss=Decimal("22.50"), affected=0, cost=Decimal("780.00"),
-        performed_by="Eigene Crew", loc_desc="Muffe Höhe Dorfstraße 14",
+        performed_by="Eigene Crew", loc_desc="Muffe Höhe Gruberstraße 14",
         desc="Schleichendes Muffenleck, durch feuchte Stelle im Belag aufgefallen.",
         repair="Muffe nachgezogen und abgedichtet.")
     add_incident(
         title="Druckverlust Netzbereich Ost", itype=Incident.TYPE_DRUCKVERLUST,
         sev=Incident.SEVERITY_HIGH, status=Incident.STATUS_IN_PROGRESS,
-        cause="ueberdruck", detected_off=12, repair_days=None, feature=versorg_lines[2],
-        affected=0, loc_desc="Birkenweg",
+        cause="ueberdruck", detected_off=12, repair_days=None,
+        feature=versorg_by_street["Löschfeld"], affected=0, loc_desc="Löschfeld",
         desc="Wiederkehrender Druckabfall in den Abendstunden, Ursache wird "
              "eingegrenzt (Schieberstellung / verdeckte Leckage).")
     add_incident(
@@ -1291,14 +1265,15 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         title="Schleichendes Leck Hauptstraße", itype=Incident.TYPE_UNDICHTHEIT,
         sev=Incident.SEVERITY_LOW, status=Incident.STATUS_OPEN,
         cause="materialermuedung", detected_off=8, repair_days=None,
-        feature=versorg_lines[1], loc_desc="Hauptstraße",
+        feature=versorg_by_street["Hauptstraße"], loc_desc="Hauptstraße",
         desc="Geringe Dauerleckage anhand der Nachtmengenmessung vermutet, "
              "Ortung steht aus.")
     add_incident(
-        title="Rohrbruch Quellweg (Setzung)", itype=Incident.TYPE_ROHRBRUCH,
+        title="Rohrbruch Raiffeisenstraße (Setzung)", itype=Incident.TYPE_ROHRBRUCH,
         sev=Incident.SEVERITY_HIGH, status=Incident.STATUS_IN_PROGRESS,
-        cause="erddruck", detected_off=20, repair_days=None, feature=versorg_lines[3],
-        water_loss=Decimal("40.00"), affected=8, loc_desc="Quellweg",
+        cause="erddruck", detected_off=20, repair_days=None,
+        feature=versorg_by_street["Raiffeisenstraße"],
+        water_loss=Decimal("40.00"), affected=8, loc_desc="Raiffeisenstraße",
         desc="Rohrbruch nach Hangsetzung, Versorgung über Schieber umgeleitet.")
     add_incident(
         title="Hydrant undicht", itype=Incident.TYPE_SONSTIGES,
@@ -1448,7 +1423,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         #    Jahres bis ``now`` (Mitte des Monats). Plan wird zyklisch genutzt;
         #    Buchungen der letzten ~40 Tage bleiben „Offen" (noch nicht verbucht).
         bridge_plan = [
-            (acc_reparatur, 1, Decimal("20.00"), Decimal("-380.00"),  giro,   "Reparatur Schieber Dorfstraße"),
+            (acc_reparatur, 1, Decimal("20.00"), Decimal("-380.00"),  giro,   "Reparatur Schieber Weingarten"),
             (acc_buero,     3, Decimal("20.00"), Decimal("-54.90"),   giro,   "Büromaterial"),
             (acc_bank,   None, None,             Decimal("-26.50"),   giro,   "Bankkosten"),
             (acc_wasser, None, Decimal("10.00"), Decimal("1240.00"),  giro,   "Sammel-Zahlungseingang Wassergebühren"),
@@ -1654,7 +1629,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         resolutions=[
             ("Vergabe Pumpentausch Druckerhöhung Sonnberg",
              R.STATUS_ACCEPTED, 6, 0, 0, "Angebot Grundfos einstimmig angenommen.", 3),
-            ("Leitungstausch Quellweg",
+            ("Leitungstausch Gruberstraße",
              R.STATUS_POSTPONED, 0, 0, 0,
              "Vertagt bis zur Klärung der Förderzusage des Landes.", 3),
         ])

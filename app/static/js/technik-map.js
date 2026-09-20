@@ -1201,6 +1201,11 @@
     renderPublic: renderPublic,
     renderStatic: renderPrint, // Rueckwaerts-Kompat (alter Aufrufname)
     createMap: createMap,
+    // Fuer fremde Karten, die Netz-Elemente identisch darstellen sollen (z. B.
+    // die Rundschreiben-Kartenauswahl): gleiches Symbol, gleiches Popup.
+    // Beide erwarten die GeoJSON-``properties`` aus feature_to_geojson().
+    pointIcon: pointIcon,
+    popupHtml: popupHtml,
   };
 
   // Editor automatisch starten, sobald das DOM steht (Vollseiten-Load).
