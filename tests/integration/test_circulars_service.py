@@ -6,8 +6,8 @@ import pytest
 
 from app.extensions import db
 from app.models import (
-    Circular, CircularRecipient, Customer, Property, PropertyOwnership,
-    EmailSuppression,
+    Circular, CircularRecipient, Customer, Incident, NetworkFeature, NetworkPlan,
+    Property, PropertyOwnership, EmailSuppression,
 )
 from app.email_suppression import suppress
 from app.circulars import services
@@ -99,3 +99,81 @@ class TestMapResolution:
         assert services.add_recipients(circ, [c]) == 1
         assert services.add_recipients(circ, [c]) == 0  # schon dabei
         assert len(circ.recipients) == 1
+
+
+class TestMapTargets:
+    """Karten-Ziele: Symbol-/Popup-Daten je Liegenschaft."""
+
+    def _plan(self):
+        plan = NetworkPlan(name="Plan", status=NetworkPlan.STATUS_ACTIVE)
+        db.session.add(plan)
+        db.session.flush()
+        return plan
+
+    def _owned_property(self, number, lat=None, lng=None, owner_name="Eigner"):
+        prop = Property(object_number=number, object_type="Haus",
+                        strasse="Dorfstrasse", hausnummer="1", plz="9800", ort="Spittal",
+                        lat=lat, lng=lng)
+        db.session.add(prop)
+        db.session.flush()
+        cust = _customer(owner_name, f"{number}@t.at")
+        db.session.add(PropertyOwnership(property_id=prop.id, customer_id=cust.id,
+                                         valid_from=date(2020, 1, 1), valid_to=None))
+        db.session.flush()
+        return prop, cust
+
+    def test_hausanschluss_target_carries_feature_props(self, app):
+        plan = self._plan()
+        prop, cust = self._owned_property("H1")
+        db.session.add(NetworkFeature(
+            plan_id=plan.id, feature_type="hausanschluss",
+            geometry_kind=NetworkFeature.GEOMETRY_POINT,
+            geometry='{"type": "Point", "coordinates": [13.5, 46.8]}',
+            lat=46.8, lng=13.5, property_id=prop.id, name="HA 1"))
+        db.session.flush()
+
+        targets = services.map_targets(plan)
+        assert len(targets) == 1
+        t = targets[0]
+        assert t["source"] == "hausanschluss"
+        # Popup-Properties wie im Leitungsplan (Symbol + Besitzer im Popup).
+        assert t["props"]["feature_type"] == "hausanschluss"
+        assert cust.letter_name in t["props"]["owner_names"]
+        assert t["props"]["property_id"] == prop.id
+
+    def test_geocoded_property_without_hausanschluss_gets_neutral_props(self, app):
+        plan = self._plan()
+        prop, cust = self._owned_property("G1", lat=46.9, lng=13.6)
+
+        targets = services.map_targets(plan)
+        assert len(targets) == 1
+        t = targets[0]
+        assert t["source"] == "property"
+        # Kein Netz-Symbol -> feature_type None (neutraler Pin im Karten-JS).
+        assert t["props"]["feature_type"] is None
+        assert cust.letter_name in t["props"]["owner_names"]
+
+
+class TestMapIncidents:
+    def test_open_incidents_only_plus_own(self, app):
+        circ = _circular(Circular.KIND_OUTAGE)
+        offen = Incident(title="Rohrbruch", detected_at=date(2026, 1, 2),
+                         status=Incident.STATUS_OPEN, lat=46.8, lng=13.5)
+        behoben = Incident(title="Alt", detected_at=date(2025, 1, 2),
+                           status=Incident.STATUS_RESOLVED, lat=46.7, lng=13.4)
+        eigene = Incident(title="Quelle", detected_at=date(2025, 6, 2),
+                          status=Incident.STATUS_RESOLVED, lat=46.6, lng=13.3)
+        db.session.add_all([offen, behoben, eigene])
+        db.session.flush()
+        circ.incident_id = eigene.id
+        db.session.flush()
+
+        ids = {f["id"] for f in services.map_incidents_geojson(circ)["features"]}
+        assert ids == {offen.id, eigene.id}  # behobene bleiben draussen
+
+    def test_without_position_skipped(self, app):
+        inc = Incident(title="Ohne Lage", detected_at=date(2026, 2, 2),
+                       status=Incident.STATUS_OPEN)
+        db.session.add(inc)
+        db.session.flush()
+        assert services.map_incidents_geojson(None)["features"] == []

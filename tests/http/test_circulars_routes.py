@@ -4,10 +4,12 @@ Deckt ab: Permission-Gate, CRUD nur im Entwurf, Notfall-Bypass beim
 E-Mail-Versand vs. normales Einwilligungs-Gate, Testmodus, Karten-Daten-Gate,
 Post-Druck ohne WeasyPrint.
 """
+from datetime import date
+
 import pytest
 
 from app.extensions import db
-from app.models import Circular, CircularRecipient, Customer, User
+from app.models import Circular, CircularRecipient, Customer, Incident, User
 from tests.conftest import _ensure_role
 
 
@@ -76,6 +78,50 @@ class TestAccess:
         _login(client, "viewer")
         resp = client.get(f"/circulars/{circ.id}/map-data.json")
         assert resp.status_code == 302  # kein circulars-Recht -> Dashboard-Redirect
+
+
+class TestMapSelect:
+    """Kartenauswahl: Seite, Stoerungs-Ebene und deren Rechte-Gate."""
+
+    def test_map_select_page_renders(self, client, admin):
+        _login(client)
+        circ = _make_circular()
+        resp = client.get(f"/circulars/{circ.id}/map-select")
+        html = resp.get_data(as_text=True)
+        assert resp.status_code == 200
+        assert "technik-map.js" in html        # Netz-Symbole + Popup wiederverwendet
+        assert 'id="circ-sel-list"' in html    # Liste der gewaehlten Eigentuemer
+        assert 'id="circ-show-incidents"' in html
+
+    def test_map_incidents_returns_open_ones(self, client, admin):
+        _login(client)
+        circ = _make_circular()
+        inc = Incident(title="Rohrbruch", detected_at=date(2026, 3, 1),
+                       status=Incident.STATUS_OPEN, lat=46.8, lng=13.5)
+        db.session.add(inc)
+        db.session.commit()
+        resp = client.get(f"/circulars/{circ.id}/map-incidents.json")
+        assert resp.status_code == 200
+        assert [f["id"] for f in resp.get_json()["features"]] == [inc.id]
+
+    def test_map_incidents_empty_without_incident_permission(self, client, app):
+        """Rundschreiben ja, Stoerungsjournal nein -> leere Ebene statt 403."""
+        role = _ensure_role("Rundschreiber", perms=["circulars"])
+        u = User(username="rs", email="rs@t.test", role_id=role.id)
+        u.set_password("secret")
+        db.session.add(u)
+        inc = Incident(title="Rohrbruch", detected_at=date(2026, 3, 1),
+                       status=Incident.STATUS_OPEN, lat=46.8, lng=13.5)
+        db.session.add(inc)
+        db.session.commit()
+        circ = _make_circular()
+        _login(client, "rs")
+        resp = client.get(f"/circulars/{circ.id}/map-incidents.json")
+        assert resp.status_code == 200
+        assert resp.get_json()["features"] == []
+        # ... und der Schalter fehlt auf der Seite.
+        page = client.get(f"/circulars/{circ.id}/map-select").get_data(as_text=True)
+        assert 'id="circ-show-incidents"' not in page
 
 
 class TestCrud:
