@@ -1,5 +1,13 @@
 Flask==3.1.0
 Flask-SQLAlchemy==3.1.1
+# SQLAlchemy 2.1 stellt den Default-DBAPI fuer postgresql:// von psycopg2 auf
+# psycopg (v3) um. psycopg3 steht nirgends in den Requirements, also bricht ein
+# frischer Build mit "ModuleNotFoundError: No module named 'psycopg'" — erst in
+# der CI, beim naechsten ungecachten Image-Build auch beim Prod-Boot.
+# Pin halten, bis bewusst auf psycopg[binary] + postgresql+psycopg:// migriert
+# wird (betrifft DATABASE_URL, TEST_DATABASE_URL, Instance.connection_url und
+# beide Alembic-env.py).
+SQLAlchemy<2.1
 Flask-Login==0.6.3
 Flask-Mail==0.10.0
 Flask-WTF==1.2.2
