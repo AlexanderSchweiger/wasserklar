@@ -3,6 +3,10 @@
 Flask + HTMX Verwaltungssystem für Wassergenossenschaften.
 Design: **Tabler 1.0.0** (Bootstrap 5 + Font Awesome)
 
+> **Lieber nichts selbst betreiben?** Dieselbe Software gibt es fertig gehostet als Programm &
+> Web-App für Wassergenossenschaften auf **[quellstube.at](https://quellstube.at)** — DSGVO-Hosting
+> in der EU, tägliche Backups, 30 Tage gratis testen.
+
 **Funktionen:**
 
 - **Stammdaten & Abrechnung** — Kunden-/Objektverwaltung, Zähler & Ablesungen (Haupt-/Subzähler, Zählertausch, CSV/Excel-Import, geschätzte Stände), Abrechnungsperioden, Tarife, Einzel- & Massen-Rechnungslauf (PDF, E-Mail), Mahnwesen, geführter Eigentümerwechsel mit unterjähriger Schlussrechnung
