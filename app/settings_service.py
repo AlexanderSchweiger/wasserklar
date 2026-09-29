@@ -25,6 +25,10 @@ _WG_MAP = {
     'account_holder': 'WG_ACCOUNT_HOLDER',
     'email':          'WG_EMAIL',
     'phone':          'WG_PHONE',
+    # Rechnungs-Pflichtangaben: UID-Nummer (AT) bzw. USt-IdNr. (DE) und
+    # Steuernummer des Ausstellers.
+    'vat_id':         'WG_VAT_ID',
+    'tax_number':     'WG_TAX_NUMBER',
 }
 
 # (State-Attribut, DB-Key, Cast-Funktion)
@@ -358,8 +362,14 @@ def get_invoice_sender_address() -> str:
 
 
 def meter_replacement_interval() -> int:
-    """Tausch-Intervall fuer Wasserzaehler in Jahren (Default 5)."""
+    """Tausch-Intervall fuer Wasserzaehler in Jahren.
+
+    Default ist die Nacheichfrist des Mandanten-Landes (AT 5, DE 6 Jahre,
+    siehe ``app.country``), solange kein eigener Wert gepflegt ist.
+    """
     from app.models import AppSetting
+    from app.country import current_profile
+    default = current_profile().calibration_years
     try:
         raw = AppSetting.get('meters.replacement_interval_years')
     except Exception:
@@ -367,8 +377,8 @@ def meter_replacement_interval() -> int:
     try:
         val = int(raw)
     except (TypeError, ValueError):
-        return 5
-    return val if val >= 1 else 5
+        return default
+    return val if val >= 1 else default
 
 
 def apply_mail_settings():

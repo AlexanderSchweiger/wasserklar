@@ -112,6 +112,7 @@
   // keinen Editor (kein #technik-map auf der Seite).
   window.TECHNIK = { vocab: window.CIRC_MAP.vocab, propertyUrl: window.CIRC_MAP.propertyUrl };
 </script>
+{% include "_map_config.html" %}
 <script src="{{ url_for('static', filename='js/technik-map.js', v=oss_version) }}"></script>
 <script>
   (function () {
@@ -143,7 +144,8 @@
       // createMap liefert die Basiskarten-Umschaltung (basemap.at Standard/grau/
       // Orthofoto + OpenStreetMap) und den Maßstab wie im Leitungsplan.
       var map = window.TECHNIK_MAP.createMap('circ-map');
-      map.setView(CENTER || [47.59, 14.14], CENTER ? 15 : 7);
+      var v = window.wkBasemaps ? window.wkBasemaps.view() : { center: [47.59, 14.14], zoom: 7 };
+      map.setView(CENTER || v.center, CENTER ? 15 : v.zoom);
 
       var selected = {};    // property_id -> target
       var markers = {};     // property_id -> marker

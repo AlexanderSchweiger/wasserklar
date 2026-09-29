@@ -138,10 +138,12 @@ def is_year_vat_liable(year):
 def default_water_tax_rate(year):
     """Standard-Steuersatz (Decimal) für Wasserpositionen im angegebenen Jahr.
 
-    Liefert 10 für umsatzsteuerpflichtige Jahre, sonst None.
+    Liefert den gepflegten Wasser-Satz (``tax_service.water_tax_rate``, Default
+    je Land: AT 10 %, DE 7 %) für umsatzsteuerpflichtige Jahre, sonst None.
     """
     if is_year_vat_liable(year):
-        return Decimal("10")
+        from app import tax_service
+        return tax_service.water_tax_rate()
     return None
 
 

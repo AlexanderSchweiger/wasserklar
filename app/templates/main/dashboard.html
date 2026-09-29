@@ -287,7 +287,7 @@
                   {% if row.overdue %}
                     <span class="badge bg-danger text-white">überfällig</span>
                   {% else %}
-                    <span class="badge bg-warning text-dark">heuer</span>
+                    <span class="badge bg-warning text-dark">{{ term('this_year') }}</span>
                   {% endif %}
                 </td>
               </tr>

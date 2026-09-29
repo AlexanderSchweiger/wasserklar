@@ -49,13 +49,13 @@
         <input type="radio" name="account_type" value="cash" class="form-selectgroup-input"
           {{ 'checked' if val_type == 'cash' }}>
         <span class="form-selectgroup-label w-100 py-2">
-          <i class="fas fa-cash-register me-1"></i> Kassa
+          <i class="fas fa-cash-register me-1"></i> {{ term('cash') }}
         </span>
       </label>
     </div>
   </div>
   <small class="form-hint">
-    Eine Kassa bildet den Bargeldbestand ab (Barzahlungen von Mitgliedern).
+    Eine {{ term('cash') }} bildet den Bargeldbestand ab (Barzahlungen von Mitgliedern).
     Bargeld, das später zur Bank gebracht wird, erfassen Sie als Umbuchung.
   </small>
 </div>
@@ -186,11 +186,11 @@
   function applyType(isCash) {
     if (ibanField) ibanField.style.display = isCash ? 'none' : '';
     if (nameInput) {
-      nameInput.placeholder = isCash ? 'z. B. Kassa' : 'z. B. Girokonto Raiffeisenbank';
+      nameInput.placeholder = isCash ? {{ ('z. B. ' ~ term('cash'))|tojson }} : 'z. B. Girokonto Raiffeisenbank';
     }
     if (openingHint) {
       openingHint.textContent = isCash
-        ? 'Bargeldbestand vor der ersten im Programm erfassten Buchung (z. B. Stand per 1.1.). Wird zum Berechnen des aktuellen Kassastands addiert.'
+        ? {{ ('Bargeldbestand vor der ersten im Programm erfassten Buchung (z. B. Stand per 1.1.). Wird zum Berechnen des aktuellen ' ~ term('cash_balance') ~ 's addiert.')|tojson }}
         : 'Kontostand vor der ersten im Programm erfassten Buchung (z. B. Stand per 1.1.). Wird zum Berechnen des aktuellen Saldos addiert.';
     }
     if (isCash && input.value === 'fa-university') selectIcon('fa-cash-register');

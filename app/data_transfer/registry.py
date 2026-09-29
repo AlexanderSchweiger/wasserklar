@@ -32,6 +32,7 @@ from app.models import (
     SchriftverkehrDocument,
     Circular, CircularRecipient, CircularDeliveryLog,
     ConsumptionYear, FundingGoal,
+    ChargeType, TariffComponent, ChargeOverride,
 )
 
 # Spalten die auf users.id verweisen — werden beim Import auf NULL gesetzt,
@@ -79,6 +80,9 @@ CATEGORIES = {
         TaxRate, FiscalYear, Account, RealAccount, Project,
         Customer, Property, PropertyOwnership, WaterMeter,
         BillingPeriod, MeterReadingAccessCode, WaterTariff,
+        # Tarifpositionen: Gebuehrenarten-Katalog, Positionen je Tarif und
+        # individuelle Gebuehren an Kunde/Objekt.
+        ChargeType, TariffComponent, ChargeOverride,
         NetworkPlan, NetworkFeature, MaintenanceLog, SpringYield, Incident,
         WaterSample, LabResult,
         CustomerWgProfile, PropertyWgProfile, WgFunction,
@@ -126,11 +130,14 @@ INSERT_ORDER = [
     # Rollen/Rechte zuerst — RolePermission.role_id → Role; sonst FK-frei.
     Role, RolePermission,
     TaxRate, FiscalYear, Account, RealAccount, Project,
+    # Gebuehrenarten sind FK-frei; Overrides NACH Customer/Property.
+    ChargeType,
     Customer, Property, PropertyOwnership, WaterMeter,
+    ChargeOverride,
     CustomerWgProfile, PropertyWgProfile, WgFunction,
     # Consent/Opt-in: kunden-gebunden → NACH Customer.
     InvoiceEmailOptInCode, CustomerEmailConsentLog,
-    BillingPeriod, MeterReadingAccessCode, WaterTariff, MeterReading,
+    BillingPeriod, MeterReadingAccessCode, WaterTariff, TariffComponent, MeterReading,
     MeterReplacement,
     BillingRun, Invoice, InvoiceItem, OpenItem, ReadingCorrection,
     # Eigentuemerwechsel NACH Invoice (settlement_invoice_id) + WaterMeter/
@@ -217,6 +224,11 @@ NATURAL_KEYS = {
     BillingPeriod: ("name",),
     MeterReadingAccessCode: ("customer_id", "billing_period_id"),
     WaterTariff: ("name", "valid_from"),
+    ChargeType: ("key",),                                   # key ist unique
+    TariffComponent: ("tariff_id", "charge_type_id"),       # uq je Tarif + Art
+    # Je Art hoechstens ein Override pro Kunde bzw. Objekt (die jeweils andere
+    # Spalte ist NULL — filter_by(x=None) rendert korrekt IS NULL).
+    ChargeOverride: ("charge_type_id", "customer_id", "property_id"),
     MeterReading: ("meter_id", "billing_period_id"),
     MeterReplacement: ("old_meter_id",),  # ein alter Zaehler wird hoechstens einmal ersetzt
     MeterTour: None,                    # kein natuerlicher Schluessel — immer Insert
@@ -302,9 +314,10 @@ FOREIGN_KEYS = {
     OwnerChange: {"property_id": Property, "billing_period_id": BillingPeriod,
                   "settlement_invoice_id": Invoice},
     OwnerChangeMeterValue: {"owner_change_id": OwnerChange, "meter_id": WaterMeter},
-    WaterTariff: {"base_fee_account_id": Account,
-                  "additional_fee_account_id": Account,
-                  "price_per_m3_account_id": Account},
+    TariffComponent: {"tariff_id": WaterTariff, "charge_type_id": ChargeType,
+                      "account_id": Account},
+    ChargeOverride: {"charge_type_id": ChargeType, "customer_id": Customer,
+                     "property_id": Property},
     BillingRun: {"billing_period_id": BillingPeriod, "project_id": Project},
     Invoice: {"customer_id": Customer, "property_id": Property, "billing_run_id": BillingRun,
               "billing_period_id": BillingPeriod,

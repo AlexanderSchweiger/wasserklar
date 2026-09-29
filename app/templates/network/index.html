@@ -204,7 +204,7 @@
         <p>
           Jeder <strong>Hausanschluss</strong> im Plan <em>{{ plan.name }}</em> wird automatisch der
           <strong>nächstgelegenen Liegenschaft</strong> zugeordnet (Luftlinie). Voraussetzung: die
-          Liegenschaften wurden geocodet (unter <em>Liegenschaften → BEV-Adressen abgleichen</em>).
+          Liegenschaften wurden geocodet (unter <em>Liegenschaften → Adressen geokodieren</em> oder manuell auf der Liegenschafts-Seite).
         </p>
         <p class="text-secondary small mb-3">
           Jede Liegenschaft wird dabei <strong>höchstens einem</strong> Hausanschluss zugeordnet — greifen
@@ -251,6 +251,7 @@
   window.TECHNIK = {{ cfg|tojson }};
   window.TECHNIK.csrfToken = "{{ csrf_token() }}";
 </script>
+{% include "_map_config.html" %}
 <script src="{{ url_for('static', filename='js/technik-map.js') }}"></script>
 {% if config.FEATURE_HAUSANSCHLUSS_AUTOASSIGN %}
 <script>

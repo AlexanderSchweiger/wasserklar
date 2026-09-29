@@ -1,0 +1,108 @@
+{# Tab „Steuern": Steuersatz-Liste + Standard-USt fuer Wasser.
+   Wird nach dem Speichern im Steuersatz-Modal per htmx neu geladen
+   (settings.tax_rates_card, outerHTML auf #taxRatesCard) — die
+   Einstellungsseite bleibt stehen, ungespeicherte Eingaben gehen nicht
+   verloren. Das Wasser-Select gehoert zum umschliessenden
+   Einstellungsformular und wird mit „Einstellungen speichern" gespeichert.
+   Erwartet: tax_rate_rows, water_rate_options, water_tax_rate, country_profile. #}
+<div id="taxRatesCard">
+  {% include "_flash_inline.html" %}
+  <div class="card mb-3">
+    <div class="card-header">
+      <h3 class="card-title"><i class="fas fa-percentage me-1"></i> Umsatzsteuer-Sätze</h3>
+      <div class="card-actions">
+        <button type="button" class="btn btn-sm btn-primary"
+                data-url="{{ url_for('settings.tax_rate_new') }}"
+                data-modal-title="Neuer Steuersatz"
+                onclick="openTaxRateModal(this)">
+          <i class="fas fa-plus me-1"></i> Neuer Steuersatz
+        </button>
+      </div>
+    </div>
+    <div class="card-body">
+      <p class="text-muted small mb-3">
+        Diese Sätze stehen in Buchungen, Rechnungen und Tarifen zur Auswahl.
+        Nicht benötigte Sätze lassen sich <strong>deaktivieren</strong> — bestehende
+        Buchungen und Rechnungen behalten ihren Satz unverändert.
+      </p>
+      <div class="table-responsive">
+        <table class="table table-sm table-vcenter mb-0">
+          <thead>
+            <tr>
+              <th style="width:7rem">Satz</th>
+              <th>Bezeichnung</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in tax_rate_rows %}
+            <tr>
+              <td class="fw-bold text-nowrap">{{ tax_rate_label(r.rate) }}</td>
+              <td>
+                {{ r.label or '' }}
+                {% if water_tax_rate == r.rate %}
+                <span class="badge bg-azure-lt ms-1" title="Standard-USt für Wasserpositionen">Standard Wasser</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if r.active %}
+                <span class="badge bg-success-lt">aktiv</span>
+                {% else %}
+                <span class="badge bg-secondary-lt">deaktiviert</span>
+                {% endif %}
+              </td>
+              <td class="text-end">
+                <button type="button" class="btn btn-sm btn-outline-secondary"
+                        data-url="{{ url_for('settings.tax_rate_edit', rate_id=r.id) }}"
+                        data-modal-title="Steuersatz bearbeiten"
+                        onclick="openTaxRateModal(this)" title="Bearbeiten">
+                  <i class="fas fa-edit"></i>
+                </button>
+              </td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="4" class="text-muted">
+                Noch keine Steuersätze gepflegt — es gelten die Standardsätze für
+                {{ country_profile.name }}. „Länder-Defaults übernehmen" legt sie an.
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title"><i class="fas fa-tint me-1"></i> Standard-USt für Wasser</h3>
+    </div>
+    <div class="card-body">
+      <div class="row g-3 align-items-end">
+        <div class="col-md-5">
+          <label class="form-label">Satz für Wasserverbrauch und Gebühren</label>
+          <select name="tax_water_rate" class="form-select">
+            {% for tr in water_rate_options %}
+            <option value="{{ tr.rate }}" {{ 'selected' if tr.rate == water_tax_rate }}>
+              {{ tr.display }}{% if not tr.active %} (deaktiviert){% endif %}
+            </option>
+            {% endfor %}
+          </select>
+          <div class="form-text">
+            Vorbelegung für neue Tarifpositionen und Wasserzeilen auf Rechnungen. Greift nur in
+            umsatzsteuerpflichtigen Buchungsjahren. Standard für {{ country_profile.name }}:
+            {{ tax_rate_label(country_profile.water_tax_rate) }}.
+          </div>
+        </div>
+        <div class="col-md-7 text-md-end">
+          <button type="button" class="btn btn-outline-secondary"
+                  data-bs-toggle="modal" data-bs-target="#countryDefaultsModal">
+            <i class="fas fa-flag me-1"></i> Länder-Defaults übernehmen …
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

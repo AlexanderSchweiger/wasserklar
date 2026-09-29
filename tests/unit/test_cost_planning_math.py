@@ -126,13 +126,19 @@ def _base_info(avg_m3="40000", base_units=200, price="1.5000",
                base_fee="50.00", additional_fee=None):
     """Minimaler baseline()-Rueckgabewert; ``tariff`` wird als Fake gebaut,
     damit der Rechenkern ohne DB testbar bleibt."""
-    from app.models import WaterTariff
-    tariff = WaterTariff(
-        name="Test", valid_from=2025,
-        base_fee=Decimal(base_fee) if base_fee is not None else None,
-        additional_fee=Decimal(additional_fee) if additional_fee is not None else None,
-        price_per_m3=Decimal(price),
-    )
+    from app.models import ChargeType, TariffComponent, WaterTariff
+
+    def _comp(key, calc, amount):
+        return TariffComponent(
+            charge_type=ChargeType(key=key, label=key, calc_type=calc),
+            amount=Decimal(amount) if amount is not None else None)
+
+    tariff = WaterTariff(name="Test", valid_from=2025)
+    tariff.components = [
+        _comp("water", "per_m3", price),
+        _comp("base_fee", "flat", base_fee),
+        _comp("additional_fee", "flat", additional_fee),
+    ]
     return {
         "tariff": tariff,
         "avg_m3": Decimal(avg_m3),

@@ -24,7 +24,7 @@
       </select>
       {% endif %}
       {% if plan %}<span class="badge {{ vocab.plan_status_badge(plan.status) }}">{{ vocab.plan_status_label(plan.status) }}</span>{% endif %}
-      <span class="text-secondary small">TWV-Beprobung — Laborwerte &amp; Grenzwert-Ampel</span>
+      <span class="text-secondary small">{{ wq.regulation_short() }}-Beprobung — Laborwerte &amp; Grenzwert-Ampel</span>
     </div>
     <div class="card-actions">
       {% if plan and stellen %}
@@ -64,7 +64,7 @@
       <label class="form-label mb-0 small text-secondary">Trend-Parameter:</label>
       <select class="form-select form-select-sm w-auto" aria-label="Parameter wählen"
               onchange="window.location.href='{{ url_for('network.water_quality', plan=plan.id) }}&param='+this.value;">
-        {% for key, meta in wq.PARAMETERS.items() %}
+        {% for key, meta in wq.parameters().items() %}
         <option value="{{ key }}" {% if key == param %}selected{% endif %}>{{ meta.label }}{% if meta.unit %} ({{ meta.unit }}){% endif %}</option>
         {% endfor %}
       </select>

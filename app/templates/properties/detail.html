@@ -3,9 +3,7 @@
 {% block page_title %}<i class="fas fa-home me-2"></i> {{ property.label() }}{% endblock %}
 
 {% block head_extra %}
-{% if network_features_display %}
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-{% endif %}
 {% endblock %}
 
 {% block content %}
@@ -41,24 +39,34 @@
           <dt class="col-sm-5">Ort</dt>
           <dd class="col-sm-7">{{ property.plz or '' }} {{ property.ort or '' }}</dd>
           {% endif %}
-          {% if property.land and property.land != 'Österreich' %}
+          {% if property.land is foreign_country %}
           <dt class="col-sm-5">Land</dt>
           <dd class="col-sm-7">{{ property.land }}</dd>
           {% endif %}
+          <dt class="col-sm-5">Lage</dt>
+          <dd class="col-sm-7">
+            {% if property.lat is not none and property.lng is not none %}
+            <span class="text-nowrap" title="WGS84">{{ property.lat|de_number(5) }}, {{ property.lng|de_number(5) }}</span>
+            {% else %}
+            <span class="text-muted">nicht gesetzt</span>
+            {% endif %}
+            <button type="button" class="btn btn-sm btn-link p-0 ms-1"
+                    data-bs-toggle="modal" data-bs-target="#propertyLocationModal">
+              <i class="fas fa-map-pin me-1"></i>{{ 'ändern' if property.lat is not none else 'auf Karte setzen' }}
+            </button>
+          </dd>
         </dl>
         {% if property.notes %}
         <hr>
         <p class="text-muted mb-0"><em>{{ property.notes }}</em></p>
         {% endif %}
-        {% if property.base_fee_override is not none or property.additional_fee_override is not none %}
+        {% set _overrides = charge_overrides_display(property) %}
+        {% if _overrides %}
         <hr>
         <small class="text-muted d-block mb-1"><i class="fas fa-sliders-h me-1"></i> Individuelle Gebühren</small>
-        {% if property.base_fee_override is not none %}
-        <small class="d-block">Grundgebühr: <strong>{{ property.base_fee_override|de_number }} €</strong></small>
-        {% endif %}
-        {% if property.additional_fee_override is not none %}
-        <small class="d-block">Zusatzgebühr: <strong>{{ property.additional_fee_override|de_number }} €</strong></small>
-        {% endif %}
+        {% for label, text in _overrides %}
+        <small class="d-block">{{ label }}: <strong>{{ text }}</strong></small>
+        {% endfor %}
         {% endif %}
         <form method="post" action="{{ url_for('properties.deactivate', property_id=property.id) }}" class="mt-3">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -551,19 +559,115 @@
 {% include "meters/_reading_edit_modal.html" %}
 {% include "meters/_meter_replace_modal.html" %}
 {% include "meters/_meter_edit_modal.html" %}
+
+{# Lage manuell setzen: Klick/Ziehen auf der Karte. Der Weg, wenn der
+   Adressdienst (AT: BEV, DE: Photon/OSM) keinen Treffer liefert. #}
+<div class="modal fade" id="propertyLocationModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="fas fa-map-pin me-2"></i> Lage der Liegenschaft</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <form method="post" action="{{ url_for('properties.set_location', property_id=property.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="lat" id="propLocLat" value="{{ property.lat if property.lat is not none else '' }}">
+        <input type="hidden" name="lng" id="propLocLng" value="{{ property.lng if property.lng is not none else '' }}">
+        <div class="modal-body">
+          <p class="text-muted small mb-2">
+            In die Karte klicken bzw. den Marker ziehen, um die Lage des Hauses zu setzen. Die
+            Koordinate wird u. a. für die automatische Hausanschluss-Zuordnung im Leitungsnetz
+            genutzt.
+          </p>
+          <div id="property-location-map" hx-boost="false"
+               style="height: 420px; border-radius: 4px;"></div>
+        </div>
+        <div class="modal-footer">
+          {% if property.lat is not none %}
+          <button type="submit" name="clear" value="1" class="btn btn-outline-danger me-auto"
+                  formnovalidate>
+            <i class="fas fa-times me-1"></i> Lage entfernen
+          </button>
+          {% endif %}
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+          <button type="submit" class="btn btn-primary" id="propLocSave"
+                  {{ 'disabled' if property.lat is none }}>
+            <i class="fas fa-save me-1"></i> Speichern
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
 {% include "properties/_property_modal_scripts.html" %}
 {% include "properties/_ownership_modal_scripts.html" %}
 {% include "meters/_modal_scripts.html" %}
+{% include "_map_config.html" %}
+<script>
+// Lage manuell setzen (Modal). Leaflet wird bei Bedarf nachgeladen.
+(function () {
+  var modalEl = document.getElementById("propertyLocationModal");
+  if (!modalEl) return;
+  var latIn = document.getElementById("propLocLat");
+  var lngIn = document.getElementById("propLocLng");
+  var saveBtn = document.getElementById("propLocSave");
+  var map = null, marker = null;
+
+  function ensureLeaflet(cb) {
+    // CSS aus head_extra fehlt nach einer hx-boost-Navigation -> nachladen.
+    if (!document.querySelector('link[href*="leaflet@1.9.4"]')) {
+      var lnk = document.createElement("link");
+      lnk.rel = "stylesheet";
+      lnk.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+      document.head.appendChild(lnk);
+    }
+    if (typeof L !== "undefined") { cb(); return; }
+    var s = document.createElement("script");
+    s.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+    s.onload = cb;
+    document.head.appendChild(s);
+  }
+
+  function setPoint(latlng) {
+    if (marker) { marker.setLatLng(latlng); }
+    else {
+      marker = L.marker(latlng, { draggable: true }).addTo(map);
+      marker.on("dragend", function () { setPoint(marker.getLatLng()); });
+    }
+    latIn.value = latlng.lat.toFixed(7);
+    lngIn.value = latlng.lng.toFixed(7);
+    if (saveBtn) saveBtn.disabled = false;
+  }
+
+  function init() {
+    if (map) { map.invalidateSize(); return; }
+    var layers = window.wkBasemaps ? window.wkBasemaps.layers()
+      : { _default: L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }) };
+    var v = window.wkBasemaps ? window.wkBasemaps.view() : { center: [47.59, 14.14], zoom: 7 };
+    var bases = {};
+    Object.keys(layers).forEach(function (k) { if (k.charAt(0) !== "_") bases[k] = layers[k]; });
+    map = L.map("property-location-map", { center: v.center, zoom: v.zoom, layers: [layers._default] });
+    if (Object.keys(bases).length) L.control.layers(bases, {}, { position: "topright" }).addTo(map);
+    var lat = parseFloat(latIn.value), lng = parseFloat(lngIn.value);
+    if (!isNaN(lat) && !isNaN(lng)) {
+      setPoint(L.latLng(lat, lng));
+      map.setView([lat, lng], 18);
+    }
+    map.on("click", function (e) { setPoint(e.latlng); });
+  }
+
+  modalEl.addEventListener("shown.bs.modal", function () { ensureLeaflet(init); });
+})();
+</script>
 {% if network_features_display %}
 <script>
 (function () {
   var features = {{ network_features_display | tojson }};
   if (!features.length) return;
 
-  var TILE_URL = "https://mapsneu.wien.gv.at/basemap/geolandbasemap/normal/google3857/{z}/{y}/{x}.png";
 
   function initMaps() {
     features.forEach(function (f) {
@@ -574,7 +678,10 @@
         boxZoom: false, keyboard: false, zoomControl: false,
         attributionControl: false, doubleClickZoom: false,
       });
-      L.tileLayer(TILE_URL, { maxZoom: 20, maxNativeZoom: 19 }).addTo(map);
+      // Standardkarte des Landes (basemaps.js); ohne sie OpenStreetMap.
+      (window.wkBasemaps ? window.wkBasemaps.layers()._default
+        : L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 })
+      ).addTo(map);
 
       if (f.geometry_kind === "point" && f.lat != null && f.lng != null) {
         var icon = L.divIcon({

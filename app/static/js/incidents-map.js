@@ -18,30 +18,29 @@
 
   var STATUS_COLOR = { offen: "#c92a2a", in_bearbeitung: "#f59f00", behoben: "#2b8a3e" };
 
-  // --- Basiskarten (basemap.at + OSM) --------------------------------------
+  // --- Basiskarten (je Land: basemap.at / basemap.de + OSM) ----------------
 
   function baseLayers() {
-    var bmAttr = 'Datenquelle: <a href="https://www.basemap.at" target="_blank" rel="noopener">basemap.at</a>';
-    var standard = L.tileLayer(
-      "https://mapsneu.wien.gv.at/basemap/geolandbasemap/normal/google3857/{z}/{y}/{x}.png",
-      { maxZoom: 20, maxNativeZoom: 19, attribution: bmAttr }
-    );
-    var ortho = L.tileLayer(
-      "https://mapsneu.wien.gv.at/basemap/bmaporthofoto30cm/normal/google3857/{z}/{y}/{x}.jpeg",
-      { maxZoom: 20, maxNativeZoom: 19, attribution: bmAttr }
-    );
+    // Basiskarten je Land kommen aus basemaps.js (app/country.py via
+    // _map_config.html). Fehlt die Datei, bleibt wenigstens OpenStreetMap.
+    if (window.wkBasemaps) return window.wkBasemaps.layers();
     var osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>-Mitwirkende',
     });
-    return { "Karte (basemap.at)": standard, "Orthofoto (basemap.at)": ortho, "OpenStreetMap": osm, _default: standard };
+    return { "OpenStreetMap": osm, _default: osm };
+  }
+
+  function mapView() {
+    return window.wkBasemaps ? window.wkBasemaps.view() : { center: [47.59, 14.14], zoom: 7 };
   }
 
   function createMap(elId) {
     var layers = baseLayers();
-    var map = L.map(elId, { center: [47.59, 14.14], zoom: 7, layers: [layers._default] });
+    var v = mapView();
+    var map = L.map(elId, { center: v.center, zoom: v.zoom, layers: [layers._default] });
     var bases = {};
-    Object.keys(layers).forEach(function (k) { if (k !== "_default") bases[k] = layers[k]; });
+    Object.keys(layers).forEach(function (k) { if (k.charAt(0) !== "_") bases[k] = layers[k]; });
     L.control.layers(bases, {}, { position: "topright" }).addTo(map);
     L.control.scale({ imperial: false }).addTo(map);
     return map;

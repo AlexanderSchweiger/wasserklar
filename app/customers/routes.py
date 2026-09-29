@@ -7,6 +7,7 @@ from flask_login import login_required
 from sqlalchemy import case as sa_case, func as sa_func, or_
 from sqlalchemy.exc import IntegrityError
 
+from app.country import home_country_name
 from app.customers import bp
 from app.customers.duplicate_check import find_similar_customers
 from app.extensions import db
@@ -594,7 +595,7 @@ def quick_create():
         hausnummer=request.form.get("hausnummer", "").strip(),
         plz=request.form.get("plz", "").strip(),
         ort=request.form.get("ort", "").strip(),
-        land=request.form.get("land", "Österreich").strip() or "Österreich",
+        land=(request.form.get("land") or "").strip() or home_country_name(),
         email=request.form.get("email", "").strip(),
         active=True,
     )
@@ -773,7 +774,7 @@ def _apply_customer_fields(customer, form, *, is_new: bool) -> str | None:
     customer.hausnummer = form.get("hausnummer", "").strip()
     customer.plz = form.get("plz", "").strip()
     customer.ort = form.get("ort", "").strip()
-    customer.land = form.get("land", "Österreich").strip() or "Österreich"
+    customer.land = (form.get("land") or "").strip() or home_country_name()
     customer.email = form.get("email", "").strip()
     customer.rechnung_per_email = form.get("rechnung_per_email") == "1"
     customer.phone = form.get("phone", "").strip()
@@ -789,16 +790,12 @@ def _apply_customer_fields(customer, form, *, is_new: bool) -> str | None:
         customer.member_since = datetime.strptime(ms, "%Y-%m-%d").date() if ms else None
     customer.externe_kennung = form.get("externe_kennung", "").strip() or None
 
-    raw_base = form.get("base_fee_override", "").strip().replace(",", ".")
-    try:
-        customer.base_fee_override = Decimal(raw_base) if raw_base else None
-    except InvalidOperation:
-        return f"Ungültiger Wert für Grundgebühr: {raw_base}"
-    raw_add = form.get("additional_fee_override", "").strip().replace(",", ".")
-    try:
-        customer.additional_fee_override = Decimal(raw_add) if raw_add else None
-    except InvalidOperation:
-        return f"Ungültiger Wert für Zusatzgebühr: {raw_add}"
+    # Individuelle Gebuehren (ChargeOverride je Gebuehrenart) — validiert
+    # komplett, bevor etwas geaendert wird.
+    from app.invoices.charges import apply_override_form
+    override_err = apply_override_form(customer, form)
+    if override_err:
+        return override_err
 
     # Kundennummer ist optional und unique. Auch reine Lieferanten duerfen
     # eine Nummer haben — nur die Auto-Vergabe bei leerem Feld bleibt Kunden

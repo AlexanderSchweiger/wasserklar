@@ -6,13 +6,13 @@
 #}
 {% set _defaults_board = {
   'heading': 'Einladung zur Vorstandssitzung',
-  'intro': '<p>Der Obmann eröffnet die Vorstandssitzung und begrüßt die Anwesenden. Er stellt die ordnungsgemäße Einladung sowie die Beschlussfähigkeit des Vorstands fest.</p>',
-  'closing': '<p>Da keine weiteren Punkte vorliegen, schließt der Obmann die Vorstandssitzung und dankt den Anwesenden für ihre Teilnahme.</p><p>Der Obmann<br>Obmanname</p>'
+  'intro': '<p>' ~ term('The_chairman') ~ ' eröffnet die Vorstandssitzung und begrüßt die Anwesenden. Er stellt die ordnungsgemäße Einladung sowie die Beschlussfähigkeit des Vorstands fest.</p>',
+  'closing': '<p>Da keine weiteren Punkte vorliegen, schließt ' ~ term('the_chairman') ~ ' die Vorstandssitzung und dankt den Anwesenden für ihre Teilnahme.</p><p>' ~ term('The_chairman') ~ '<br>Name</p>'
 } %}
 {% set _defaults_assembly = {
   'heading': 'Einladung zur Hauptversammlung',
-  'intro': '<p>Der Obmann eröffnet die ordentliche Hauptversammlung und begrüßt die erschienenen Mitglieder. Er stellt fest, dass die Einladung fristgerecht ergangen ist und die Versammlung beschlussfähig ist.</p>',
-  'closing': '<p>Da keine weiteren Wortmeldungen vorliegen, schließt der Obmann die Hauptversammlung und dankt den Mitgliedern für ihre Teilnahme.</p><p>Der Obmann<br>Obmanname</p>'
+  'intro': '<p>' ~ term('The_chairman') ~ ' eröffnet die ordentliche Hauptversammlung und begrüßt die erschienenen Mitglieder. Er stellt fest, dass die Einladung fristgerecht ergangen ist und die Versammlung beschlussfähig ist.</p>',
+  'closing': '<p>Da keine weiteren Wortmeldungen vorliegen, schließt ' ~ term('the_chairman') ~ ' die Hauptversammlung und dankt den Mitgliedern für ihre Teilnahme.</p><p>' ~ term('The_chairman') ~ '<br>Name</p>'
 } %}
 {% macro meeting_form_fields(meeting=None, meeting_type=None) %}
 {%- if meeting %}

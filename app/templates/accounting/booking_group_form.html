@@ -99,7 +99,7 @@
           </select>
         </div>
         <div class="col-12 col-sm-4">
-          <label class="form-label">Bank/Kassa</label>
+          <label class="form-label">Bank/{{ term('cash') }}</label>
           <select name="real_account_id" class="form-select tom-select">
             <option value="">– kein Konto –</option>
             {% for ra in real_accounts %}

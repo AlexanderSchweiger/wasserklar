@@ -28,9 +28,10 @@ def setup(app, user):
         name="P", start_date=date(TODAY.year, 1, 1),
         end_date=date(TODAY.year, 12, 31), active=True)
     db.session.add(period)
-    tariff = WaterTariff(
+    from app.invoices.charges import build_tariff
+    tariff = build_tariff(
         name="T", valid_from=TODAY.year, base_fee=Decimal("36.50"),
-        price_per_m3=Decimal("2"))
+        water_price=Decimal("2"))
     db.session.add(tariff)
     old = Customer(name="Alt Besitzer", customer_number=1)
     new = Customer(name="Neu Besitzer", customer_number=2)

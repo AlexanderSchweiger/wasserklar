@@ -42,7 +42,7 @@
       </a>
       <div class="ms-auto d-flex gap-2 align-items-center">
         <form method="post" action="{{ url_for('meter_tours.set_interval') }}"
-              class="d-flex align-items-center" title="Nacheichfrist in Jahren (Österreich: 5 Jahre für Kaltwasserzähler)">
+              class="d-flex align-items-center" title="Nacheichfrist in Jahren ({{ country.calibration_hint }})">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <span class="text-secondary small me-1">Eichfrist</span>
           <input type="number" name="interval" value="{{ interval }}" min="1" max="30"

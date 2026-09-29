@@ -10,6 +10,7 @@ import io
 from flask import render_template
 
 from app.models import AppSetting
+from app.country import is_foreign
 from app.invoices.design import get_design
 from app.settings_service import (
     wg_settings, get_contact_info, get_contact_info_font_size,
@@ -130,7 +131,7 @@ def build_letter_docx(circular, customer):
         addr.add_run("\n" + street)
     if city:
         addr.add_run("\n" + city)
-    if customer.land and customer.land != "Österreich":
+    if is_foreign(customer.land):
         addr.add_run("\n" + customer.land)
 
     # Betreff.

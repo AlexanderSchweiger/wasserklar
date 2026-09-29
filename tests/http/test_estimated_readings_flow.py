@@ -89,9 +89,9 @@ class TestEstimatedReadingLifecycle:
         db.session.add(FiscalYear(
             year=today.year, start_date=date(today.year, 1, 1),
             end_date=date(today.year, 12, 31)))
-        tariff = WaterTariff(name="T", valid_from=2024,
-                             base_fee=Decimal("30"), price_per_m3=Decimal("2"))
-        db.session.add(tariff)
+        from app.invoices.charges import build_tariff
+        tariff = build_tariff(name="T", valid_from=2024,
+                              base_fee=Decimal("30"), water_price=Decimal("2"))
         cust = Customer(name="Kunde", customer_number=1)
         db.session.add(cust)
         db.session.flush()
@@ -185,8 +185,8 @@ class TestNegativeInvoiceCapped:
             year=today.year, start_date=date(today.year, 1, 1),
             end_date=date(today.year, 12, 31)))
         # Kein Grund-/Zusatzgebühr -> Verbrauch ist die einzige Position.
-        tariff = WaterTariff(name="T", valid_from=2026, price_per_m3=Decimal("1.5"))
-        db.session.add(tariff)
+        from app.invoices.charges import build_tariff
+        tariff = build_tariff(name="T", valid_from=2026, water_price=Decimal("1.5"))
         cust = Customer(name="Kunde", customer_number=1)
         db.session.add(cust)
         db.session.flush()
@@ -262,8 +262,8 @@ class TestCorrectionReversalOnDelete:
         db.session.add(FiscalYear(
             year=today.year, start_date=date(today.year, 1, 1),
             end_date=date(today.year, 12, 31)))
-        tariff = WaterTariff(name="T", valid_from=2026, price_per_m3=Decimal("1.5"))
-        db.session.add(tariff)
+        from app.invoices.charges import build_tariff
+        tariff = build_tariff(name="T", valid_from=2026, water_price=Decimal("1.5"))
         cust = Customer(name="Kunde", customer_number=1)
         db.session.add(cust)
         db.session.flush()

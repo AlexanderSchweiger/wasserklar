@@ -1,0 +1,45 @@
+{# Abschnitt „Individuelle Gebühren" im Kunden- bzw. Objektformular.
+   Erwartet: override_rows (charges.override_form_rows via Jinja-Global
+   charge_override_rows) und inherit_label („wie Tarif" / „wie Kunde bzw. Tarif").
+   Je überschreibbarer Gebührenart: erbt · eigener Betrag · entfällt. Ein
+   eingetippter Betrag bei „erbt" gilt serverseitig als eigener Betrag. #}
+{% if override_rows %}
+<div class="table-responsive">
+  <table class="table table-sm table-vcenter mb-2">
+    <thead>
+      <tr>
+        <th>Gebührenart</th>
+        <th style="min-width:11rem">Regel</th>
+        <th style="min-width:10rem">Betrag</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in override_rows %}
+      {% set ct = row.ct %}
+      <tr>
+        <td>
+          {{ ct.label }}
+          {% if not ct.active %}<span class="badge bg-secondary-lt ms-1">ausgeblendet</span>{% endif %}
+        </td>
+        <td>
+          <select name="ov_mode_{{ ct.id }}" class="form-select form-select-sm">
+            <option value="" {{ 'selected' if row.mode == '' }}>{{ inherit_label }}</option>
+            <option value="amount" {{ 'selected' if row.mode == 'amount' }}>eigener Betrag</option>
+            <option value="exempt" {{ 'selected' if row.mode == 'exempt' }}>entfällt</option>
+          </select>
+        </td>
+        <td>
+          <div class="input-group input-group-sm">
+            <input type="text" inputmode="decimal" name="ov_amount_{{ ct.id }}" class="form-control"
+                   value="{{ row.amount }}" placeholder="{{ '0,0000' if ct.is_per_m3 else '0,00' }}">
+            <span class="input-group-text">{{ '€/m³' if ct.is_per_m3 else '€' }}</span>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="text-muted small mb-2">Keine individuell überschreibbaren Gebührenarten vorhanden.</p>
+{% endif %}

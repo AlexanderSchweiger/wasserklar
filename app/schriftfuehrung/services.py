@@ -11,7 +11,7 @@ from app.models import (
     AppSetting, Customer, WgFunction,
     Meeting, MeetingAttendance, MeetingResolution, MeetingProtocol,
 )
-from app.wg import BOARD_FUNCTIONS, FUNCTION_LABELS, function_keys_ordered
+from app.wg import BOARD_FUNCTIONS, function_keys_ordered, function_label
 
 
 def _is_member(customer):
@@ -62,7 +62,7 @@ def preselect_recipient_ids(meeting_type):
 def customer_function_labels(customer):
     """Deutsche Funktions-Labels eines Kontakts in kanonischer Reihenfolge."""
     keys = function_keys_ordered(customer.function_keys())
-    return [FUNCTION_LABELS.get(k, k) for k in keys]
+    return [function_label(k) for k in keys]
 
 
 def total_member_count():

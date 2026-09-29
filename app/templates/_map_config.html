@@ -1,0 +1,5 @@
+{# Karten-Konfiguration (Basiskarten + Startausschnitt je Land, app/country.py)
+   fuer static/js/basemaps.js. Nicht-ausfuehrbares JSON: CSP-tauglich (auch auf
+   der oeffentlichen Feuerwehr-Freigabe) und hx-boost-sicher. #}
+<script type="application/json" id="wk-map-config">{{ map_config() | tojson }}</script>
+<script src="{{ url_for('static', filename='js/basemaps.js', v=oss_version) }}"></script>

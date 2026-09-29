@@ -166,5 +166,6 @@
 {% if tour_data.can_invoice %}
 {% include "meter_tours/_invoice_modal_scripts.html" %}
 {% endif %}
+{% include "_map_config.html" %}
 <script src="{{ url_for('static', filename='js/tours-map.js') }}"></script>
 {% endblock %}

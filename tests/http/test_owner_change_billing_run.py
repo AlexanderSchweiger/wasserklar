@@ -43,9 +43,10 @@ def scenario(app, admin):
         name="P", start_date=date(TODAY.year, 1, 1),
         end_date=date(TODAY.year, 12, 31), active=True)
     db.session.add(period)
-    tariff = WaterTariff(
+    from app.invoices.charges import build_tariff
+    tariff = build_tariff(
         name="T", valid_from=TODAY.year, base_fee=Decimal("36.50"),
-        price_per_m3=Decimal("2"))
+        water_price=Decimal("2"))
     db.session.add(tariff)
     db.session.add(Account(name="Wasser"))
     old = Customer(name="Alt", customer_number=1)

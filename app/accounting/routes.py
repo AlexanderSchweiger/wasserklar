@@ -180,7 +180,7 @@ def _bookings_table_ctx(params, bulk_done_count=None):
         quarter = 0
     # tax: "" (alle) / "any" (alle mit Steuer ≠ 0%) / Satz-Wert ("10", "20", …)
     tax = params.get("tax", "", type=str)
-    _tax_values = {str(int(r)) for r in tax_service.tax_rate_values()}
+    _tax_values = {str(int(r)) for r in tax_service.known_rate_values()}
     if tax not in ({"any"} | _tax_values):
         tax = ""
 
@@ -360,7 +360,7 @@ def bookings():
         accounts=accounts, projects=projects,
         real_accounts=real_accounts,
         customers=customers, assignable_projects=assignable_projects,
-        tax_rates=tax_service.tax_rates(),
+        tax_rates=tax_service.tax_rates(include_inactive=True),
         filter_include=_BOOKINGS_FILTER_INCLUDE,
         refresh_include=_BOOKINGS_REFRESH_INCLUDE,
         **filters,
@@ -486,7 +486,8 @@ def _booking_form_context(booking=None):
         projects=projects,
         real_accounts=real_accounts,
         customers=customers,
-        tax_rates=tax_service.tax_rates(),
+        tax_rates=tax_service.tax_rates(
+            include=booking.tax_rate if booking is not None else None),
         default_real_account=RealAccount.query.filter_by(is_default=True, active=True).first(),
         today=date.today(),
     )
@@ -562,7 +563,7 @@ def _parse_booking_form(form, today, *, booking=None):
             tax_rate = Decimal(tax_rate_raw) if tax_rate_raw else Decimal("0")
         except (InvalidOperation, ValueError):
             tax_rate = Decimal("0")
-        known_rates = set(tax_service.tax_rate_values())
+        known_rates = set(tax_service.known_rate_values())
         data["tax_rate"] = tax_rate if (tax_rate > 0 and tax_rate in known_rates) else None
 
         # Belegnummer (optional)
@@ -1077,7 +1078,8 @@ def booking_group_edit(group_id):
     active_projects = Project.query.filter_by(closed=False).order_by(Project.name).all()
     real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
     customers = Customer.query.filter_by(active=True).order_by(Customer.name).all()
-    tax_rates = tax_service.tax_rates()
+    # Saetze der bestehenden Zeilen mitnehmen (auch wenn inzwischen deaktiviert).
+    tax_rates = tax_service.tax_rates(include=[c.tax_rate for c in group.children])
     default_real_account = RealAccount.query.filter_by(is_default=True, active=True).first()
     today = date.today()
 
@@ -2629,7 +2631,7 @@ def export_csv():
         query = query.filter(Booking.tax_rate.isnot(None), Booking.tax_rate > 0)
     elif tax == "0":
         query = query.filter(db.or_(Booking.tax_rate.is_(None), Booking.tax_rate == 0))
-    elif tax in {str(int(r)) for r in tax_service.tax_rate_values()}:
+    elif tax in {str(int(r)) for r in tax_service.known_rate_values()}:
         query = query.filter(Booking.tax_rate == Decimal(tax))
     bookings = query.order_by(Booking.date, Booking.id).all()
 

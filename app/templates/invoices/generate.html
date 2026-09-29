@@ -73,8 +73,7 @@
               <option value="{{ t.id }}">
                 {{ t.name }}
                 ({{ t.valid_from }}{% if t.valid_to %}–{{ t.valid_to }}{% else %} aktuell{% endif %})
-                – {{ t.price_per_m3 }} €/m³
-                {% if t.base_fee %}, Grundgebühr {{ t.base_fee }} €{% endif %}
+                – {{ t.summary }}
               </option>
               {% else %}
               <option disabled>Kein Tarif vorhanden – bitte zuerst anlegen</option>

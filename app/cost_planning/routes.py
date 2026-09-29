@@ -473,19 +473,18 @@ def goal_apply_tariff(goal_id):
               "danger")
         return redirect(url_for("cost_planning.goal_detail", goal_id=goal.id))
 
-    params = {
-        "name": f"Tarif ab {goal.start_year}",
-        "valid_from": goal.start_year,
-        "price_per_m3": scenario.price_per_m3,
-    }
+    # Der neue Tarif uebernimmt ALLE Positionen des aktuellen (Texte, USt,
+    # Konten, Wassercent …) — nur Wasserpreis und Grundgebuehr kommen aus dem
+    # Paket. Ohne aktuellen Tarif entstehen die Positionen aus dem Katalog.
+    from app.invoices.charges import ensure_system_charge_types, tariff_form_params
+    from app.models import ChargeType
+    ensure_system_charge_types()
+    amounts = {ChargeType.KEY_WATER: scenario.price_per_m3}
     if scenario.base_fee is not None:
-        params["base_fee"] = scenario.base_fee
-    if scenario.additional_fee is not None:
-        params["additional_fee"] = scenario.additional_fee
-    if ctx["tariff"] is not None:
-        params["base_fee_label"] = ctx["tariff"].base_fee_label or "Grundgebühr"
-        params["additional_fee_label"] = (
-            ctx["tariff"].additional_fee_label or "Zusatzgebühr")
+        amounts[ChargeType.KEY_BASE_FEE] = scenario.base_fee
+    params = tariff_form_params(
+        ctx["tariff"], name=f"Tarif ab {goal.start_year}",
+        valid_from=goal.start_year, amounts=amounts)
     params["notes"] = (
         f"Aus der Plankostenrechnung „{goal.name}“ "
         f"(Paket {scenario.label}, Bedarf "

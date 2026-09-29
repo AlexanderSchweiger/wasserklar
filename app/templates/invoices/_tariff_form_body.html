@@ -1,70 +1,38 @@
-{# Konto-Dropdown fuer eine Gebuehrenart. Das gewaehlte Konto landet im
-   Rechnungslauf auf der erzeugten Position und von dort in der Buchung. #}
-{% macro fee_account(field, selected) %}
-<select name="{{ field }}" class="form-select">
-  <option value="">– kein Konto –</option>
-  {% for a in accounts %}
-  <option value="{{ a.id }}" {{ 'selected' if selected == a.id }}>
-    {% if a.code %}{{ a.code }} – {% endif %}{{ a.name }}
-  </option>
-  {% endfor %}
-</select>
-{% endmacro %}
-{# Form-Body fuers Tarif-Modal — per HTMX in tariffModalBody geladen.
-   Erwartet tariff (oder None) + optional form (nach Validierungsfehler). #}
+{# Form-Body fuers Tarif-Modal (und die Vollseite tariff_form.html).
+   Erwartet tariff (oder None), form (nach Validierungsfehler / Vorbelegung),
+   component_rows (je Gebührenart eine Zeile, siehe _tariff_form_rows),
+   tax_options, accounts. #}
 {% include "_flash_inline.html" %}
 {% if form %}
   {% set val_name = form.get('name', '') %}
   {% set val_valid_from = form.get('valid_from', '') %}
   {% set val_valid_to = form.get('valid_to', '') %}
-  {% set val_base_fee = form.get('base_fee', '') %}
-  {% set val_base_fee_label = form.get('base_fee_label', '') %}
-  {% set val_base_fee_account = form.get('base_fee_account_id', '')|int(0) %}
-  {% set val_additional_fee = form.get('additional_fee', '') %}
-  {% set val_additional_fee_label = form.get('additional_fee_label', '') %}
-  {% set val_additional_fee_account = form.get('additional_fee_account_id', '')|int(0) %}
-  {% set val_price_per_m3 = form.get('price_per_m3', '') %}
-  {% set val_price_per_m3_account = form.get('price_per_m3_account_id', '')|int(0) %}
   {% set val_notes = form.get('notes', '') %}
 {% elif tariff %}
   {% set val_name = tariff.name %}
   {% set val_valid_from = tariff.valid_from %}
   {% set val_valid_to = tariff.valid_to if tariff.valid_to is not none else '' %}
-  {% set val_base_fee = tariff.base_fee if tariff.base_fee is not none else '' %}
-  {% set val_base_fee_label = tariff.base_fee_label or '' %}
-  {% set val_base_fee_account = tariff.base_fee_account_id or 0 %}
-  {% set val_additional_fee = tariff.additional_fee if tariff.additional_fee is not none else '' %}
-  {% set val_additional_fee_label = tariff.additional_fee_label or '' %}
-  {% set val_additional_fee_account = tariff.additional_fee_account_id or 0 %}
-  {% set val_price_per_m3 = tariff.price_per_m3 %}
-  {% set val_price_per_m3_account = tariff.price_per_m3_account_id or 0 %}
   {% set val_notes = tariff.notes or '' %}
 {% else %}
   {% set val_name = '' %}
   {% set val_valid_from = '' %}
   {% set val_valid_to = '' %}
-  {% set val_base_fee = '' %}
-  {% set val_base_fee_label = '' %}
-  {% set val_base_fee_account = 0 %}
-  {% set val_additional_fee = '' %}
-  {% set val_additional_fee_label = '' %}
-  {% set val_additional_fee_account = 0 %}
-  {% set val_price_per_m3 = '' %}
-  {% set val_price_per_m3_account = 0 %}
   {% set val_notes = '' %}
 {% endif %}
-<div class="mb-3">
-  <label class="form-label">Name <span class="text-danger">*</span></label>
-  <input type="text" name="name" class="form-control" value="{{ val_name }}" required>
-</div>
 <div class="row g-2">
   <div class="col-md-6">
+    <div class="mb-3">
+      <label class="form-label">Name <span class="text-danger">*</span></label>
+      <input type="text" name="name" class="form-control" value="{{ val_name }}" required>
+    </div>
+  </div>
+  <div class="col-md-3">
     <div class="mb-3">
       <label class="form-label">Gültig von (Jahr) <span class="text-danger">*</span></label>
       <input type="number" name="valid_from" class="form-control" value="{{ val_valid_from }}" required>
     </div>
   </div>
-  <div class="col-md-6">
+  <div class="col-md-3">
     <div class="mb-3">
       <label class="form-label">Gültig bis <small class="text-muted">(leer = aktuell)</small></label>
       <input type="number" name="valid_to" class="form-control" value="{{ val_valid_to }}">
@@ -73,83 +41,93 @@
 </div>
 
 <hr>
-<h6 class="text-muted mb-3">Gebühren</h6>
-<div class="alert alert-info py-2 mb-3">
+<h6 class="text-muted mb-2">Positionen</h6>
+<div class="alert alert-info py-2 mb-3 small">
   <i class="fas fa-info-circle me-1"></i>
-  <strong>Hinweis:</strong> Grundgebühr und Zusatzgebühr erscheinen nur dann als Rechnungsposition,
-  wenn ein Betrag eingetragen ist. Auch <code>0,00</code> erzeugt eine Position.
-  Leer lassen = diese Gebühr wird auf der Rechnung gar nicht angezeigt.
-  Das <strong>Konto</strong> bestimmt, wohin die Zahlung später gebucht wird — sind die drei
-  Konten verschieden, entsteht beim Bezahlen automatisch eine Sammelbuchung.
+  Jede angehakte Position erscheint als eigene Zeile auf der Rechnung. Bei Grund- und
+  Zusatzgebühr bedeutet ein <strong>leerer Betrag</strong>: nur für Kunden/Objekte mit
+  individuellem Betrag. Individuelle Beträge pflegen Sie am Kunden bzw. Objekt — sie ersetzen
+  nur den <strong>Betrag</strong>; Text, USt und Konto kommen immer aus dem Tarif. Die USt
+  greift nur in umsatzsteuerpflichtigen Buchungsjahren; das <strong>Konto</strong> bestimmt,
+  wohin die Zahlung später gebucht wird.
 </div>
-
-<div class="row g-2">
-  <div class="col-md-4">
-    <div class="mb-3">
-      <label class="form-label">Grundgebühr (€/Jahr) <small class="text-muted">(leer = keine Position)</small></label>
-      <div class="input-group">
-        <input type="number" name="base_fee" step="0.01" class="form-control" value="{{ val_base_fee }}">
-        <span class="input-group-text">€</span>
-      </div>
-    </div>
-  </div>
-  <div class="col-md-4">
-    <div class="mb-3">
-      <label class="form-label">Bezeichnung auf Rechnung</label>
-      <input type="text" name="base_fee_label" class="form-control"
-        placeholder="Grundgebühr" value="{{ val_base_fee_label }}">
-    </div>
-  </div>
-  <div class="col-md-4">
-    <div class="mb-3">
-      <label class="form-label">Konto</label>
-      {{ fee_account('base_fee_account_id', val_base_fee_account) }}
-    </div>
-  </div>
+<div class="table-responsive">
+  <table class="table table-sm table-vcenter mb-2">
+    <thead>
+      <tr>
+        <th style="width:2rem"></th>
+        <th style="min-width:14rem">Position (Rechnungstext)</th>
+        <th style="min-width:10rem">Betrag</th>
+        <th style="min-width:8rem">USt</th>
+        <th style="min-width:12rem">Konto</th>
+        <th style="min-width:9rem">gilt ab <small class="text-muted">(optional)</small></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in component_rows %}
+      {% set ct = row.ct %}
+      <tr>
+        <td>
+          {% if row.is_water %}
+          <input type="hidden" name="comp_on_{{ ct.id }}" value="1">
+          <input type="checkbox" class="form-check-input" checked disabled
+                 title="Pflichtposition jedes Tarifs">
+          {% else %}
+          <input type="checkbox" class="form-check-input" name="comp_on_{{ ct.id }}" value="1"
+                 {{ 'checked' if row.on }} aria-label="{{ ct.label }} in den Tarif aufnehmen">
+          {% endif %}
+        </td>
+        <td>
+          <input type="text" name="comp_label_{{ ct.id }}" class="form-control form-control-sm"
+                 value="{{ row.label }}" placeholder="{{ ct.label }}" maxlength="100">
+          <div class="small text-muted mt-1">
+            {{ ct.calc_label }}
+            {% if ct.is_levy %}<span class="badge bg-orange-lt ms-1" title="An das Land weitergereichte Abgabe">Abgabe</span>{% endif %}
+            {% if ct.overridable %}<span class="ms-1">· individuell überschreibbar</span>{% endif %}
+            {% if not ct.active %}<span class="badge bg-secondary-lt ms-1">deaktiviert</span>{% endif %}
+          </div>
+        </td>
+        <td>
+          <div class="input-group input-group-sm">
+            <input type="text" inputmode="decimal" name="comp_amount_{{ ct.id }}" class="form-control"
+                   value="{{ row.amount }}" {{ 'required' if row.is_water }}
+                   placeholder="{{ '0,0000' if ct.is_per_m3 else ('nur individuell' if ct.overridable else '0,00') }}">
+            <span class="input-group-text">{{ '€/m³' if ct.is_per_m3 else '€' }}</span>
+          </div>
+        </td>
+        <td>
+          <select name="comp_tax_{{ ct.id }}" class="form-select form-select-sm">
+            <option value="" {{ 'selected' if not row.tax }}>keine USt</option>
+            {% for opt in tax_options %}
+            <option value="{{ opt.value }}" {{ 'selected' if row.tax == opt.value }}>{{ opt.label }}</option>
+            {% endfor %}
+          </select>
+        </td>
+        <td>
+          <select name="comp_account_{{ ct.id }}" class="form-select form-select-sm">
+            <option value="">– kein Konto –</option>
+            {% for a in accounts %}
+            <option value="{{ a.id }}" {{ 'selected' if row.account_id == a.id }}>
+              {% if a.code %}{{ a.code }} – {% endif %}{{ a.name }}
+            </option>
+            {% endfor %}
+          </select>
+        </td>
+        <td>
+          {% if not row.is_water %}
+          <input type="date" name="comp_valid_from_{{ ct.id }}" class="form-control form-control-sm"
+                 value="{{ row.valid_from }}"
+                 title="Gilt erst ab diesem Tag (z. B. Wassercent ab 1.7.) — Menge bzw. Betrag werden im Rechnungslauf zeitanteilig abgegrenzt">
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
 </div>
-
-<div class="row g-2">
-  <div class="col-md-4">
-    <div class="mb-3">
-      <label class="form-label">Zusatzgebühr (€/Jahr) <small class="text-muted">(leer = keine Position)</small></label>
-      <div class="input-group">
-        <input type="number" name="additional_fee" step="0.01" class="form-control" value="{{ val_additional_fee }}">
-        <span class="input-group-text">€</span>
-      </div>
-    </div>
-  </div>
-  <div class="col-md-4">
-    <div class="mb-3">
-      <label class="form-label">Bezeichnung auf Rechnung</label>
-      <input type="text" name="additional_fee_label" class="form-control"
-        placeholder="Zusatzgebühr" value="{{ val_additional_fee_label }}">
-    </div>
-  </div>
-  <div class="col-md-4">
-    <div class="mb-3">
-      <label class="form-label">Konto</label>
-      {{ fee_account('additional_fee_account_id', val_additional_fee_account) }}
-    </div>
-  </div>
-</div>
-
-<div class="row g-2">
-  <div class="col-md-4">
-    <div class="mb-3">
-      <label class="form-label">Preis pro m³ <span class="text-danger">*</span></label>
-      <div class="input-group">
-        <input type="number" name="price_per_m3" step="0.0001" class="form-control"
-          value="{{ val_price_per_m3 }}" required>
-        <span class="input-group-text">€/m³</span>
-      </div>
-    </div>
-  </div>
-  <div class="col-md-4 offset-md-4">
-    <div class="mb-3">
-      <label class="form-label">Konto</label>
-      {{ fee_account('price_per_m3_account_id', val_price_per_m3_account) }}
-    </div>
-  </div>
+<div class="form-text mb-3">
+  Weitere Gebührenarten (z. B. Abwasser, Zählermiete) legen Sie auf der Tarif-Seite unter
+  „Gebührenarten" an.
 </div>
 
 <hr>

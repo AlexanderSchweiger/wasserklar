@@ -111,19 +111,39 @@ def apply_schema_upgrades(conn, dialect, *, verbose=False, schema=None):
         _add(table, col_def, col_name)
 
 
-def seed_default_tax_rates(db, *, verbose=False):
-    """Die Standard-Steuersaetze idempotent anlegen (Quelle: tax_service)."""
-    from app.models import TaxRate
-    from app import tax_service
+def seed_default_tax_rates(db, *, verbose=False, country_code=None):
+    """Die Standard-Steuersaetze des Mandanten-Landes idempotent anlegen.
 
-    for tr in tax_service.tax_rates():
-        if not TaxRate.query.filter_by(rate=tr.rate).first():
-            db.session.add(TaxRate(rate=tr.rate, label=tr.label))
+    Quelle: ``app.country`` (nicht ``tax_service`` — der liest selbst aus der
+    Tabelle). Vorhandene Saetze bleiben unangetastet, auch deaktivierte: ein
+    vom Mandanten abgeschalteter Satz wird so nicht bei jedem ``upgrade-db``
+    wiederbelebt.
+    """
+    from app.models import TaxRate
+    from app import country
+
+    for rate, label in country.profile(country_code).tax_rates:
+        if not TaxRate.query.filter_by(rate=rate).first():
+            db.session.add(TaxRate(rate=rate, label=label, active=True))
             if verbose:
-                print(f"  + Steuersatz {tr.rate}% angelegt.")
+                print(f"  + Steuersatz {rate}% angelegt.")
         elif verbose:
-            print(f"  ok Steuersatz {tr.rate}% bereits vorhanden.")
+            print(f"  ok Steuersatz {rate}% bereits vorhanden.")
     db.session.commit()
+
+
+def seed_default_charge_types(db, *, verbose=False, country_code=None):
+    """Die System-Gebührenarten (Wasser, Wassercent, Grund-/Zusatzgebuehr)
+    idempotent anlegen. Die Alembic-Migration seedet sie ebenfalls — das hier
+    deckt Resets/Wipes und per ``create_all`` angelegte DBs ab."""
+    from app.invoices.charges import ensure_system_charge_types
+    added = ensure_system_charge_types(country_code)
+    db.session.commit()
+    if verbose:
+        if added:
+            print(f"  + {len(added)} Gebührenart(en) angelegt.")
+        else:
+            print("  ok Gebührenarten bereits vorhanden.")
 
 
 def seed_default_dunning_policy(db, *, verbose=False):
@@ -172,15 +192,20 @@ def seed_default_dunning_policy(db, *, verbose=False):
         print("  + Standard-Mahnvorlage mit 4 Stufen angelegt.")
 
 
-def seed_default_roles(db, *, verbose=False):
+def seed_default_roles(db, *, verbose=False, country_code=None):
     """Die drei Standard-Rollen idempotent anlegen.
 
     Quelle der Wahrheit: app.auth.permissions. Admin (is_system=True) hat
     implizit alle Rechte und kann nicht editiert/geloescht werden — daher
     keine RolePermission-Eintraege noetig (Logik im Model). Kassier und
-    Zaehlerverwalter bekommen ihre Default-Berechtigungen.
+    Zaehlerverwalter bekommen ihre Default-Berechtigungen. Die Kassier-Rolle
+    heisst je Land „Kassier" (AT) bzw. „Kassierer" (DE); existiert eine der
+    Schreibweisen schon, wird keine zweite angelegt. Die RBAC-Migration legt
+    „Kassier" an, bevor das Land des Mandanten feststeht — solange niemand die
+    Rolle nutzt, wird sie deshalb auf die Schreibweise des Landes umbenannt.
     """
-    from app.models import Role, RolePermission
+    from app import country
+    from app.models import Role, RolePermission, User
     from app.auth.permissions import (
         PERM_AUSWERTUNGEN,
         PERM_BUCHHALTUNG,
@@ -189,15 +214,22 @@ def seed_default_roles(db, *, verbose=False):
         PERM_ZAEHLER,
     )
 
+    treasurer = country.term("role_treasurer", country_code)
     defaults = [
         ("Admin", "Vollzugriff auf alle Bereiche", True, []),
-        ("Kassier", "Buchhaltung, Rechnungen/OP, Mahnwesen und Auswertungen", False,
+        (treasurer, "Buchhaltung, Rechnungen/OP, Mahnwesen und Auswertungen", False,
          [PERM_BUCHHALTUNG, PERM_RECHNUNGEN, PERM_MAHNWESEN, PERM_AUSWERTUNGEN]),
         ("Zählerverwalter", "Verwaltung von Zählern und Ablesungen", False,
          [PERM_ZAEHLER]),
     ]
     for name, desc, is_system, perms in defaults:
-        role = Role.query.filter_by(name=name).first()
+        names = country.role_treasurer_names() if name == treasurer else (name,)
+        role = Role.query.filter(Role.name.in_(names)).first()
+        if (role is not None and name == treasurer and role.name != treasurer
+                and not User.query.filter_by(role_id=role.id).first()):
+            if verbose:
+                print(f"  ~ Rolle '{role.name}' -> '{treasurer}' umbenannt.")
+            role.name = treasurer
         if role is None:
             role = Role(name=name, description=desc, is_system=is_system)
             db.session.add(role)
@@ -338,11 +370,11 @@ def _wipe_business_data(db, *, verbose: bool = False) -> None:
     """Loescht alle Geschaefts-Daten (Tabellen behalten), re-seeded Defaults.
 
     Identisches Verhalten wie ``clear-db --full``, aber ohne interaktiven Prompt.
-    Schutzliste: tax_rates, dunning_policies, dunning_stages. Defaults
+    Schutzliste: tax_rates, dunning_policies, dunning_stages, charge_types. Defaults
     (Steuersaetze, Mahnvorlage, Abrechnungsperiode, Rollen) werden danach
     idempotent neu eingespielt.
     """
-    schutz = {"tax_rates", "dunning_policies", "dunning_stages"}
+    schutz = {"tax_rates", "dunning_policies", "dunning_stages", "charge_types"}
     dialect = db.engine.dialect.name
     existing = set(sa.inspect(db.engine).get_table_names())
     tables = [t for t in db.metadata.tables.values()
@@ -369,6 +401,7 @@ def _wipe_business_data(db, *, verbose: bool = False) -> None:
         print(f"  {len(tables)} Tabelle(n) geleert.")
 
     seed_default_tax_rates(db, verbose=verbose)
+    seed_default_charge_types(db, verbose=verbose)
     seed_default_dunning_policy(db, verbose=verbose)
     seed_default_billing_period(db, verbose=verbose)
     seed_default_roles(db, verbose=verbose)
@@ -380,13 +413,29 @@ def register_commands(app):
     from app.models import User, Account, TaxRate, DunningPolicy, DunningStage
 
     @app.cli.command("init-db")
-    def init_db():
+    @click.option("--country", "country_code", default=None,
+                  help="Land des Mandanten (AT | DE). Steuert u.a. die geseedeten "
+                       "Steuersaetze. Ohne Angabe: DEFAULT_COUNTRY aus der .env bzw. AT.")
+    def init_db(country_code):
         """Datenbanktabellen via Alembic anlegen und Defaults seeden."""
         from flask_migrate import upgrade as alembic_upgrade
+        from app import country
         alembic_upgrade()
         print("Datenbankschema auf head migriert.")
 
+        if country_code is not None:
+            code = country.normalize_code(country_code)
+            if code is None:
+                raise click.ClickException(
+                    f"Unbekanntes Land {country_code!r} — erlaubt: "
+                    + ", ".join(country.PROFILES))
+            from app.models import AppSetting
+            AppSetting.set(country.SETTING_KEY, code)
+            db.session.commit()
+            print(f"Land des Mandanten: {country.PROFILES[code].name}")
+
         seed_default_tax_rates(db)
+        seed_default_charge_types(db)
         seed_default_dunning_policy(db)
         seed_default_billing_period(db)
         seed_default_roles(db)
@@ -442,6 +491,7 @@ def register_commands(app):
         print("Datenbankschema auf head migriert.")
 
         seed_default_tax_rates(db, verbose=True)
+        seed_default_charge_types(db, verbose=True)
         seed_default_dunning_policy(db, verbose=True)
         seed_default_billing_period(db, verbose=True)
         seed_default_roles(db, verbose=True)
@@ -487,7 +537,9 @@ def register_commands(app):
         from app.models import Role
         seed_default_roles(db)
         admin_role = Role.query.filter_by(name="Admin").first()
-        kassier_role = Role.query.filter_by(name="Kassier").first()
+        from app import country as _country
+        kassier_role = Role.query.filter(
+            Role.name.in_(_country.role_treasurer_names())).first()
         admin = User.query.filter_by(username="admin").first()
         if not admin:
             admin = User(username="admin", email="admin@wassergenossenschaft.at",
@@ -526,24 +578,20 @@ def register_commands(app):
         # ------------------------------------------------------------------
         # Tarife
         # ------------------------------------------------------------------
-        tarif2021 = WaterTariff(
-            name="Tarif 2021",
-            valid_from=2021, valid_to=2021,
-            base_fee=Decimal("28.00"), price_per_m3=Decimal("1.10"),
+        from app.invoices.charges import build_tariff
+        tarif2021 = build_tariff(
+            name="Tarif 2021", valid_from=2021, valid_to=2021,
+            base_fee=Decimal("28.00"), water_price=Decimal("1.10"),
         )
-        tarif2022 = WaterTariff(
-            name="Tarif 2022",
-            valid_from=2022, valid_to=2023,
-            base_fee=Decimal("30.00"), price_per_m3=Decimal("1.20"),
+        tarif2022 = build_tariff(
+            name="Tarif 2022", valid_from=2022, valid_to=2023,
+            base_fee=Decimal("30.00"), water_price=Decimal("1.20"),
         )
-        tarif2024 = WaterTariff(
-            name="Tarif 2024",
-            valid_from=2024, valid_to=None,
-            base_fee=Decimal("35.00"), price_per_m3=Decimal("1.45"),
+        tarif2024 = build_tariff(
+            name="Tarif 2024", valid_from=2024, valid_to=None,
+            base_fee=Decimal("35.00"), water_price=Decimal("1.45"),
             notes="Preisanpassung wegen gestiegener Betriebskosten",
         )
-        db.session.add_all([tarif2021, tarif2022, tarif2024])
-        db.session.flush()
 
         # ------------------------------------------------------------------
         # Kunden
@@ -657,8 +705,8 @@ def register_commands(app):
         # Rechnungen + Positionen + Buchungen
         # ------------------------------------------------------------------
         def make_invoice(nr, kunde, objekt, jahr, status, tarif, verbrauch_m3, created_by):
-            base = tarif.base_fee
-            preis = tarif.price_per_m3
+            base = tarif.component("base_fee").amount
+            preis = tarif.water_price
             wasserkosten = (preis * verbrauch_m3).quantize(Decimal("0.01"))
             gesamt = (base + wasserkosten).quantize(Decimal("0.01"))
             inv = Invoice(
@@ -678,13 +726,13 @@ def register_commands(app):
                 invoice_id=inv.id,
                 description="Grundgebühr Wasserversorgung",
                 quantity=Decimal("1"), unit="Stk",
-                unit_price=base, amount=base,
+                unit_price=base, amount=base, charge_key="base_fee",
             ))
             db.session.add(InvoiceItem(
                 invoice_id=inv.id,
                 description=f"Wasserverbrauch {jahr} ({verbrauch_m3} m³)",
                 quantity=verbrauch_m3, unit="m³",
-                unit_price=preis, amount=wasserkosten,
+                unit_price=preis, amount=wasserkosten, charge_key="water",
             ))
             db.session.flush()
             if status == Invoice.STATUS_PAID:
@@ -881,7 +929,7 @@ def register_commands(app):
         Mahnrichtlinie, Abrechnungsperiode) werden geleert, dann werden die
         Defaults neu eingespielt.
         """
-        schutz = {"tax_rates", "dunning_policies", "dunning_stages"}
+        schutz = {"tax_rates", "dunning_policies", "dunning_stages", "charge_types"}
         if not full:
             schutz |= {"users", "user_preferences", "app_settings"}
 
@@ -921,6 +969,7 @@ def register_commands(app):
 
         if full:
             seed_default_tax_rates(db)
+            seed_default_charge_types(db)
             seed_default_dunning_policy(db)
             seed_default_billing_period(db)
             seed_default_roles(db)

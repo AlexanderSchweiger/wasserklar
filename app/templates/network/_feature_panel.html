@@ -269,7 +269,7 @@
             {% if unit %}<span class="input-group-text">{{ unit }}</span>{% endif %}
           </div>
         </div>
-        <div class="col-3 text-secondary small text-truncate" title="Grenzwert (TWV)">{{ limit or '—' }}</div>
+        <div class="col-3 text-secondary small text-truncate" title="Grenzwert ({{ wq.regulation_short() }})">{{ limit or '—' }}</div>
       </div>
       {% endfor %}
       {% endfor %}

@@ -1,0 +1,70 @@
+{# Form-Body fuers Gebührenart-Modal (Neuanlage + Bearbeitung).
+   Erwartet ct (oder None), form (nach Validierungsfehler), calc_choices.
+   System-Arten: Berechnungsart + „Abgabe" fest; Wasser: immer aktiv, nie
+   ueberschreibbar (Verbrauch/Schaetzung/Plankostenrechnung haengen daran). #}
+{% include "_flash_inline.html" %}
+{% if form %}
+  {% set val_label = form.get('label', '') %}
+  {% set val_calc = form.get('calc_type', 'flat') %}
+  {% set val_levy = form.get('is_levy') %}
+  {% set val_overridable = form.get('overridable') %}
+  {% set val_active = form.get('active') %}
+{% elif ct %}
+  {% set val_label = ct.label %}
+  {% set val_calc = ct.calc_type %}
+  {% set val_levy = ct.is_levy %}
+  {% set val_overridable = ct.overridable %}
+  {% set val_active = ct.active %}
+{% else %}
+  {% set val_label = '' %}
+  {% set val_calc = 'flat' %}
+  {% set val_levy = false %}
+  {% set val_overridable = true %}
+  {% set val_active = true %}
+{% endif %}
+{% set is_system = ct is not none and ct.is_system %}
+{% set is_water = ct is not none and ct.key == 'water' %}
+<div class="mb-3">
+  <label class="form-label">Bezeichnung <span class="text-danger">*</span></label>
+  <input type="text" name="label" class="form-control" maxlength="100" value="{{ val_label }}"
+         placeholder="z. B. Schmutzwasser, Zählermiete" required>
+  <div class="form-text">Vorbelegung für den Rechnungstext neuer Tarifpositionen.</div>
+</div>
+<div class="mb-3">
+  <label class="form-label">Berechnung</label>
+  {% if is_system %}
+  <input type="text" class="form-control" value="{{ ct.calc_label }}" disabled>
+  {% else %}
+  <select name="calc_type" class="form-select">
+    {% for value, label in calc_choices %}
+    <option value="{{ value }}" {{ 'selected' if val_calc == value }}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  {% endif %}
+</div>
+{% if not is_system %}
+<label class="form-check mb-2">
+  <input type="checkbox" class="form-check-input" name="is_levy" value="1" {{ 'checked' if val_levy }}>
+  <span class="form-check-label">
+    Abgabe (an eine Behörde weitergereicht) — zählt in der Plankostenrechnung nicht als Ertrag
+  </span>
+</label>
+{% endif %}
+{% if not is_water %}
+<label class="form-check mb-2">
+  <input type="checkbox" class="form-check-input" name="overridable" value="1" {{ 'checked' if val_overridable }}>
+  <span class="form-check-label">
+    Individuell überschreibbar — Kunden und Objekte können einen eigenen Betrag erhalten
+    oder davon befreit werden
+  </span>
+</label>
+{% endif %}
+<label class="form-check mb-1">
+  <input type="checkbox" class="form-check-input" name="active" value="1"
+         {{ 'checked' if val_active or is_water }} {{ 'disabled' if is_water }}>
+  <span class="form-check-label">Aktiv — für neue Tarifpositionen auswählbar</span>
+</label>
+{% if is_water %}<input type="hidden" name="active" value="1">{% endif %}
+<div class="form-text">
+  Ausgeblendete Arten rechnen in bestehenden Tarifen unverändert weiter ab.
+</div>

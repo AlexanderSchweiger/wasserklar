@@ -14,9 +14,6 @@ from app.models import (
 )
 from app.network.services import haversine_m
 
-# Oesterreichische Nacheichfrist fuer Kaltwasserzaehler (MEG): 5 Jahre.
-CALIBRATION_INTERVAL_DEFAULT = 5
-
 SETTING_INTERVAL = "meter_tours.calibration_interval_years"
 SETTING_FEE_DESCRIPTION = "meter_tours.fee_description"
 SETTING_FEE_AMOUNT = "meter_tours.fee_amount"
@@ -25,7 +22,6 @@ SETTING_NOTIFY_SUBJECT = "meter_tours.notify_subject"
 SETTING_NOTIFY_BODY = "meter_tours.notify_body"
 
 FEE_DESCRIPTION_DEFAULT = "Zählertausch-Pauschale"
-FEE_TAX_RATE_DEFAULT = "10"  # AT: Wasser 10 %
 
 NOTIFY_SUBJECT_DEFAULT = "Zählertausch am {datum}"
 NOTIFY_BODY_DEFAULT = (
@@ -49,12 +45,16 @@ class TourError(ValueError):
 
 
 def calibration_interval_years():
-    raw = AppSetting.get(SETTING_INTERVAL, str(CALIBRATION_INTERVAL_DEFAULT))
+    """Nacheichfrist in Jahren — gepflegter Wert, sonst der Default des
+    Mandanten-Landes (AT 5 Jahre nach MEG, DE 6 Jahre nach MessEV)."""
+    from app.country import current_profile
+    default = current_profile().calibration_years
+    raw = AppSetting.get(SETTING_INTERVAL)
     try:
         value = int(str(raw).strip())
     except (TypeError, ValueError):
-        return CALIBRATION_INTERVAL_DEFAULT
-    return value if value > 0 else CALIBRATION_INTERVAL_DEFAULT
+        return default
+    return value if value > 0 else default
 
 
 def open_tour_meter_ids():

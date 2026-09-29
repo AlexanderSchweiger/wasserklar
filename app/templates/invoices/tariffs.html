@@ -2,7 +2,7 @@
 {% block title %}Tarife{% endblock %}
 {% block page_title %}<i class="fas fa-sliders-h me-2"></i> Wassertarife{% endblock %}
 {% block content %}
-<div class="card">
+<div class="card mb-3">
   <div class="card-header">
     <h3 class="card-title">Tarife</h3>
     <div class="card-options">
@@ -21,8 +21,7 @@
           <th>Name</th>
           <th>Gültig von</th>
           <th>Gültig bis</th>
-          <th class="text-end">Grundgebühr</th>
-          <th class="text-end">Preis/m³</th>
+          <th>Positionen</th>
           <th>Konten</th>
           <th></th>
         </tr>
@@ -33,39 +32,52 @@
           <td><strong>{{ t.name }}</strong></td>
           <td>{{ t.valid_from }}</td>
           <td>{{ t.valid_to or '<span class="badge bg-success text-white">aktuell</span>' | safe }}</td>
-          <td class="text-end">{{ t.base_fee|de_number }} €</td>
-          <td class="text-end">{{ t.price_per_m3|de_number(4) }} €</td>
           <td class="small">
-            {# Kontierung je Gebuehrenart — macht unkontierte Tarife sofort sichtbar,
-               weil die dann beim Bezahlen einen Konto-Dialog ausloesen. #}
-            {% set accs = [] %}
-            {% if t.base_fee is not none %}
-              {% set _ = accs.append(('Grundgeb.', t.base_fee_account)) %}
-            {% endif %}
-            {% if t.additional_fee is not none %}
-              {% set _ = accs.append(('Zusatzgeb.', t.additional_fee_account)) %}
-            {% endif %}
-            {% set _ = accs.append(('m³', t.price_per_m3_account)) %}
-            {% for label, acc in accs %}
+            {% for comp in t.components %}
             <div class="text-nowrap">
-              <span class="text-muted">{{ label }}:</span>
-              {% if acc %}{% if acc.code %}{{ acc.code }} – {% endif %}{{ acc.name }}
+              {{ comp.label }}:
+              {% if comp.amount is none %}
+                <span class="text-muted">nur individuell</span>
+              {% elif comp.charge_type.is_per_m3 %}
+                <strong>{{ comp.amount|de_number(4) }} €/m³</strong>
+              {% else %}
+                {{ comp.amount|de_number }} €
+              {% endif %}
+              {% if comp.tax_rate is not none %}<span class="text-muted">· {{ tax_rate_label(comp.tax_rate) }}</span>{% endif %}
+              {% if comp.valid_from %}<span class="text-muted">· ab {{ comp.valid_from.strftime('%d.%m.%Y') }}</span>{% endif %}
+            </div>
+            {% endfor %}
+          </td>
+          <td class="small">
+            {# Kontierung je Position — macht unkontierte Tarife sofort sichtbar,
+               weil die dann beim Bezahlen einen Konto-Dialog ausloesen. #}
+            {% for comp in t.components %}
+            <div class="text-nowrap">
+              <span class="text-muted">{{ comp.label }}:</span>
+              {% if comp.account %}{% if comp.account.code %}{{ comp.account.code }} – {% endif %}{{ comp.account.name }}
               {% else %}<span class="badge bg-yellow text-dark">kein Konto</span>{% endif %}
             </div>
             {% endfor %}
           </td>
-          <td class="text-end">
+          <td class="text-end text-nowrap">
             <button type="button" data-url="{{ url_for('invoices.tariff_edit', tariff_id=t.id) }}"
                     data-modal-title="Tarif bearbeiten"
                     onclick="openTariffModal(this)"
                     class="btn btn-sm btn-outline-secondary" title="Bearbeiten">
               <i class="fas fa-edit"></i>
             </button>
+            <button type="button" data-url="{{ url_for('invoices.tariff_new', copy_from=t.id) }}"
+                    data-modal-title="Tarif kopieren"
+                    onclick="openTariffModal(this)"
+                    class="btn btn-sm btn-outline-secondary ms-1"
+                    title="Als neuen Tarif kopieren (z. B. für das Folgejahr)">
+              <i class="fas fa-copy"></i>
+            </button>
           </td>
         </tr>
         {% else %}
         <tr>
-          <td colspan="7" class="text-center text-muted py-3">Noch keine Tarife.</td>
+          <td colspan="6" class="text-center text-muted py-3">Noch keine Tarife.</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -73,10 +85,82 @@
     </div>
   </div>
 </div>
+
+<div class="card">
+  <div class="card-header">
+    <h3 class="card-title"><i class="fas fa-list-ul me-1"></i> Gebührenarten</h3>
+    <div class="card-options">
+      <button type="button" data-url="{{ url_for('invoices.charge_type_new') }}"
+              data-modal-title="Neue Gebührenart"
+              onclick="openChargeTypeModal(this)" class="btn btn-sm btn-outline-primary">
+        <i class="fas fa-plus me-1"></i> Neue Gebührenart
+      </button>
+    </div>
+  </div>
+  <div class="card-body pb-0">
+    <p class="text-muted small mb-3">
+      Aus diesen Arten setzen sich die Tarife zusammen. Individuelle Beträge an Kunden und
+      Objekten hängen an der Gebührenart — sie gelten deshalb über Tarifwechsel hinweg weiter.
+      Der <strong>Wassercent</strong> (Wasserentnahmeentgelt) ist eine Landesabgabe je m³; sein
+      Satz ist je Bundesland verschieden und wird im Tarif eingetragen.
+    </p>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm table-vcenter mb-0">
+      <thead>
+        <tr>
+          <th>Bezeichnung</th>
+          <th>Berechnung</th>
+          <th>Eigenschaften</th>
+          <th>Status</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for ct in charge_types %}
+        <tr>
+          <td>
+            <strong>{{ ct.label }}</strong>
+            {% if ct.is_system %}<span class="badge bg-secondary-lt ms-1" title="Vordefinierte Gebührenart">System</span>{% endif %}
+          </td>
+          <td>{{ ct.calc_label }}</td>
+          <td class="small">
+            {% if ct.is_levy %}<span class="badge bg-orange-lt me-1">Abgabe</span>{% endif %}
+            {% if ct.overridable %}<span class="badge bg-azure-lt">individuell überschreibbar</span>{% endif %}
+          </td>
+          <td>
+            {% if ct.active %}<span class="badge bg-success-lt">aktiv</span>
+            {% else %}<span class="badge bg-secondary-lt">ausgeblendet</span>{% endif %}
+          </td>
+          <td class="text-end text-nowrap">
+            <button type="button" data-url="{{ url_for('invoices.charge_type_edit', ct_id=ct.id) }}"
+                    data-modal-title="Gebührenart bearbeiten"
+                    onclick="openChargeTypeModal(this)"
+                    class="btn btn-sm btn-outline-secondary" title="Bearbeiten">
+              <i class="fas fa-edit"></i>
+            </button>
+            {% if not ct.is_system and ct.id not in used_charge_type_ids %}
+            <form method="post" action="{{ url_for('invoices.charge_type_delete', ct_id=ct.id) }}"
+                  class="d-inline"
+                  onsubmit='return confirm({{ ("Gebührenart „" ~ ct.label ~ "“ löschen?")|tojson }})'>
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-sm btn-outline-danger ms-1" title="Löschen">
+                <i class="fas fa-trash"></i>
+              </button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
 {% endblock %}
 
 {% block modals %}
 {% include "invoices/_tariff_modal.html" %}
+{% include "invoices/_charge_type_modal.html" %}
 {% endblock %}
 
 {% block scripts %}
@@ -89,6 +173,14 @@ setupEditModal({
   openFn: 'openTariffModal',
   closeEvent: 'closeTariffModal',
   savedEvent: 'tariffSaved',
+});
+setupEditModal({
+  formId: 'chargeTypeForm',
+  bodyId: 'chargeTypeModalBody',
+  modalId: 'chargeTypeModal',
+  openFn: 'openChargeTypeModal',
+  closeEvent: 'closeChargeTypeModal',
+  savedEvent: 'chargeTypeSaved',
 });
 </script>
 {% endblock %}

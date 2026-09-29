@@ -22,7 +22,7 @@
             <option value="">– wählen –</option>
             {% for t in tariffs %}
             <option value="{{ t.id }}" {% if selected_tariff_id == t.id %}selected{% endif %}>
-              {{ t.name }} ({{ t.price_per_m3 | de_number }} €/m³)
+              {{ t.name }} ({{ t.summary }})
             </option>
             {% endfor %}
           </select>

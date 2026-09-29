@@ -223,7 +223,7 @@
       <label class="form-label">Land</label>
       <input type="text" name="land" class="form-control"
         list="land-suggestions" autocomplete="off"
-        value="{{ fval('land', 'Österreich') }}">
+        value="{{ fval('land', country.name) }}">
       <datalist id="land-suggestions">
         <option value="Österreich"></option>
         <option value="Deutschland"></option>
@@ -399,31 +399,14 @@
 
 <hr class="my-2">
 <h6 class="text-muted mb-1"><i class="fas fa-file-invoice-dollar me-2"></i>Abrechnungseinstellungen</h6>
-<p class="text-muted small mb-2">Überschreibt die Tarif-Gebühren für diesen {{ 'Kontakt' if is_wg else 'Kunden' }} beim Rechnungslauf. Leer lassen = Tarif-Standardwert verwenden.</p>
-<div class="row">
-  <div class="col-md-6">
-    <div class="mb-3">
-      <label class="form-label">Grundgebühr – {{ 'Kontaktwert' if is_wg else 'Kundenwert' }} (€/Jahr)</label>
-      <div class="input-group">
-        <input type="number" name="base_fee_override" step="0.01" class="form-control"
-          placeholder="Tarif-Standard"
-          value="{% if form_data is defined and form_data %}{{ form_data.get('base_fee_override', '') }}{% elif customer and customer.base_fee_override is not none %}{{ '%.2f'|format(customer.base_fee_override) }}{% endif %}">
-        <span class="input-group-text">€</span>
-      </div>
-    </div>
-  </div>
-  <div class="col-md-6">
-    <div class="mb-3">
-      <label class="form-label">Zusatzgebühr – {{ 'Kontaktwert' if is_wg else 'Kundenwert' }} (€/Jahr)</label>
-      <div class="input-group">
-        <input type="number" name="additional_fee_override" step="0.01" class="form-control"
-          placeholder="Tarif-Standard"
-          value="{% if form_data is defined and form_data %}{{ form_data.get('additional_fee_override', '') }}{% elif customer and customer.additional_fee_override is not none %}{{ '%.2f'|format(customer.additional_fee_override) }}{% endif %}">
-        <span class="input-group-text">€</span>
-      </div>
-    </div>
-  </div>
-</div>
+<p class="text-muted small mb-2">
+  Individuelle Gebühren für diesen {{ 'Kontakt' if is_wg else 'Kunden' }} — ersetzen im
+  Rechnungslauf den <strong>Betrag</strong> der Tarifposition (Text, USt und Konto kommen weiter
+  aus dem Tarif). Ein Wert an der Liegenschaft hat Vorrang.
+</p>
+{% set override_rows = charge_override_rows(customer, form_data if form_data is defined and form_data else none) %}
+{% set inherit_label = 'wie Tarif' %}
+{% include "_charge_overrides_fields.html" %}
 
 <script>
 // Kundennummer-Hinweis ein/ausblenden je nach Kontakttyp.
@@ -479,9 +462,7 @@
   if (!statusSel) return;  // Versorger-Modus: kein Mitgliedschafts-Block
   var BOARD = ['chairman','deputy_chairman','committee','secretary','treasurer','water_warden'];
   var MEMBER_REQ = ['chairman','deputy_chairman'];
-  var LABELS = {chairman:'Obmann', deputy_chairman:'Obmann-Stellvertreter',
-                committee:'Ausschuss-Mitglied', secretary:'Schriftführer',
-                treasurer:'Kassier', water_warden:'Wasserwart', auditor:'Rechnungsprüfer'};
+  var LABELS = {{ wg_function_labels | tojson }};
   var warnBox = document.getElementById('wg-func-warning');
   var hint = document.getElementById('wg-status-hint');
   function checkedFuncs() {

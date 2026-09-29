@@ -10,6 +10,7 @@ from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 from docx.shared import Pt, Cm, RGBColor
 
+from app.country import is_foreign, term
 from app.invoices.design import get_design
 
 
@@ -276,6 +277,10 @@ def generate_docx(invoice, wg: dict, design: dict | None = None,
     # auf die stornierte Rechnung (UStG § 11) statt Liefer-/Faelligkeitsdatum.
     is_credit = invoice.is_credit_note
     original = invoice.cancels_invoice if is_credit else None
+    # Pflichtangaben (Leistungszeitraum, UID/USt-IdNr., Steuernummer,
+    # Kleinunternehmer-Hinweis) — dieselbe Quelle wie das PDF.
+    from app.invoices.services import invoice_legal_context
+    legal = invoice_legal_context(invoice)
     if is_credit:
         meta_lines = [
             ("Gutschriftsnummer", invoice.invoice_number),
@@ -289,10 +294,13 @@ def generate_docx(invoice, wg: dict, design: dict | None = None,
                 f"{original.invoice_number} vom {original.date.strftime('%d.%m.%Y')}",
             ))
     else:
+        sp = legal["service_period"]
         meta_lines = [
             ("Rechnungsnummer", invoice.invoice_number),
             ("Rechnungsdatum", invoice_date_str),
-            ("Lieferdatum", invoice_date_str),
+            (("Leistungszeitraum",
+              f"{sp[0].strftime('%d.%m.%Y')} – {sp[1].strftime('%d.%m.%Y')}")
+             if sp else ("Lieferdatum", invoice_date_str)),
         ]
         if invoice.customer.customer_number:
             meta_lines.append(("Kundennummer", str(invoice.customer.customer_number)))
@@ -302,6 +310,10 @@ def generate_docx(invoice, wg: dict, design: dict | None = None,
         ))
     if invoice.billing_period:
         meta_lines.append(("Abrechnungsperiode", invoice.billing_period.name))
+    if legal["vat_id"]:
+        meta_lines.append((legal["vat_id_label"], legal["vat_id"]))
+    if legal["tax_number"]:
+        meta_lines.append(("Steuernummer", legal["tax_number"]))
 
     addr_tbl = doc.add_table(rows=1, cols=2)
     _remove_table_borders(addr_tbl)
@@ -329,7 +341,7 @@ def generate_docx(invoice, wg: dict, design: dict | None = None,
     if city:
         recipient_cell.add_paragraph(city)
     land = invoice.customer.land
-    if land and land != "Österreich":
+    if is_foreign(land):
         recipient_cell.add_paragraph(land)
     if invoice.property:
         p_prop = recipient_cell.add_paragraph()
@@ -445,6 +457,10 @@ def generate_docx(invoice, wg: dict, design: dict | None = None,
     else:
         _add_total_row(tbl, col_count, invoice.total_amount, "Gesamtsumme", heading_rgb)
 
+    # ── Kleinunternehmer-Hinweis (nur nicht USt-pflichtige Jahre, opt-in) ─
+    if legal["small_business_note"]:
+        doc.add_paragraph(legal["small_business_note"])
+
     # ── Hinweistext ───────────────────────────────────────────────────────
     if invoice.notes:
         p_notes = doc.add_paragraph()
@@ -483,11 +499,11 @@ def generate_docx(invoice, wg: dict, design: dict | None = None,
                 "war noch nicht bezahlt. Bitte betrachten Sie die ursprüngliche "
                 "Zahlungsaufforderung als gegenstandslos.")
     else:
-        p_pay2 = payment_cell.add_paragraph("Wir ersuchen Sie, den Rechnungsbetrag von ")
+        p_pay2 = payment_cell.add_paragraph(f"{term('pay_request')}, den Rechnungsbetrag von ")
         p_pay2.add_run(f"{_de_fmt(invoice.total_amount, 2)} €").bold = True
         if invoice.due_date:
             p_pay2.add_run(f" bis zum {invoice.due_date.strftime('%d.%m.%Y')}")
-        p_pay2.add_run(" auf unser Konto einzuzahlen:")
+        p_pay2.add_run(f" auf unser Konto {term('pay_verb')}:")
 
         if wg.get("iban"):
             p_iban = payment_cell.add_paragraph("IBAN: ")

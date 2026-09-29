@@ -74,7 +74,7 @@
   {% set city = [customer.plz, customer.ort] | select | join(' ') %}
   {% if street %}{{ street }}<br>{% endif %}
   {% if city %}{{ city }}<br>{% endif %}
-  {% if customer.land and customer.land != 'Österreich' %}{{ customer.land }}<br>{% endif %}
+  {% if customer.land is foreign_country %}{{ customer.land }}<br>{% endif %}
 </div>
 
 <h1>{{ subject }}</h1>

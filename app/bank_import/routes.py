@@ -13,6 +13,7 @@ from flask import (
 from flask_login import current_user, login_required
 from sqlalchemy import case as sa_case, or_
 
+from app.country import term
 from app.extensions import db
 from app.models import (
     Account,
@@ -136,7 +137,7 @@ def upload():
     )
     if not real_accounts:
         flash(
-            "Bitte legen Sie zuerst ein Bankkonto unter Buchhaltung › Bank & Kassa an.",
+            f"Bitte legen Sie zuerst ein Bankkonto unter Buchhaltung › Bank & {term('cash')} an.",
             "warning",
         )
         return redirect(url_for("bank_import.index"))

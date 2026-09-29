@@ -11,13 +11,13 @@
 
 <div class="card">
   <div class="card-header">
-    <h3 class="card-title mb-0">Grenzwerte (Trinkwasserverordnung)</h3>
+    <h3 class="card-title mb-0">Grenzwerte ({{ wq.regulation_short() }})</h3>
   </div>
   <form method="post" action="{{ url_for('network.water_quality_limits') }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="card-body">
       <p class="text-secondary">
-        Standardwerte entsprechen der österreichischen Trinkwasserverordnung. Ein
+        Standardwerte entsprechen der {{ wq.regulation_name() }}. Ein
         Feld leer lassen = Standard verwenden. Für Bereiche (z. B. pH) das Format
         <code>min-max</code> nutzen (z. B. <code>6,5-9,5</code>). Bereits erfasste
         Befunde behalten ihren damaligen Grenzwert (Snapshot).
@@ -34,7 +34,10 @@
           <tbody>
             {% for row in rows %}
             <tr>
-              <td>{{ row.label }}</td>
+              <td>
+                {{ row.label }}
+                {% if row.note %}<div class="text-secondary small">{{ row.note }}</div>{% endif %}
+              </td>
               <td class="text-secondary">{{ row.default_display or '—' }}</td>
               <td>
                 <div class="input-group input-group-sm">

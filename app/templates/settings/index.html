@@ -9,7 +9,12 @@
   <ul class="nav nav-tabs mb-3" id="settingsTabs" role="tablist">
     <li class="nav-item" role="presentation">
       <a class="nav-link active" id="tab-mandant" data-bs-toggle="tab" href="#pane-mandant" role="tab">
-        <i class="fas fa-building me-1"></i> Mandant-Typ
+        <i class="fas fa-building me-1"></i> Mandant
+      </a>
+    </li>
+    <li class="nav-item" role="presentation">
+      <a class="nav-link" id="tab-tax" data-bs-toggle="tab" href="#pane-tax" role="tab">
+        <i class="fas fa-percentage me-1"></i> Steuern
       </a>
     </li>
     <li class="nav-item" role="presentation">
@@ -48,8 +53,60 @@
 
   <div class="tab-content" id="settingsTabContent">
 
-    {# ── Tab: Mandant-Typ ────────────────────────────────────────────── #}
+    {# ── Tab: Mandant (Land + Mandant-Typ) ───────────────────────────── #}
     <div class="tab-pane fade show active" id="pane-mandant" role="tabpanel">
+      <div class="card mb-3">
+        <div class="card-header">
+          <h3 class="card-title"><i class="fas fa-globe-europe me-1"></i> Land</h3>
+        </div>
+        <div class="card-body">
+          <div class="row g-3 align-items-start">
+            <div class="col-md-4">
+              <label class="form-label">Land des Mandanten</label>
+              <select name="org_country" class="form-select">
+                {% for code, name in country_choices %}
+                <option value="{{ code }}" {{ 'selected' if org_country == code }}>{{ name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-8">
+              <p class="text-muted small mb-0">
+                Bestimmt die länderabhängigen Standardwerte: Umsatzsteuer-Sätze
+                (Österreich 0/10/13/20&nbsp;%, Deutschland 0/7/19&nbsp;%), die Standard-USt
+                für Wasser und die Nacheichfrist der Wasserzähler. Bei einem Wechsel werden
+                die Standardsätze des neuen Landes ergänzt; bewusst gepflegte Abweichungen
+                bleiben erhalten. Nichts wird gelöscht.
+              </p>
+            </div>
+          </div>
+          <details class="mt-3" {{ 'open' if map_ortho.url }}>
+            <summary class="text-muted small">Karte: eigener Luftbild-Dienst (WMS, optional)</summary>
+            <p class="text-muted small mt-2 mb-2">
+              Die Karten nutzen die amtliche Basiskarte des Landes ({{ 'basemap.at inkl. Orthofoto' if org_country == 'AT' else 'basemap.de' }}).
+              In Deutschland gibt es kein bundesweit freies Luftbild — viele Bundesländer bieten ihre
+              digitalen Orthophotos (DOP) aber als offenen WMS an. Tragen Sie ihn hier ein, erscheint er
+              in allen Karten als Ebene „Luftbild". Nutzungsbedingungen des Anbieters beachten.
+            </p>
+            <div class="row g-2">
+              <div class="col-md-6">
+                <label class="form-label small">WMS-Adresse (https://…)</label>
+                <input type="url" name="map_ortho_wms_url" class="form-control form-control-sm"
+                       value="{{ map_ortho.url }}" placeholder="https://…/wms_dop">
+              </div>
+              <div class="col-md-3">
+                <label class="form-label small">Layer</label>
+                <input type="text" name="map_ortho_wms_layers" class="form-control form-control-sm"
+                       value="{{ map_ortho.layers }}" placeholder="z. B. dop20">
+              </div>
+              <div class="col-md-3">
+                <label class="form-label small">Quellenangabe</label>
+                <input type="text" name="map_ortho_attribution" class="form-control form-control-sm"
+                       value="{{ map_ortho.attribution }}" placeholder="© GeoBasis-DE / …">
+              </div>
+            </div>
+          </details>
+        </div>
+      </div>
       <div class="card">
         <div class="card-header">
           <h3 class="card-title"><i class="fas fa-building me-1"></i> Mandant-Typ</h3>
@@ -99,6 +156,11 @@
           </div>
         </div>
       </div>
+    </div>
+
+    {# ── Tab: Steuern ────────────────────────────────────────────────── #}
+    <div class="tab-pane fade" id="pane-tax" role="tabpanel">
+      {% include "settings/_tax_rates_card.html" %}
     </div>
 
     {# ── Tab: Kontaktdaten ───────────────────────────────────────────── #}
@@ -222,10 +284,32 @@
               sonst zeigen Banken bei Überweisungen eine Empfänger-Warnung an.
             </div>
           </div>
-          <div class="alert alert-info mb-0">
+          <div class="alert alert-info mb-3">
             <i class="fas fa-info-circle me-1"></i>
             Die Bankdaten werden ausschließlich auf Rechnungen angezeigt und haben
             sonst keinerlei weitere Behandlung.
+          </div>
+          <h4 class="mb-2">Steuerliche Angaben <small class="text-muted fw-normal">(Pflichtangaben auf Rechnungen)</small></h4>
+          <div class="row g-2">
+            <div class="col-md-6">
+              <div class="mb-3">
+                <label class="form-label">{{ country.vat_id_label }}</label>
+                <input type="text" name="wg_vat_id" class="form-control"
+                       value="{{ wg.vat_id }}" placeholder="{{ 'ATU12345678' if country.code == 'AT' else 'DE123456789' }}">
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="mb-3">
+                <label class="form-label">Steuernummer</label>
+                <input type="text" name="wg_tax_number" class="form-control"
+                       value="{{ wg.tax_number }}">
+              </div>
+            </div>
+          </div>
+          <div class="form-text">
+            Werden — sofern ausgefüllt — auf jeder Rechnung gedruckt. Für umsatzsteuerpflichtige
+            Rechnungen ist eine der beiden Angaben vorgeschrieben
+            ({{ 'UStG § 11' if country.code == 'AT' else '§ 14 Abs. 4 UStG' }}).
           </div>
         </div>
       </div>
@@ -238,7 +322,7 @@
         <div class="card-body">
           <div class="form-text mb-2">
             Erscheint auf der Rechnung im Adressblock rechts – z.&nbsp;B. Ansprechpartner
-            (Obmann, Kassier) mit Telefonnummer. Text kann <strong>fett</strong> und
+            ({{ term('chairman') }}, {{ term('treasurer') }}) mit Telefonnummer. Text kann <strong>fett</strong> und
             <em>kursiv</em> formatiert werden. Die Schriftgröße gilt für den markierten
             Text – z.&nbsp;B. eine ganze Zeile markieren, um sie größer oder kleiner zu machen.
           </div>
@@ -381,14 +465,24 @@
                style="{% if doc_format not in ('docx', 'both') %}display:none{% endif %}">
             <i class="fas fa-exclamation-triangle me-1"></i>
             <strong>Hinweis:</strong> Das Word-Format (.docx) ist kein gültiges
-            Archivierungsformat und erfüllt nicht die Anforderungen der österreichischen
-            Belegaufbewahrungspflicht (§ 132 BAO). Für rechtssichere Archivierung bitte
+            Archivierungsformat und erfüllt nicht die Anforderungen der
+            {{ 'österreichischen Belegaufbewahrungspflicht (§ 132 BAO)' if country.code == 'AT' else 'deutschen Aufbewahrungspflichten (§ 147 AO, GoBD)' }}. Für rechtssichere Archivierung bitte
             PDF verwenden. Der Anwender ist für eine ordentliche Ablage selbst verantwortlich.
           </div>
 
           <hr class="my-3">
 
           <hr class="my-3">
+
+          <div class="mb-3">
+            <label class="form-label">Hinweis bei Umsatzsteuerbefreiung <small class="text-muted">(Kleinunternehmer, optional)</small></label>
+            <input type="text" name="invoice_small_business_note" class="form-control"
+                   value="{{ invoice_small_business_note }}" placeholder="{{ country.small_business_note }}">
+            <div class="form-text">
+              Wird in <strong>nicht umsatzsteuerpflichtigen</strong> Buchungsjahren unter die
+              Positionen gedruckt. Leer = kein Hinweis. Üblicher Text: „{{ country.small_business_note }}"
+            </div>
+          </div>
 
           <div class="mb-3">
             <label class="form-check form-switch">
@@ -438,7 +532,7 @@
             <div class="form-text">
               Nach wie vielen Jahren ein Wasserzähler getauscht werden muss.
               Das Fälligkeitsjahr ergibt sich aus dem Eichjahr (ersatzweise dem
-              Einbaujahr) zuzüglich dieser Anzahl. Standard: 5&nbsp;Jahre.
+              Einbaujahr) zuzüglich dieser Anzahl. Standard: {{ country.calibration_hint }}.
             </div>
           </div>
         </div>
@@ -830,13 +924,78 @@ document.getElementById('btnTestMail')?.addEventListener('click', function () {
 </div>
 {% endif %}
 
+{# Steuersatz anlegen/bearbeiten (Tab „Steuern"). #}
+{% include "settings/_tax_rate_modal.html" %}
+
+{# ── Länder-Defaults übernehmen — eigenes Formular/Endpunkt ─────────────── #}
+<div class="modal modal-blur fade" id="countryDefaultsModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered" role="document">
+    <div class="modal-content">
+      <form action="{{ url_for('settings.apply_country_defaults_route') }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="fas fa-flag me-2"></i>Länder-Defaults übernehmen</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+        </div>
+        <div class="modal-body">
+          <p class="mb-2">Übernimmt die Standardwerte für <strong>{{ country_profile.name }}</strong>:</p>
+          <ul class="mb-3">
+            <li>Steuersätze
+              {% for rate, _label in country_profile.tax_rates %}{{ tax_rate_label(rate) }}{{ ', ' if not loop.last }}{% endfor %}
+              anlegen bzw. wieder aktivieren</li>
+            <li>Standard-USt für Wasser: {{ tax_rate_label(country_profile.water_tax_rate) }}</li>
+            <li>Zählertausch-Intervall / Nacheichfrist: {{ country_profile.calibration_years }} Jahre</li>
+          </ul>
+          <label class="form-check">
+            <input type="checkbox" class="form-check-input" name="deactivate_foreign" value="1" checked>
+            <span class="form-check-label">
+              Alle anderen Steuersätze deaktivieren (nicht löschen — bestehende Buchungen und
+              Rechnungen behalten ihren Satz)
+            </span>
+          </label>
+          <div class="alert alert-info small mb-0 mt-3">
+            <i class="fas fa-info-circle me-1"></i>
+            Das Land wird im Tab „Mandant" gewählt und muss vorher gespeichert sein.
+            Nicht gespeicherte Änderungen auf dieser Seite gehen verloren.
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">Abbrechen</button>
+          <button type="submit" class="btn btn-primary">
+            <i class="fas fa-check me-1"></i> Übernehmen
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 {# Erweiterungspunkt: Bestaetigungs-Modal(e) der SaaS-Danger-Zone
    („Testdaten laden"). Im OSS-Standalone leer. #}
 {% block danger_modals %}{% endblock %}
 {% endblock %}
 
 {% block scripts %}
+{% include "_modal_edit_helpers.html" %}
 <script>
+// ── Steuersatz-Modal ─────────────────────────────────────────────────────
+// Nach dem Speichern nur die Steuersatz-Karte neu laden (kein Full-Reload —
+// ungespeicherte Eingaben im Einstellungsformular bleiben erhalten).
+window.onTaxRateSaved = function () {
+  if (!window.htmx) { window.location.reload(); return; }
+  htmx.ajax('GET', '{{ url_for("settings.tax_rates_card") }}',
+            {target: '#taxRatesCard', swap: 'outerHTML'});
+};
+setupEditModal({
+  formId: 'taxRateForm',
+  bodyId: 'taxRateModalBody',
+  modalId: 'taxRateModal',
+  openFn: 'openTaxRateModal',
+  closeEvent: 'closeTaxRateModal',
+  savedEvent: 'taxRateSaved',
+  savedHandler: 'onTaxRateSaved',
+});
+
 // ── Logo-Upload + Cropper ────────────────────────────────────────────────
 // Cropper.js wird erst bei Bedarf vom CDN nachgeladen (nicht global, um andere
 // Seiten nicht zu belasten). Zuschnitt + Verkleinerung passieren client-seitig;

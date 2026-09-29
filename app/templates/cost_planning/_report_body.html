@@ -52,8 +52,9 @@
     <td>Bisheriger Tarif</td>
     <td class="num">
       {{ tariff.name }} —
-      {% if tariff.base_fee is not none %}{{ tariff.base_fee|de_number }} € Grundgebühr, {% endif %}
-      {{ tariff.price_per_m3|de_number(4) }} € je m³
+      {% set _base = tariff.component('base_fee') %}
+      {% if _base and _base.amount is not none %}{{ _base.amount|de_number }} € Grundgebühr, {% endif %}
+      {{ (tariff.water_price or 0)|de_number(4) }} € je m³
     </td>
   </tr>
   {% endif %}

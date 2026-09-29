@@ -31,7 +31,7 @@
         <label class="form-label mb-1">Zeitraum</label>
         <select name="quartal" class="form-control form-control-sm" onchange="this.form.requestSubmit()">
           <option value="0" {% if quartal == 0 %}selected{% endif %}>Gesamtjahr</option>
-          <option value="1" {% if quartal == 1 %}selected{% endif %}>Q1 (Jän–Mär)</option>
+          <option value="1" {% if quartal == 1 %}selected{% endif %}>Q1 ({{ term('jan_short') }}–Mär)</option>
           <option value="2" {% if quartal == 2 %}selected{% endif %}>Q2 (Apr–Jun)</option>
           <option value="3" {% if quartal == 3 %}selected{% endif %}>Q3 (Jul–Sep)</option>
           <option value="4" {% if quartal == 4 %}selected{% endif %}>Q4 (Okt–Dez)</option>

@@ -340,8 +340,11 @@
             <th class="po-sort" data-key="versandart" data-type="text">Versandart <i class="fas fa-sort text-muted"></i></th>
             <th class="po-sort text-end" data-key="m3" data-type="num">m³ <i class="fas fa-sort text-muted"></i></th>
             <th class="po-sort text-end" data-key="wasser" data-type="num">Wasser <i class="fas fa-sort text-muted"></i></th>
-            <th class="po-sort text-end" data-key="grund" data-type="num">Grundgeb. <i class="fas fa-sort text-muted"></i></th>
-            <th class="po-sort text-end" data-key="zusatz" data-type="num">Zusatzgeb. <i class="fas fa-sort text-muted"></i></th>
+            {# Je Gebührenart des Tarifs (ohne Wasser) eine Spalte — Wassercent,
+               Grund-/Zusatzgebühr, eigene Arten. #}
+            {% for col in charge_columns %}
+            <th class="po-sort text-end" data-key="charge{{ loop.index0 }}" data-type="num">{{ col.label }} <i class="fas fa-sort text-muted"></i></th>
+            {% endfor %}
             <th class="po-sort text-end" data-key="netto" data-type="num">Netto <i class="fas fa-sort text-muted"></i></th>
             {% if run_has_vat %}
             <th class="po-sort text-end" data-key="ust" data-type="num">USt <i class="fas fa-sort text-muted"></i></th>
@@ -366,8 +369,8 @@
               data-email="{{ inv.customer.email or '' }}"
               data-m3="{{ amt.m3 or 0 }}"
               data-wasser="{{ amt.water_net }}"
-              data-grund="{{ amt.base_fee }}"
-              data-zusatz="{{ amt.additional_fee }}"
+              {% for col in charge_columns %}data-charge{{ loop.index0 }}="{{ amt.charges[col.key] }}"
+              {% endfor %}
               data-netto="{{ amt.net }}"
               data-ust="{{ amt.ust }}"
               data-brutto="{{ amt.gross }}"
@@ -421,8 +424,9 @@
             </td>
             <td class="text-end">{{ amt.m3 | de_number(2) if amt.m3 else '—' }}</td>
             <td class="text-end">{{ amt.water_net | de_number }} €</td>
-            <td class="text-end">{{ amt.base_fee | de_number }} €</td>
-            <td class="text-end">{{ amt.additional_fee | de_number }} €</td>
+            {% for col in charge_columns %}
+            <td class="text-end">{{ amt.charges[col.key] | de_number }} €</td>
+            {% endfor %}
             <td class="text-end">{{ amt.net | de_number }} €</td>
             {% if run_has_vat %}
             <td class="text-end">{{ amt.ust | de_number }} €</td>

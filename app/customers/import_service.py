@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from app.country import home_country_name
 from app.imports.common import (
     PreviewRow,
     ImportStats,
@@ -545,7 +546,7 @@ def commit(rows: list[PreviewRow], cfg: CustomerImportConfig,
                     hausnummer=row.fields.get("hausnummer") or None,
                     plz=row.fields.get("plz") or None,
                     ort=row.fields.get("ort") or None,
-                    land=row.fields.get("land") or "Österreich",
+                    land=row.fields.get("land") or home_country_name(),
                     email=row.fields.get("email") or None,
                     phone=row.fields.get("phone") or None,
                     notes=row.fields.get("notes") or None,

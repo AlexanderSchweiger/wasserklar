@@ -112,7 +112,10 @@
 <div class="invoice-meta">
   <strong>{{ 'Gutschriftsnummer' if is_credit else 'Rechnungsnummer' }}:</strong> {{ invoice.invoice_number }}<br>
   <strong>{{ 'Gutschriftsdatum' if is_credit else 'Rechnungsdatum' }}:</strong> {{ invoice.date.strftime('%d.%m.%Y') }}<br>
-  {% if not is_credit %}<strong>Lieferdatum:</strong> {{ invoice.date.strftime('%d.%m.%Y') }}<br>{% endif %}
+  {% if not is_credit %}
+  {% if legal and legal.service_period %}<strong>Leistungszeitraum:</strong> {{ legal.service_period[0].strftime('%d.%m.%Y') }} – {{ legal.service_period[1].strftime('%d.%m.%Y') }}<br>
+  {% else %}<strong>Lieferdatum:</strong> {{ invoice.date.strftime('%d.%m.%Y') }}<br>{% endif %}
+  {% endif %}
   {% if invoice.customer.customer_number %}<strong>Kundennummer:</strong> {{ invoice.customer.customer_number }}<br>{% endif %}
   {% if is_credit %}
   {# UStG § 11: die Gutschrift muss die stornierte Rechnung eindeutig benennen. #}
@@ -131,7 +134,7 @@
   {% set city = [invoice.customer.plz, invoice.customer.ort] | select | join(' ') %}
   {% if street %}{{ street }}<br>{% endif %}
   {% if city %}{{ city }}<br>{% endif %}
-  {% if invoice.customer.land and invoice.customer.land != 'Österreich' %}{{ invoice.customer.land }}<br>{% endif %}
+  {% if invoice.customer.land is foreign_country %}{{ invoice.customer.land }}<br>{% endif %}
   {% if invoice.property %}
   {% endif %}
 </div>
@@ -195,6 +198,10 @@
   </tfoot>
 </table>
 
+{% if legal and legal.small_business_note %}
+<p style="margin-top:0.3cm">{{ legal.small_business_note }}</p>
+{% endif %}
+
 {% if invoice.notes %}
 <p style="margin-top:0.5cm"><em>{{ invoice.notes }}</em></p>
 {% endif %}
@@ -216,8 +223,8 @@
 {% else %}
 <div class="payment-info">
   <strong>Zahlung</strong><br>
-  Wir ersuchen Sie, den Rechnungsbetrag von <strong>{{ invoice.total_amount|de_number(2) }} €</strong>
-  {% if invoice.due_date %}bis zum {{ invoice.due_date.strftime('%d.%m.%Y') }} {% endif %}auf unser Konto einzuzahlen:<br>
+  {{ term('pay_request') }}, den Rechnungsbetrag von <strong>{{ invoice.total_amount|de_number(2) }} €</strong>
+  {% if invoice.due_date %}bis zum {{ invoice.due_date.strftime('%d.%m.%Y') }} {% endif %}auf unser Konto {{ term('pay_verb') }}:<br>
   {% if wg.iban %}IBAN: <strong>{{ wg.iban }}</strong><br>{% endif %}
   {% if wg.bic %}BIC: <strong>{{ wg.bic }}</strong><br>{% endif %}
   Empfänger: {{ wg.account_holder or wg.name }}<br>
@@ -231,6 +238,8 @@
   {{ wg.name }}
   {% if wg.address %} &mdash; {{ wg.address | replace('\n', ' | ') | replace('\\n', ' | ') }}{% endif %}
   {% if wg.email %} &mdash; {{ wg.email }}{% endif %}
+  {% if legal and legal.vat_id %} &mdash; {{ legal.vat_id_label }} {{ legal.vat_id }}{% endif %}
+  {% if legal and legal.tax_number %} &mdash; Steuernr. {{ legal.tax_number }}{% endif %}
 </div>
 
 </body>

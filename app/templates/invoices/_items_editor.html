@@ -170,11 +170,14 @@
         <select name="{{ _prefix }}row_tariff_id[]" class="form-control form-control-sm tariff-select" required onchange="itemsEditorUpdateTariffPrice(this)">
           <option value="">— Tarif wählen —</option>
           {% for t in tariffs %}
+          {# data-price = Summe aller m³-Positionen (Wasser + z.B. Wassercent),
+             data-base = Summe aller Pauschalen — nur fuer die Vorschau; die
+             Positionen selbst baut der Server aus dem Tarif. #}
           <option value="{{ t.id }}"
-                  data-price="{{ t.price_per_m3 }}"
-                  data-base="{{ t.base_fee or 0 }}">
+                  data-price="{{ t.per_m3_total }}"
+                  data-base="{{ t.flat_total }}">
             {{ t.name }} ({{ t.valid_from }}{% if t.valid_to %}–{{ t.valid_to }}{% else %} aktuell{% endif %})
-            – {{ t.price_per_m3 }} €/m³{% if t.base_fee %}, Grundgebühr {{ t.base_fee }} €{% endif %}
+            – {{ t.summary }}
           </option>
           {% endfor %}
         </select>

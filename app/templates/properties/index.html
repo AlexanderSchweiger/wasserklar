@@ -57,7 +57,7 @@
           </li>
           <li>
             <button type="button" class="dropdown-item" data-bs-toggle="modal" data-bs-target="#geocodeBevModal">
-              <i class="fas fa-crosshairs me-2"></i> BEV-Adressen abgleichen
+              <i class="fas fa-crosshairs me-2"></i> Adressen geokodieren
             </button>
           </li>
           <li><hr class="dropdown-divider"></li>
@@ -120,30 +120,39 @@
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title" id="geocodeBevModalLabel">
-          <i class="fas fa-crosshairs me-2"></i> BEV-Adressen abgleichen
+          <i class="fas fa-crosshairs me-2"></i> Adressen geokodieren
         </h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
       </div>
       <div class="modal-body">
         <p>
-          Die Adressen der Liegenschaften werden gegen das amtliche
-          <strong>österreichische Adressregister (BEV)</strong> abgeglichen und mit
-          einer Koordinate versehen. Diese Koordinate ist die Voraussetzung dafür,
-          dass das Leitungsnetz jeden Hausanschluss automatisch der nächstgelegenen
-          Liegenschaft zuordnen kann.
+          Die Adressen der Liegenschaften werden gegen
+          {% if geocode_status.provider == 'bev' %}das amtliche
+          <strong>österreichische Adressregister (BEV)</strong>{% else %}<strong>OpenStreetMap</strong>
+          (Photon-Geocoder){% endif %} abgeglichen und mit einer Koordinate versehen. Diese
+          Koordinate ist die Voraussetzung dafür, dass das Leitungsnetz jeden Hausanschluss
+          automatisch der nächstgelegenen Liegenschaft zuordnen kann. Ohne Treffer lässt sich die
+          Lage auf der Detailseite der Liegenschaft auch manuell setzen.
         </p>
-        {% if bev_index_info %}
+        {% if geocode_status.provider == 'bev' and geocode_status.index %}
         <div class="alert alert-info py-2 mb-3">
           <i class="fas fa-database me-1"></i>
-          Adressindex vorhanden: <strong>{{ bev_index_info.addresses }}</strong> Adressen
-          {% if bev_index_info.built_at %}(Stand {{ bev_index_info.built_at[:10] }}){% endif %}.
+          Adressindex vorhanden: <strong>{{ geocode_status.index.addresses }}</strong> Adressen
+          {% if geocode_status.index.built_at %}(Stand {{ geocode_status.index.built_at[:10] }}){% endif %}.
         </div>
-        {% else %}
+        {% elif geocode_status.provider == 'bev' %}
         <div class="alert alert-warning py-2 mb-3">
           <i class="fas fa-exclamation-triangle me-1"></i>
           Es ist noch <strong>kein BEV-Adressindex</strong> vorhanden. Bitte zuerst
           <code>flask&nbsp;bev-refresh</code> ausführen (im SaaS-Betrieb wird der Index
           automatisch bereitgestellt).
+        </div>
+        {% elif not geocode_status.available %}
+        <div class="alert alert-warning py-2 mb-3">
+          <i class="fas fa-exclamation-triangle me-1"></i>
+          Es ist noch <strong>kein Geocoding-Dienst</strong> eingerichtet
+          (<code>GEOCODER_PHOTON_URL</code>). Die Lage einzelner Liegenschaften können Sie
+          auf deren Detailseite manuell setzen.
         </div>
         {% endif %}
         <div class="form-check">
@@ -164,7 +173,7 @@
         <form method="post" action="{{ url_for('properties.geocode_bev') }}" id="geocodeBevForm">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="mode" id="geocodeBevMode" value="missing">
-          <button type="submit" class="btn btn-primary" {% if not bev_index_info %}disabled{% endif %}>
+          <button type="submit" class="btn btn-primary" {% if not geocode_status.available %}disabled{% endif %}>
             <i class="fas fa-crosshairs me-1"></i> Abgleichen
           </button>
         </form>
@@ -204,7 +213,7 @@
           <div class="mb-3">
             <label class="form-label" for="setAddressLand">Land</label>
             <input type="text" class="form-control" id="setAddressLand" name="land" maxlength="100"
-              autocomplete="off" placeholder="z. B. Österreich">
+              autocomplete="off" placeholder="z. B. {{ country.name }}">
           </div>
           <p class="text-muted small mb-3">
             Nur ausgefüllte Felder werden übernommen — ein leeres Feld lässt die jeweilige
@@ -260,7 +269,7 @@ window.onPropertyEdited = function (e) {
   });
 };
 
-// BEV-Abgleich: gewaehlten Modus (Radio im Modal-Body) auf das Hidden-Feld im
+// Adress-Abgleich: gewaehlten Modus (Radio im Modal-Body) auf das Hidden-Feld im
 // Submit-Form spiegeln. Die Radios liegen ausserhalb des <form> und wuerden
 // sonst nicht mitgesendet.
 (function () {

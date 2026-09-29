@@ -1,4 +1,5 @@
 from datetime import datetime, date, timedelta
+from decimal import Decimal
 import sqlalchemy as sa
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_login import UserMixin
@@ -265,7 +266,9 @@ class Customer(db.Model):
     hausnummer = db.Column(db.String(20))
     plz = db.Column(db.String(10))
     ort = db.Column(db.String(100))
-    land = db.Column(db.String(100), default="Österreich")
+    # Kein fester Default: neue Adressen bekommen das Land des Mandanten aus
+    # Route/Import (app.country.home_country_name); leer gilt als Inland.
+    land = db.Column(db.String(100))
     email = db.Column(db.String(120))
     rechnung_per_email = db.Column(db.Boolean, default=False, nullable=False)
     phone = db.Column(db.String(50))
@@ -273,10 +276,13 @@ class Customer(db.Model):
     notes = db.Column(db.Text)
     active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    base_fee_override = db.Column(db.Numeric(10, 2), nullable=True)       # überschreibt Tarif-Grundgebühr
-    additional_fee_override = db.Column(db.Numeric(10, 2), nullable=True)  # überschreibt Tarif-Zusatzgebühr
 
     invoices = db.relationship("Invoice", backref="customer", lazy="dynamic")
+    # Individuelle Gebuehren (ersetzen den Tarifbetrag je Gebuehrenart, siehe
+    # ChargeOverride). Objekt-Overrides haben Vorrang vor Kunden-Overrides.
+    charge_overrides = db.relationship(
+        "ChargeOverride", foreign_keys="ChargeOverride.customer_id",
+        back_populates="customer", cascade="all, delete-orphan")
     ownerships = db.relationship("PropertyOwnership", backref="customer", lazy="dynamic")
     # WG-spezifisch (Mandant-Typ Wassergenossenschaft): 1:1-Profil + mehrwertige
     # Funktionen. Cascade delete-orphan, damit beim Hard-Delete eines Kontakts
@@ -304,7 +310,8 @@ class Customer(db.Model):
         city = " ".join(filter(None, [self.plz, self.ort]))
         if city:
             parts.append(city)
-        if self.land and self.land != "Österreich":
+        from app.country import is_foreign
+        if is_foreign(self.land):
             parts.append(self.land)
         return ", ".join(parts)
 
@@ -393,15 +400,13 @@ class Property(db.Model):
     hausnummer = db.Column(db.String(20))
     plz = db.Column(db.String(10))
     ort = db.Column(db.String(100))
-    land = db.Column(db.String(100), default="Österreich")
+    land = db.Column(db.String(100))   # Default aus Route/Import, s. Customer.land
     notes = db.Column(db.Text)
     active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    base_fee_override = db.Column(db.Numeric(10, 2), nullable=True)       # überschreibt Kunden-/Tarif-Grundgebühr
-    additional_fee_override = db.Column(db.Numeric(10, 2), nullable=True)  # überschreibt Kunden-/Tarif-Zusatzgebühr
 
     # Geocoding (BEV-Adressregister): WGS84-Koordinate der Liegenschaft, per
-    # `flask bev-refresh`-Index + "BEV-Adressen abgleichen"-Button befuellt.
+    # `flask bev-refresh`-Index + "Adressen geokodieren"-Button befuellt (DE: Photon/OSM, siehe app/properties/geocoding.py) oder manuell auf der Detailseite gesetzt.
     # Treibt die Hausanschluss-Zuordnung im Leitungsnetz (Nearest-Neighbour).
     # ``geocoded_at`` None = "noch nicht / nicht gefunden" (Re-Abgleich versucht
     # es erneut), sonst Zeitpunkt des letzten erfolgreichen Treffers.
@@ -414,6 +419,10 @@ class Property(db.Model):
     ownerships = db.relationship("PropertyOwnership", backref="property", lazy="dynamic",
                                  order_by="PropertyOwnership.valid_from.desc()")
     invoices = db.relationship("Invoice", backref="property", lazy="dynamic")
+    # Individuelle Gebuehren (Vorrang vor Kunden-Overrides, siehe ChargeOverride).
+    charge_overrides = db.relationship(
+        "ChargeOverride", foreign_keys="ChargeOverride.property_id",
+        back_populates="property", cascade="all, delete-orphan")
     # WG-spezifisch (Mandant-Typ Wassergenossenschaft): Anteile + m2.
     wg_profile = db.relationship("PropertyWgProfile", uselist=False,
                                  back_populates="property", cascade="all, delete-orphan")
@@ -433,7 +442,8 @@ class Property(db.Model):
         city = " ".join(filter(None, [self.plz, self.ort]))
         if city:
             parts.append(city)
-        if self.land and self.land != "Österreich":
+        from app.country import is_foreign
+        if is_foreign(self.land):
             parts.append(self.land)
         return ", ".join(parts)
 
@@ -917,6 +927,12 @@ class ReadingCorrection(db.Model):
     delta_m3 = db.Column(db.Numeric(12, 3), nullable=True)               # real - geschaetzt
     unit_price = db.Column(db.Numeric(10, 4), nullable=False)            # €/m³ Snapshot
     tax_rate = db.Column(db.Numeric(5, 2), nullable=True)                # USt% Snapshot (None = keine)
+    # Verbrauchsabhaengige Tarifposition, deren Menge korrigiert wird: je
+    # m³-Position (Wasser, Wassercent, …) entsteht ein eigener Posten, damit
+    # z.B. die Wassercent-Korrektur separat ausgewiesen wird. NULL = Altbestand
+    # bzw. Kappungs-Uebertrag (dann gilt der Wasserverbrauch).
+    charge_key = db.Column(db.String(40), nullable=True)
+    label = db.Column(db.String(100), nullable=True)                     # Positionstext-Snapshot
     amount = db.Column(db.Numeric(10, 2), nullable=False)                # signed netto
     remaining_amount = db.Column(db.Numeric(10, 2), nullable=False)      # signed netto, noch offen
     status = db.Column(
@@ -1336,36 +1352,233 @@ class BillingPeriod(db.Model):
 # Tarife
 # ---------------------------------------------------------------------------
 
+class ChargeType(db.Model):
+    """Gebührenart — mandantenweiter Katalog der Positionen, aus denen Tarife
+    bestehen (Wasserverbrauch, Grundgebühr, Zusatzgebühr, Wassercent, …).
+
+    Die Gebührenart ist der **stabile Anker der Überschreibungen**: ein
+    ``ChargeOverride`` haengt an der Gebührenart, nicht an einer Tarifposition,
+    und ueberlebt dadurch jeden Tarifwechsel. Welche Positionen eine Rechnung
+    bekommt, bestimmt dagegen allein der Tarif (``TariffComponent``).
+
+    ``key`` ist technisch und unveraenderlich (landet eingefroren auf
+    ``InvoiceItem.charge_key``); System-Arten (``is_system``) sind nicht
+    loeschbar. ``active`` steuert nur die Auswahl fuer neue Tarifpositionen —
+    bestehende Tarife rechnen unveraendert weiter ab. ``is_levy`` markiert
+    eine an das Land weitergereichte Abgabe (Wassercent): sie zaehlt in der
+    Plankostenrechnung nicht als Ertrag.
+    """
+    __tablename__ = "charge_types"
+
+    KEY_WATER = "water"
+    KEY_BASE_FEE = "base_fee"
+    KEY_ADDITIONAL_FEE = "additional_fee"
+    KEY_WATER_LEVY = "water_levy"
+
+    CALC_PER_M3 = "per_m3"
+    CALC_FLAT = "flat"
+    CALC_CHOICES = [
+        (CALC_PER_M3, "je m³ (verbrauchsabhängig)"),
+        (CALC_FLAT, "pauschal je Objekt"),
+    ]
+
+    id = db.Column(db.Integer, primary_key=True)
+    key = db.Column(db.String(40), nullable=False, unique=True)
+    label = db.Column(db.String(100), nullable=False)
+    calc_type = db.Column(db.String(10), nullable=False, default=CALC_FLAT,
+                          server_default=db.text("'flat'"))
+    is_levy = db.Column(db.Boolean, nullable=False, default=False,
+                        server_default=sa.false())
+    overridable = db.Column(db.Boolean, nullable=False, default=False,
+                            server_default=sa.false())
+    is_system = db.Column(db.Boolean, nullable=False, default=False,
+                          server_default=sa.false())
+    active = db.Column(db.Boolean, nullable=False, default=True,
+                       server_default=sa.true())
+    sort_order = db.Column(db.Integer, nullable=False, default=100,
+                           server_default=db.text("100"))
+
+    @property
+    def is_per_m3(self):
+        return self.calc_type == self.CALC_PER_M3
+
+    @property
+    def unit(self):
+        """Einheit der erzeugten Rechnungsposition."""
+        return "m³" if self.is_per_m3 else "Pauschal"
+
+    @property
+    def calc_label(self):
+        return dict(self.CALC_CHOICES).get(self.calc_type, self.calc_type)
+
+    def __repr__(self):
+        return f"<ChargeType {self.key}>"
+
+
 class WaterTariff(db.Model):
+    """Wassertarif = Name + Gueltigkeit + eine Liste von Tarifpositionen
+    (``components``). Jeder Tarif hat genau eine Position der Gebührenart
+    ``water`` (Preis je m³) — Verbrauch, Schaetzung und Plankostenrechnung
+    haengen daran. Alle Positionen tragen ihren eigenen USt-Satz und ihr
+    Buchungskonto; die Tarif-Engine (``app/invoices/tariff_engine.py``)
+    macht daraus unter Beruecksichtigung der Überschreibungen die
+    Rechnungspositionen."""
     __tablename__ = "water_tariffs"
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
     valid_from = db.Column(db.Integer, nullable=False)   # Jahr
     valid_to = db.Column(db.Integer)                      # Jahr (None = aktuell gültig)
-    base_fee = db.Column(db.Numeric(10, 2))               # Grundgebühr €; None = keine Position auf Rechnung
-    base_fee_label = db.Column(db.String(100), default="Grundgebühr")
-    additional_fee = db.Column(db.Numeric(10, 2))          # Zusatzgebühr €; None = keine Position auf Rechnung
-    additional_fee_label = db.Column(db.String(100), default="Zusatzgebühr")
-    price_per_m3 = db.Column(db.Numeric(10, 4), nullable=False)  # Preis pro m³ (4 Nachkommastellen)
     notes = db.Column(db.Text)
 
-    # Buchungskonto je Gebuehrenart. Der Rechnungslauf schreibt es auf die
-    # erzeugten Positionen (InvoiceItem.account_id); von dort splittet die
-    # Zahlung in eine Sammelbuchung. None = keine Vorbelegung, das Konto wird
-    # dann beim Bezahlen abgefragt.
-    base_fee_account_id = db.Column(db.Integer, db.ForeignKey("accounts.id"), nullable=True)
-    additional_fee_account_id = db.Column(db.Integer, db.ForeignKey("accounts.id"), nullable=True)
-    price_per_m3_account_id = db.Column(db.Integer, db.ForeignKey("accounts.id"), nullable=True)
+    components = db.relationship(
+        "TariffComponent", back_populates="tariff", cascade="all, delete-orphan",
+        order_by="(TariffComponent.sort_order, TariffComponent.id)")
 
-    # foreign_keys ist Pflicht: drei FKs auf dieselbe Tabelle sind sonst nicht
-    # aufloesbar (AmbiguousForeignKeysError).
-    base_fee_account = db.relationship("Account", foreign_keys=[base_fee_account_id])
-    additional_fee_account = db.relationship("Account", foreign_keys=[additional_fee_account_id])
-    price_per_m3_account = db.relationship("Account", foreign_keys=[price_per_m3_account_id])
+    def component(self, key):
+        """Die Tarifposition der Gebührenart ``key`` oder ``None``."""
+        return next((c for c in self.components if c.charge_type.key == key), None)
+
+    @property
+    def water_component(self):
+        return self.component(ChargeType.KEY_WATER)
+
+    @property
+    def water_price(self):
+        """Preis je m³ der Wasser-Position (Decimal) oder ``None``."""
+        comp = self.water_component
+        return comp.amount if comp is not None else None
+
+    @property
+    def per_m3_total(self):
+        """Summe aller m³-Positionen mit Betrag (Wasser + z.B. Wassercent)."""
+        return sum((Decimal(str(c.amount)) for c in self.components
+                    if c.amount is not None and c.charge_type.is_per_m3), Decimal("0"))
+
+    @property
+    def flat_total(self):
+        """Summe aller Pauschal-Positionen mit Betrag (ohne Overrides)."""
+        return sum((Decimal(str(c.amount)) for c in self.components
+                    if c.amount is not None and not c.charge_type.is_per_m3), Decimal("0"))
+
+    @property
+    def summary(self):
+        """Kurzfassung fuer Auswahllisten: ``1,4000 €/m³ · Grundgebühr 32,00 €``."""
+        parts = []
+        for comp in self.components:
+            if comp.amount is None:
+                continue
+            if comp.charge_type.is_per_m3:
+                value = f"{Decimal(str(comp.amount)):.4f}".replace(".", ",")
+                text = f"{value} €/m³"
+            else:
+                value = f"{Decimal(str(comp.amount)):.2f}".replace(".", ",")
+                text = f"{value} €"
+            if comp.charge_type.key != ChargeType.KEY_WATER:
+                text = f"{comp.label} {text}"
+            parts.append(text)
+        return " · ".join(parts)
 
     def __repr__(self):
         return f"<WaterTariff {self.name} {self.valid_from}>"
+
+
+class TariffComponent(db.Model):
+    """Tarifposition — eine Zeile eines Wassertarifs.
+
+    ``amount`` ist der Preis je m³ (``per_m3``) bzw. der Pauschalbetrag
+    (``flat``), 4 Nachkommastellen. ``amount`` NULL heisst „keine Position,
+    ausser eine individuelle Gebühr setzt einen Betrag" (z.B. eine
+    Zusatzgebühr, die nur einzelne Objekte zahlen). ``tax_rate`` greift nur in
+    umsatzsteuerpflichtigen Buchungsjahren. ``valid_from`` (optional) laesst
+    eine Position erst ab einem Stichtag innerhalb des Abrechnungszeitraums
+    gelten — Menge/Betrag werden dann zeitanteilig abgegrenzt (z.B. bayerischer
+    Wassercent ab 1.7.2026).
+    """
+    __tablename__ = "tariff_components"
+
+    id = db.Column(db.Integer, primary_key=True)
+    tariff_id = db.Column(
+        db.Integer, db.ForeignKey("water_tariffs.id", ondelete="CASCADE"),
+        nullable=False, index=True)
+    charge_type_id = db.Column(
+        db.Integer, db.ForeignKey("charge_types.id"), nullable=False)
+    label = db.Column(db.String(100), nullable=False)
+    amount = db.Column(db.Numeric(10, 4), nullable=True)
+    tax_rate = db.Column(db.Numeric(5, 2), nullable=True)
+    account_id = db.Column(db.Integer, db.ForeignKey("accounts.id"), nullable=True)
+    valid_from = db.Column(db.Date, nullable=True)
+    sort_order = db.Column(db.Integer, nullable=False, default=100,
+                           server_default=db.text("100"))
+
+    __table_args__ = (
+        db.UniqueConstraint("tariff_id", "charge_type_id",
+                            name="uq_tariff_components_tariff_charge"),
+    )
+
+    tariff = db.relationship("WaterTariff", back_populates="components")
+    charge_type = db.relationship("ChargeType")
+    account = db.relationship("Account", foreign_keys=[account_id])
+
+    def __repr__(self):
+        return f"<TariffComponent {self.tariff_id}:{self.charge_type_id} {self.amount}>"
+
+
+class ChargeOverride(db.Model):
+    """Individuelle Gebühr eines Kunden ODER Objekts für eine Gebührenart.
+
+    Regeln (siehe ``app/invoices/tariff_engine.py``):
+
+    * Der Tarif bestimmt, WELCHE Positionen es gibt (Text, Berechnungsart, USt,
+      Konto). Ein Override ersetzt nur den **Betrag** der Position.
+    * Prioritaet je Gebührenart: Objekt > Kunde > Tarif.
+    * Keine Zeile = erbt vom Tarif; ``amount`` gesetzt = ersetzt (bei
+      m³-Arten den Preis je m³); ``amount`` NULL = Position **entfällt**.
+    * Wirkt nur bei Gebührenarten mit ``overridable``.
+
+    Genau eines von ``customer_id``/``property_id`` ist gesetzt (App-seitig
+    geprueft, kein CHECK-Constraint — dialekt-portabel).
+    """
+    __tablename__ = "charge_overrides"
+
+    id = db.Column(db.Integer, primary_key=True)
+    charge_type_id = db.Column(
+        db.Integer, db.ForeignKey("charge_types.id", ondelete="CASCADE"),
+        nullable=False)
+    customer_id = db.Column(
+        db.Integer, db.ForeignKey("customers.id", ondelete="CASCADE"),
+        nullable=True, index=True)
+    property_id = db.Column(
+        db.Integer, db.ForeignKey("properties.id", ondelete="CASCADE"),
+        nullable=True, index=True)
+    amount = db.Column(db.Numeric(10, 4), nullable=True)
+    note = db.Column(db.String(200), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        db.UniqueConstraint("charge_type_id", "customer_id",
+                            name="uq_charge_overrides_customer"),
+        db.UniqueConstraint("charge_type_id", "property_id",
+                            name="uq_charge_overrides_property"),
+    )
+
+    # ``is_exempt`` steht VOR den Relationships: das Attribut ``property``
+    # (Relationship zum Objekt) ueberschattet sonst im Klassenkoerper den
+    # eingebauten ``@property``-Decorator.
+    @property
+    def is_exempt(self):
+        """True = die Position entfaellt fuer diesen Kunden/dieses Objekt."""
+        return self.amount is None
+
+    charge_type = db.relationship("ChargeType")
+    customer = db.relationship("Customer", foreign_keys=[customer_id],
+                               back_populates="charge_overrides")
+    property = db.relationship("Property", foreign_keys=[property_id],
+                               back_populates="charge_overrides")
+
+    def __repr__(self):
+        scope = f"c{self.customer_id}" if self.customer_id else f"p{self.property_id}"
+        return f"<ChargeOverride {self.charge_type_id} {scope} {self.amount}>"
 
 
 # ---------------------------------------------------------------------------
@@ -1593,6 +1806,11 @@ class BillingRun(db.Model):
     tariff_additional_fee_label = db.Column(db.String(100), nullable=True)
     tariff_price_per_m3 = db.Column(db.Numeric(10, 4), nullable=False)
     tariff_notes = db.Column(db.Text, nullable=True)
+    # Snapshot ALLER Tarifpositionen als JSON (Liste von Dicts: key, label,
+    # calc_type, amount, tax_rate, account_id, is_levy). Laeufe vor den
+    # Tarifpositionen haben ihn nicht — ``tariff_components_snapshot`` baut ihn
+    # dann aus den Einzelspalten nach.
+    tariff_snapshot = db.Column(db.Text, nullable=True)
 
     invoices_created = db.Column(db.Integer, default=0, nullable=False)
     invoices_skipped = db.Column(db.Integer, default=0, nullable=False)
@@ -1614,6 +1832,46 @@ class BillingRun(db.Model):
     invoices = db.relationship("Invoice", backref="billing_run", lazy="dynamic")
     billing_period = db.relationship("BillingPeriod")
     project = db.relationship("Project", foreign_keys=[project_id])
+
+    @property
+    def tariff_components_snapshot(self):
+        """Tarifpositionen des Laufs als Liste von Dicts (Decimal-Betraege).
+
+        Neue Laeufe lesen den JSON-Snapshot, Altlaeufe werden aus den
+        Einzelspalten (Wasserpreis, Grund-/Zusatzgebuehr) rekonstruiert.
+        """
+        import json
+        rows = []
+        if self.tariff_snapshot:
+            try:
+                raw = json.loads(self.tariff_snapshot)
+            except (TypeError, ValueError):
+                raw = []
+            for r in raw:
+                r = dict(r)
+                for f in ("amount", "tax_rate"):
+                    if r.get(f) is not None:
+                        r[f] = Decimal(str(r[f]))
+                rows.append(r)
+            return rows
+        rows.append({"key": ChargeType.KEY_WATER, "label": "Wasserverbrauch",
+                     "calc_type": ChargeType.CALC_PER_M3,
+                     "amount": (Decimal(str(self.tariff_price_per_m3))
+                                if self.tariff_price_per_m3 is not None else None),
+                     "tax_rate": None, "account_id": None, "is_levy": False})
+        if self.tariff_base_fee is not None:
+            rows.append({"key": ChargeType.KEY_BASE_FEE,
+                         "label": self.tariff_base_fee_label or "Grundgebühr",
+                         "calc_type": ChargeType.CALC_FLAT,
+                         "amount": Decimal(str(self.tariff_base_fee)),
+                         "tax_rate": None, "account_id": None, "is_levy": False})
+        if self.tariff_additional_fee is not None:
+            rows.append({"key": ChargeType.KEY_ADDITIONAL_FEE,
+                         "label": self.tariff_additional_fee_label or "Zusatzgebühr",
+                         "calc_type": ChargeType.CALC_FLAT,
+                         "amount": Decimal(str(self.tariff_additional_fee)),
+                         "tax_rate": None, "account_id": None, "is_levy": False})
+        return rows
 
     def __repr__(self):
         return f"<BillingRun {self.billing_period_id} {self.created_at}>"
@@ -1821,11 +2079,17 @@ class Invoice(EmailTrackableMixin, db.Model):
 
     @property
     def consumption(self):
+        """Abgerechnete Wassermenge in m³ — nur die Wasser-Position(en).
+
+        Weitere m³-Positionen (z.B. Wassercent) tragen dieselbe Menge ein
+        zweites Mal und duerfen nicht mitgezaehlt werden; massgeblich ist daher
+        ``charge_key``. Altbelege ohne Key fallen auf die Einheit zurueck.
+        """
         from decimal import Decimal
         return sum(
             (item.quantity or Decimal("0"))
             for item in self.items
-            if item.unit == "m³"
+            if item.is_water_consumption
         ) or None
 
     # -- Storno-Rechnung (Gutschrift) ---------------------------------------
@@ -2015,6 +2279,11 @@ class InvoiceItem(db.Model):
     unit_price = db.Column(db.Numeric(10, 4), nullable=False)
     amount = db.Column(db.Numeric(10, 2), nullable=False)
     tax_rate = db.Column(db.Numeric(5, 2), nullable=True)  # MwSt in %; None = keine MwSt
+    # Gebuehrenart der Tarifposition, aus der die Zeile entstand (``water``,
+    # ``base_fee``, ``water_levy``, …) — eingefroren wie ``tax_rate``, damit
+    # Auswertungen nicht an wandelbaren Beschriftungen haengen. NULL bei freien
+    # Positionen, Korrekturen und Altbelegen.
+    charge_key = db.Column(db.String(40), nullable=True)
     # Buchungsdimensionen der Position. Bei der Zahlung splittet
     # ``_split_invoice_by_dimensions`` nach (account_id, project_id, tax_rate);
     # ergibt das mehr als eine Zeile, entsteht eine Sammelbuchung.
@@ -2047,6 +2316,14 @@ class InvoiceItem(db.Model):
     account = db.relationship("Account", foreign_keys=[account_id])
     project = db.relationship("Project", foreign_keys=[project_id])
 
+    @property
+    def is_water_consumption(self):
+        """True fuer die Wasserverbrauchs-Zeile(n) — Altbelege ohne
+        ``charge_key`` ueber die Einheit m³ (damals die einzige m³-Position)."""
+        if self.unit != "m³" or getattr(self, "is_dunning_fee", 0):
+            return False
+        return self.charge_key in (None, ChargeType.KEY_WATER)
+
     def __repr__(self):
         return f"<InvoiceItem {self.description}>"
 
@@ -2076,11 +2353,21 @@ class Project(db.Model):
 # ---------------------------------------------------------------------------
 
 class TaxRate(db.Model):
+    """Vom Mandanten gepflegter USt-Satz (Auswahllisten in Buchung/Rechnung/Tarif).
+
+    Belege speichern den Satz als Zahl, nicht als FK — daher wird ein Satz nie
+    geloescht, sondern nur deaktiviert (``active=False``): er verschwindet aus
+    den Auswahllisten, die Historie bleibt. Geseedet werden die Standardsaetze
+    des Mandanten-Landes (``app.country``); Zugriff ueber ``app.tax_service``.
+    """
     __tablename__ = "tax_rates"
 
     id = db.Column(db.Integer, primary_key=True)
-    rate = db.Column(db.Numeric(5, 2), nullable=False, unique=True)  # z. B. 0, 10, 13, 20
+    rate = db.Column(db.Numeric(5, 2), nullable=False, unique=True)  # z. B. 0, 7, 10, 19, 20
     label = db.Column(db.String(100), nullable=True)  # optionale Bezeichnung
+    # server_default, weil der SaaS-Provisioner Seeds per Roh-INSERT schreibt.
+    active = db.Column(db.Boolean, nullable=False, default=True,
+                       server_default=sa.true())
 
     def __repr__(self):
         return f"<TaxRate {self.rate}%>"
@@ -2125,7 +2412,11 @@ class RealAccount(db.Model):
 
     @property
     def type_label(self):
-        return "Kassa" if self.is_cash else "Bankkonto"
+        """Anzeigename des Kontotyps; „Kassa" (AT) bzw. „Kasse" (DE) je Land."""
+        if self.is_cash:
+            from app.country import term
+            return term("cash")
+        return "Bankkonto"
 
     def __repr__(self):
         return f"<RealAccount {self.name} ({self.account_type})>"

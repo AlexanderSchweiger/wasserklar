@@ -174,7 +174,7 @@
       <small class="form-hint">Bestehenden wählen oder neuen Namen eintippen und mit <kbd>Enter</kbd> anlegen.</small>
     </div>
     <div class="col-12 col-sm-6">
-      <label class="form-label">Bank/Kassa</label>
+      <label class="form-label">Bank/{{ term('cash') }}</label>
       <select name="real_account_id" id="booking-real-account-select" class="form-select tom-select">
         <option value="">– kein Konto –</option>
         {% for ra in real_accounts %}

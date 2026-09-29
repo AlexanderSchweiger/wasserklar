@@ -29,7 +29,7 @@
       <span class="text-secondary small">Trend</span>
       <select class="form-select form-select-sm w-auto" aria-label="Parameter wählen"
               onchange="window.location.href='{{ url_for('network.samples_overview', feature_id=f.id) }}?param='+this.value;">
-        {% for key, meta in wq.PARAMETERS.items() %}
+        {% for key, meta in wq.parameters().items() %}
         <option value="{{ key }}" {% if key == param %}selected{% endif %}>{{ meta.label }}{% if meta.unit %} ({{ meta.unit }}){% endif %}</option>
         {% endfor %}
       </select>

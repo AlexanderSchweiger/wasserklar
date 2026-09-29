@@ -20,7 +20,10 @@ from app.models import (
     MeterReading, MeterReplacement, OwnerChange, OwnerChangeMeterValue,
     Property, PropertyOwnership, WaterMeter,
 )
-from app.accounting.services import default_water_tax_rate, open_fiscal_year_error
+from app.accounting.services import (
+    default_water_tax_rate, is_year_vat_liable, open_fiscal_year_error,
+)
+from app.invoices import tariff_engine as engine
 from app.meters.estimation import (
     _base_value, apply_corrections_to_invoice, cap_invoice_at_zero,
     customer_correction_balance, estimate_meter_value,
@@ -216,66 +219,88 @@ def collect_meter_snapshots(prop, period, stichtag, meter_inputs):
     return snapshots, warnings
 
 
-def _effective_fee(prop, customer, tariff_fee_attr, tariff, override_attr):
-    """Effektive Gebuehr: Objekt-Override > Kunden-Override > Tarif.
-    ``None`` bedeutet: keine Gebuehr / keine Position."""
-    prop_ov = getattr(prop, override_attr)
-    if prop_ov is not None:
-        return prop_ov
-    cust_ov = getattr(customer, override_attr)
-    if cust_ov is not None:
-        return cust_ov
-    return getattr(tariff, tariff_fee_attr)
+def _water_tax(tariff, vat_liable):
+    """USt-Satz der Wasser-Position (auch fuer die Null-Kappung)."""
+    comp = tariff.water_component if tariff is not None else None
+    if comp is None:
+        return default_water_tax_rate(date.today().year) if vat_liable else None
+    return engine.effective_tax(comp.tax_rate, vat_liable)
 
 
 def _settlement_lines(prop, period, stichtag, tariff, fee_mode, recipient,
-                      snapshots, water_tax):
+                      snapshots, vat_liable):
     """Positionsliste (Dicts) der Schlussrechnung — geteilt von Vorschau und
-    Rechnungsbau. Verbrauch je Zaehler + (nur pro_rata) anteilige Gebuehren."""
+    Rechnungsbau. Verbrauch je Zaehler, weitere m³-Positionen des Tarifs
+    (z.B. Wassercent) auf die Summe, (nur pro_rata) anteilige Pauschalen.
+
+    Betraege, Texte, USt und Konten kommen aus der Tarif-Engine — inkl. der
+    individuellen Gebuehren des Altbesitzers (Objekt > Kunde > Tarif).
+    """
     lines = []
-    price = Decimal(str(tariff.price_per_m3))
-    for snap in snapshots:
-        cons = snap["consumption_billed"]
-        if cons is None:
+    charges = engine.resolve_charges(tariff, prop=prop, customer=recipient)
+    water = engine.water_charge(charges)
+    last_day = stichtag - timedelta(days=1)
+    billed_m3 = Decimal("0")
+    if water is not None:
+        for snap in snapshots:
+            cons = snap["consumption_billed"]
+            if cons is None:
+                continue
+            meter = snap["meter"]
+            billed_m3 += cons
+            amount = (cons * water.unit_price).quantize(Decimal("0.01"))
+            lines.append({
+                "description": (
+                    f"{water.label} {period.name} bis "
+                    f"{stichtag.strftime('%d.%m.%Y')} – Zähler {meter.meter_number}"
+                    f" ({cons.quantize(Decimal('1'))} m³)"),
+                "quantity": cons,
+                "unit": "m³",
+                "unit_price": water.unit_price,
+                "amount": amount,
+                "tax_rate": water.tax(vat_liable),
+                "account_id": water.account_id,
+                "charge_key": water.key,
+                "is_estimated": snap["is_estimated"],
+            })
+
+    is_any_estimated = any(snap["is_estimated"] for snap in snapshots
+                           if snap["consumption_billed"] is not None)
+    for charge in charges:
+        if charge.is_water or not charge.is_per_m3 or water is None:
             continue
-        meter = snap["meter"]
-        amount = (cons * price).quantize(Decimal("0.01"))
-        lines.append({
-            "description": (
-                f"Wasserverbrauch {period.name} bis "
-                f"{stichtag.strftime('%d.%m.%Y')} – Zähler {meter.meter_number}"
-                f" ({cons.quantize(Decimal('1'))} m³)"),
-            "quantity": cons,
-            "unit": "m³",
-            "unit_price": price,
-            "amount": amount,
-            "tax_rate": water_tax,
-            "is_estimated": snap["is_estimated"],
-        })
+        line = engine.per_m3_line(
+            charge, billed_m3, start=period.start_date, end=last_day,
+            period_name=f"{period.name} bis {stichtag.strftime('%d.%m.%Y')}")
+        if line is None:
+            continue
+        line.update({"tax_rate": charge.tax(vat_liable), "account_id": charge.account_id,
+                     "is_estimated": is_any_estimated})
+        lines.append(line)
 
     if fee_mode == FEE_MODE_PRO_RATA:
         old_days, _new_days, period_days = fee_day_split(period, stichtag)
         if old_days > 0 and period_days > 0:
-            last_day = stichtag - timedelta(days=1)
             span = (f"{period.start_date.strftime('%d.%m.%Y')} – "
                     f"{last_day.strftime('%d.%m.%Y')}")
-            for fee_attr, override_attr, default_label in (
-                ("base_fee", "base_fee_override", "Grundgebühr"),
-                ("additional_fee", "additional_fee_override", "Zusatzgebühr"),
-            ):
-                fee = _effective_fee(prop, recipient, fee_attr, tariff, override_attr)
-                if fee is None:
+            for charge in charges:
+                if charge.is_per_m3:
                     continue
-                label = getattr(tariff, fee_attr + "_label", None) or default_label
-                amount = (Decimal(str(fee)) * Decimal(old_days)
+                days = engine.active_days(charge, period.start_date, last_day)
+                if days <= 0:
+                    continue
+                amount = (charge.unit_price * Decimal(days)
                           / Decimal(period_days)).quantize(Decimal("0.01"))
                 lines.append({
-                    "description": f"{label} anteilig {old_days}/{period_days} Tage ({span})",
+                    "description": (f"{charge.label} anteilig {days}/{period_days} "
+                                    f"Tage ({span})"),
                     "quantity": Decimal("1"),
                     "unit": "Pauschal",
                     "unit_price": amount,
                     "amount": amount,
-                    "tax_rate": water_tax,
+                    "tax_rate": charge.tax(vat_liable),
+                    "account_id": charge.account_id,
+                    "charge_key": charge.key,
                     "is_estimated": False,
                 })
     return lines
@@ -284,10 +309,11 @@ def _settlement_lines(prop, period, stichtag, tariff, fee_mode, recipient,
 def build_settlement_preview(*, prop, period, stichtag, tariff, fee_mode,
                              recipient, meter_inputs):
     """Reine Rechenvorschau der Schlussrechnung (keine DB-Writes)."""
-    water_tax = default_water_tax_rate(date.today().year)
+    vat_liable = is_year_vat_liable(date.today().year)
+    water_tax = _water_tax(tariff, vat_liable)
     snapshots, warnings = collect_meter_snapshots(prop, period, stichtag, meter_inputs)
     lines = _settlement_lines(prop, period, stichtag, tariff, fee_mode,
-                              recipient, snapshots, water_tax)
+                              recipient, snapshots, vat_liable)
     net = sum((Decimal(str(l["amount"])) for l in lines), Decimal("0"))
     gross = Decimal("0")
     for l in lines:
@@ -339,7 +365,10 @@ def deductions_for_property(property_id, period_id):
     total = Decimal("0")
     fee_days = 0
     numbers = []
+    change_date = None
     for oc in changes:
+        if change_date is None or (oc.change_date and oc.change_date > change_date):
+            change_date = oc.change_date
         if oc.settlement_invoice is not None:
             numbers.append(oc.settlement_invoice.invoice_number)
         if oc.fee_days_billed:
@@ -355,6 +384,9 @@ def deductions_for_property(property_id, period_id):
         "total": total,
         "fee_days": fee_days,
         "invoice_numbers": numbers,
+        # Juengster Stichtag: ab hier gehoert der Verbrauch dem Nachbesitzer
+        # (zeitanteilige Abgrenzung von Positionen mit ``valid_from``).
+        "change_date": change_date,
     }
 
 
@@ -366,9 +398,10 @@ def _build_settlement_invoice(*, prop, period, stichtag, tariff, fee_mode,
                               recipient, snapshots, due_days, created_by_id):
     """Erzeugt die Schlussrechnung (Entwurf) + Positionen. Flusht, committet
     nicht. Gibt ``(invoice, old_days_or_None)`` zurueck."""
-    water_tax = default_water_tax_rate(date.today().year)
+    vat_liable = is_year_vat_liable(date.today().year)
+    water_tax = _water_tax(tariff, vat_liable)
     lines = _settlement_lines(prop, period, stichtag, tariff, fee_mode,
-                              recipient, snapshots, water_tax)
+                              recipient, snapshots, vat_liable)
     if not lines:
         raise OwnerChangeError(
             "Die Schlussrechnung hätte keine Positionen (kein abrechenbarer "
@@ -400,6 +433,8 @@ def _build_settlement_invoice(*, prop, period, stichtag, tariff, fee_mode,
             unit_price=l["unit_price"],
             amount=l["amount"],
             tax_rate=l["tax_rate"],
+            account_id=l.get("account_id"),
+            charge_key=l.get("charge_key"),
             is_estimated=l.get("is_estimated", False),
         ))
     for snap in snapshots:

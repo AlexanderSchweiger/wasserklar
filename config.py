@@ -57,6 +57,12 @@ class Config:
     # ganz (manuell geladenes ZIP).
     BEV_DOWNLOAD_URL = os.environ.get("BEV_DOWNLOAD_URL", "")
 
+    # Geocoding fuer Deutschland: Photon-Server (OpenStreetMap), z.B.
+    # "http://photon:2322" (SaaS: eigener Container). Leer = kein automatischer
+    # Abgleich — die Lage einer Liegenschaft laesst sich dann manuell auf der
+    # Karte setzen. Oesterreich nutzt weiter den BEV-Index (siehe oben).
+    GEOCODER_PHOTON_URL = os.environ.get("GEOCODER_PHOTON_URL", "")
+
     # Automatische Hausanschluss->Liegenschaft-Zuordnung im Leitungsnetz
     # (Nearest-Neighbour gegen die geocodeten Liegenschaften, siehe
     # app/network/services.assign_hausanschluss_to_properties). Bewusst ein
@@ -114,6 +120,12 @@ class Config:
     # ggf. strenger per Env setzen.
     BULK_PRINT_MAX = int(os.environ.get("BULK_PRINT_MAX", 100))
 
+    # Land des Mandanten (ISO-Code, siehe app/country.py: "AT" | "DE"). Nur der
+    # Fallback, solange die AppSetting ``org.country`` nicht gesetzt ist — der
+    # Mandant waehlt sein Land in den Einstellungen (SaaS: bei der Registrierung).
+    # Steuert Länder-Defaults wie Steuersaetze, Wasser-USt und Eichfrist.
+    DEFAULT_COUNTRY = os.environ.get("DEFAULT_COUNTRY", "AT").strip().upper()
+
     # Genossenschaft (für Rechnungskopf)
     WG_NAME = os.environ.get("WG_NAME", "Wassergenossenschaft")
     WG_ADDRESS = os.environ.get("WG_ADDRESS", "")
@@ -122,6 +134,8 @@ class Config:
     WG_ACCOUNT_HOLDER = os.environ.get("WG_ACCOUNT_HOLDER", "")
     WG_EMAIL = os.environ.get("WG_EMAIL", "")
     WG_PHONE = os.environ.get("WG_PHONE", "")
+    WG_VAT_ID = os.environ.get("WG_VAT_ID", "")          # UID-Nr. / USt-IdNr.
+    WG_TAX_NUMBER = os.environ.get("WG_TAX_NUMBER", "")  # Steuernummer
 
     # Produkt-/Markenname fuer nutzersichtbare Stellen (Footer, 2FA-Aussteller,
     # Export-Dateiname, iCal-Metadaten). Default "wasserklar" fuer den

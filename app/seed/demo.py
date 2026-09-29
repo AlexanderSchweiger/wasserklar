@@ -138,7 +138,9 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         admin = author
     else:
         admin_role = Role.query.filter_by(name="Admin").first()
-        kassier_role = Role.query.filter_by(name="Kassier").first()
+        from app import country as _country
+        kassier_role = Role.query.filter(
+            Role.name.in_(_country.role_treasurer_names())).first()
         admin = User.query.filter_by(username="admin").first()
         if not admin:
             admin = User(
@@ -212,20 +214,24 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     # ------------------------------------------------------------------
     # Tarife (je 1 pro Jahr, unterschiedliche Preise)
     # ------------------------------------------------------------------
-    t_prev = WaterTariff(
+    from app.invoices.charges import build_tariff
+    # USt je Position: der Wasser-Satz des Mandanten-Landes (AT 10 %, DE 7 %).
+    # Der Wassercent (Landesabgabe je m³) nur, wo es ihn gibt (DE, Satz je
+    # Bundesland verschieden — hier 10 ct wie in Bayern/Baden-Württemberg).
+    from app import country as _country
+    _levy = Decimal("0.10") if _country.current_code() == "DE" else None
+    t_prev = build_tariff(
         name=f"Tarif {prev_year}", valid_from=prev_year, valid_to=prev_year,
         base_fee=Decimal("32.00"), additional_fee=Decimal("8.00"),
-        price_per_m3=Decimal("1.40"),
+        water_price=Decimal("1.40"), water_levy=_levy,
         notes=f"Tarif für Periode {prev_year}.",
     )
-    t_curr = WaterTariff(
+    t_curr = build_tariff(
         name=f"Tarif {current_year}", valid_from=current_year, valid_to=None,
         base_fee=Decimal("36.00"), additional_fee=Decimal("9.00"),
-        price_per_m3=Decimal("1.55"),
+        water_price=Decimal("1.55"), water_levy=_levy,
         notes="Preisanpassung wegen gestiegener Betriebskosten.",
     )
-    db.session.add_all([t_prev, t_curr])
-    db.session.flush()
     counts["tariffs"] = 2
 
     # ------------------------------------------------------------------
@@ -249,9 +255,9 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     # der Demo-Mandant den Regelfall: beim Bezahlen entsteht eine Sammelbuchung
     # mit einer Zeile je Konto, ohne dass jemand ein Konto eintippen muss.
     for t in (t_prev, t_curr):
-        t.price_per_m3_account_id = acc_wasser.id
-        t.base_fee_account_id = acc_grund.id
-        t.additional_fee_account_id = acc_grund.id
+        for comp in t.components:
+            comp.account_id = (acc_wasser.id if comp.charge_type.is_per_m3
+                               else acc_grund.id)
     db.session.flush()
 
     # ------------------------------------------------------------------
@@ -609,8 +615,8 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
             due = inv_date + timedelta(days=30)
 
         verbrauch = Decimal(rng.randint(70, 240))
-        base = t_prev.base_fee
-        wasser = (t_prev.price_per_m3 * verbrauch).quantize(Decimal("0.01"))
+        base = t_prev.component("base_fee").amount
+        wasser = (t_prev.water_price * verbrauch).quantize(Decimal("0.01"))
         # Reparatur-Position fuer 20% steuersatz auf manche Rechnungen
         with_repair = rng.random() < 0.35
         repair_net = Decimal(str(rng.randint(40, 150))) if with_repair else Decimal("0.00")
@@ -637,14 +643,16 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
             unit_price=base, amount=base,
             tax_rate=Decimal("10.00"),
             account_id=acc_grund.id,
+            charge_key="base_fee",
         ))
         db.session.add(InvoiceItem(
             invoice_id=inv.id,
             description=f"Wasserverbrauch {prev_year} ({verbrauch} m³)",
             quantity=verbrauch, unit="m³",
-            unit_price=t_prev.price_per_m3, amount=wasser,
+            unit_price=t_prev.water_price, amount=wasser,
             tax_rate=Decimal("10.00"),
             account_id=acc_wasser.id,
+            charge_key="water",
         ))
         if with_repair:
             db.session.add(InvoiceItem(

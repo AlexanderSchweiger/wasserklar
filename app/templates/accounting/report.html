@@ -14,7 +14,7 @@
       </div>
 
       <div>
-        <label class="form-label fw-bold mb-1">Bank/Kassa</label>
+        <label class="form-label fw-bold mb-1">Bank/{{ term('cash') }}</label>
         <select name="real_account_id" class="form-select form-select-sm tom-select" onchange="this.form.requestSubmit()">
           <option value="0" {% if real_account_id == 0 %}selected{% endif %}>Alle Konten</option>
           {% for ra in all_real_accounts %}

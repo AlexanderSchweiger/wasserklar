@@ -10,6 +10,7 @@ from flask import (
 )
 from flask_login import login_required
 
+from app.country import home_country_name
 from app.import_csv import bp
 from app.extensions import db
 from app.imports.common import resolve_contact_name, split_street_number
@@ -416,7 +417,7 @@ def _run_import(df, col_map: dict, duplicate_mode: str,
                 hausnummer=_hausnummer,
                 plz=_get_cell(row, col_plz),
                 ort=_get_cell(row, col_ort),
-                land=_get_cell(row, col_land) or "Österreich",
+                land=_get_cell(row, col_land) or home_country_name(),
                 email=_get_cell(row, col_email),
                 rechnung_per_email=bool(_get_cell(row, col_email)),
                 phone=_get_cell(row, col_phone),

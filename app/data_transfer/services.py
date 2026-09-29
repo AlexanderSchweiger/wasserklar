@@ -531,6 +531,11 @@ def import_from_zip(extract_dir: Path, manifest: dict, *, mode: str = "replace",
         with open(tpath, "r", encoding="utf-8") as fh:
             table_records[model] = json.load(fh)
 
+    # Exporte vor den Tarifpositionen (v1.44.0) tragen Grund-/Zusatzgebuehr
+    # und Preis/m³ noch als Tarif-Spalten — ohne Uebersetzung gingen die
+    # Gebuehren und die individuellen Betraege beim Re-Import still verloren.
+    _upgrade_legacy_tariff_records(table_records, models)
+
     # Der ganze Lauf (inkl. commit — der flusht) laeuft unter dem Import-Guard,
     # damit aufgesetzte before_flush-Listener keine Folgeobjekte anlegen, die
     # der Import gleich darauf selbst mitbringt. Siehe guard.py.
@@ -565,6 +570,91 @@ def import_from_zip(extract_dir: Path, manifest: dict, *, mode: str = "replace",
         _copy_pdfs(extract_dir, instance_path, table_records)
 
     return stats
+
+
+# Gleiche Definition wie in der Migration c3e8a1f6d2b9 (bewusst dupliziert).
+_LEGACY_CHARGE_TYPES = (
+    # id, key, label, calc_type, is_levy, overridable, sort_order
+    (1, "water", "Wasserverbrauch", "per_m3", False, False, 10),
+    (2, "water_levy", "Wasserentnahmeentgelt", "per_m3", True, False, 15),
+    (3, "base_fee", "Grundgebühr", "flat", False, True, 20),
+    (4, "additional_fee", "Zusatzgebühr", "flat", False, True, 30),
+)
+
+
+def _upgrade_legacy_tariff_records(table_records: dict, models: list):
+    """Uebersetzt die Tarif-/Override-Spalten eines Alt-Exports in
+    ``charge_types``/``tariff_components``/``charge_overrides``-Records —
+    exakt wie die Alembic-Migration (Grund-/Zusatzgebuehr auch ohne Betrag).
+    No-op fuer aktuelle Exporte (die bringen die neuen Tabellen selbst mit).
+    """
+    from app.models import (ChargeOverride, ChargeType, Customer, Property,
+                            TariffComponent, WaterTariff)
+    tariffs = table_records.get(WaterTariff) or []
+    legacy_tariffs = any("price_per_m3" in r for r in tariffs)
+    legacy_overrides = any(
+        "base_fee_override" in r or "additional_fee_override" in r
+        for model in (Customer, Property) for r in table_records.get(model) or [])
+    if not (legacy_tariffs or legacy_overrides):
+        return
+    if TariffComponent in table_records or ChargeOverride in table_records:
+        return
+    if ChargeType not in models:
+        return
+
+    settings = {r.get("key"): r.get("value")
+                for r in table_records.get(AppSetting) or []}
+    country = (settings.get("org.country") or "AT").upper()
+    water_rate = settings.get("tax.water_rate") or ("7" if country == "DE" else "10")
+
+    if ChargeType not in table_records:
+        table_records[ChargeType] = [
+            {"id": i, "key": key, "label": label, "calc_type": calc,
+             "is_levy": levy, "overridable": overridable, "is_system": True,
+             "active": (country == "DE") if key == "water_levy" else True,
+             "sort_order": sort}
+            for i, key, label, calc, levy, overridable, sort in _LEGACY_CHARGE_TYPES
+        ]
+    ct_ids = {r["key"]: r["id"] for r in table_records[ChargeType]}
+
+    if legacy_tariffs and TariffComponent in models:
+        comps = []
+        for t in tariffs:
+            for key, amount_col, label_col, acc_col, default_label, sort in (
+                ("water", "price_per_m3", None, "price_per_m3_account_id",
+                 "Wasserverbrauch", 10),
+                ("base_fee", "base_fee", "base_fee_label", "base_fee_account_id",
+                 "Grundgebühr", 20),
+                ("additional_fee", "additional_fee", "additional_fee_label",
+                 "additional_fee_account_id", "Zusatzgebühr", 30),
+            ):
+                comps.append({
+                    "id": len(comps) + 1,
+                    "tariff_id": t["id"],
+                    "charge_type_id": ct_ids[key],
+                    "label": (t.get(label_col) if label_col else None) or default_label,
+                    "amount": t.get(amount_col),
+                    "tax_rate": water_rate,
+                    "account_id": t.get(acc_col),
+                    "valid_from": None,
+                    "sort_order": sort,
+                })
+        table_records[TariffComponent] = comps
+
+    if legacy_overrides and ChargeOverride in models:
+        overrides = []
+        for model, fk in ((Customer, "customer_id"), (Property, "property_id")):
+            for r in table_records.get(model) or []:
+                for key in ("base_fee", "additional_fee"):
+                    value = r.get(f"{key}_override")
+                    if value is None:
+                        continue
+                    row = {"id": len(overrides) + 1, "charge_type_id": ct_ids[key],
+                           "customer_id": None, "property_id": None,
+                           "amount": value, "note": None, "created_at": None}
+                    row[fk] = r["id"]
+                    overrides.append(row)
+        table_records[ChargeOverride] = overrides
 
 
 def _truncate_models(models: list):

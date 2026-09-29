@@ -1,0 +1,48 @@
+{# Form-Body fuers Steuersatz-Modal (Neuanlage + Bearbeitung teilen ihn).
+   Erwartet rate_obj (oder None) + optional form (nach Validierungsfehler).
+   Der Satz selbst ist nach dem Anlegen fest — Belege speichern ihn als Zahl. #}
+{% include "_flash_inline.html" %}
+{% if form %}
+  {% set val_rate = form.get('rate', '') %}
+  {% set val_label = form.get('label', '') %}
+  {% set val_active = form.get('active') %}
+{% elif rate_obj %}
+  {% set val_rate = rate_obj.rate %}
+  {% set val_label = rate_obj.label or '' %}
+  {% set val_active = rate_obj.active %}
+{% else %}
+  {% set val_rate = '' %}
+  {% set val_label = '' %}
+  {% set val_active = true %}
+{% endif %}
+<div class="row g-3">
+  <div class="col-md-4">
+    <label class="form-label">Satz {% if not rate_obj %}<span class="text-danger">*</span>{% endif %}</label>
+    {% if rate_obj %}
+    <input type="text" class="form-control" value="{{ tax_rate_label(rate_obj.rate) }}" disabled>
+    {% else %}
+    <div class="input-group">
+      <input type="text" name="rate" class="form-control" inputmode="decimal"
+             value="{{ val_rate }}" placeholder="z. B. 7" required autofocus>
+      <span class="input-group-text">%</span>
+    </div>
+    {% endif %}
+  </div>
+  <div class="col-md-8">
+    <label class="form-label">Bezeichnung <small class="text-muted">(optional)</small></label>
+    <input type="text" name="label" class="form-control" maxlength="100"
+           value="{{ val_label }}" placeholder="z. B. 7 % – ermäßigt">
+  </div>
+  <div class="col-12">
+    <label class="form-check form-switch mb-1">
+      <input type="checkbox" class="form-check-input" name="active" value="1"
+             {{ 'checked' if val_active }}>
+      <span class="form-check-label">Aktiv — in Buchungen, Rechnungen und Tarifen auswählbar</span>
+    </label>
+    <div class="form-text">
+      {% if rate_obj %}Der Satz selbst lässt sich nach dem Anlegen nicht mehr ändern.{% endif %}
+      Deaktivierte Sätze verschwinden aus den Auswahllisten; bestehende Buchungen und
+      Rechnungen behalten ihren Satz.
+    </div>
+  </div>
+</div>

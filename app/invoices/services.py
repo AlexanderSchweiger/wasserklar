@@ -115,3 +115,54 @@ def create_fee_invoice(*, customer, property, description, amount,
     ))
     inv.recalculate_total()
     return inv
+
+
+# AppSetting: Hinweis auf Umsatzsteuerbefreiung (Kleinunternehmer) — opt-in,
+# gedruckt nur in nicht USt-pflichtigen Buchungsjahren.
+SMALL_BUSINESS_NOTE_KEY = "invoice.small_business_note"
+
+
+def service_period(invoice):
+    """Leistungszeitraum der Rechnung als ``(start, end)`` oder ``None``.
+
+    Pflichtangabe (AT § 11 UStG, DE § 14 Abs. 4 UStG). Bei periodischer
+    Wasserabrechnung ist das die Abrechnungsperiode; die Schlussrechnung beim
+    Eigentuemerwechsel endet am Tag vor dem Stichtag.
+    """
+    period = invoice.billing_period
+    if period is None:
+        return None
+    start, end = period.start_date, period.end_date
+    if invoice.invoice_kind == Invoice.KIND_FINAL_SETTLEMENT:
+        from app.models import OwnerChange
+        oc = OwnerChange.query.filter_by(settlement_invoice_id=invoice.id).first()
+        if oc is not None and oc.change_date:
+            end = oc.change_date - timedelta(days=1)
+    return start, end
+
+
+def invoice_legal_context(invoice):
+    """Rechnungs-Pflichtangaben fuer PDF/DOCX: USt-IdNr./UID + Steuernummer
+    des Ausstellers, Leistungszeitraum, ggf. Kleinunternehmer-Hinweis.
+    Beschriftungen je Land (app/country.py)."""
+    from app import country
+    from app.accounting.services import is_year_vat_liable
+    from app.models import AppSetting
+    from app.settings_service import get_wg
+
+    prof = country.current_profile()
+    note = None
+    try:
+        configured = (AppSetting.get(SMALL_BUSINESS_NOTE_KEY) or "").strip()
+    except Exception:
+        configured = ""
+    if configured and invoice.date and not is_year_vat_liable(invoice.date.year):
+        note = configured
+    return {
+        "vat_id_label": prof.vat_id_label,
+        "vat_id": (get_wg("vat_id") or "").strip(),
+        "tax_number": (get_wg("tax_number") or "").strip(),
+        "service_period": service_period(invoice),
+        "small_business_note": note,
+    }
+

@@ -9,9 +9,10 @@ from flask_login import login_required, current_user
 from app.meter_tours import bp
 from app.meter_tours import services as svc
 from app.auth.permissions import permission_required, PERM_RECHNUNGEN
+from app import tax_service
 from app.extensions import db
 from app.models import (
-    AppSetting, Customer, MeterTour, MeterTourStop, PropertyOwnership, TaxRate,
+    AppSetting, Customer, MeterTour, MeterTourStop, PropertyOwnership,
 )
 
 
@@ -502,12 +503,17 @@ def notify_send(tour_id):
 # ---------------------------------------------------------------------------
 
 def _fee_defaults():
+    # Zuletzt verwendeter Satz ("" = bewusst "Keine USt"), sonst der
+    # Wasser-Satz des Mandanten (Zaehlertausch = Nebenleistung der
+    # Wasserlieferung; AT 10 %, DE 7 %).
+    tax_rate = AppSetting.get(svc.SETTING_FEE_TAX_RATE)
+    if tax_rate is None:
+        tax_rate = str(tax_service.water_tax_rate())
     return {
         "description": AppSetting.get(svc.SETTING_FEE_DESCRIPTION,
                                       svc.FEE_DESCRIPTION_DEFAULT),
         "amount": AppSetting.get(svc.SETTING_FEE_AMOUNT, ""),
-        "tax_rate": AppSetting.get(svc.SETTING_FEE_TAX_RATE,
-                                   svc.FEE_TAX_RATE_DEFAULT),
+        "tax_rate": tax_rate,
     }
 
 
@@ -527,7 +533,7 @@ def stop_invoice(tour_id, stop_id):
         return render_template(
             "meter_tours/_invoice_modal_body.html", tour=tour, stop=stop,
             owners=owners, defaults=_fee_defaults(),
-            tax_rates=TaxRate.query.order_by(TaxRate.rate).all(),
+            tax_rates=tax_service.tax_rates(),
             already_invoiced=False)
 
     # POST

@@ -276,71 +276,135 @@ class TestProjectModal:
 # --------------------------------------------------------------------------- #
 
 class TestTariffModal:
+    @staticmethod
+    def _ct():
+        """Gebuehrenart-IDs nach Schluessel (System-Arten werden geseedet)."""
+        from app.invoices.charges import ensure_system_charge_types
+        from app.models import ChargeType
+        ensure_system_charge_types()
+        db.session.commit()
+        return {ct.key: ct.id for ct in ChargeType.query.all()}
+
     def test_get_modal_body_is_fragment(self, client, admin):
         _login(client)
+        ct = self._ct()
         r = client.get("/invoices/tariffs/new", headers=MODAL)
         assert r.status_code == 200
         html = r.get_data(as_text=True)
         assert "<html" not in html.lower()
-        assert 'name="price_per_m3"' in html and 'name="valid_from"' in html
+        assert f'name="comp_amount_{ct["water"]}"' in html and 'name="valid_from"' in html
 
     def test_post_modal_creates_and_triggers(self, client, admin):
         _login(client)
+        ct = self._ct()
         r = client.post("/invoices/tariffs/new", headers=MODAL,
                         data={"name": "Tarif 2026", "valid_from": "2026",
-                              "valid_to": "", "base_fee": "50,00",
-                              "price_per_m3": "1,2345", "notes": ""})
+                              "valid_to": "", "notes": "",
+                              f"comp_amount_{ct['water']}": "1,2345",
+                              f"comp_on_{ct['base_fee']}": "1",
+                              f"comp_amount_{ct['base_fee']}": "50,00"})
         assert r.status_code == 204
         trig = json.loads(r.headers["HX-Trigger"])
         assert "closeTariffModal" in trig and "tariffSaved" in trig
         t = WaterTariff.query.filter_by(name="Tarif 2026").one()
-        assert t.price_per_m3 == Decimal("1.2345")
-        assert t.base_fee == Decimal("50.00")
+        assert t.water_price == Decimal("1.2345")
+        assert t.component("base_fee").amount == Decimal("50.00")
+        assert t.component("additional_fee") is None   # nicht angehakt
         assert t.valid_to is None
 
     def test_post_modal_invalid_amount_returns_fragment(self, client, admin):
         _login(client)
+        ct = self._ct()
         r = client.post("/invoices/tariffs/new", headers=MODAL,
                         data={"name": "Kaputt", "valid_from": "2026",
-                              "price_per_m3": "keine Zahl"})
+                              f"comp_amount_{ct['water']}": "keine Zahl"})
         assert r.status_code == 200
         assert "HX-Trigger" not in r.headers
         assert WaterTariff.query.filter_by(name="Kaputt").count() == 0
 
+    def test_post_modal_missing_water_price_rejected(self, client, admin):
+        _login(client)
+        ct = self._ct()
+        r = client.post("/invoices/tariffs/new", headers=MODAL,
+                        data={"name": "Ohne", "valid_from": "2026",
+                              f"comp_amount_{ct['water']}": ""})
+        assert r.status_code == 200
+        assert "Preis pro m³" in r.get_data(as_text=True)
+        assert WaterTariff.query.filter_by(name="Ohne").count() == 0
+
     def test_post_modal_valid_to_before_valid_from_rejected(self, client, admin):
         _login(client)
+        ct = self._ct()
         r = client.post("/invoices/tariffs/new", headers=MODAL,
                         data={"name": "Verdreht", "valid_from": "2026",
-                              "valid_to": "2024", "price_per_m3": "1,00"})
+                              "valid_to": "2024", f"comp_amount_{ct['water']}": "1,00"})
         assert r.status_code == 200
         assert "HX-Trigger" not in r.headers
         assert WaterTariff.query.filter_by(name="Verdreht").count() == 0
 
     def test_edit_modal_body_prefills(self, client, admin):
+        from app.invoices.charges import build_tariff
         _login(client)
-        t = WaterTariff(name="Alttarif", valid_from=2024,
-                        price_per_m3=Decimal("0.9500"))
-        db.session.add(t)
+        t = build_tariff(name="Alttarif", valid_from=2024, water_price=Decimal("0.9500"))
         db.session.commit()
         r = client.get(f"/invoices/tariffs/{t.id}/edit", headers=MODAL)
         assert r.status_code == 200
-        assert "Alttarif" in r.get_data(as_text=True)
+        html = r.get_data(as_text=True)
+        assert "Alttarif" in html
+        assert 'value="0,9500"' in html
 
     def test_edit_modal_updates_and_triggers(self, client, admin):
+        from app.invoices.charges import build_tariff
         _login(client)
-        t = WaterTariff(name="Alt", valid_from=2024, price_per_m3=Decimal("0.95"))
-        db.session.add(t)
+        ct = self._ct()
+        t = build_tariff(name="Alt", valid_from=2024, water_price=Decimal("0.95"),
+                         base_fee=Decimal("20"))
         db.session.commit()
         r = client.post(f"/invoices/tariffs/{t.id}/edit", headers=MODAL,
                         data={"name": "Neu", "valid_from": "2024",
-                              "valid_to": "2025", "price_per_m3": "1,10",
-                              "additional_fee": "12,00"})
+                              "valid_to": "2025", f"comp_amount_{ct['water']}": "1,10",
+                              # Grundgebuehr abgewaehlt, Zusatzgebuehr neu
+                              f"comp_on_{ct['additional_fee']}": "1",
+                              f"comp_amount_{ct['additional_fee']}": "12,00"})
         assert r.status_code == 204
         assert "closeTariffModal" in json.loads(r.headers["HX-Trigger"])
-        db.session.refresh(t)
+        db.session.expire_all()
+        t = db.session.get(WaterTariff, t.id)
         assert t.name == "Neu"
         assert t.valid_to == 2025
-        assert t.additional_fee == Decimal("12.00")
+        assert t.water_price == Decimal("1.10")
+        assert t.component("additional_fee").amount == Decimal("12.00")
+        assert t.component("base_fee") is None
+
+    def test_levy_component_with_valid_from(self, client, admin):
+        _login(client)
+        ct = self._ct()
+        r = client.post("/invoices/tariffs/new", headers=MODAL,
+                        data={"name": "DE", "valid_from": "2026",
+                              f"comp_amount_{ct['water']}": "1,85",
+                              f"comp_tax_{ct['water']}": "7",
+                              f"comp_on_{ct['water_levy']}": "1",
+                              f"comp_amount_{ct['water_levy']}": "0,10",
+                              f"comp_tax_{ct['water_levy']}": "7",
+                              f"comp_valid_from_{ct['water_levy']}": "2026-07-01"})
+        assert r.status_code == 204
+        t = WaterTariff.query.filter_by(name="DE").one()
+        levy = t.component("water_levy")
+        assert levy.amount == Decimal("0.10")
+        assert levy.tax_rate == Decimal("7")
+        assert levy.valid_from.isoformat() == "2026-07-01"
+
+    def test_copy_prefills_new_tariff(self, client, admin):
+        from app.invoices.charges import build_tariff
+        _login(client)
+        t = build_tariff(name="T2025", valid_from=2025, water_price=Decimal("1.40"),
+                         base_fee=Decimal("32"))
+        db.session.commit()
+        html = client.get(f"/invoices/tariffs/new?copy_from={t.id}",
+                          headers=MODAL).get_data(as_text=True)
+        assert 'value="T2025 (Kopie)"' in html
+        assert 'value="2026"' in html
+        assert 'value="1,4000"' in html and 'value="32,00"' in html
 
     def test_standalone_page_still_renders(self, client, admin):
         _login(client)
@@ -349,45 +413,47 @@ class TestTariffModal:
         assert "<html" in r.get_data(as_text=True).lower()
 
     def test_modal_body_offers_account_selects(self, client, admin):
-        """Kontierung je Gebuehrenart (v1.43.0) — auch im Modal-Fragment."""
+        """Kontierung je Tarifposition (v1.43.0) — auch im Modal-Fragment."""
         _login(client)
+        ct = self._ct()
         a = Account(name="Wassererlöse", code="W01")
         db.session.add(a)
         db.session.commit()
         html = client.get("/invoices/tariffs/new", headers=MODAL).get_data(as_text=True)
-        for field in ("base_fee_account_id", "additional_fee_account_id",
-                      "price_per_m3_account_id"):
-            assert f'name="{field}"' in html
+        for key in ("water", "base_fee", "additional_fee"):
+            assert f'name="comp_account_{ct[key]}"' in html
         assert "Wassererlöse" in html
 
     def test_modal_saves_accounts(self, client, admin):
         _login(client)
+        ct = self._ct()
         a1 = Account(name="Wasser", code="W01")
         a2 = Account(name="Grundgebühren", code="G01")
         db.session.add_all([a1, a2])
         db.session.commit()
         r = client.post("/invoices/tariffs/new", headers=MODAL,
                         data={"name": "Kontiert", "valid_from": "2026",
-                              "base_fee": "50,00", "price_per_m3": "1,20",
-                              "price_per_m3_account_id": str(a1.id),
-                              "base_fee_account_id": str(a2.id),
-                              "additional_fee_account_id": ""})
+                              f"comp_amount_{ct['water']}": "1,20",
+                              f"comp_account_{ct['water']}": str(a1.id),
+                              f"comp_on_{ct['base_fee']}": "1",
+                              f"comp_amount_{ct['base_fee']}": "50,00",
+                              f"comp_account_{ct['base_fee']}": str(a2.id)})
         assert r.status_code == 204
         t = WaterTariff.query.filter_by(name="Kontiert").one()
-        assert t.price_per_m3_account_id == a1.id
-        assert t.base_fee_account_id == a2.id
-        assert t.additional_fee_account_id is None
+        assert t.water_component.account_id == a1.id
+        assert t.component("base_fee").account_id == a2.id
 
     def test_edit_modal_prefills_selected_account(self, client, admin):
+        from app.invoices.charges import build_tariff
         _login(client)
         a = Account(name="Wasser", code="W01")
         db.session.add(a)
         db.session.flush()
-        t = WaterTariff(name="Vorbelegt", valid_from=2024,
-                        price_per_m3=Decimal("1.00"),
-                        price_per_m3_account_id=a.id)
-        db.session.add(t)
+        t = build_tariff(name="Vorbelegt", valid_from=2024, water_price=Decimal("1.00"),
+                         accounts={"water": a.id})
         db.session.commit()
         html = client.get(f"/invoices/tariffs/{t.id}/edit",
                           headers=MODAL).get_data(as_text=True)
         assert f'value="{a.id}" selected' in html
+
+

@@ -44,5 +44,6 @@
   window.INCIDENT = {{ cfg|tojson }};
   window.INCIDENT.csrfToken = "{{ csrf_token() }}";
 </script>
+{% include "_map_config.html" %}
 <script src="{{ url_for('static', filename='js/incidents-map.js', v=oss_version) }}"></script>
 {% endblock %}

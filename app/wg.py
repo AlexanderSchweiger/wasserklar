@@ -117,8 +117,28 @@ BOARD_FUNCTIONS = {
 MEMBER_REQUIRED = {FUNC_CHAIRMAN, FUNC_DEPUTY_CHAIRMAN}
 
 
+# Funktionen, deren Bezeichnung sich zwischen AT und DE unterscheidet
+# (Obmann/Vorsitzender, Kassier/Kassierer …) — Begriffe aus app/country.py.
+_COUNTRY_TERM_FUNCTIONS = {
+    FUNC_CHAIRMAN: "chairman",
+    FUNC_DEPUTY_CHAIRMAN: "deputy_chairman",
+    FUNC_TREASURER: "treasurer",
+    FUNC_AUDITOR: "auditor",
+}
+
+
+def function_labels():
+    """``FUNCTION_LABELS`` mit den Begriffen des Mandanten-Landes (gleiche
+    Keys, gleiche Reihenfolge). ``FUNCTION_LABELS`` selbst bleibt die
+    oesterreichische Fassung (Import-Synonyme, Key-Validierung)."""
+    from app.country import term
+    return {key: (term(_COUNTRY_TERM_FUNCTIONS[key]) if key in _COUNTRY_TERM_FUNCTIONS
+                  else label)
+            for key, label in FUNCTION_LABELS.items()}
+
+
 def function_label(key):
-    return FUNCTION_LABELS.get(key, key)
+    return function_labels().get(key, key)
 
 
 def function_keys_ordered(keys):

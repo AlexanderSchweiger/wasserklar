@@ -176,6 +176,7 @@
 <script>
   window.TECHNIK = {{ cfg|tojson }};
 </script>
+{% include "_map_config.html" %}
 <script src="{{ url_for('static', filename='js/technik-map.js') }}"></script>
 <script>
   document.addEventListener('DOMContentLoaded', function () {

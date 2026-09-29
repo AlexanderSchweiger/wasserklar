@@ -48,12 +48,11 @@ def billing_setup(app):
     account_base = Account(name="Grundgebühren")
     db.session.add_all([account, account_base])
     db.session.flush()
-    tariff = WaterTariff(
+    from app.invoices.charges import build_tariff
+    tariff = build_tariff(
         name="T", valid_from=2024, base_fee=Decimal("30"),
-        price_per_m3=Decimal("2"),
-        price_per_m3_account_id=account.id,
-        base_fee_account_id=account_base.id)
-    db.session.add(tariff)
+        water_price=Decimal("2"),
+        accounts={"water": account.id, "base_fee": account_base.id})
     project = Project(name="Wasserzins 2024", code="WZ4")
     db.session.add(project)
     cust = Customer(name="Kunde", customer_number=1)
@@ -317,7 +316,7 @@ class TestBillingRunKontierung:
         """Alles auf ein Konto -> normale Einzelbuchung, keine Sammelbuchung."""
         from app.models import Booking, BookingGroup
         tariff = billing_setup["tariff"]
-        tariff.base_fee_account_id = billing_setup["account"].id
+        tariff.component("base_fee").account_id = billing_setup["account"].id
         db.session.commit()
 
         _login(client)

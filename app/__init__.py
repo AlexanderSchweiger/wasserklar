@@ -172,15 +172,41 @@ def create_app(config_name=None):
     from app.wg import (
         STATUS_LABELS as _wg_status_labels,
         STATUS_BADGE as _wg_status_badge,
-        FUNCTION_LABELS as _wg_function_labels,
         function_label as _wg_function_label,
         function_keys_ordered as _wg_function_keys_ordered,
     )
     app.jinja_env.globals["wg_status_labels"] = _wg_status_labels
     app.jinja_env.globals["wg_status_badge"] = _wg_status_badge
-    app.jinja_env.globals["wg_function_labels"] = _wg_function_labels
+    # wg_function_labels kommt je Request aus inject_org_type (Begriffe je
+    # Land: Obmann/Vorsitzender, Kassier/Kassierer …).
     app.jinja_env.globals["wg_function_label"] = _wg_function_label
     app.jinja_env.globals["wg_function_keys_ordered"] = _wg_function_keys_ordered
+
+    # Adress-Land: ``{% if customer.land is foreign_country %}`` druckt das Land
+    # nur bei Auslandsanschriften (Inland = Land des Mandanten, app/country.py).
+    from app.country import (is_foreign as _is_foreign_country,
+                             map_config as _map_config, term as _country_term)
+    app.jinja_env.tests["foreign_country"] = _is_foreign_country
+    # ``term()`` auch als Global: per ``{% from … import %}`` geladene Makro-
+    # Dateien bekommen keinen Context-Processor-Kontext (Schriftführung).
+    # Im normalen Render-Kontext ueberschattet ihn inject_country (schneller,
+    # weil das Profil dort nur einmal je Request aufgeloest wird).
+    app.jinja_env.globals["term"] = _country_term
+    # Karten-Konfiguration je Land (Basiskarten/Startausschnitt) fuer
+    # _map_config.html -> static/js/basemaps.js.
+    app.jinja_env.globals["map_config"] = _map_config
+
+    # Steuersatz-Anzeige ("7 %", "7 % – ermäßigt") fuer Auswahllisten/Tabellen.
+    from app.tax_service import (default_label as _tax_rate_label,
+                                 display_label as _tax_rate_display)
+    app.jinja_env.globals["tax_rate_label"] = _tax_rate_label
+    app.jinja_env.globals["tax_rate_display"] = _tax_rate_display
+
+    # Individuelle Gebuehren (Kunde/Objekt): Formularzeilen + Anzeige.
+    from app.invoices.charges import (override_form_rows as _override_rows,
+                                      overrides_display as _overrides_display)
+    app.jinja_env.globals["charge_override_rows"] = _override_rows
+    app.jinja_env.globals["charge_overrides_display"] = _overrides_display
 
     # Notiz-Helfer als Jinja-Globals: Detailseiten/Dashboard rendern ihr Panel
     # via ``hx-trigger=load`` (kein Direkt-Query noetig), aber die Zeilen-Pins in
@@ -206,11 +232,26 @@ def create_app(config_name=None):
     @app.context_processor
     def inject_org_type():
         from app.settings_service import org_type, is_wassergenossenschaft
+        from app.wg import FUNCTION_LABELS, function_labels
         try:
-            return dict(org_type=org_type(), is_wg=is_wassergenossenschaft())
+            return dict(org_type=org_type(), is_wg=is_wassergenossenschaft(),
+                        wg_function_labels=function_labels())
         except Exception:
             from app.wg import ORG_COOPERATIVE
-            return dict(org_type=ORG_COOPERATIVE, is_wg=True)
+            return dict(org_type=ORG_COOPERATIVE, is_wg=True,
+                        wg_function_labels=FUNCTION_LABELS)
+
+    # Context Processor: Länderprofil des Mandanten (app/country.py) — Defaults
+    # wie Landname, Eichfrist-Hinweis, Rechnungs-Pflichtangaben-Beschriftungen.
+    @app.context_processor
+    def inject_country():
+        from app import country as _country
+        try:
+            prof = _country.current_profile()
+        except Exception:
+            prof = _country.PROFILES[_country.DEFAULT_COUNTRY]
+        return dict(country=prof,
+                    term=lambda key: _country.term(key, prof.code))
 
     # Context Processor: OSS-Version fuer Footer/About — SaaS-Layer
     # ueberschreibt den Footer-Block selbst und kombiniert mit saas_version.

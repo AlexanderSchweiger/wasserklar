@@ -8,6 +8,7 @@ from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 from docx.shared import Pt, Cm, RGBColor
 
+from app.country import is_foreign
 from app.invoices.design import get_design
 
 
@@ -253,7 +254,7 @@ def generate_dunning_docx(notice, wg: dict, design: dict | None = None,
     if city:
         _tight(recipient_cell.add_paragraph(city), after=0)
     land = customer.land
-    if land and land != "Österreich":
+    if is_foreign(land):
         _tight(recipient_cell.add_paragraph(land), after=0)
 
     # Infoblock rechts, auf gleicher Höhe wie der Absender.

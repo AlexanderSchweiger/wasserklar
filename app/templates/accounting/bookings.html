@@ -24,7 +24,7 @@
 
 <div class="card table-card">
   <div class="card-header">
-    {% set months = [(1,'Jänner'),(2,'Februar'),(3,'März'),(4,'April'),(5,'Mai'),(6,'Juni'),(7,'Juli'),(8,'August'),(9,'September'),(10,'Oktober'),(11,'November'),(12,'Dezember')] %}
+    {% set months = [(1,term('january')),(2,'Februar'),(3,'März'),(4,'April'),(5,'Mai'),(6,'Juni'),(7,'Juli'),(8,'August'),(9,'September'),(10,'Oktober'),(11,'November'),(12,'Dezember')] %}
     {% set has_filter = account_id or project_id or real_account_id or kind or month or quarter or tax or (year != now_year) %}
     <div class="filter-bar" id="bookings-filter-bar">
       <div class="mb-3">
@@ -66,7 +66,7 @@
         </select>
       </div>
       <div class="mb-3">
-        <label class="form-label mb-0 me-1">Bank/Kassa</label>
+        <label class="form-label mb-0 me-1">Bank/{{ term('cash') }}</label>
         <select name="real_account_id" class="form-select form-select-sm"
           data-filter-field
           hx-get="{{ url_for('accounting.bookings') }}"

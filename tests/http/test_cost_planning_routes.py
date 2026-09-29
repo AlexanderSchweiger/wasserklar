@@ -54,10 +54,10 @@ def zaehler_user(app):
 
 @pytest.fixture
 def tariff(app):
-    t = WaterTariff(name="Tarif 2025", valid_from=2025,
-                    base_fee=Decimal("50.00"),
-                    price_per_m3=Decimal("1.5000"))
-    db.session.add(t)
+    from app.invoices.charges import build_tariff
+    t = build_tariff(name="Tarif 2025", valid_from=2025,
+                     base_fee=Decimal("50.00"),
+                     water_price=Decimal("1.5000"))
     db.session.commit()
     return t
 
@@ -316,7 +316,8 @@ class TestGoalDetail:
         assert resp.status_code == 302
         location = resp.headers["Location"]
         assert "/invoices/tariffs/new" in location
-        assert "price_per_m3" in location
+        # Vorbelegung ueber die Positionsfelder des Tarifformulars
+        assert "comp_amount_" in location
         assert "valid_from=2026" in location
         # Es darf noch KEIN zweiter Tarif entstanden sein.
         assert WaterTariff.query.count() == 1
@@ -325,13 +326,17 @@ class TestGoalDetail:
                                                     tariff):
         client.get("/auth/logout")
         _login(client, "cpadmin", "test")
+        from app.models import ChargeType
+        base_ct = ChargeType.query.filter_by(key="base_fee").one()
+        water_ct = ChargeType.query.filter_by(key="water").one()
         resp = client.get("/invoices/tariffs/new"
                           "?name=Tarif+ab+2026&valid_from=2026"
-                          "&base_fee=150.00&price_per_m3=1.5000")
+                          f"&comp_on_{base_ct.id}=1&comp_amount_{base_ct.id}=150,00"
+                          f"&comp_amount_{water_ct.id}=1,5000")
         assert resp.status_code == 200
         body = resp.data.decode()
         assert 'value="Tarif ab 2026"' in body
-        assert 'value="150.00"' in body
+        assert 'value="150,00"' in body
 
 
 # ---------------------------------------------------------------------------

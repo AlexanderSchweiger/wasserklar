@@ -14,38 +14,23 @@
   var T = window.TECHNIK || {};
   var V = T.vocab || {};
 
-  // --- Basiskarten (basemap.at + OSM) --------------------------------------
+  // --- Basiskarten (je Land: basemap.at / basemap.de + OSM) ----------------
+  // Interne Handles: _default (Standardkarte), _grau (gedaempfter Hintergrund,
+  // Default der Druckkarte), _ortho (Luftbild, falls vorhanden).
 
   function baseLayers() {
-    var bmAttr = 'Datenquelle: <a href="https://www.basemap.at" target="_blank" rel="noopener">basemap.at</a>';
-    // Einzelhost mapsneu.wien.gv.at: die alten Lastverteilungs-Subdomains
-    // maps1..maps4.wien.gv.at antworten nicht mehr (→ ~80 % graue Kacheln).
-    var standard = L.tileLayer(
-      "https://mapsneu.wien.gv.at/basemap/geolandbasemap/normal/google3857/{z}/{y}/{x}.png",
-      { maxZoom: 20, maxNativeZoom: 19, attribution: bmAttr }
-    );
-    // Graue basemap.at-Ebene — gedaempfter Hintergrund, auf dem sich die farbigen
-    // Marker/Leitungen klar abheben. Default fuer die Druckkarte (renderPrint).
-    var grau = L.tileLayer(
-      "https://mapsneu.wien.gv.at/basemap/bmapgrau/normal/google3857/{z}/{y}/{x}.png",
-      { maxZoom: 20, maxNativeZoom: 19, attribution: bmAttr }
-    );
-    var ortho = L.tileLayer(
-      "https://mapsneu.wien.gv.at/basemap/bmaporthofoto30cm/normal/google3857/{z}/{y}/{x}.jpeg",
-      { maxZoom: 20, maxNativeZoom: 19, attribution: bmAttr }
-    );
+    // Basiskarten je Land kommen aus basemaps.js (app/country.py via
+    // _map_config.html). Fehlt die Datei, bleibt wenigstens OpenStreetMap.
+    if (window.wkBasemaps) return window.wkBasemaps.layers();
     var osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>-Mitwirkende',
     });
-    return {
-      "Karte (basemap.at)": standard,
-      "Karte grau (basemap.at)": grau,
-      "Orthofoto (basemap.at)": ortho,
-      "OpenStreetMap": osm,
-      _default: standard,
-      _grau: grau,
-    };
+    return { "OpenStreetMap": osm, _default: osm };
+  }
+
+  function mapView() {
+    return window.wkBasemaps ? window.wkBasemaps.view() : { center: [47.59, 14.14], zoom: 7 };
   }
 
   // opts.startLayer: interner Layer-Handle aus baseLayers() (z. B. "_grau"),
@@ -58,7 +43,8 @@
     // als einzelne SVG-<path>-Elemente. Bei Plaenen mit vielen hundert bis tausend
     // Leitungen ist das der groesste Rendering-Hebel — SVG-Pfade sind der teure Teil.
     // Punkt-Marker (divIcon) sind immer DOM und davon unberuehrt.
-    var map = L.map(elId, { preferCanvas: true, center: [47.59, 14.14], zoom: 7, layers: [start] });
+    var v = mapView();
+    var map = L.map(elId, { preferCanvas: true, center: v.center, zoom: v.zoom, layers: [start] });
     var bases = {};
     Object.keys(layers).forEach(function (k) { if (k.charAt(0) !== "_") bases[k] = layers[k]; });
     L.control.layers(bases, {}, { position: "topright" }).addTo(map);

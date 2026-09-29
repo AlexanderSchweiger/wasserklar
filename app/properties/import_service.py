@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from app.country import home_country_name
 from app.imports.common import (
     PreviewRow,
     ImportStats,
@@ -426,7 +427,7 @@ def commit(rows: list[PreviewRow], cfg: PropertyImportConfig) -> ImportStats:
             hausnummer = row.fields.get("hausnummer", "").strip() or None
             plz = row.fields.get("plz", "").strip() or None
             ort = row.fields.get("ort", "").strip() or None
-            land = row.fields.get("land", "").strip() or "Österreich"
+            land = row.fields.get("land", "").strip() or home_country_name()
             notes = row.fields.get("notes", "").strip() or None
             owner_cnum_raw = row.fields.get("owner_customer_number", "").strip()
 
@@ -456,7 +457,7 @@ def commit(rows: list[PreviewRow], cfg: PropertyImportConfig) -> ImportStats:
                 if cfg.col_ort:
                     existing.ort = ort
                 if cfg.col_land:
-                    existing.land = land or "Österreich"
+                    existing.land = land or home_country_name()
                 if cfg.col_notes:
                     existing.notes = notes
                 if cfg.col_object_type and object_type_raw and object_type_raw.strip():

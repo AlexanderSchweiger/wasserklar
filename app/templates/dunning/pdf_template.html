@@ -88,7 +88,7 @@
   {% set city = [invoice.customer.plz, invoice.customer.ort] | select | join(' ') %}
   {% if street %}{{ street }}<br>{% endif %}
   {% if city %}{{ city }}<br>{% endif %}
-  {% if invoice.customer.land and invoice.customer.land != 'Österreich' %}{{ invoice.customer.land }}<br>{% endif %}
+  {% if invoice.customer.land is foreign_country %}{{ invoice.customer.land }}<br>{% endif %}
 </div>
 
 <h1>{{ notice.print_title_snapshot or notice.name_snapshot }}</h1>

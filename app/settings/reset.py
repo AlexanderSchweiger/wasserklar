@@ -38,6 +38,7 @@ KEEP_TABLES = {
     "user_preferences",    # per-User-Einstellungen
     "roles",               # Rollen
     "role_permissions",    # Rollen-Rechte-Zuordnung
+    "charge_types",        # Gebuehrenarten-Katalog (Konfiguration wie die Steuersaetze)
     "alembic_version",     # Schema-Versionsstand (nie anfassen)
 }
 
@@ -107,12 +108,14 @@ def _reseed_baseline() -> None:
     """
     from cli import (
         seed_default_tax_rates,
+        seed_default_charge_types,
         seed_default_dunning_policy,
         seed_default_billing_period,
         seed_default_roles,
     )
 
     seed_default_tax_rates(db)
+    seed_default_charge_types(db)
     seed_default_dunning_policy(db)
     seed_default_billing_period(db)
     seed_default_roles(db)  # No-op falls die behaltenen Rollen schon existieren

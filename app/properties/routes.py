@@ -89,9 +89,9 @@ def index():
     if request.headers.get("HX-Request"):
         return render_template("properties/_table.html", **ctx)
 
-    # BEV-Geocoding: Index-Info (built_at/Anzahl) fuer den Abgleich-Dialog.
-    from app.properties import bev_geocode
-    ctx["bev_index_info"] = bev_geocode.index_info(current_app.config["BEV_INDEX_PATH"])
+    # Geocoding je Land (AT: BEV-Index, DE: Photon/OSM) fuer den Abgleich-Dialog.
+    from app.properties import geocoding
+    ctx["geocode_status"] = geocoding.status()
     ctx["property_count"] = Property.query.filter_by(active=True).count()
     ctx["has_filter"] = bool(q or shares_filter != "all")
     return render_template("properties/index.html", **ctx)
@@ -147,20 +147,21 @@ def fix_housenumbers():
 @bp.route("/geocode-bev", methods=["POST"])
 @login_required
 def geocode_bev():
-    """Gleicht die Adressen der Liegenschaften gegen den BEV-Index ab und setzt
-    ihre Koordinaten (Voraussetzung fuer die Hausanschluss-Zuordnung im
-    Leitungsnetz).
+    """Gleicht die Adressen der Liegenschaften gegen den Adressdienst des
+    Landes ab (AT: BEV-Index, DE: Photon/OpenStreetMap) und setzt ihre
+    Koordinaten (Voraussetzung fuer die Hausanschluss-Zuordnung im
+    Leitungsnetz). Endpoint-Name bleibt ``geocode_bev`` (Bestand).
 
     Standardlauf ist idempotent (nur Liegenschaften ohne Koordinate). Mit
     ``mode=all`` werden alle neu abgeglichen — sinnvoll nach einem
     Index-Refresh (``flask bev-refresh``).
     """
-    from app.properties import bev_geocode
+    from app.properties import geocoding
 
     only_missing = request.form.get("mode") != "all"
     try:
-        result = bev_geocode.geocode_properties(only_missing=only_missing)
-    except bev_geocode.BevImportError as exc:
+        result = geocoding.geocode_properties(only_missing=only_missing)
+    except geocoding.GeocodingError as exc:
         flash(str(exc), "warning")
         return redirect(url_for("properties.index"))
 
@@ -170,16 +171,47 @@ def geocode_bev():
     else:
         nf = len(result["not_found"])
         category = "success" if result["geocoded"] else "warning"
-        msg = (f"BEV-Abgleich: {result['geocoded']} von {result['total']} "
+        label = geocoding.LABELS[geocoding.provider()]
+        msg = (f"Adress-Abgleich ({label}): {result['geocoded']} von {result['total']} "
                f"Liegenschaften geocodet.")
         if nf:
             sample = ", ".join(result["not_found"][:8])
             if nf > 8:
                 sample += " …"
             msg += (f" {nf} ohne Treffer: {sample} — diese Adressen bitte prüfen "
-                    f"(Schreibweise/Hausnummer) oder den Index aktualisieren.")
+                    f"(Schreibweise/Hausnummer) oder die Lage auf der Detailseite "
+                    f"manuell setzen.")
         flash(msg, category)
     return redirect(url_for("properties.index"))
+
+
+@bp.route("/<int:property_id>/location", methods=["POST"])
+@login_required
+def set_location(property_id):
+    """Lage einer Liegenschaft manuell setzen oder entfernen (Karte auf der
+    Detailseite) — der Weg, wenn der Adressdienst keinen Treffer liefert oder
+    (DE ohne Photon) gar keiner eingerichtet ist."""
+    prop = db.get_or_404(Property, property_id)
+    if request.form.get("clear"):
+        prop.lat = prop.lng = prop.geocoded_at = None
+        db.session.commit()
+        flash("Lage der Liegenschaft entfernt.", "success")
+        return redirect(url_for("properties.detail", property_id=prop.id))
+    try:
+        lat = float((request.form.get("lat") or "").replace(",", "."))
+        lng = float((request.form.get("lng") or "").replace(",", "."))
+    except ValueError:
+        flash("Ungültige Koordinate — bitte einen Punkt auf der Karte wählen.", "danger")
+        return redirect(url_for("properties.detail", property_id=prop.id))
+    if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+        flash("Ungültige Koordinate.", "danger")
+        return redirect(url_for("properties.detail", property_id=prop.id))
+    prop.lat, prop.lng = round(lat, 7), round(lng, 7)
+    from datetime import datetime as _dt
+    prop.geocoded_at = _dt.utcnow()
+    db.session.commit()
+    flash("Lage der Liegenschaft gespeichert.", "success")
+    return redirect(url_for("properties.detail", property_id=prop.id))
 
 
 @bp.route("/bulk-set-address", methods=["POST"])
@@ -242,6 +274,14 @@ def new():
     is_modal = bool(request.headers.get("X-From-Modal"))
 
     if request.method == "POST":
+        from app.invoices.charges import validate_override_form
+        err = validate_override_form(request.form)
+        if err:
+            flash(err, "danger")
+            if is_modal:
+                return render_template("properties/_property_edit_form_body.html",
+                                       property=Property())
+            return render_template("properties/form.html", property=None)
         prop = _property_from_form(Property())
         db.session.add(prop)
         db.session.commit()
@@ -382,6 +422,14 @@ def edit(property_id):
     is_modal = bool(request.headers.get("X-From-Modal"))
 
     if request.method == "POST":
+        from app.invoices.charges import validate_override_form
+        err = validate_override_form(request.form)
+        if err:
+            flash(err, "danger")
+            if is_modal:
+                return render_template("properties/_property_edit_form_body.html",
+                                       property=prop)
+            return render_template("properties/form.html", property=prop)
         _property_from_form(prop)
         db.session.commit()
         if is_modal:
@@ -629,12 +677,13 @@ def _property_from_form(prop):
     prop.hausnummer = request.form.get("hausnummer", "").strip()
     prop.plz = request.form.get("plz", "").strip()
     prop.ort = request.form.get("ort", "").strip()
-    prop.land = request.form.get("land", "Österreich").strip()
+    from app.country import home_country_name
+    prop.land = (request.form.get("land") or "").strip() or home_country_name()
     prop.notes = request.form.get("notes", "").strip()
-    raw_base = request.form.get("base_fee_override", "").strip().replace(",", ".")
-    prop.base_fee_override = Decimal(raw_base) if raw_base else None
-    raw_add = request.form.get("additional_fee_override", "").strip().replace(",", ".")
-    prop.additional_fee_override = Decimal(raw_add) if raw_add else None
+    # Individuelle Gebuehren: vorab in new()/edit() validiert
+    # (validate_override_form), hier nur noch angewendet.
+    from app.invoices.charges import apply_override_form
+    apply_override_form(prop, request.form)
 
     # WG-Felder (Anteile/m2) nur im Genossenschafts-Modus — im Versorger-Modus
     # fehlen sie im Formular, bestehende Werte bleiben unangetastet.

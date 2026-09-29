@@ -131,12 +131,11 @@ def _issued_invoice_for(property_id, period_id):
 
 def _consumption_price(invoice):
     """Preis (€/m³) + USt-Satz, mit dem der Verbrauch auf ``invoice`` abgerechnet
-    wurde. Bevorzugt die Verbrauchsposition (Einheit m³), faellt auf den
-    Tarif-Snapshot des Rechnungslaufs zurueck. ``(None, None)`` wenn nicht
-    ermittelbar."""
+    wurde. Bevorzugt die Wasser-Position, faellt auf den Tarif-Snapshot des
+    Rechnungslaufs zurueck. ``(None, None)`` wenn nicht ermittelbar."""
     item = next(
         (it for it in invoice.items
-         if it.unit == "m³" and not getattr(it, "is_dunning_fee", 0)
+         if it.is_water_consumption
          and it.unit_price is not None and Decimal(str(it.unit_price)) > 0),
         None,
     )
@@ -148,6 +147,40 @@ def _consumption_price(invoice):
         if run is not None and run.tariff_price_per_m3 is not None:
             return Decimal(str(run.tariff_price_per_m3)), None
     return None, None
+
+
+def _extra_volume_prices(invoice):
+    """Weitere verbrauchsabhaengige Positionen der Rechnung (z.B. Wassercent):
+    Liste ``(charge_key, label, effektiver €/m³-Preis, USt)``.
+
+    Effektiv = Betrag / abgerechnete Wassermenge — so ist auch eine
+    zeitanteilig abgegrenzte Position (gilt erst ab Stichtag) korrekt
+    beruecksichtigt. Nur Belege mit ``charge_key`` (Altbelege kannten keine
+    weiteren m³-Positionen).
+    """
+    water_qty = sum((Decimal(str(it.quantity or 0)) for it in invoice.items
+                     if it.is_water_consumption), Decimal("0"))
+    if water_qty <= 0:
+        return []
+    out = []
+    seen = set()
+    for it in invoice.items:
+        key = it.charge_key
+        if (not key or key == "water" or it.unit != "m³" or key in seen
+                or getattr(it, "is_dunning_fee", 0)):
+            continue
+        seen.add(key)
+        amount = sum((Decimal(str(x.amount or 0)) for x in invoice.items
+                      if x.charge_key == key and x.unit == "m³"), Decimal("0"))
+        price = (amount / water_qty).quantize(Decimal("0.0001"))
+        if price == 0:
+            continue
+        from app.models import ChargeType
+        ct = ChargeType.query.filter_by(key=key).first()
+        label = ct.label if ct is not None else key
+        tax = Decimal(str(it.tax_rate)) if it.tax_rate else None
+        out.append((key, label, price, tax))
+    return out
 
 
 def build_correction(reading, estimated_consumption, *, created_by_id=None):
@@ -175,27 +208,40 @@ def build_correction(reading, estimated_consumption, *, created_by_id=None):
     unit_price, tax_rate = _consumption_price(invoice)
     if unit_price is None:
         return None  # Preis nicht ermittelbar -> kein automatischer Posten
-    amount = (delta * unit_price).quantize(Decimal("0.01"))
-    if amount == 0:
-        return None
 
-    corr = ReadingCorrection(
-        customer_id=invoice.customer_id,
-        meter_id=meter.id,
-        billing_period_id=reading.billing_period_id,
-        source_reading_id=reading.id,
-        source_invoice_id=invoice.id,
-        estimated_consumption=Decimal(str(estimated_consumption)),
-        real_consumption=Decimal(str(reading.consumption)),
-        delta_m3=delta,
-        unit_price=unit_price,
-        tax_rate=tax_rate,
-        amount=amount,
-        remaining_amount=amount,
-        status=ReadingCorrection.STATUS_OPEN,
-        created_by_id=created_by_id,
-    )
-    db.session.add(corr)
+    def _corr(amount, price, tax, charge_key=None, label=None):
+        c = ReadingCorrection(
+            customer_id=invoice.customer_id,
+            meter_id=meter.id,
+            billing_period_id=reading.billing_period_id,
+            source_reading_id=reading.id,
+            source_invoice_id=invoice.id,
+            estimated_consumption=Decimal(str(estimated_consumption)),
+            real_consumption=Decimal(str(reading.consumption)),
+            delta_m3=delta,
+            unit_price=price,
+            tax_rate=tax,
+            charge_key=charge_key,
+            label=label,
+            amount=amount,
+            remaining_amount=amount,
+            status=ReadingCorrection.STATUS_OPEN,
+            created_by_id=created_by_id,
+        )
+        db.session.add(c)
+        return c
+
+    corr = None
+    amount = (delta * unit_price).quantize(Decimal("0.01"))
+    if amount != 0:
+        corr = _corr(amount, unit_price, tax_rate, charge_key="water")
+    # Weitere m³-Positionen (Wassercent …) bekommen einen eigenen Posten, damit
+    # die Korrektur wie auf der Originalrechnung getrennt ausgewiesen wird.
+    for key, label, price, tax in _extra_volume_prices(invoice):
+        extra = (delta * price).quantize(Decimal("0.01"))
+        if extra != 0:
+            c = _corr(extra, price, tax, charge_key=key, label=label)
+            corr = corr or c
     return corr
 
 
@@ -277,8 +323,12 @@ def _add_correction_item(inv, corr, net_amount, *, partial):
         else:
             delta_abs = abs(Decimal(str(corr.delta_m3 or 0)))
             qty_suffix = f" ({delta_abs.quantize(Decimal('1'))} m³)"
+        # Korrektur einer weiteren m³-Position (z.B. Wassercent) mit deren Text.
+        subject = ("geschätzter Wasserverbrauch"
+                   if corr.charge_key in (None, "water") or not corr.label
+                   else f"{corr.label} (geschätzter Verbrauch)")
         desc = (
-            f"{label} geschätzter Wasserverbrauch {period_name}"
+            f"{label} {subject} {period_name}"
             f" – Zähler {meter_no}{qty_suffix}"
         )
     # An die relationship anhaengen (nicht nur session.add), damit ``inv.items``

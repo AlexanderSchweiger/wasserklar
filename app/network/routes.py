@@ -289,7 +289,7 @@ def assign_hausanschluss():
 
     if res["geocoded_total"] == 0:
         flash("Keine geocodeten Liegenschaften vorhanden — bitte zuerst unter "
-              "Liegenschaften „BEV-Adressen abgleichen“ ausführen.", "warning")
+              "Liegenschaften „Adressen geokodieren“ ausführen.", "warning")
     elif res["considered"] == 0:
         flash("Keine passenden Hausanschlüsse gefunden (alle bereits zugeordnet "
               "oder keiner mit Koordinate). Für eine Neu-Zuordnung „Alle neu“ wählen.",
@@ -774,7 +774,7 @@ def sample_add(feature_id):
     if request.method == "POST":
         when = _parse_date(request.form.get("sample_date")) or date.today()
         results = []
-        for key in wq.PARAMETERS:
+        for key in wq.parameters():
             raw = (request.form.get(f"value__{key}") or "").strip()
             if not raw:
                 continue
@@ -784,8 +784,9 @@ def sample_add(feature_id):
                 value_num=num,
                 value_text=raw if num is None else None,
                 unit=wq.parameter_unit(key) or None,
-                limit_text=wq.limit_display(key) or None,
-                status=wq.assess(key, num),
+                # Grenzwert zum Probenahmedatum (Uebergangsfristen, z. B. Blei DE).
+                limit_text=wq.limit_display(key, when) or None,
+                status=wq.assess(key, num, when),
             ))
         if not results:
             flash("Bitte mindestens einen Laborwert erfassen.", "warning")
@@ -836,7 +837,7 @@ def samples_overview(feature_id):
     if f.feature_type != "probenahme":
         abort(404)
     param = request.args.get("param") or "nitrat"
-    if param not in wq.PARAMETERS:
+    if param not in wq.parameters():
         param = "nitrat"
     samples_asc = list(f.water_samples)  # aufsteigend nach Datum (Relationship)
     points = [
@@ -882,7 +883,7 @@ def water_quality():
     plan = current_plan()
     plans = NetworkPlan.query.order_by(NetworkPlan.name.asc()).all()
     param = request.args.get("param") or "nitrat"
-    if param not in wq.PARAMETERS:
+    if param not in wq.parameters():
         param = "nitrat"
 
     if plan is None:
@@ -1044,7 +1045,7 @@ def water_quality_limits():
     """Pro-Tenant-Override der TWV-Grenzwerte (AppSetting ``water_quality.<key>.limit``).
     Leeres Feld = Standard-Grenzwert verwenden (Override wird geloescht)."""
     if request.method == "POST":
-        for key in wq.PARAMETERS:
+        for key in wq.parameters():
             skey = f"water_quality.{key}.limit"
             raw = (request.form.get(f"limit__{key}") or "").strip()
             if raw:
@@ -1056,7 +1057,7 @@ def water_quality_limits():
         return redirect(url_for("network.water_quality"))
 
     rows = []
-    for key, meta in wq.PARAMETERS.items():
+    for key, meta in wq.parameters().items():
         if meta["kind"] == "info":
             continue  # kein Grenzwert anpassbar
         rows.append({
@@ -1066,6 +1067,7 @@ def water_quality_limits():
             "kind": meta["kind"],
             "override": (AppSetting.get(f"water_quality.{key}.limit") or ""),
             "default_display": wq.limit_display(key),
+            "note": meta.get("note") or "",
         })
     return render_template("network/water_quality_limits.html", rows=rows, wq=wq)
 

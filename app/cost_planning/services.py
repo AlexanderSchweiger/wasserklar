@@ -17,7 +17,9 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from app import consumption
 from app.extensions import db
+from app.invoices import tariff_engine as engine
 from app.models import (
+    ChargeType,
     Customer,
     FundingGoal,
     Property,
@@ -26,7 +28,7 @@ from app.models import (
 )
 
 CENT = Decimal("0.01")
-M3_PRICE_STEP = Decimal("0.0001")   # WaterTariff.price_per_m3 hat 4 Nachkommastellen
+M3_PRICE_STEP = Decimal("0.0001")   # Tarifposition Wasser hat 4 Nachkommastellen
 ZERO = Decimal("0")
 
 # Verteilungsschluessel: Anteil des Mehrbedarfs, der ueber die Grundgebuehr
@@ -159,9 +161,13 @@ def baseline(tariff, avg_years=3):
 
     Der entscheidende Punkt sind die **Einheiten-Zahlen**: ein Aufschlag auf die
     Tarif-Grundgebuehr wirkt nur bei Objekten, deren Gebuehr tatsaechlich aus
-    dem Tarif kommt. Objekte oder Kunden mit einem ``*_fee_override`` sind vom
-    Aufschlag nicht betroffen (Prioritaet Objekt > Kunde > Tarif, identisch zu
-    ``invoices.generate``). Wer das ignoriert, ueberschaetzt den Mehrertrag.
+    dem Tarif kommt. Objekte oder Kunden mit einer individuellen Gebuehr
+    (``ChargeOverride``) sind vom Aufschlag nicht betroffen (Prioritaet Objekt >
+    Kunde > Tarif, identisch zu ``invoices.generate`` — beide nutzen die
+    Tarif-Engine). Wer das ignoriert, ueberschaetzt den Mehrertrag.
+
+    Abgaben (``is_levy``, z.B. Wassercent) zaehlen bewusst nicht als Ertrag:
+    sie werden an das Land weitergereicht und finanzieren kein Ziel.
 
     ``abrechenbar`` = aktives Objekt mit mindestens einem aktiven Zaehler und
     einem aktuellen Eigentuemer. Mehrere parallele aktive ``PropertyOwnership``
@@ -205,16 +211,11 @@ def baseline(tariff, avg_years=3):
             db.session.get(Customer, ownership.customer_id)
             if ownership is not None else None
         )
-        base_from_tariff, base_value = _effective_fee(
-            prop.base_fee_override,
-            customer.base_fee_override if customer is not None else None,
-            tariff.base_fee if tariff is not None else None,
-        )
-        add_from_tariff, add_value = _effective_fee(
-            prop.additional_fee_override,
-            customer.additional_fee_override if customer is not None else None,
-            tariff.additional_fee if tariff is not None else None,
-        )
+        sources = engine.charge_sources(tariff, prop=prop, customer=customer)
+        base_from_tariff, base_value = sources.get(
+            ChargeType.KEY_BASE_FEE, (True, None))
+        add_from_tariff, add_value = sources.get(
+            ChargeType.KEY_ADDITIONAL_FEE, (True, None))
         if base_from_tariff and base_value is not None:
             base_units += 1
         if add_from_tariff and add_value is not None:
@@ -226,7 +227,8 @@ def baseline(tariff, avg_years=3):
         if add_value is not None:
             current_additional_revenue += Decimal(add_value)
 
-    price = Decimal(tariff.price_per_m3) if tariff is not None else ZERO
+    water_price = tariff.water_price if tariff is not None else None
+    price = Decimal(water_price) if water_price is not None else ZERO
     volume_revenue = avg_m3 * price
 
     return {
@@ -245,21 +247,6 @@ def baseline(tariff, avg_years=3):
             current_base_revenue + current_additional_revenue + volume_revenue
         ),
     }
-
-
-def _effective_fee(prop_override, customer_override, tariff_value):
-    """``(kommt_aus_dem_tarif, wirksamer_wert)``.
-
-    Prioritaet Objekt > Kunde > Tarif; ``None`` heisst "keine Gebuehr" und ist
-    ein gueltiger Wert, kein "nicht gesetzt" — deshalb wird auf ``is not None``
-    geprueft und nicht auf Truthiness (0,00 € ist eine Gebuehr von null, die
-    einen Aufschlag NICHT mitnimmt).
-    """
-    if prop_override is not None:
-        return False, prop_override
-    if customer_override is not None:
-        return False, customer_override
-    return True, tariff_value
 
 
 # ---------------------------------------------------------------------------
@@ -301,6 +288,14 @@ class Scenario:
         return "bg-orange text-white"
 
 
+def _component_amount(tariff, key):
+    """Betrag der Tarifposition ``key`` (Decimal) oder ``None``."""
+    comp = tariff.component(key) if tariff is not None else None
+    if comp is None or comp.amount is None:
+        return None
+    return Decimal(comp.amount)
+
+
 def build_scenarios(required, base_info, rounding="exact",
                     sample_household_m3=None):
     """Drei Tarifpakete fuer den Jahresbedarf ``required``.
@@ -318,15 +313,9 @@ def build_scenarios(required, base_info, rounding="exact",
     tariff = base_info["tariff"]
     avg_m3 = Decimal(base_info["avg_m3"] or 0)
     base_units = base_info["base_fee_units"]
-    current_base = (
-        Decimal(tariff.base_fee) if tariff is not None and tariff.base_fee is not None
-        else None
-    )
-    current_price = Decimal(tariff.price_per_m3) if tariff is not None else ZERO
-    current_additional = (
-        Decimal(tariff.additional_fee)
-        if tariff is not None and tariff.additional_fee is not None else None
-    )
+    current_base = _component_amount(tariff, ChargeType.KEY_BASE_FEE)
+    current_price = _component_amount(tariff, ChargeType.KEY_WATER) or ZERO
+    current_additional = _component_amount(tariff, ChargeType.KEY_ADDITIONAL_FEE)
 
     out = []
     for key, label, share, description in SCENARIOS:
