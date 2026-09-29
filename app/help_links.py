@@ -153,6 +153,7 @@ ENDPOINT_TO_DOC = {
     "files.index":                 "einstellungen",
     "backups.index":               "abonnement#export",
     "api_admin.index":             "api-rest",
+    "getting_started.index":       "erste-schritte",
     "bank_import.index":           "buchhaltung",
 }
 
