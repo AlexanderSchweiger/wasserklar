@@ -275,7 +275,8 @@ def export_to_zip(selection: dict, fileobj, *, exported_by: str = "system") -> d
             if include_pdfs:
                 if model is Invoice:
                     for rec in records:
-                        for col in ("pdf_path", "doc_path"):
+                        # xml_path = eingefrorene E-Rechnung (Bundle-Endung .xml)
+                        for col in ("pdf_path", "doc_path", "xml_path"):
                             src = rec.get(col)
                             if src and os.path.isfile(src):
                                 bundle_name = f"pdfs/invoices/{rec.get('invoice_number','id_'+str(rec.get('id')))}.{col.split('_')[0]}"
@@ -296,7 +297,7 @@ def export_to_zip(selection: dict, fileobj, *, exported_by: str = "system") -> d
                 # Pfade nullen — Empfaenger soll PDFs neu generieren
                 if model in (Invoice, DunningNotice):
                     for rec in records:
-                        for col in ("pdf_path", "doc_path"):
+                        for col in ("pdf_path", "doc_path", "xml_path"):
                             if col in rec:
                                 rec[col] = None
 
@@ -914,7 +915,8 @@ def _copy_pdfs(extract_dir: Path, instance_path: str, table_records: dict):
     # Invoices
     if Invoice in table_records:
         for rec in table_records[Invoice]:
-            for col, subdir in (("pdf_path", "invoices"), ("doc_path", "invoices")):
+            for col, subdir in (("pdf_path", "invoices"), ("doc_path", "invoices"),
+                                ("xml_path", "invoices")):
                 bundle_path = rec.get(col)
                 if not bundle_path or not bundle_path.startswith("pdfs/"):
                     continue

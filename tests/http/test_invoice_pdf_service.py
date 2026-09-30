@@ -38,19 +38,28 @@ def _blank_pdf():
     return buf.getvalue()
 
 
+class _Rendered(list):
+    """Gerenderte HTML-Strings; ``writes`` haelt je write_pdf-Aufruf die
+    Optionen, Anhaenge und XMP-Bloecke (fuer die E-Rechnungs-Einbettung)."""
+
+    def __init__(self):
+        super().__init__()
+        self.writes = []
+
+
 @pytest.fixture
 def rendered(monkeypatch):
     """Ersetzt WeasyPrint; die Liste sammelt jedes gerenderte HTML."""
-    calls = []
+    calls = _Rendered()
 
-    class FakeHTML:
-        def __init__(self, string=None, **kwargs):
-            calls.append(string)
-
-        def render(self, **kwargs):
-            return self
+    class FakeDocument:
+        def __init__(self):
+            self.metadata = types.SimpleNamespace(attachments=[], xmp_metadata=[])
 
         def write_pdf(self, target=None, **kwargs):
+            calls.writes.append({"options": kwargs,
+                                 "attachments": list(self.metadata.attachments),
+                                 "xmp": list(self.metadata.xmp_metadata)})
             data = _blank_pdf()
             if target is None:
                 return data
@@ -58,8 +67,24 @@ def rendered(monkeypatch):
                 fh.write(data)
             return None
 
+    class FakeHTML:
+        def __init__(self, string=None, **kwargs):
+            calls.append(string)
+            self._document = FakeDocument()
+
+        def render(self, **kwargs):
+            return self._document
+
+        def write_pdf(self, target=None, **kwargs):
+            return self._document.write_pdf(target, **kwargs)
+
+    class FakeAttachment:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
     module = types.ModuleType("weasyprint")
     module.HTML = FakeHTML
+    module.Attachment = FakeAttachment
     monkeypatch.setitem(sys.modules, "weasyprint", module)
     return calls
 
@@ -235,3 +260,101 @@ class TestRoutes:
         draft = db.session.get(Invoice, draft.id)
         assert draft.status == Invoice.STATUS_SENT
         assert draft.pdf_path and os.path.exists(draft.pdf_path)
+
+
+# ---------------------------------------------------------------------------
+# E-Rechnung (ZUGFeRD/Factur-X) im Render-Weg, auf der Detailseite und in den
+# Einstellungen
+# ---------------------------------------------------------------------------
+
+def _ready_seller():
+    """Vollstaendige Mandanten-Stammdaten (DE) + USt-pflichtiges Jahr."""
+    from app.models import AppSetting, FiscalYear
+    for key, value in {
+        "org.country": "DE",
+        "wg.name": "Wasserversorgung Musterdorf eG",
+        "wg.address": "Brunnenweg 1\n91234 Musterdorf",
+        "wg.vat_id": "DE123456789",
+        "wg.iban": "DE02120300000000202051",
+    }.items():
+        AppSetting.set(key, value)
+    db.session.add(FiscalYear(year=2026, start_date=date(2026, 1, 1),
+                              end_date=date(2026, 12, 31), is_vat_liable=True))
+    db.session.commit()
+
+
+class TestEInvoiceEmbedding:
+    def test_ready_invoice_becomes_a_facturx_pdf(self, app, rendered, pdf_dir, invoices):
+        sent, _ = invoices
+        _ready_seller()
+        with app.test_request_context():
+            render_invoice_pdf(sent)
+        write = rendered.writes[-1]
+        assert write["options"] == {"pdf_variant": "pdf/a-3b"}
+        (attachment,) = write["attachments"]
+        assert attachment.name == "factur-x.xml"
+        assert attachment.relationship == "Data"
+        assert "2026-00042" in attachment.string
+        assert b"<fx:ConformanceLevel>EN 16931</fx:ConformanceLevel>" in write["xmp"][0]
+        # Gesperrte Rechnung → XML beim Rendern eingefroren.
+        assert sent.xml_path and os.path.exists(sent.xml_path)
+
+    def test_incomplete_data_gives_a_plain_pdf(self, app, rendered, invoices):
+        sent, _ = invoices
+        with app.test_request_context():
+            render_invoice_pdf(sent)
+        assert rendered.writes[-1]["options"] == {}
+        assert rendered.writes[-1]["attachments"] == []
+        assert sent.xml_path is None
+
+    def test_sending_a_draft_freezes_its_xml(self, client, admin, rendered, pdf_dir,
+                                            invoices, monkeypatch):
+        from app.invoices import routes as inv_routes
+
+        monkeypatch.setattr(inv_routes, "send_mail", lambda msg: None)
+        _ready_seller()
+        _, draft = invoices
+        _login(client)
+        client.post(f"/invoices/{draft.id}/send-email", data={"test_mode": "0"})
+        draft = db.session.get(Invoice, draft.id)
+        assert draft.status == Invoice.STATUS_SENT
+        assert draft.xml_path and os.path.exists(draft.xml_path)
+        assert draft.einvoice_profile == "en16931"
+
+
+class TestEInvoiceUi:
+    def test_detail_shows_ready_state_and_xml_download(self, client, admin, pdf_dir,
+                                                       invoices):
+        _ready_seller()
+        sent, _ = invoices
+        _login(client)
+        html = client.get(f"/invoices/{sent.id}").get_data(as_text=True)
+        assert "ZUGFeRD · EN 16931" in html
+        r = client.get(f"/invoices/{sent.id}/einvoice.xml")
+        assert r.status_code == 200
+        assert r.mimetype == "application/xml"
+        assert b"CrossIndustryInvoice" in r.data
+        assert 'filename="2026-00042.xml"' in r.headers["Content-Disposition"]
+        assert db.session.get(Invoice, sent.id).xml_path is not None
+
+    def test_detail_lists_missing_master_data(self, client, admin, invoices):
+        sent, _ = invoices
+        _login(client)
+        html = client.get(f"/invoices/{sent.id}").get_data(as_text=True)
+        assert "Kein ZUGFeRD im PDF" in html
+        assert client.get(f"/invoices/{sent.id}/einvoice.xml").status_code == 302
+
+    def test_settings_card_saves_address_reason_and_switch(self, client, admin):
+        from app.models import AppSetting
+        _login(client)
+        html = client.get("/einstellungen/").get_data(as_text=True)
+        assert "E-Rechnung (ZUGFeRD / Factur-X)" in html
+        client.post("/einstellungen/", data={
+            "wg_name": "WG Test", "wg_street": "Quellweg 9", "wg_postal_code": "1234",
+            "wg_city": "Musterdorf", "einvoice_exempt_reason": "Echter Mitgliedsbeitrag",
+        })
+        assert AppSetting.get("wg.street") == "Quellweg 9"
+        assert AppSetting.get("wg.postal_code") == "1234"
+        # Schalter nicht mitgeschickt = abgeschaltet.
+        assert AppSetting.get("einvoice.enabled") == "false"
+        assert AppSetting.get("einvoice.exempt_reason") == "Echter Mitgliedsbeitrag"

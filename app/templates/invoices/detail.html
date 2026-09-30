@@ -164,6 +164,46 @@
         </div>
         {% endif %}
 
+        {% if einvoice.enabled %}
+        <!-- E-Rechnung (ZUGFeRD/Factur-X) -->
+        <div class="list-group-item d-flex align-items-start justify-content-between gap-3 py-2 px-3">
+          <div>
+            <div class="fw-medium">
+              E-Rechnung
+              {% if einvoice.ok %}<span class="badge bg-azure-lt ms-1">ZUGFeRD · EN 16931</span>{% endif %}
+            </div>
+            {% if einvoice.ok %}
+            <div class="text-muted small">
+              {% if einvoice.frozen %}
+              <i class="fas fa-lock me-1"></i>Beim Versand eingefroren — das PDF enthält genau diese Daten.
+              {% else %}
+              Das PDF enthält die strukturierten Rechnungsdaten.
+              {% endif %}
+            </div>
+            {% else %}
+            <div class="text-muted small">
+              <i class="fas fa-exclamation-triangle text-warning me-1"></i>Kein ZUGFeRD im PDF:
+              <ul class="mb-0 ps-3">
+                {% for issue in einvoice.issues %}<li>{{ issue }}</li>{% endfor %}
+              </ul>
+            </div>
+            {% endif %}
+          </div>
+          <div class="text-nowrap">
+            {% if einvoice.ok %}
+            <a href="{{ url_for('invoices.einvoice_xml', invoice_id=invoice.id) }}"
+               class="btn btn-sm btn-outline-azure">
+              <i class="fas fa-file-code me-1"></i> XML
+            </a>
+            {% else %}
+            <button type="button" class="btn btn-sm btn-outline-secondary" disabled>
+              <i class="fas fa-file-code me-1"></i> XML
+            </button>
+            {% endif %}
+          </div>
+        </div>
+        {% endif %}
+
         {% if doc_format in ('docx', 'both') %}
         <!-- Word -->
         <div class="list-group-item d-flex align-items-center justify-content-between gap-3 py-2 px-3">

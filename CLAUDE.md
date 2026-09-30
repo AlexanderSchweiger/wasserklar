@@ -257,6 +257,15 @@ Konto und Projekt deshalb in einer **zweiten Zeile** („Kontierung") innerhalb 
 Positions-Box; wer dort ein Feld ergaenzt, gehoert in diese zweite Zeile, nicht in die
 Betragszeile.
 
+### E-Rechnung (ZUGFeRD/Factur-X, EN 16931)
+
+Jedes Rechnungs-PDF wird ein **Hybrid**: PDF/A-3b mit eingebettetem `factur-x.xml` (Profil „EN 16931"), für DE **und** AT, B2B **und** B2C, kein Plan-Gate. Modul [app/einvoice/](app/einvoice/) — eine Richtung: `mapper.build_einvoice(invoice)` (einzige Stelle, die OSS-Modelle liest) → `model.EInvoice` → `rules.check()` (deutsche Meldungen, leer = gültig) → `cii.serialize()` (deterministisch, XSD-Reihenfolge beachten!) → `pdf.write_facturx_pdf()` (WeasyPrint-`Attachment` + Factur-X-XMP). Eingehängt in `pdf_service.render_invoice_pdf` — fehlen Stammdaten oder ist `einvoice.enabled=false`, entsteht still ein normales PDF.
+
+- **Einfrieren:** Gesperrte Rechnungen (und Entwürfe beim Versand, `freeze_einvoice=True` in Mail-/Post-Versand) legen ihr XML als `<PDF_DIR>/<Jahr>/<Nr>.xml` ab (`invoices.xml_path`, `einvoice_profile`); jedes spätere PDF bettet genau dieses XML ein. Grund: beim Hybrid geht das XML dem Bildteil vor. `xml_path` läuft im data_transfer-ZIP mit wie `pdf_path`.
+- **Normalisierung im Mapper:** Mahngebühr-Positionen raus; Storno → Typ 381 mit positiven Werten + Verweis aufs Original; negativer Einzelpreis → negative Menge (BR-27); USt > 0 → S, ohne USt → E mit Begründung (Kleinunternehmer-Hinweis in nicht USt-pflichtigen Jahren, sonst `einvoice.exempt_reason`) — **nie O** (BR-O-* verbietet das neben S). Summen exakt wie `recalculate_total`; Abweichung zu `total_amount` = kein XML.
+- **Stammdaten:** strukturierte Anschrift `wg.street`/`wg.postal_code`/`wg.city` (leer = aus `wg.address` zerlegt), `wg.contact_name`, `wg.register_number` (Kennung ohne UID, BR-CO-26) — alle in `_WG_MAP`, also **zwingend** als Inputs in `settings/index.html` (die Speicher-Schleife setzt fehlende Felder auf leer). Karte „E-Rechnung" im Tab „Rechnung" mit Checkliste (`service.readiness()`); Rechnungsdetail zeigt Status + XML-Download (`/invoices/<id>/einvoice.xml`).
+- **Validierung:** `tests/integration/test_einvoice.py` (Golden-Fälle G1–G12) schreibt mit `EINVOICE_DUMP_DIR=…` jedes XML heraus → mit Mustang-CLI (`java -jar Mustang-CLI.jar --action validate --source <datei>`) gegen EN-16931- + Factur-X-Schematron prüfen; XRechnung-Hinweise (BR-DE-*) dort sind erwartet (Profil EN 16931, XRechnung folgt). Plan und Phasen: `E_RECHNUNG_PLAN.md` im Workspace-Root.
+
 ### Rechte-System (Rollen & Permissions)
 
 [app/auth/permissions.py](app/auth/permissions.py) definiert **10 Bereichs-Rechte** als Code-Konstanten (keine DB-Tabelle): `stammdaten`, `zaehler`, `buchhaltung`, `rechnungen_op`, `mahnwesen`, `auswertungen`, `network`, `incidents`, `schriftfuehrung`, `verwaltung`. Jeder Hauptmenuepunkt entspricht genau einem Recht.

@@ -61,6 +61,7 @@ ENDPOINT_TO_DOC = {
     # Rechnungen / OP
     "invoices.index":              "rechnungen",
     "invoices.detail":             "rechnungen#status",
+    "invoices.einvoice_xml":       "e-rechnung",
     "invoices.new":                "rechnungen#einzeln",
     "invoices.edit":               "rechnungen",
     "invoices.generate":           "rechnungen#rechnungslauf",

@@ -1024,9 +1024,12 @@ def detail(invoice_id):
     # sonst scheitert die Buchung und der Statuswechsel wird zurueckgerollt.
     needs_pay_account = acc_svc.invoice_missing_account(invoice)
 
+    from app.einvoice.service import invoice_status as einvoice_status
+
     return render_template(
         "invoices/detail.html",
         invoice=invoice,
+        einvoice=einvoice_status(invoice),
         accounts=accounts,
         needs_pay_account=needs_pay_account,
         doc_format=doc_format,
@@ -1817,6 +1820,24 @@ def pdf_preview(invoice_id):
     return _render_pdf_html(invoice)
 
 
+@bp.route("/<int:invoice_id>/einvoice.xml")
+@login_required
+def einvoice_xml(invoice_id):
+    """E-Rechnung (EN-16931-XML, ZUGFeRD/Factur-X) zum Herunterladen."""
+    from app.einvoice import service as einvoice_service
+    invoice = db.get_or_404(Invoice, invoice_id)
+    if not einvoice_service.invoice_status(invoice).ok:
+        flash("Für diese Rechnung kann keine E-Rechnung erzeugt werden.", "warning")
+        return redirect(url_for("invoices.detail", invoice_id=invoice.id))
+    xml = einvoice_service.einvoice_xml(invoice)
+    # Ein gesperrter Beleg friert sein XML beim ersten Abruf ein.
+    db.session.commit()
+    resp = make_response(xml)
+    resp.headers["Content-Type"] = "application/xml; charset=utf-8"
+    resp.headers["Content-Disposition"] = f'attachment; filename="{invoice.invoice_number}.xml"'
+    return resp
+
+
 def _record_invoice_sent(invoice, msg, recipient):
     """Setzt Versand-Status + Tracking-Felder am Invoice und legt ein Sent-Event an.
 
@@ -1884,7 +1905,8 @@ def send_email(invoice_id):
 
     if fmt in ("pdf", "both"):
         try:
-            pdf_bytes = render_invoice_pdf(invoice, for_email=True)
+            pdf_bytes = render_invoice_pdf(invoice, for_email=True,
+                                           freeze_einvoice=not test_mode)
             pdf_path = write_invoice_pdf(invoice, pdf_bytes)
             msg.attach(f"{invoice.invoice_number}.pdf", "application/pdf", pdf_bytes)
             pdf_ok = True
@@ -1980,7 +2002,8 @@ def send_email_ajax(invoice_id):
 
         if fmt in ("pdf", "both"):
             try:
-                pdf_bytes = render_invoice_pdf(invoice, for_email=True)
+                pdf_bytes = render_invoice_pdf(invoice, for_email=True,
+                                               freeze_einvoice=not test_mode)
                 pdf_path = write_invoice_pdf(invoice, pdf_bytes)
                 msg.attach(f"{invoice.invoice_number}.pdf", "application/pdf", pdf_bytes)
                 pdf_ok = True
@@ -2603,7 +2626,9 @@ def billing_run_post_bulk(run_id):
 
     writer = PdfWriter()
     for invoice in invoices:
-        pdf_bytes = render_invoice_pdf(invoice)
+        # Der Post-Beleg wird jetzt versendet — seine E-Rechnungsdaten einfrieren,
+        # auch wenn die Rechnung in diesem Moment noch Entwurf ist.
+        pdf_bytes = render_invoice_pdf(invoice, freeze_einvoice=True)
         # Erzeugtes PDF immer persistieren (der heruntergeladene Post-Beleg).
         invoice.pdf_path = write_invoice_pdf(invoice, pdf_bytes)
         # Nur Entwürfe auf „Versendet" setzen; Offenen Posten wie beim Mailversand anlegen.

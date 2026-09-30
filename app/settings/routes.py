@@ -192,6 +192,14 @@ def index():
         sender_address = request.form.get('invoice_sender_address', '').strip()
         AppSetting.set('invoice.sender_address', sender_address if sender_address else None)
 
+        # E-Rechnung (ZUGFeRD in Rechnungs-PDFs). Die strukturierten wg.*-Felder
+        # speichert oben schon die _WG_MAP-Schleife.
+        from app.einvoice.mapper import EXEMPT_REASON_KEY
+        from app.einvoice.service import ENABLED_KEY
+        AppSetting.set(ENABLED_KEY, 'true' if request.form.get('einvoice_enabled') else 'false')
+        exempt = (request.form.get('einvoice_exempt_reason') or '').strip()
+        AppSetting.set(EXEMPT_REASON_KEY, exempt[:300] or None)
+
         # Zähler-Tauschintervall (Jahre)
         default_interval = country_mod.profile(previous_country).calibration_years
         try:
@@ -301,7 +309,9 @@ def index():
     print_meter_swap = AppSetting.get('invoice.print_meter_swap') == 'true'
     show_email_signup = AppSetting.get('invoice.show_email_signup') == 'true'
     show_payment_qr = AppSetting.get('invoice.show_payment_qr') == 'true'
+    from app.einvoice.service import settings_context as einvoice_settings_context
     return render_template('settings/index.html', wg=wg, mail=mail_cfg, mail_raw=mail_raw,
+                           einvoice=einvoice_settings_context(),
                            db_info=db_info,
                            org_type=org_type(),
                            org_country=country_mod.current_code(),

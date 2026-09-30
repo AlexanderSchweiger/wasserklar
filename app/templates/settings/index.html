@@ -516,6 +516,122 @@
           {% block invoice_design_extra %}{% endblock %}
         </div>
       </div>
+
+      {# ── E-Rechnung (ZUGFeRD/Factur-X) ──────────────────────────────── #}
+      <div class="card mt-3" id="einvoice-card">
+        <div class="card-header">
+          <h3 class="card-title"><i class="fas fa-file-code me-1"></i> E-Rechnung (ZUGFeRD / Factur-X)</h3>
+          <div class="card-actions">
+            {% if not einvoice.enabled %}
+            <span class="badge bg-secondary-lt">aus</span>
+            {% elif einvoice.ready %}
+            <span class="badge bg-green-lt">bereit</span>
+            {% else %}
+            <span class="badge bg-yellow-lt">Angaben fehlen</span>
+            {% endif %}
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="mb-3">
+            <label class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" name="einvoice_enabled"
+                     {% if einvoice.enabled %}checked{% endif %}>
+              <span class="form-check-label">Strukturierte Rechnungsdaten in Rechnungs-PDFs einbetten</span>
+            </label>
+            <div class="form-text">
+              Jedes Rechnungs-PDF wird zur E-Rechnung nach EN&nbsp;16931 (ZUGFeRD/Factur-X): Es sieht
+              aus wie bisher, enthält aber zusätzlich die Rechnungsdaten als XML, die
+              Buchhaltungsprogramme automatisch einlesen.
+              {% if country.code == 'DE' %}
+              Damit ist die E-Rechnungspflicht gegenüber Unternehmen erfüllt — diese müssen die
+              Rechnung dann elektronisch erhalten, z.&nbsp;B. per E-Mail, nicht auf Papier.
+              {% else %}
+              In Österreich gibt es derzeit keine Pflicht; die Daten schaden nicht und erleichtern
+              Firmenkunden und Gemeinden die Verbuchung.
+              {% endif %}
+            </div>
+          </div>
+
+          <h4 class="mb-2">Anschrift der Genossenschaft</h4>
+          {% set sug = einvoice.address_suggestion or {} %}
+          {% if einvoice.address_suggestion %}
+          <div class="form-text mb-2">
+            <i class="fas fa-info-circle me-1"></i>
+            Aus der Kontaktadresse übernommen — bitte prüfen und speichern.
+          </div>
+          {% endif %}
+          <div class="row g-2">
+            <div class="col-md-6">
+              <div class="mb-3">
+                <label class="form-label">Straße und Hausnummer</label>
+                <input type="text" name="wg_street" class="form-control"
+                       value="{{ wg.street or sug.street or '' }}">
+              </div>
+            </div>
+            <div class="col-md-2">
+              <div class="mb-3">
+                <label class="form-label">PLZ</label>
+                <input type="text" name="wg_postal_code" class="form-control"
+                       value="{{ wg.postal_code or sug.postal_code or '' }}">
+              </div>
+            </div>
+            <div class="col-md-4">
+              <div class="mb-3">
+                <label class="form-label">Ort</label>
+                <input type="text" name="wg_city" class="form-control"
+                       value="{{ wg.city or sug.city or '' }}">
+              </div>
+            </div>
+          </div>
+          <div class="row g-2">
+            <div class="col-md-6">
+              <div class="mb-3">
+                <label class="form-label">Ansprechpartner <small class="text-muted">(optional)</small></label>
+                <input type="text" name="wg_contact_name" class="form-control"
+                       value="{{ wg.contact_name }}" placeholder="z. B. Maria Muster">
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="mb-3">
+                <label class="form-label">Register-/Kennnummer <small class="text-muted">(optional)</small></label>
+                <input type="text" name="wg_register_number" class="form-control"
+                       value="{{ wg.register_number }}"
+                       placeholder="{{ 'z. B. FN 123456a' if country.code == 'AT' else 'z. B. GnR 123' }}">
+                <div class="form-text">
+                  Nur nötig, wenn keine {{ country.vat_id_label }} hinterlegt ist —
+                  {% if country.code == 'AT' %}z.&nbsp;B. Firmenbuchnummer, ZVR-Zahl oder bei
+                  Wassergenossenschaften die Wasserbuch-Postzahl.{% else %}z.&nbsp;B.
+                  Genossenschafts-, Vereins- oder Handelsregisternummer.{% endif %}
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Begründung für Positionen ohne Umsatzsteuer <small class="text-muted">(optional)</small></label>
+            <input type="text" name="einvoice_exempt_reason" class="form-control"
+                   value="{{ einvoice.exempt_reason }}" placeholder="{{ einvoice.default_exempt_reason }}">
+            <div class="form-text">
+              Die E-Rechnung verlangt für jede Position ohne Umsatzsteuer eine Begründung. In
+              nicht umsatzsteuerpflichtigen Jahren wird automatisch der Kleinunternehmer-Hinweis
+              verwendet; dieser Text gilt für 0-%-Positionen in steuerpflichtigen Jahren
+              (z.&nbsp;B. echte Mitgliedsbeiträge).
+            </div>
+          </div>
+
+          <h4 class="mb-2">Checkliste</h4>
+          <ul class="list-unstyled mb-0">
+            {% for item in einvoice.readiness %}
+            <li class="mb-1">
+              {% if item.ok %}<i class="fas fa-check-circle text-success me-1"></i>
+              {% elif item.required %}<i class="fas fa-times-circle text-danger me-1"></i>
+              {% else %}<i class="fas fa-minus-circle text-muted me-1"></i>{% endif %}
+              {{ item.label }}{% if not item.required %} <small class="text-muted">(empfohlen)</small>{% endif %}
+              {% if item.hint %}<div class="text-muted small ms-4">{{ item.hint }}</div>{% endif %}
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
     </div>
 
     {# ── Tab: Zähler ─────────────────────────────────────────────────── #}

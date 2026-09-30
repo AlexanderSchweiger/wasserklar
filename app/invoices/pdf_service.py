@@ -3,9 +3,9 @@
 Alle Wege, auf denen ein Rechnungs-PDF entsteht — Einzel-PDF, Sammel-PDF,
 ZIP, Mail-Anhang, Post-Versand eines Rechnungslaufs und die gleichnamigen
 Hintergrund-Jobs der SaaS — rendern ueber ``render_invoice_pdf`` und legen
-Dateien ueber ``write_invoice_pdf`` ab. Wer den Inhalt eines Rechnungs-PDFs
-erweitert (z.B. die eingebettete E-Rechnung), tut das hier und nicht an den
-Aufrufstellen.
+Dateien ueber ``write_invoice_pdf`` ab. Hier wird auch die E-Rechnung
+(ZUGFeRD/Factur-X) eingebettet — wer den Inhalt eines Rechnungs-PDFs
+erweitert, tut das hier und nicht an den Aufrufstellen.
 
 WeasyPrint wird erst beim Rendern importiert: ohne GTK (Windows-Dev) wirft
 ``render_invoice_pdf`` ``ImportError``/``OSError`` — die Aufrufer fangen das
@@ -60,10 +60,24 @@ def render_invoice_html(invoice, *, for_email=False):
     )
 
 
-def render_invoice_pdf(invoice, *, for_email=False):
-    """PDF-Bytes der Rechnung. Wirft ``ImportError``/``OSError`` ohne WeasyPrint."""
+def render_invoice_pdf(invoice, *, for_email=False, freeze_einvoice=False):
+    """PDF-Bytes der Rechnung. Wirft ``ImportError``/``OSError`` ohne WeasyPrint.
+
+    Ist die E-Rechnung aktiv und sind die Daten vollstaendig, wird das PDF ein
+    ZUGFeRD/Factur-X-Hybrid (PDF/A-3b mit eingebettetem EN-16931-XML), sonst ein
+    normales PDF. Gesperrte Rechnungen frieren ihr XML dabei ein; wer einen
+    Entwurf versendet, setzt ``freeze_einvoice`` (siehe app/einvoice/service.py).
+    """
     from weasyprint import HTML
-    return HTML(string=render_invoice_html(invoice, for_email=for_email)).write_pdf()
+
+    from app.einvoice.service import einvoice_xml
+
+    html = render_invoice_html(invoice, for_email=for_email)
+    xml = einvoice_xml(invoice, freeze=freeze_einvoice)
+    if xml is None:
+        return HTML(string=html).write_pdf()
+    from app.einvoice.pdf import write_facturx_pdf
+    return write_facturx_pdf(HTML(string=html).render(), xml)
 
 
 def invoice_doc_dir(invoice):

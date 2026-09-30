@@ -29,6 +29,14 @@ _WG_MAP = {
     # Steuernummer des Ausstellers.
     'vat_id':         'WG_VAT_ID',
     'tax_number':     'WG_TAX_NUMBER',
+    # E-Rechnung (EN 16931): strukturierte Anschrift (leer = aus ``address``
+    # zerlegt, siehe app.einvoice.mapper.seller_address), Ansprechpartner und
+    # Register-/Firmenbuchnummer als Kennung des Rechnungsstellers.
+    'street':          'WG_STREET',
+    'postal_code':     'WG_POSTAL_CODE',
+    'city':            'WG_CITY',
+    'contact_name':    'WG_CONTACT_NAME',
+    'register_number': 'WG_REGISTER_NUMBER',
 }
 
 # (State-Attribut, DB-Key, Cast-Funktion)

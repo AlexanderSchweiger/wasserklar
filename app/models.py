@@ -1954,6 +1954,10 @@ class Invoice(EmailTrackableMixin, db.Model):
     total_amount = db.Column(db.Numeric(10, 2), default=0)
     pdf_path = db.Column(db.String(500))
     doc_path = db.Column(db.String(500))   # gecachte .docx für gesperrte Rechnungen
+    # E-Rechnung (ZUGFeRD/Factur-X, EN 16931): das beim Versand eingefrorene XML
+    # und das Profil, mit dem es erzeugt wurde (siehe app/einvoice/service.py).
+    xml_path = db.Column(db.String(500))
+    einvoice_profile = db.Column(db.String(40))
     notes = db.Column(db.Text)
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
