@@ -135,6 +135,18 @@ def _get_document_format(override=None):
     return fmt if fmt in ("pdf", "docx", "both") else "pdf"
 
 
+def _mail_document_format(invoice):
+    """Dokumentformat fuer den Mailversand einer Rechnung.
+
+    Unternehmer-Kunden bekommen immer das PDF (ZUGFeRD bzw. bei XRechnung die XML-
+    Datei), nie nur ein Word-Dokument: Word ist keine E-Rechnung, und ein
+    Unternehmer hat darauf nach der Uebergangszeit keinen Anspruch mehr.
+    """
+    if invoice.customer.is_business:
+        return "pdf"
+    return _get_document_format()
+
+
 _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
@@ -1024,12 +1036,15 @@ def detail(invoice_id):
     # sonst scheitert die Buchung und der Statuswechsel wird zurueckgerollt.
     needs_pay_account = acc_svc.invoice_missing_account(invoice)
 
+    from app.einvoice.obligation import delivery_problem, required_for
     from app.einvoice.service import invoice_status as einvoice_status
 
     return render_template(
         "invoices/detail.html",
         invoice=invoice,
         einvoice=einvoice_status(invoice),
+        einvoice_required=required_for(invoice),
+        einvoice_delivery=delivery_problem(invoice),
         accounts=accounts,
         needs_pay_account=needs_pay_account,
         doc_format=doc_format,
@@ -1543,6 +1558,12 @@ def set_status(invoice_id):
         flash(f"Status auf '{new_status}' gesetzt.", "success")
         if credit_note_skipped:
             flash(f"Keine Storno-Rechnung erstellt: {credit_note_skipped}", "warning")
+    if new_status == Invoice.STATUS_SENT:
+        from app.einvoice.obligation import required_for
+        if required_for(invoice) and not invoice.email_sent_at:
+            flash("Hinweis: Der Kunde ist Unternehmer — seine Rechnung muss als E-Rechnung "
+                  "elektronisch zugestellt werden (z. B. per E-Mail). Papier oder ein "
+                  "reines PDF genügen nicht.", "warning")
     return _status_response(invoice)
 
 
@@ -1889,7 +1910,7 @@ def send_email(invoice_id):
             flash(notice, "danger")
             return redirect(url_for("invoices.detail", invoice_id=invoice.id))
 
-    fmt = _get_document_format()
+    fmt = _mail_document_format(invoice)
 
     subject = _render_email_subject(invoice)
     body = _render_email_body(invoice)
@@ -1903,7 +1924,17 @@ def send_email(invoice_id):
     pdf_path = None
     pdf_ok = False
 
-    if fmt in ("pdf", "both"):
+    # XRechnung (Behoerdenkunde): statt PDF/Word geht die XML-Datei raus.
+    from app.einvoice.service import EInvoiceUnavailable, xml_only_attachment
+    try:
+        xrechnung = xml_only_attachment(invoice, freeze=not test_mode)
+    except EInvoiceUnavailable as exc:
+        flash(f"Die {exc.format_name} kann nicht erzeugt werden: " + "; ".join(exc.issues), "danger")
+        return redirect(url_for("invoices.detail", invoice_id=invoice.id))
+    if xrechnung:
+        msg.attach(*xrechnung)
+
+    if not xrechnung and fmt in ("pdf", "both"):
         try:
             pdf_bytes = render_invoice_pdf(invoice, for_email=True,
                                            freeze_einvoice=not test_mode)
@@ -1918,7 +1949,7 @@ def send_email(invoice_id):
                 return redirect(url_for("invoices.detail", invoice_id=invoice_id))
             # bei 'both': docx-Fallback unten
 
-    if fmt == "docx" or (fmt == "both" and not pdf_ok):
+    if not xrechnung and (fmt == "docx" or (fmt == "both" and not pdf_ok)):
         from app.invoices.document_service import generate_docx
         doc_data = generate_docx(invoice, wg_settings(), design=_current_design())
         msg.attach(f"{invoice.invoice_number}.docx", _DOCX_MIME, doc_data)
@@ -1985,7 +2016,7 @@ def send_email_ajax(invoice_id):
         if notice:
             return jsonify({"ok": False, "error": notice}), 400
 
-    fmt = _get_document_format()
+    fmt = _mail_document_format(invoice)
 
     try:
         subject = _render_email_subject(invoice)
@@ -2000,7 +2031,17 @@ def send_email_ajax(invoice_id):
         pdf_path = None
         pdf_ok = False
 
-        if fmt in ("pdf", "both"):
+        # XRechnung (Behoerdenkunde): statt PDF/Word geht die XML-Datei raus.
+        from app.einvoice.service import EInvoiceUnavailable, xml_only_attachment
+        try:
+            xrechnung = xml_only_attachment(invoice, freeze=not test_mode)
+        except EInvoiceUnavailable as exc:
+            return jsonify({"ok": False,
+                            "error": f"{exc.format_name} nicht möglich: " + "; ".join(exc.issues)}), 400
+        if xrechnung:
+            msg.attach(*xrechnung)
+
+        if not xrechnung and fmt in ("pdf", "both"):
             try:
                 pdf_bytes = render_invoice_pdf(invoice, for_email=True,
                                                freeze_einvoice=not test_mode)
@@ -2015,7 +2056,7 @@ def send_email_ajax(invoice_id):
                                     "preview_url": preview_url if current_app.debug else None}), 503
                 # bei 'both': docx-Fallback unten
 
-        if fmt == "docx" or (fmt == "both" and not pdf_ok):
+        if not xrechnung and (fmt == "docx" or (fmt == "both" and not pdf_ok)):
             from app.invoices.document_service import generate_docx
             doc_data = generate_docx(invoice, wg_settings(), design=_current_design())
             msg.attach(f"{invoice.invoice_number}.docx", _DOCX_MIME, doc_data)
@@ -2183,6 +2224,8 @@ def _invoice_overview(invoices, columns, label_map):
     Erwartet eine bereits geladene Liste (inkl. der noetigen Eager-Loads), damit
     die Aufrufer ihre Query selbst bauen koennen.
     """
+    from app.einvoice.obligation import XML_ONLY_REASONS, electronic_reason
+
     rows = []
     count_draft = count_sent = count_mail = count_post = 0
     count_paid = count_open = 0
@@ -2193,6 +2236,9 @@ def _invoice_overview(invoices, columns, label_map):
     run_has_vat = False
     mailable = []   # versandbereite Entwürfe per Mail (für den Versenden-Dialog)
     post_ids = []   # versandbereite Entwürfe per Post
+    electronic_only = []   # Entwürfe, die nur elektronisch zugestellt werden dürfen, aber
+                           # keine E-Mail bekommen können (E-Rechnungs-Pflicht / XRechnung)
+    count_electronic = 0
 
     for inv in invoices:
         amt = _invoice_amounts(inv, columns, label_map)
@@ -2218,6 +2264,15 @@ def _invoice_overview(invoices, columns, label_map):
                     "number": inv.invoice_number,
                     "name": inv.customer.name,
                     "email": inv.customer.email,
+                })
+            elif (reason := electronic_reason(inv)):
+                # Kein Post-Versand: der Kunde darf keinen Ausdruck bekommen, die E-Mail
+                # geht aber nicht (keine Adresse / „Schriftverkehr per E-Mail" aus).
+                count_electronic += 1
+                electronic_only.append({
+                    "id": inv.id, "number": inv.invoice_number, "name": inv.customer.name,
+                    "customer_id": inv.customer_id, "reason": reason,
+                    "xml_only": reason in XML_ONLY_REASONS,
                 })
             else:
                 count_post += 1
@@ -2251,6 +2306,7 @@ def _invoice_overview(invoices, columns, label_map):
         "rows": rows,
         "count_draft": count_draft, "count_sent": count_sent,
         "count_mail": count_mail, "count_post": count_post,
+        "count_electronic": count_electronic, "electronic_only": electronic_only,
         "count_paid": count_paid, "count_open": count_open,
         "count_total": count_total, "count_live": count_live,
         "other_status_counts": other_status_counts,
@@ -2622,6 +2678,19 @@ def billing_run_post_bulk(run_id):
     )
     if not invoices:
         flash("Keine Rechnungen gefunden.", "warning")
+        return redirect(url_for("invoices.billing_run_detail", run_id=run_id))
+
+    # Pflicht-E-Rechnungen (Unternehmer) und XRechnung-Kunden duerfen nicht per Post
+    # raus: der Druck wuerde sie auf „Versendet" setzen, obwohl der Kunde keine
+    # zulaessige Rechnung bekommt. Die Seite listet sie gar nicht erst als Post —
+    # das hier faengt veraltete Seiten und manipulierte Requests ab.
+    from app.einvoice.obligation import split_post_invoices
+    invoices, blocked = split_post_invoices(invoices)
+    if blocked:
+        flash(f"{len(blocked)} Rechnung(en) wurden nicht gedruckt: Der Kunde darf nur eine "
+              "E-Rechnung bekommen (Post ist nicht zulässig). Nummern: "
+              + ", ".join(inv.invoice_number for inv in blocked), "warning")
+    if not invoices:
         return redirect(url_for("invoices.billing_run_detail", run_id=run_id))
 
     writer = PdfWriter()

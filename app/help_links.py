@@ -76,6 +76,8 @@ ENDPOINT_TO_DOC = {
     "accounting.bookings":           "buchhaltung#buchungen",
     "accounting.booking_new":        "buchhaltung#buchungen",
     "accounting.booking_edit":       "buchhaltung#buchungen",
+    "accounting.incoming_list":      "buchhaltung#eingangsrechnungen",
+    "accounting.incoming_detail":    "buchhaltung#eingangsrechnungen",
     "accounting.transfers":          "buchhaltung#umbuchungen",
     "accounting.transfer_new":       "buchhaltung#umbuchungen",
     "accounting.fiscal_years":       "buchhaltung#jahresabschluss",

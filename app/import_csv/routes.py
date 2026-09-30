@@ -13,7 +13,9 @@ from flask_login import login_required
 from app.country import home_country_name
 from app.import_csv import bp
 from app.extensions import db
-from app.imports.common import resolve_contact_name, split_street_number
+from app.imports.common import (
+    apply_einvoice_columns, resolve_contact_name, split_street_number,
+)
 from app.imports.relations import OwnerConflictTracker, MeterObjectTracker
 from app.models import (
     Customer, Property, PropertyOwnership, WaterMeter, MeterReading,
@@ -53,6 +55,14 @@ _COLUMN_HINTS = {
     "phone": ["telefon", "tel"],
     "email": ["e-mail", "email"],
     "notes": ["kommentar", "bemerkung", "notiz", "info"],
+    # E-Rechnung
+    "is_business": ["unternehmer", "ust-pflichtig", "ustpflichtig", "umsatzsteuerpflichtig", "b2b"],
+    "vat_id": [
+        "ust-idnr", "ust-id", "ust id", "ustid", "uid-nr", "uid nr", "uid-nummer",
+        "umsatzsteuer-id", "umsatzsteuer id", "vat-id", "vat id", "vat number", "=uid", "=vat",
+    ],
+    "buyer_reference": ["leitweg", "käuferreferenz", "kaeuferreferenz", "buyer reference"],
+    "einvoice_format": ["rechnungsformat", "e-rechnung", "erechnung", "xrechnung"],
     # WG-spezifisch (nur im Genossenschafts-Modus gemappt/angewendet)
     "wg_status": ["status", "mitgliedsstatus", "mitglieds-status"],
     "member_since": ["mitglied seit", "mitglied-seit", "beitritt", "beitrittsdatum", "eintritt"],
@@ -68,7 +78,10 @@ def _suggest_column(columns: list, target_key: str) -> str:
     for col in columns:
         normalized = col.strip().lower()
         for candidate in candidates:
-            if normalized == candidate or candidate in normalized:
+            if candidate.startswith("="):       # nur exakt (z.B. "uid", nicht "GUID")
+                if normalized == candidate[1:]:
+                    return col
+            elif normalized == candidate or candidate in normalized:
                 return col
     return ""
 
@@ -314,6 +327,11 @@ def _run_import(df, col_map: dict, duplicate_mode: str,
     col_phone = col_map.get("phone", "")
     col_email = col_map.get("email", "")
     col_notes = col_map.get("notes", "")
+    # E-Rechnung: nur gemappte Spalten werden angewendet (ein Import ohne diese
+    # Spalten laesst vorhandene Werte stehen, auch im overwrite-Modus).
+    ei_cols = {key: col_map.get(key, "") for key in
+               ("is_business", "vat_id", "buyer_reference", "einvoice_format")}
+    ei_mapped = {key for key, col in ei_cols.items() if col}
     # WG-spezifisch (nur im Genossenschafts-Modus angewendet)
     wg_customer_cols = (
         col_map.get("wg_status", ""),
@@ -451,6 +469,15 @@ def _run_import(df, col_map: dict, duplicate_mode: str,
                     cust.first_name = None
                     cust.last_name = None
 
+            def _apply_einvoice(cust, source_row, line):
+                """E-Rechnung-Spalten (USt-IdNr., Leitweg-ID, Format, Unternehmer)."""
+                if not ei_mapped:
+                    return
+                for warning in apply_einvoice_columns(
+                        cust, {key: _get_cell(source_row, col) for key, col in ei_cols.items()},
+                        ei_mapped):
+                    results["warnings"].append(f"Zeile {line}: {warning}")
+
             # --- Kunde bestimmen (neu / aus DB / aus diesem Lauf) ---
             if cnum in seen_customers:
                 customer = seen_customers[cnum]
@@ -464,6 +491,7 @@ def _run_import(df, col_map: dict, duplicate_mode: str,
                         for key, val in cust_fields.items():
                             setattr(customer, key, val)
                         _apply_name_fields(customer, is_new=False)
+                        _apply_einvoice(customer, row, idx)
                         db.session.flush()
                         if is_wg:
                             _apply_wg_customer(customer, row, wg_customer_cols, actions)
@@ -479,6 +507,7 @@ def _run_import(df, col_map: dict, duplicate_mode: str,
                 else:
                     customer = Customer(customer_number=cnum, active=True, **cust_fields)
                     _apply_name_fields(customer, is_new=True)
+                    _apply_einvoice(customer, row, idx)
                     db.session.add(customer)
                     db.session.flush()
                     seen_customers[cnum] = customer

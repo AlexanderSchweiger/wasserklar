@@ -318,6 +318,89 @@
   </div>
 </div>
 
+{# ── E-Rechnung: XRechnung für Behörden, USt-IdNr., Käuferreferenz ──────── #}
+{% set v_einvoice_format = fval('einvoice_format')|trim %}
+<hr class="my-2">
+<h6 class="text-muted mb-2"><i class="fas fa-file-code me-2"></i>E-Rechnung</h6>
+{% if country.code == 'DE' %}
+{# Unternehmer-Kennzeichen (nur deutsche Mandanten): Empfaenger, dem nach der
+   Uebergangszeit nur noch E-Rechnungen zugestellt werden duerfen. #}
+<input type="hidden" name="einvoice_b2b_fields" value="1">
+<div class="mb-3">
+  <div class="form-check form-switch">
+    <input type="checkbox" class="form-check-input" id="is_business" name="is_business" value="1"
+           {% if form_data is defined and form_data %}{{ 'checked' if form_data.get('is_business') == '1' }}{% elif customer and customer.is_business %}checked{% endif %}>
+    <label class="form-check-label" for="is_business">Unternehmer (umsatzsteuerpflichtig)</label>
+  </div>
+  <small class="text-muted d-block">
+    Vermieter, Landwirte, Gewerbe, Gastronomie, Gemeinden im unternehmerischen Bereich. Unternehmern darf
+    nach der Übergangszeit nur noch eine <strong>E-Rechnung</strong> zugestellt werden, also per E-Mail statt
+    Post. Beim Einschalten wird „Schriftverkehr per E-Mail“ mit aktiviert, sobald eine E-Mail-Adresse
+    hinterlegt ist.
+  </small>
+</div>
+{% endif %}
+<div class="row">
+  <div class="col-md-4">
+    <div class="mb-3">
+      <label class="form-label" for="einvoice_format">Rechnungsformat</label>
+      <select name="einvoice_format" id="einvoice_format" class="form-select">
+        <option value="">ZUGFeRD-PDF (Standard)</option>
+        <option value="xrechnung" {{ 'selected' if v_einvoice_format == 'xrechnung' }}>XRechnung (Behörden)</option>
+        <option value="peppol_ubl" {{ 'selected' if v_einvoice_format == 'peppol_ubl' }}>UBL / Peppol (Bund Österreich)</option>
+      </select>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="mb-3">
+      <label class="form-label" for="buyer_reference">Leitweg-ID / Käuferreferenz</label>
+      <input type="text" name="buyer_reference" id="buyer_reference" class="form-control"
+        maxlength="100" placeholder="z. B. 04011000-1234512345-06"
+        value="{{ fval('buyer_reference') }}">
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="mb-3">
+      <label class="form-label" for="vat_id">USt-IdNr. / UID</label>
+      <input type="text" name="vat_id" id="vat_id" class="form-control"
+        maxlength="20" placeholder="z. B. DE123456789"
+        value="{{ fval('vat_id') }}">
+    </div>
+  </div>
+</div>
+<div class="row">
+  <div class="col-md-4">
+    <div class="mb-3">
+      <label class="form-label" for="order_reference">Auftragsreferenz <small class="text-muted">(nur UBL / Bund)</small></label>
+      <input type="text" name="order_reference" id="order_reference" class="form-control"
+        maxlength="100" value="{{ fval('order_reference') }}">
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="mb-3">
+      <label class="form-label" for="supplier_number">Lieferantennummer <small class="text-muted">(nur UBL / Bund)</small></label>
+      <input type="text" name="supplier_number" id="supplier_number" class="form-control"
+        maxlength="50" value="{{ fval('supplier_number') }}">
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="mb-3">
+      <label class="form-label" for="peppol_id">Peppol-ID <small class="text-muted">(nur UBL / Bund)</small></label>
+      <input type="text" name="peppol_id" id="peppol_id" class="form-control"
+        maxlength="60" placeholder="z. B. 9915:b" value="{{ fval('peppol_id') }}">
+    </div>
+  </div>
+</div>
+<small class="text-muted d-block mb-3">
+  <strong>UBL / Peppol</strong> verlangen Bundesdienststellen in Österreich (e-Rechnung.gv.at): mit
+  <strong>Auftragsreferenz</strong>, der <strong>Lieferantennummer</strong> der Genossenschaft beim Bund und der
+  <strong>Peppol-ID</strong> der Dienststelle (<code>Schema:Kennung</code>, wie die Dienststelle sie mitteilt;
+  ohne Eintrag dient ihre USt-IdNr.).
+  <strong>XRechnung</strong> brauchen Behörden, die keine PDF-Rechnung annehmen: Statt des PDFs
+  wird die XML-Datei versendet (das PDF steckt darin). Die <strong>Leitweg-ID</strong> teilt die
+  Behörde mit; ohne Eintrag dient die Kundennummer als Käuferreferenz.
+</small>
+
 {% if is_wg %}
 {# ── Mitgliedschaft (nur Mandant-Typ Wassergenossenschaft) ──────────────── #}
 {% if form_data is defined and form_data %}

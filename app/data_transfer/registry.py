@@ -33,6 +33,7 @@ from app.models import (
     Circular, CircularRecipient, CircularDeliveryLog,
     ConsumptionYear, FundingGoal,
     ChargeType, TariffComponent, ChargeOverride,
+    IncomingInvoice,
 )
 
 # Spalten die auf users.id verweisen — werden beim Import auf NULL gesetzt,
@@ -49,6 +50,7 @@ NULL_ON_IMPORT_COLS = {
     Transfer: ["created_by_id"],
     Booking: ["created_by_id"],
     BookingGroup: ["created_by_id"],
+    IncomingInvoice: ["created_by_id"],
     OpenItem: ["created_by_id"],
     FiscalYear: ["closed_by_id"],
     DunningNotice: ["reset_by_id", "created_by_id"],
@@ -104,6 +106,8 @@ CATEGORIES = {
         OwnerChange, OwnerChangeMeterValue,
         ReadingCorrection,
         BookingGroup, Booking, Transfer, RealAccountYearBalance,
+        # Eingangs-E-Rechnungen: Belege gehoeren zu den Buchungen (8 Jahre Aufbewahrung).
+        IncomingInvoice,
         BankStatement, BankStatementLine, BankStatementLineAllocation,
         InvoiceCounter, CustomerCounter,
     ],
@@ -146,6 +150,8 @@ INSERT_ORDER = [
     # Touren NACH MeterReplacement + Invoice (Stop-FKs zeigen auf beide).
     MeterTour, MeterTourStop,
     BookingGroup, Booking, Transfer, RealAccountYearBalance,
+    # Eingangsrechnung NACH Customer + Booking + BookingGroup (FKs darauf).
+    IncomingInvoice,
     # Bankauszug NACH Booking/BookingGroup/Invoice/OpenItem/Account/RealAccount
     # (BankStatementLine referenziert alle). Line VOR Allocation (FK line_id).
     BankStatement, BankStatementLine, BankStatementLineAllocation,
@@ -186,6 +192,7 @@ YEAR_FILTERS = {
     OpenItem: "period_year",
     ReadingCorrection: ("date_year", "created_at"),
     Booking: ("date_year", "date"),
+    IncomingInvoice: ("date_year", "issue_date"),
     Transfer: ("date_year", "date"),
     RealAccountYearBalance: "year",
     InvoiceCounter: "year",
@@ -242,6 +249,7 @@ NATURAL_KEYS = {
     ReadingCorrection: None,
     BookingGroup: None,
     Booking: None,
+    IncomingInvoice: ("sha256",),       # dieselbe Datei nie doppelt (Dublettenschutz)
     Transfer: None,
     RealAccountYearBalance: ("real_account_id", "year"),
     DunningPolicy: ("name",),
@@ -335,6 +343,8 @@ FOREIGN_KEYS = {
               "project_id": Project, "real_account_id": RealAccount,
               "customer_id": Customer, "group_id": BookingGroup,
               "storno_of_id": Booking},  # Self-FK, zweiter Pass
+    IncomingInvoice: {"supplier_id": Customer, "booking_id": Booking,
+                      "booking_group_id": BookingGroup},
     Transfer: {"from_real_account_id": RealAccount, "to_real_account_id": RealAccount},
     RealAccountYearBalance: {"real_account_id": RealAccount},
     DunningStage: {"policy_id": DunningPolicy},

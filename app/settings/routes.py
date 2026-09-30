@@ -199,6 +199,12 @@ def index():
         AppSetting.set(ENABLED_KEY, 'true' if request.form.get('einvoice_enabled') else 'false')
         exempt = (request.form.get('einvoice_exempt_reason') or '').strip()
         AppSetting.set(EXEMPT_REASON_KEY, exempt[:300] or None)
+        # Stichtag der B2B-Pflicht (nur deutsche Mandanten haben das Feld im Formular).
+        if 'einvoice_mandate_from' in request.form:
+            from app.einvoice.obligation import MANDATE_KEY, MANDATE_OPTIONS
+            chosen = request.form.get('einvoice_mandate_from', '').strip()
+            if chosen in {d.isoformat() for d in MANDATE_OPTIONS}:
+                AppSetting.set(MANDATE_KEY, chosen)
 
         # Zähler-Tauschintervall (Jahre)
         default_interval = country_mod.profile(previous_country).calibration_years

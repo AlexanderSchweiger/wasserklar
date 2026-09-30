@@ -358,3 +358,180 @@ class TestEInvoiceUi:
         # Schalter nicht mitgeschickt = abgeschaltet.
         assert AppSetting.get("einvoice.enabled") == "false"
         assert AppSetting.get("einvoice.exempt_reason") == "Echter Mitgliedsbeitrag"
+
+
+# ---------------------------------------------------------------------------
+# XRechnung: Behoerdenkunden bekommen die XML-Datei statt des PDFs
+# ---------------------------------------------------------------------------
+
+def _make_government(customer):
+    """Der Testkunde wird zur Gemeinde mit Leitweg-ID."""
+    customer.is_company = True
+    customer.strasse, customer.plz, customer.ort = "Rathausplatz 1", "91234", "Musterdorf"
+    customer.einvoice_format = "xrechnung"
+    customer.buyer_reference = "04011000-1234512345-06"
+    db.session.commit()
+
+
+def _xrechnung_seller(complete=True):
+    from app.models import AppSetting
+    _ready_seller()
+    AppSetting.set("wg.email", "info@wv-musterdorf.example")
+    if complete:
+        AppSetting.set("wg.contact_name", "Erika Kassier")
+        AppSetting.set("wg.phone", "+49 9123 4567")
+    db.session.commit()
+
+
+class TestXRechnung:
+    def test_mail_carries_the_xml_and_freezes_it(self, client, admin, rendered, pdf_dir,
+                                                 invoices, monkeypatch):
+        import base64
+
+        from lxml import etree
+
+        from app.invoices import routes as inv_routes
+
+        sent_mails = []
+        monkeypatch.setattr(inv_routes, "send_mail", sent_mails.append)
+        sent, _ = invoices
+        _make_government(sent.customer)
+        _xrechnung_seller()
+        _login(client)
+        client.post(f"/invoices/{sent.id}/send-email", data={"test_mode": "0"})
+
+        (mail,) = sent_mails
+        assert [a.filename for a in mail.attachments] == ["2026-00042.xml"]
+        xml = mail.attachments[0].data
+        assert b"urn:xeinkauf.de:kosit:xrechnung_3.0" in xml
+        ns = {"ram": "urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100"}
+        binary = etree.fromstring(xml).xpath("//ram:AttachmentBinaryObject", namespaces=ns)[0]
+        assert base64.b64decode(binary.text).startswith(b"%PDF")      # die PDF-Ansicht steckt im XML
+        stored = db.session.get(Invoice, sent.id)
+        assert stored.einvoice_profile == "xrechnung-3.0"
+        assert stored.xml_path and os.path.exists(stored.xml_path)
+        assert stored.pdf_path is None
+
+    def test_bulk_mail_sends_the_xml_too(self, client, admin, rendered, pdf_dir, invoices,
+                                         monkeypatch):
+        from app.invoices import routes as inv_routes
+
+        sent_mails = []
+        monkeypatch.setattr(inv_routes, "send_mail", sent_mails.append)
+        _, draft = invoices
+        _make_government(draft.customer)
+        _xrechnung_seller()
+        _login(client)
+        r = client.post(f"/invoices/{draft.id}/send-email-ajax", data={"test_mode": "0"})
+        assert r.get_json()["ok"] is True
+        assert [a.filename for a in sent_mails[0].attachments] == ["2026-00043.xml"]
+        assert db.session.get(Invoice, draft.id).status == Invoice.STATUS_SENT
+
+    def test_incomplete_master_data_stops_the_mail(self, client, admin, rendered, pdf_dir,
+                                                   invoices, monkeypatch):
+        from app.invoices import routes as inv_routes
+
+        sent_mails = []
+        monkeypatch.setattr(inv_routes, "send_mail", sent_mails.append)
+        _, draft = invoices
+        _make_government(draft.customer)
+        _xrechnung_seller(complete=False)
+        _login(client)
+        r = client.post(f"/invoices/{draft.id}/send-email", data={"test_mode": "0"},
+                        follow_redirects=True)
+        assert sent_mails == []
+        assert "Die XRechnung kann nicht erzeugt werden" in r.get_data(as_text=True)
+        assert "Ansprechpartner" in r.get_data(as_text=True)
+        assert db.session.get(Invoice, draft.id).status == Invoice.STATUS_DRAFT
+
+        ajax = client.post(f"/invoices/{draft.id}/send-email-ajax", data={"test_mode": "0"})
+        assert ajax.status_code == 400 and "Ansprechpartner" in ajax.get_json()["error"]
+        assert sent_mails == []
+
+    def test_the_pdf_stays_a_plain_pdf(self, app, rendered, pdf_dir, invoices):
+        sent, _ = invoices
+        _make_government(sent.customer)
+        _xrechnung_seller()
+        with app.test_request_context():
+            pdf = render_invoice_pdf(sent)
+        assert pdf.startswith(b"%PDF")
+        # Kein PDF/A-3, kein Factur-X-Anhang — das XML ist der Beleg, das PDF nur seine Ansicht.
+        assert rendered.writes[0]["options"] == {}
+        assert rendered.writes[0]["attachments"] == []
+        # Die gesperrte Rechnung hat ihr XML trotzdem eingefroren.
+        assert sent.einvoice_profile == "xrechnung-3.0"
+        assert sent.xml_path and os.path.exists(sent.xml_path)
+
+    def test_draft_preview_does_not_freeze(self, app, rendered, pdf_dir, invoices):
+        _, draft = invoices
+        _make_government(draft.customer)
+        _xrechnung_seller()
+        with app.test_request_context():
+            render_invoice_pdf(draft)
+        assert draft.xml_path is None
+
+    def test_an_embed_false_render_is_always_plain(self, app, rendered, pdf_dir, invoices):
+        sent, _ = invoices
+        _ready_seller()
+        with app.test_request_context():
+            render_invoice_pdf(sent, embed=False)
+        assert rendered.writes[0]["options"] == {} and rendered.writes[0]["attachments"] == []
+        assert sent.xml_path is None
+
+    def test_detail_names_the_format(self, client, admin, pdf_dir, invoices):
+        sent, _ = invoices
+        _make_government(sent.customer)
+        _xrechnung_seller()
+        _login(client)
+        html = client.get(f"/invoices/{sent.id}").get_data(as_text=True)
+        assert "XRechnung 3.0" in html
+        assert "Der Kunde bekommt die XML-Datei" in html
+        r = client.get(f"/invoices/{sent.id}/einvoice.xml")
+        assert r.status_code == 200 and b"xrechnung_3.0" in r.data
+
+    def test_detail_lists_what_is_missing_for_the_xrechnung(self, client, admin, invoices):
+        sent, _ = invoices
+        _make_government(sent.customer)
+        _login(client)
+        html = client.get(f"/invoices/{sent.id}").get_data(as_text=True)
+        assert "Keine XRechnung" in html
+        assert "Kein ZUGFeRD im PDF" not in html
+
+    def test_federal_customer_gets_a_ubl_file(self, client, admin, rendered, pdf_dir, invoices,
+                                              monkeypatch):
+        """Bundesdienststelle (UBL): Mail-Anhang ist die UBL-Datei, Format im Detail benannt."""
+        from app.invoices import routes as inv_routes
+
+        mails = []
+        monkeypatch.setattr(inv_routes, "send_mail", mails.append)
+        sent, _ = invoices
+        customer = sent.customer
+        customer.einvoice_format = "peppol_ubl"
+        customer.order_reference, customer.supplier_number = "BBG-4711", "L-123456"
+        customer.peppol_id = "9915:b"
+        _xrechnung_seller()
+        _login(client)
+        html = client.get(f"/invoices/{sent.id}").get_data(as_text=True)
+        assert "UBL · Peppol BIS 3.0" in html
+        client.post(f"/invoices/{sent.id}/send-email", data={"test_mode": "0"})
+        (mail,) = mails
+        assert [a.filename for a in mail.attachments] == ["2026-00042.xml"]
+        assert b"urn:fdc:peppol.eu:2017:poacc:billing:3.0" in mail.attachments[0].data
+        stored = db.session.get(Invoice, sent.id)
+        assert stored.einvoice_profile == "peppol-bis-3" and os.path.exists(stored.xml_path)
+
+    def test_federal_customer_without_references_stops_the_mail(self, client, admin, rendered,
+                                                                pdf_dir, invoices, monkeypatch):
+        from app.invoices import routes as inv_routes
+
+        mails = []
+        monkeypatch.setattr(inv_routes, "send_mail", mails.append)
+        sent, _ = invoices
+        sent.customer.einvoice_format = "peppol_ubl"
+        _xrechnung_seller()
+        _login(client)
+        r = client.post(f"/invoices/{sent.id}/send-email", data={"test_mode": "0"},
+                        follow_redirects=True)
+        html = r.get_data(as_text=True)
+        assert mails == []
+        assert "Die UBL-Rechnung kann nicht erzeugt werden" in html and "Auftragsreferenz" in html

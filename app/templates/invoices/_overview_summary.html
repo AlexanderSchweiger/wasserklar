@@ -25,6 +25,10 @@
               <span class="text-azure"><i class="fas fa-envelope me-1"></i>{{ count_mail }} per Mail</span>
               <span class="text-muted mx-1">·</span>
               <span class="text-orange"><i class="fas fa-inbox me-1"></i>{{ count_post }} per Post</span>
+              {% if count_electronic %}
+              <span class="text-muted mx-1">·</span>
+              <span class="text-yellow" title="Nur elektronisch zustellbar (E-Rechnung), aber ohne E-Mail-Versand"><i class="fas fa-file-code me-1"></i>{{ count_electronic }} nur elektronisch</span>
+              {% endif %}
             </div>
             {% endif %}
           </div>

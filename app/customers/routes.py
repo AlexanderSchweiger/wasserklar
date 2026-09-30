@@ -34,6 +34,9 @@ _TYPE_FILTERS = {"customer", "supplier", "all"}
 _SORT_KEYS = {"nr", "name", "type", "address", "object", "email"}
 _DEFAULT_SORT = "name"
 
+# Erlaubte Werte des business-Filters (E-Rechnung, nur DE).
+_BUSINESS_FILTERS = {"yes", "no_email"}
+
 
 @bp.route("/")
 @login_required
@@ -51,6 +54,9 @@ def index():
     country_filter = request.args.get("country", "").strip()
     status_filter = request.args.get("status", "").strip()
     func_filter = request.args.get("func", "").strip()
+    business_filter = request.args.get("business", "").strip()
+    if business_filter not in _BUSINESS_FILTERS:
+        business_filter = ""
 
     query = Customer.query.filter_by(active=True)
     if type_filter == "customer":
@@ -61,6 +67,12 @@ def index():
         query = query.filter(Customer.name.ilike(f"%{q}%"))
     if country_filter:
         query = query.filter(Customer.land == country_filter)
+    # E-Rechnung (DE): Unternehmer, ggf. nur die, die keine E-Mail bekommen koennen.
+    if business_filter:
+        from app.einvoice.obligation import no_email_clause
+        query = query.filter(Customer.is_business.is_(True))
+        if business_filter == "no_email":
+            query = query.filter(no_email_clause())
     # WG-Filter: Status (fehlendes Profil = Mitglied, Default) + Funktion.
     if status_filter in STATUS_LABELS:
         query = query.outerjoin(
@@ -152,7 +164,8 @@ def index():
         countries=countries,
         status_filter=status_filter,
         func_filter=func_filter,
-        has_filter=bool(q or country_filter or status_filter or func_filter),
+        business_filter=business_filter,
+        has_filter=bool(q or country_filter or status_filter or func_filter or business_filter),
         wg_profile_map=wg_profile_map,
         wg_functions_map=wg_functions_map,
         suppressed_emails=suppressed_emails,
@@ -226,6 +239,9 @@ def new():
                 "Bitte erneut speichern."
             )
 
+        from app.einvoice.obligation import business_warning
+        if (warning := business_warning(c)):
+            flash(warning, "warning")
         if is_modal:
             resp = make_response("", 204)
             resp.headers["HX-Trigger"] = json.dumps({
@@ -288,6 +304,9 @@ def edit(customer_id):
             from app.wg import function_warnings
             if is_wassergenossenschaft():
                 warnings = function_warnings(customer.wg_status, customer.function_keys())
+            from app.einvoice.obligation import business_warning
+            if (warning := business_warning(customer)):
+                warnings.append(warning)
             try:
                 db.session.commit()
             except IntegrityError:
@@ -779,6 +798,9 @@ def _apply_customer_fields(customer, form, *, is_new: bool) -> str | None:
     customer.rechnung_per_email = form.get("rechnung_per_email") == "1"
     customer.phone = form.get("phone", "").strip()
     customer.notes = form.get("notes", "").strip()
+    einvoice_error = _apply_einvoice_fields(customer, form)
+    if einvoice_error:
+        return einvoice_error
     if is_new:
         customer.active = True
     # member_since nur anfassen, wenn das Feld gesendet wurde — im Versorger-
@@ -832,6 +854,44 @@ def _apply_customer_fields(customer, form, *, is_new: bool) -> str | None:
     from app.settings_service import is_wassergenossenschaft
     if is_wassergenossenschaft():
         _apply_wg_fields(customer, form)
+    return None
+
+
+_VAT_ID_PATTERN = re.compile(r"^[A-Z]{2}[A-Z0-9]{2,12}$")
+
+
+def _apply_einvoice_fields(customer, form) -> str | None:
+    """USt-IdNr. (BT-48), E-Rechnungs-Format und Kaeuferreferenz (BT-10, Leitweg-ID).
+
+    Gibt eine deutsche Fehlermeldung zurueck oder setzt die Felder und gibt None
+    zurueck. Die Pruefziffer wird nur bei Werten geprueft, die wie eine Leitweg-ID
+    aufgebaut sind — die Referenz eines Firmenkunden bleibt frei waehlbar.
+    """
+    from app.einvoice import leitweg
+    from app.einvoice.obligation import set_business
+    from app.einvoice.model import XML_ONLY_FORMATS
+
+    vat_id = re.sub(r"\s+", "", form.get("vat_id", "")).upper()
+    if vat_id and not _VAT_ID_PATTERN.match(vat_id):
+        return "Die USt-IdNr./UID braucht das Länderkürzel, z. B. ATU12345678 oder DE123456789."
+    peppol_id = form.get("peppol_id", "").strip()
+    if peppol_id and not re.match(r"^\d{4}:\S+$", peppol_id):
+        return "Die Peppol-ID braucht das Format Schema:Kennung, z. B. 9915:b."
+    reference = form.get("buyer_reference", "").strip()
+    if leitweg.looks_like(reference) and not leitweg.is_valid(reference):
+        return (f"Die Leitweg-ID „{reference}“ hat eine ungültige Prüfziffer — "
+                "bitte mit der Behörde abgleichen.")
+    customer.vat_id = vat_id or None
+    customer.buyer_reference = reference or None
+    fmt = form.get("einvoice_format", "").strip()
+    customer.einvoice_format = fmt if fmt in XML_ONLY_FORMATS else None
+    customer.order_reference = form.get("order_reference", "").strip() or None
+    customer.supplier_number = form.get("supplier_number", "").strip() or None
+    customer.peppol_id = peppol_id or None
+    # Der Schalter steht nur in deutschen Mandanten im Formular; das Marker-Feld
+    # verhindert, dass ein AT-Formular (ohne Checkbox) das Kennzeichen loescht.
+    if form.get("einvoice_b2b_fields") == "1":
+        set_business(customer, form.get("is_business") == "1")
     return None
 
 
@@ -995,6 +1055,14 @@ def import_preview():
             cfg.col_phone = suggested.col_phone
         if not cfg.col_notes:
             cfg.col_notes = suggested.col_notes
+        if not cfg.col_is_business:
+            cfg.col_is_business = suggested.col_is_business
+        if not cfg.col_vat_id:
+            cfg.col_vat_id = suggested.col_vat_id
+        if not cfg.col_buyer_reference:
+            cfg.col_buyer_reference = suggested.col_buyer_reference
+        if not cfg.col_einvoice_format:
+            cfg.col_einvoice_format = suggested.col_einvoice_format
         if is_wg:
             if not cfg.col_wg_status:
                 cfg.col_wg_status = suggested.col_wg_status

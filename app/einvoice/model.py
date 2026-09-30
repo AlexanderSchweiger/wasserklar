@@ -9,6 +9,24 @@ from datetime import date
 from decimal import Decimal
 from typing import Optional
 
+# Profile einer E-Rechnung. Die Werte landen in ``invoices.einvoice_profile``.
+PROFILE_EN16931 = "en16931"          # ZUGFeRD/Factur-X, als XML im PDF
+PROFILE_XRECHNUNG = "xrechnung-3.0"  # XRechnung 3.0 (CII), reines XML mit PDF-Anhang
+PROFILE_PEPPOL_UBL = "peppol-bis-3"  # UBL 2.1 / Peppol BIS Billing 3.0 (e-Rechnung.gv.at), reines XML
+# Profile, in denen das XML der Beleg ist und das PDF nur als Anhang darin steckt.
+XML_ONLY_PROFILES = (PROFILE_XRECHNUNG, PROFILE_PEPPOL_UBL)
+
+# Wert von ``Customer.einvoice_format`` fuer Kunden, die eine XRechnung verlangen
+# (leer = ZUGFeRD-PDF).
+FORMAT_XRECHNUNG = "xrechnung"
+FORMAT_PEPPOL_UBL = "peppol_ubl"
+XML_ONLY_FORMATS = (FORMAT_XRECHNUNG, FORMAT_PEPPOL_UBL)
+PROFILE_FOR_FORMAT = {FORMAT_XRECHNUNG: PROFILE_XRECHNUNG, FORMAT_PEPPOL_UBL: PROFILE_PEPPOL_UBL}
+
+# Schema der elektronischen Adresse (BT-34/BT-49, EAS-Codeliste)
+ENDPOINT_EMAIL = "EM"
+ENDPOINT_LEITWEG = "0204"
+
 
 @dataclass
 class Address:
@@ -26,7 +44,8 @@ class Party:
     legal_id: Optional[str] = None      # BT-30 (Register-/Firmenbuchnummer)
     vat_id: Optional[str] = None        # BT-31 / BT-48
     tax_number: Optional[str] = None    # BT-32 (Steuernummer)
-    email: Optional[str] = None         # BT-34 / BT-49 (elektronische Adresse, Schema EM)
+    endpoint: Optional[str] = None      # BT-34 / BT-49 (elektronische Adresse)
+    endpoint_scheme: str = ENDPOINT_EMAIL  # schemeID: EM (E-Mail) oder 0204 (Leitweg-ID)
     contact_name: Optional[str] = None  # BT-41
     contact_phone: Optional[str] = None  # BT-42
     contact_email: Optional[str] = None  # BT-43
@@ -47,6 +66,15 @@ class Payment:
     account_name: Optional[str] = None  # BT-85
     bic: Optional[str] = None           # BT-86
     reference: Optional[str] = None     # BT-83 (Verwendungszweck)
+
+
+@dataclass
+class Attachment:
+    """BG-24: Anhang, bei der XRechnung die PDF-Sichtkopie."""
+    filename: str                       # BT-125 (Dateiname)
+    mime_code: str                      # BT-125 (z.B. application/pdf)
+    data: bytes                         # BT-125 (Inhalt)
+    name: str = "Rechnung"              # BT-123 (Beschreibung)
 
 
 @dataclass
@@ -93,6 +121,10 @@ class EInvoice:
     payment: Optional[Payment] = None   # BG-16/BG-17
     preceding_number: Optional[str] = None      # BT-25
     preceding_date: Optional[date] = None       # BT-26
+    profile: str = PROFILE_EN16931              # steuert Regeln und Serialisierung
+    buyer_reference: Optional[str] = None       # BT-10 (Leitweg-ID oder Kundenreferenz)
+    order_reference: Optional[str] = None       # BT-13 (AT: Auftragsreferenz der Bundesdienststelle)
+    attachment: Optional[Attachment] = None     # BG-24 (nur XRechnung)
     # Befunde des Mappers, die keine EN-Regel abbildet (z.B. Summenabweichung
     # zur gespeicherten Rechnung) — rules.check() meldet sie mit.
     mapping_errors: list = field(default_factory=list)

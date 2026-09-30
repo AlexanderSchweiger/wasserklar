@@ -34,7 +34,7 @@ from app.data_transfer.guard import import_active
 from app.models import (
     AppSetting, BankStatementLine, BankStatementLineAllocation,
     Booking, BookingGroup, Customer, CustomerCounter,
-    DunningNotice, FiscalYear, Invoice, InvoiceCounter, InvoiceItem,
+    DunningNotice, FiscalYear, IncomingInvoice, Invoice, InvoiceCounter, InvoiceItem,
     RolePermission,
 )
 from app.data_transfer.registry import (
@@ -293,6 +293,15 @@ def export_to_zip(selection: dict, fileobj, *, exported_by: str = "system") -> d
                                 bundle_name = f"pdfs/dunning/{rec.get('id')}.{ext}"
                                 pdf_files.append((bundle_name, src))
                                 rec[col] = bundle_name
+                if model is IncomingInvoice:
+                    # Empfangene E-Rechnungen: das unveraenderte Original gehoert mit ins
+                    # Bundle (Aufbewahrung, § 14b UStG) — der Dateiname traegt schon die ID.
+                    for rec in records:
+                        src = rec.get("file_path")
+                        if src and os.path.isfile(src):
+                            bundle_name = f"pdfs/incoming/{os.path.basename(src)}"
+                            pdf_files.append((bundle_name, src))
+                            rec["file_path"] = bundle_name
             else:
                 # Pfade nullen — Empfaenger soll PDFs neu generieren
                 if model in (Invoice, DunningNotice):
@@ -300,6 +309,9 @@ def export_to_zip(selection: dict, fileobj, *, exported_by: str = "system") -> d
                         for col in ("pdf_path", "doc_path", "xml_path"):
                             if col in rec:
                                 rec[col] = None
+                if model is IncomingInvoice:
+                    for rec in records:
+                        rec["file_path"] = None      # Original fehlt dann (Daten bleiben)
 
             data = json.dumps(records, ensure_ascii=False, indent=2, default=_json_default)
             data_bytes = data.encode("utf-8")
@@ -943,4 +955,21 @@ def _copy_pdfs(extract_dir: Path, instance_path: str, table_records: dict):
                 dst = pdfs_dst / subdir / src.name
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, dst)
+    # Eingangs-E-Rechnungen: Originale ins tenant-eigene incoming/-Verzeichnis
+    # (Geschwister von PDF_DIR, im SaaS je Mandant), Pfad an der Zeile nachziehen.
+    if IncomingInvoice in table_records:
+        incoming_dst = Path(current_app.config.get("PDF_DIR", str(pdfs_dst))).parent / "incoming"
+        for rec in table_records[IncomingInvoice]:
+            bundle_path = rec.get("file_path")
+            if not bundle_path or not bundle_path.startswith("pdfs/incoming/"):
+                continue
+            src = extract_dir / bundle_path
+            if not src.exists():
+                continue
+            dst = incoming_dst / src.name
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+            row = IncomingInvoice.query.filter_by(sha256=rec.get("sha256")).first()
+            if row is not None:
+                row.file_path = str(dst)
     db.session.commit()

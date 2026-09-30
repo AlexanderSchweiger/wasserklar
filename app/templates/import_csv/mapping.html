@@ -68,6 +68,12 @@
               {{ col_select("phone", "Telefon") }}
               {{ col_select("email", "E-Mail") }}
               {{ col_select("notes", "Kommentar / Notizen") }}
+              {{ col_select("vat_id", "USt-IdNr. / UID") }}
+              {{ col_select("buyer_reference", "Leitweg-ID / Käuferreferenz (XRechnung)") }}
+              {{ col_select("einvoice_format", "Rechnungsformat (Spalte mit „XRechnung“)") }}
+              {% if country.code == 'DE' %}
+              {{ col_select("is_business", "Unternehmer (ja/nein)") }}
+              {% endif %}
               {% if is_wg %}
               {{ col_select("wg_status", "Mitglieds-Status") }}
               {{ col_select("member_since", "Mitglied seit") }}

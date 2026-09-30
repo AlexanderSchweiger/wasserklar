@@ -1,16 +1,26 @@
 """EN-16931-Modell → UN/CEFACT Cross Industry Invoice (CII, D16B).
 
-Profil „EN 16931" von ZUGFeRD 2.x/Factur-X. Die Reihenfolge der Elemente folgt
+Profil „EN 16931" von ZUGFeRD 2.x/Factur-X und XRechnung 3.0 (CIUS der EN 16931
+fuer die deutsche Verwaltung). Die Reihenfolge der Elemente folgt
 dem XSD (Sequenzen) — beim Ergaenzen eines Elements immer an der Stelle
 einfuegen, die das Schema vorgibt, sonst ist die Datei ein Formatfehler und
 damit keine E-Rechnung. Die Ausgabe ist deterministisch (keine Zeitstempel):
 dieselbe Rechnung ergibt Byte fuer Byte dasselbe XML.
 """
+import base64
 from decimal import Decimal
 
 from lxml import etree
 
+from app.einvoice.model import PROFILE_EN16931, PROFILE_XRECHNUNG
+
 GUIDELINE_EN16931 = "urn:cen.eu:en16931:2017"
+GUIDELINE_XRECHNUNG = "urn:cen.eu:en16931:2017#compliant#urn:xeinkauf.de:kosit:xrechnung_3.0"
+GUIDELINES = {PROFILE_EN16931: GUIDELINE_EN16931, PROFILE_XRECHNUNG: GUIDELINE_XRECHNUNG}
+# BT-23: Prozesskennung (Peppol-BIS-Billing), verlangt von XRechnung 3.0
+PROCESS_XRECHNUNG = "urn:fdc:peppol.eu:2017:poacc:billing:01:1.0"
+# Dokumenttyp „Zugehoeriges Dokument" (BT-122): Anhang zur Rechnung
+TYPE_CODE_ATTACHMENT = "916"
 
 NS_RSM = "urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100"
 NS_RAM = "urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100"
@@ -81,9 +91,9 @@ def _party(parent, tag, party):
             mail = _ram(contact, "EmailURIUniversalCommunication")
             _ram(mail, "URIID", party.contact_email)
     _address(node, party.address)
-    if party.email:
+    if party.endpoint:
         uri = _ram(node, "URIUniversalCommunication")
-        _ram(uri, "URIID", party.email, schemeID="EM")
+        _ram(uri, "URIID", party.endpoint, schemeID=party.endpoint_scheme)
     if party.vat_id:
         reg = _ram(node, "SpecifiedTaxRegistration")
         _ram(reg, "ID", party.vat_id, schemeID="VA")
@@ -113,11 +123,30 @@ def _line(parent, line):
     _ram(summation, "LineTotalAmount", _amount(line.net_amount))
 
 
-def serialize(e, guideline=GUIDELINE_EN16931):
-    """CII-XML der E-Rechnung als UTF-8-Bytes."""
+def _attachment(parent, attachment):
+    """BG-24 als ``AdditionalReferencedDocument`` (BT-122 Kennung, BT-123 Beschreibung)."""
+    doc = _ram(parent, "AdditionalReferencedDocument")
+    _ram(doc, "IssuerAssignedID", attachment.filename)
+    _ram(doc, "TypeCode", TYPE_CODE_ATTACHMENT)
+    _ram(doc, "Name", attachment.name)
+    _ram(doc, "AttachmentBinaryObject", base64.b64encode(attachment.data).decode("ascii"),
+         mimeCode=attachment.mime_code, filename=attachment.filename)
+
+
+def serialize(e, guideline=None):
+    """CII-XML der E-Rechnung als UTF-8-Bytes.
+
+    Das Profil steckt im Modell (``e.profile``); ``guideline`` ueberschreibt nur
+    die Kennung (BT-24), etwa fuer einen Test.
+    """
+    guideline = guideline or GUIDELINES[e.profile]
     root = etree.Element(f"{{{NS_RSM}}}CrossIndustryInvoice", nsmap=_NSMAP)
 
     context = _el(root, NS_RSM, "ExchangedDocumentContext")
+    if e.profile == PROFILE_XRECHNUNG:
+        # Reihenfolge laut XSD: BT-23 vor BT-24.
+        process = _ram(context, "BusinessProcessSpecifiedDocumentContextParameter")
+        _ram(process, "ID", PROCESS_XRECHNUNG)
     guideline_node = _ram(context, "GuidelineSpecifiedDocumentContextParameter")
     _ram(guideline_node, "ID", guideline)
 
@@ -134,8 +163,15 @@ def serialize(e, guideline=GUIDELINE_EN16931):
         _line(transaction, line)
 
     agreement = _ram(transaction, "ApplicableHeaderTradeAgreement")
+    if e.buyer_reference:
+        _ram(agreement, "BuyerReference", e.buyer_reference)
     _party(agreement, "SellerTradeParty", e.seller)
     _party(agreement, "BuyerTradeParty", e.buyer)
+    if e.order_reference:
+        order = _ram(agreement, "BuyerOrderReferencedDocument")       # BT-13
+        _ram(order, "IssuerAssignedID", e.order_reference)
+    if e.attachment:
+        _attachment(agreement, e.attachment)
 
     delivery = _ram(transaction, "ApplicableHeaderTradeDelivery")
     if e.delivery and e.delivery.address:

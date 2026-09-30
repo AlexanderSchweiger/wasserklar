@@ -22,7 +22,7 @@ from flask import current_app, render_template
 
 from app.invoices.design import get_design
 from app.invoices.render_hooks import build_pdf_context
-from app.models import AppSetting
+from app.models import AppSetting, Invoice
 from app.settings_service import (
     get_contact_info, get_contact_info_font_size, get_invoice_sender_address,
 )
@@ -60,20 +60,34 @@ def render_invoice_html(invoice, *, for_email=False):
     )
 
 
-def render_invoice_pdf(invoice, *, for_email=False, freeze_einvoice=False):
+def render_invoice_pdf(invoice, *, for_email=False, freeze_einvoice=False, embed=True):
     """PDF-Bytes der Rechnung. Wirft ``ImportError``/``OSError`` ohne WeasyPrint.
 
     Ist die E-Rechnung aktiv und sind die Daten vollstaendig, wird das PDF ein
     ZUGFeRD/Factur-X-Hybrid (PDF/A-3b mit eingebettetem EN-16931-XML), sonst ein
     normales PDF. Gesperrte Rechnungen frieren ihr XML dabei ein; wer einen
     Entwurf versendet, setzt ``freeze_einvoice`` (siehe app/einvoice/service.py).
+
+    Bei einer XRechnung/UBL-Rechnung (Behoerdenkunde) ist das PDF nur die Ansicht: das XML ist
+    der Beleg und traegt das PDF als Anhang. Das PDF bleibt deshalb ein normales;
+    ``render_invoice_pdf`` friert hier nur das XML ein.
+
+    ``embed=False`` liefert immer das normale PDF ohne E-Rechnungsdaten.
     """
     from weasyprint import HTML
 
-    from app.einvoice.service import einvoice_xml
+    from app.einvoice import service as einvoice
+    from app.einvoice.model import XML_ONLY_PROFILES
 
     html = render_invoice_html(invoice, for_email=for_email)
-    xml = einvoice_xml(invoice, freeze=freeze_einvoice)
+    if not embed or not einvoice.is_enabled():
+        return HTML(string=html).write_pdf()
+    if einvoice.profile_of(invoice) in XML_ONLY_PROFILES:
+        pdf = HTML(string=html).write_pdf()
+        if freeze_einvoice or invoice.status != Invoice.STATUS_DRAFT:
+            einvoice.einvoice_xml(invoice, freeze=freeze_einvoice, visual_pdf=pdf)
+        return pdf
+    xml = einvoice.einvoice_xml(invoice, freeze=freeze_einvoice)
     if xml is None:
         return HTML(string=html).write_pdf()
     from app.einvoice.pdf import write_facturx_pdf

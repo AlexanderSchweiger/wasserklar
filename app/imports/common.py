@@ -460,14 +460,19 @@ def suggest_column(columns: list[str], hints: list[str]) -> str:
     """Return the first column whose normalised name matches a hint.
 
     Normalisation: ``strip().lower()``.  A match is either an exact equality
-    or a substring containment (hint contained in column name).
+    or a substring containment (hint contained in column name).  A hint that
+    starts with ``=`` matches only exactly (for short words like ``uid``, which
+    would otherwise hit every ``GUID`` column).
 
     Returns ``""`` if nothing matches.
     """
     for col in columns:
         norm = col.strip().lower()
         for hint in hints:
-            if norm == hint or hint in norm:
+            if hint.startswith("="):
+                if norm == hint[1:]:
+                    return col
+            elif norm == hint or hint in norm:
                 return col
     return ""
 
@@ -544,6 +549,92 @@ def parse_is_company(raw: str) -> bool | None:
     if any(tok in _COMPANY_LEGAL_TOKENS for tok in _RE_WORD_SPLIT.split(s) if tok):
         return True
     return None
+
+
+# ---------------------------------------------------------------------------
+# E-Rechnung-Spalten (shared by both customer importers)
+# ---------------------------------------------------------------------------
+#
+# USt-IdNr./UID, Unternehmer-Kennzeichen, Rechnungsformat (XRechnung) und
+# Leitweg-ID/Kaeuferreferenz: dieselben Regeln wie im Kundenformular
+# (``customers/routes.py:_apply_einvoice_fields``). Ungueltige Werte werden
+# NICHT uebernommen und als Warnung gemeldet — der Rest der Zeile wird importiert.
+
+_TRUE_TOKENS = {"1", "ja", "j", "x", "yes", "y", "true", "wahr", "unternehmer", "gewerbe", "b2b"}
+_FALSE_TOKENS = {"0", "nein", "n", "no", "false", "falsch", "privat", "privatperson",
+                 "privatkunde", "kein", "keine"}
+_RE_VAT_ID = re.compile(r"^[A-Z]{2}[A-Z0-9]{2,12}$")
+
+
+def parse_bool(raw: str) -> bool | None:
+    """Interpret a yes/no cell (``ja``/``nein``/``x``/``1`` …); ``None`` if empty/unknown."""
+    s = (raw or "").strip().lower().rstrip(".")
+    if s in _TRUE_TOKENS:
+        return True
+    if s in _FALSE_TOKENS:
+        return False
+    return None
+
+
+def normalize_vat_id(raw: str) -> tuple[str, str]:
+    """``(USt-IdNr. ohne Leerzeichen in Grossbuchstaben, Warnung)``.
+
+    Ohne Laenderkuerzel ist die Nummer fuer die E-Rechnung unbrauchbar (BR-CO-9):
+    dann kommt ``("", Warnung)``."""
+    value = re.sub(r"\s+", "", raw or "").upper()
+    if not value:
+        return "", ""
+    if not _RE_VAT_ID.match(value):
+        return "", (f"USt-IdNr. »{raw.strip()}« braucht das Länderkürzel "
+                    "(z. B. ATU12345678) – nicht übernommen")
+    return value, ""
+
+
+def parse_einvoice_format(raw: str) -> str:
+    """``'xrechnung'``/``'peppol_ubl'`` wenn die Zelle es verlangt, sonst ``''`` (ZUGFeRD-PDF)."""
+    norm = re.sub(r"[\s_-]+", "", (raw or "").lower())
+    if "xrechnung" in norm:
+        return "xrechnung"
+    if "peppol" in norm or norm == "ubl" or norm.startswith("ubl"):
+        return "peppol_ubl"
+    return ""
+
+
+def check_buyer_reference(raw: str) -> tuple[str, str]:
+    """``(Kaeuferreferenz, Warnung)``; eine Leitweg-ID mit falscher Pruefziffer wird verworfen."""
+    from app.einvoice import leitweg
+    value = (raw or "").strip()
+    if leitweg.looks_like(value) and not leitweg.is_valid(value):
+        return "", f"Leitweg-ID »{value}« hat eine ungültige Prüfziffer – nicht übernommen"
+    return value, ""
+
+
+def apply_einvoice_columns(customer, values: dict, mapped: set[str]) -> list[str]:
+    """Schreibt die gemappten E-Rechnung-Spalten an den Kunden; gibt Warnungen zurueck.
+
+    ``values`` hat die Rohwerte (``is_business``, ``vat_id``, ``buyer_reference``,
+    ``einvoice_format``), ``mapped`` nennt die Schluessel, deren Spalte gemappt ist —
+    ein nicht gemappter Wert laesst den Kunden unberuehrt (auch beim Aktualisieren).
+    Muss NACH E-Mail/Schriftverkehr-Feldern laufen: das Unternehmer-Kennzeichen
+    schaltet in DE den E-Mail-Versand mit ein.
+    """
+    from app.einvoice.obligation import set_business
+    warnings = []
+    if "vat_id" in mapped:
+        value, warning = normalize_vat_id(values.get("vat_id", ""))
+        customer.vat_id = value or None
+        if warning:
+            warnings.append(warning)
+    if "buyer_reference" in mapped:
+        value, warning = check_buyer_reference(values.get("buyer_reference", ""))
+        customer.buyer_reference = value or None
+        if warning:
+            warnings.append(warning)
+    if "einvoice_format" in mapped:
+        customer.einvoice_format = parse_einvoice_format(values.get("einvoice_format", "")) or None
+    if "is_business" in mapped:
+        set_business(customer, parse_bool(values.get("is_business", "")) is True)
+    return warnings
 
 
 def resolve_contact_name(*, combined: str = "", last: str = "", first: str = "",

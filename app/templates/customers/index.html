@@ -32,7 +32,7 @@
         hx-get="{{ url_for('customers.index') }}"
         hx-trigger="input changed delay:300ms, search"
         hx-target="#customer-table"
-        hx-include="[name='q'], [name='type'], [name='sort'], [name='dir'], [name='country'], [name='status'], [name='func']">
+        hx-include="[name='q'], [name='type'], [name='sort'], [name='dir'], [name='country'], [name='status'], [name='func'], [name='business']">
       <span class="input-group-text"><i class="fas fa-search"></i></span>
     </div>
     {% if countries | length > 1 %}
@@ -41,7 +41,7 @@
       hx-get="{{ url_for('customers.index') }}"
       hx-trigger="change"
       hx-target="#customer-table"
-      hx-include="[name='q'], [name='type'], [name='sort'], [name='dir'], [name='country'], [name='status'], [name='func']">
+      hx-include="[name='q'], [name='type'], [name='sort'], [name='dir'], [name='country'], [name='status'], [name='func'], [name='business']">
       <option value="">Alle Länder</option>
       {% for c in countries %}
       <option value="{{ c }}" {% if c == country_filter %}selected{% endif %}>{{ c }}</option>
@@ -54,7 +54,7 @@
       hx-get="{{ url_for('customers.index') }}"
       hx-trigger="change"
       hx-target="#customer-table"
-      hx-include="[name='q'], [name='type'], [name='sort'], [name='dir'], [name='country'], [name='status'], [name='func']">
+      hx-include="[name='q'], [name='type'], [name='sort'], [name='dir'], [name='country'], [name='status'], [name='func'], [name='business']">
       <option value="">Alle Status</option>
       {% for key, label in wg_status_labels.items() %}
       <option value="{{ key }}" {% if key == status_filter %}selected{% endif %}>{{ label }}</option>
@@ -65,7 +65,7 @@
       hx-get="{{ url_for('customers.index') }}"
       hx-trigger="change"
       hx-target="#customer-table"
-      hx-include="[name='q'], [name='type'], [name='sort'], [name='dir'], [name='country'], [name='status'], [name='func']">
+      hx-include="[name='q'], [name='type'], [name='sort'], [name='dir'], [name='country'], [name='status'], [name='func'], [name='business']">
       <option value="">Alle Funktionen</option>
       <option value="__any__" {% if func_filter == '__any__' %}selected{% endif %}>Alle mit Funktion</option>
       <option value="__none__" {% if func_filter == '__none__' %}selected{% endif %}>Alle ohne Funktion</option>
@@ -74,6 +74,18 @@
         <option value="{{ key }}" {% if key == func_filter %}selected{% endif %}>{{ label }}</option>
         {% endfor %}
       </optgroup>
+    </select>
+    {% endif %}
+    {% if country.code == 'DE' %}
+    <select name="business" class="form-select form-select-sm" style="width:210px"
+      data-filter-field
+      hx-get="{{ url_for('customers.index') }}"
+      hx-trigger="change"
+      hx-target="#customer-table"
+      hx-include="[name='q'], [name='type'], [name='sort'], [name='dir'], [name='country'], [name='status'], [name='func'], [name='business']">
+      <option value="">Alle Kunden</option>
+      <option value="yes" {% if business_filter == 'yes' %}selected{% endif %}>Nur Unternehmer</option>
+      <option value="no_email" {% if business_filter == 'no_email' %}selected{% endif %}>Unternehmer ohne E-Mail-Versand</option>
     </select>
     {% endif %}
     <input type="hidden" name="type" value="{{ type_filter }}">

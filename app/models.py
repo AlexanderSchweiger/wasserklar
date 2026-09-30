@@ -260,6 +260,12 @@ class Customer(db.Model):
     last_name = db.Column(db.String(100))    # Nachname (Person/Familie)
     is_company = db.Column(db.Boolean, nullable=False, default=False,
                            server_default=sa.false())
+    # Unternehmer i. S. d. UStG (DE): Empfaenger, dem nach der Uebergangszeit nur noch
+    # E-Rechnungen zugestellt werden duerfen (app/einvoice/obligation.py). Bewusst
+    # NICHT ``is_company``: ein Vermieter ist Person UND Unternehmer, ``is_company``
+    # steuert nur Anrede und Namen.
+    is_business = db.Column(db.Boolean, nullable=False, default=False,
+                            server_default=sa.false())
     is_customer = db.Column(db.Boolean, default=True, nullable=False)
     is_supplier = db.Column(db.Boolean, default=False, nullable=False)
     strasse = db.Column(db.String(200))
@@ -271,6 +277,19 @@ class Customer(db.Model):
     land = db.Column(db.String(100))
     email = db.Column(db.String(120))
     rechnung_per_email = db.Column(db.Boolean, default=False, nullable=False)
+    # E-Rechnung (siehe app/einvoice): USt-IdNr. des Kunden (BT-48), gewuenschtes
+    # Format (leer = ZUGFeRD-PDF, 'xrechnung' = XRechnung fuer Behoerden) und die
+    # Kaeuferreferenz (BT-10, bei Behoerden die Leitweg-ID).
+    vat_id = db.Column(db.String(20), nullable=True)
+    einvoice_format = db.Column(db.String(20), nullable=True)   # 'xrechnung' | 'peppol_ubl'
+    buyer_reference = db.Column(db.String(100), nullable=True)
+    # AT-Bund (e-Rechnung.gv.at, UBL): Auftragsreferenz (BT-13) und die Lieferantennummer
+    # der Genossenschaft beim Bund (BT-29) sind dort Pflicht.
+    order_reference = db.Column(db.String(100), nullable=True)
+    supplier_number = db.Column(db.String(50), nullable=True)
+    # Elektronische Adresse im Peppol-Schema „Schema:Kennung“ (z.B. 9915:b); UBL verlangt
+    # einen Peppol-registrierten Schema-Code (PEPPOL-EN16931-CL008), „EM“ (E-Mail) gilt dort nicht.
+    peppol_id = db.Column(db.String(60), nullable=True)
     phone = db.Column(db.String(50))
     member_since = db.Column(db.Date)
     notes = db.Column(db.Text)
@@ -1100,6 +1119,10 @@ class CustomerEmailConsentLog(db.Model):
     OPT_IN = "opt_in_confirmed"
     UNSUBSCRIBED = "unsubscribed"
     EMAIL_CHANGED = "email_changed"
+    # Der Mandant hat den E-Mail-Versand fuer einen Unternehmer-Kunden eingeschaltet
+    # (DE, E-Rechnung): KEINE Einwilligung des Kunden — B2B-E-Rechnungen brauchen
+    # keine —, daher bewusst eine eigene Aktion statt ``opt_in_confirmed``.
+    EINVOICE_B2B = "einvoice_b2b_enabled"
 
     id = db.Column(db.Integer, primary_key=True)
     customer_id = db.Column(
@@ -2563,6 +2586,74 @@ class BookingGroup(db.Model):
 
     def __repr__(self):
         return f"<BookingGroup {self.date} {self.total_amount}>"
+
+
+class IncomingInvoice(db.Model):
+    """Eingangsrechnung eines Lieferanten als E-Rechnung (XML oder ZUGFeRD-PDF).
+
+    Seit 2025 muessen Unternehmen in Deutschland E-Rechnungen empfangen und lesbar
+    aufbewahren koennen (§ 14b UStG, 8 Jahre). Das Original liegt **unveraendert** als
+    Datei (``file_path``, Geschwister von ``PDF_DIR``: ``instance/incoming/``), die
+    gelesenen Daten als JSON (``data``) plus ein paar Spalten fuer die Liste. Aus dem
+    Beleg entsteht per Buchungsvorschlag eine Ausgabenbuchung (``booking_id`` bzw.
+    ``booking_group_id``). Parser: ``app/einvoice/incoming.py``.
+    """
+    __tablename__ = "incoming_invoices"
+
+    STATUS_NEW = "Neu"
+    STATUS_BOOKED = "Verbucht"
+    STATUS_DISCARDED = "Verworfen"
+
+    id = db.Column(db.Integer, primary_key=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    original_name = db.Column(db.String(255), nullable=False)
+    file_path = db.Column(db.String(500), nullable=True)
+    sha256 = db.Column(db.String(64), nullable=False, index=True)   # Dublettenschutz je Datei
+    source_kind = db.Column(db.String(10), nullable=False)          # xml | pdf
+    syntax = db.Column(db.String(10), nullable=False)               # cii | ubl
+    guideline = db.Column(db.String(255))
+    status = db.Column(db.String(20), nullable=False, default=STATUS_NEW)
+    number = db.Column(db.String(100))
+    issue_date = db.Column(db.Date)
+    currency = db.Column(db.String(3))
+    type_code = db.Column(db.String(3))
+    seller_name = db.Column(db.String(200))
+    seller_vat_id = db.Column(db.String(30))
+    grand_total = db.Column(db.Numeric(12, 2))
+    data = db.Column(db.Text, nullable=False)                        # ParsedInvoice als JSON
+    supplier_id = db.Column(db.Integer, db.ForeignKey("customers.id"), nullable=True)
+    booking_id = db.Column(db.Integer, db.ForeignKey("bookings.id"), nullable=True)
+    booking_group_id = db.Column(db.Integer, db.ForeignKey("booking_groups.id"), nullable=True)
+
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+    supplier = db.relationship("Customer", foreign_keys=[supplier_id],
+                               backref=db.backref("incoming_invoices", lazy="dynamic"))
+    booking = db.relationship("Booking", foreign_keys=[booking_id])
+    booking_group = db.relationship("BookingGroup", foreign_keys=[booking_group_id])
+
+    @property
+    def parsed(self):
+        from app.einvoice.incoming import ParsedInvoice
+        return ParsedInvoice.from_json(self.data)
+
+    @property
+    def is_credit_note(self):
+        return self.type_code in ("381", "261")
+
+    @property
+    def format_label(self):
+        guideline = (self.guideline or "").lower()
+        if self.source_kind == "pdf":
+            return "ZUGFeRD / Factur-X (PDF)"
+        if "xrechnung" in guideline:
+            return "XRechnung (XML)"
+        if "peppol" in guideline:
+            return "Peppol (UBL-XML)"
+        return "UBL (XML)" if self.syntax == "ubl" else "CII (XML)"
+
+    def __repr__(self):
+        return f"<IncomingInvoice {self.number} {self.seller_name}>"
 
 
 # ---------------------------------------------------------------------------

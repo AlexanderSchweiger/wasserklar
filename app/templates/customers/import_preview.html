@@ -20,7 +20,14 @@
   ('col_email', 'E-Mail'),
   ('col_phone', 'Telefon'),
   ('col_notes', 'Notizen'),
+  ('col_vat_id', 'USt-IdNr. / UID'),
+  ('col_buyer_reference', 'Leitweg-ID / Käuferreferenz'),
+  ('col_einvoice_format', 'Rechnungsformat (XRechnung)'),
 ] %}
+{% if country.code == 'DE' %}
+{% set col_fields = col_fields + [('col_is_business', 'Unternehmer (ja/nein)')] %}
+{% endif %}
+{% set ei_cols = cfg.col_is_business or cfg.col_vat_id or cfg.col_buyer_reference or cfg.col_einvoice_format %}
 {% if is_wg %}
 {% set col_fields = col_fields + [
   ('col_wg_status', 'Status'),
@@ -134,6 +141,7 @@
               <th style="min-width:140px">E-Mail</th>
               <th style="min-width:100px">Telefon</th>
               <th style="min-width:120px">Notizen</th>
+              {% if ei_cols %}<th style="min-width:190px">E-Rechnung</th>{% endif %}
               {% if is_wg %}
               <th style="min-width:130px">Mitglieds-Status</th>
               <th style="min-width:140px">Mitglied seit</th>
@@ -228,6 +236,31 @@
                        class="form-control form-control-sm"
                        value="{{ row.fields.get('notes', '') }}">
               </td>
+              {% if ei_cols %}
+              <td>
+                {% if cfg.col_is_business %}
+                <select name="rows[{{ row.idx }}][is_business]" class="form-select form-select-sm mb-1">
+                  <option value="" {{ 'selected' if row.fields.get('is_business') != '1' }}>Kein Unternehmer</option>
+                  <option value="1" {{ 'selected' if row.fields.get('is_business') == '1' }}>Unternehmer</option>
+                </select>
+                {% endif %}
+                {% if cfg.col_vat_id %}
+                <input type="text" name="rows[{{ row.idx }}][vat_id]" class="form-control form-control-sm mb-1"
+                       placeholder="USt-IdNr." value="{{ row.fields.get('vat_id', '') }}">
+                {% endif %}
+                {% if cfg.col_buyer_reference %}
+                <input type="text" name="rows[{{ row.idx }}][buyer_reference]" class="form-control form-control-sm mb-1"
+                       placeholder="Leitweg-ID" value="{{ row.fields.get('buyer_reference', '') }}">
+                {% endif %}
+                {% if cfg.col_einvoice_format %}
+                <select name="rows[{{ row.idx }}][einvoice_format]" class="form-select form-select-sm">
+                  <option value="" {{ 'selected' if row.fields.get('einvoice_format') not in ('xrechnung', 'peppol_ubl') }}>ZUGFeRD-PDF</option>
+                  <option value="xrechnung" {{ 'selected' if row.fields.get('einvoice_format') == 'xrechnung' }}>XRechnung</option>
+                  <option value="peppol_ubl" {{ 'selected' if row.fields.get('einvoice_format') == 'peppol_ubl' }}>UBL / Peppol</option>
+                </select>
+                {% endif %}
+              </td>
+              {% endif %}
               {% if is_wg %}
               <td>
                 <select name="rows[{{ row.idx }}][wg_status]"
@@ -254,7 +287,7 @@
             </tr>
             {% else %}
             <tr>
-              <td colspan="{{ 17 if is_wg else 14 }}" class="text-center text-muted py-4">
+              <td colspan="{{ (17 if is_wg else 14) + (1 if ei_cols else 0) }}" class="text-center text-muted py-4">
                 Keine Zeilen — bitte mindestens eine Spalte zuordnen und auf
                 „Vorschau aktualisieren" klicken.
               </td>

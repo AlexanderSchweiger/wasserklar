@@ -618,6 +618,24 @@
             </div>
           </div>
 
+          {% if einvoice.b2b_applies %}
+          <div class="mb-3">
+            <label class="form-label">E-Rechnungs-Pflicht gegenüber Unternehmern ab</label>
+            <select name="einvoice_mandate_from" class="form-select" style="max-width:32rem">
+              {% for value, label in einvoice.mandate_options %}
+              <option value="{{ value }}" {{ 'selected' if value == einvoice.mandate_from }}>{{ label }}</option>
+              {% endfor %}
+            </select>
+            <div class="form-text">
+              Maßgeblich ist, wann die Leistung erbracht wurde (bei der Wasserabrechnung: Ende des
+              Abrechnungszeitraums). Ab diesem Stichtag dürfen Kunden, die als <em>Unternehmer</em>
+              gekennzeichnet sind, keine Rechnung mehr per Post bekommen; Kleinunternehmer und Rechnungen
+              bis 250&nbsp;€ sind ausgenommen. Die Stufe 2027 gilt nur bei über 800.000&nbsp;€ Gesamtumsatz im
+              Vorjahr — im Zweifel die Steuerberatung fragen.
+            </div>
+          </div>
+          {% endif %}
+
           <h4 class="mb-2">Checkliste</h4>
           <ul class="list-unstyled mb-0">
             {% for item in einvoice.readiness %}

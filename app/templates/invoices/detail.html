@@ -164,17 +164,39 @@
         </div>
         {% endif %}
 
+        {% if einvoice_required %}
+        <!-- Pflicht-E-Rechnung (DE, Unternehmer) -->
+        <div class="list-group-item py-2 px-3">
+          <div class="fw-medium">
+            Pflicht-E-Rechnung <span class="badge bg-yellow-lt ms-1">Unternehmer</span>
+          </div>
+          <div class="text-muted small">
+            Der Kunde ist Unternehmer: Die Rechnung muss elektronisch zugestellt werden — Papier oder ein
+            reines PDF genügen nicht.
+            {% if not einvoice.enabled %}<strong>Die E-Rechnung ist in den Einstellungen abgeschaltet, das PDF enthält dann keine Rechnungsdaten.</strong>{% endif %}
+          </div>
+          {% if einvoice_delivery %}
+          <div class="alert alert-{{ einvoice_delivery[0] }} mb-0 mt-2 py-2 small">
+            <i class="fas fa-exclamation-triangle me-1"></i>{{ einvoice_delivery[1] }}
+          </div>
+          {% endif %}
+        </div>
+        {% endif %}
+
         {% if einvoice.enabled %}
-        <!-- E-Rechnung (ZUGFeRD/Factur-X) -->
+        <!-- E-Rechnung (ZUGFeRD/Factur-X bzw. XRechnung) -->
         <div class="list-group-item d-flex align-items-start justify-content-between gap-3 py-2 px-3">
           <div>
             <div class="fw-medium">
               E-Rechnung
-              {% if einvoice.ok %}<span class="badge bg-azure-lt ms-1">ZUGFeRD · EN 16931</span>{% endif %}
+              {% if einvoice.ok %}<span class="badge bg-azure-lt ms-1">{{ einvoice.label }}</span>{% endif %}
             </div>
             {% if einvoice.ok %}
             <div class="text-muted small">
-              {% if einvoice.frozen %}
+              {% if einvoice.is_xml_only %}
+              {% if einvoice.frozen %}<i class="fas fa-lock me-1"></i>Beim Versand eingefroren.{% endif %}
+              Der Kunde bekommt die XML-Datei; das PDF steckt als Anhang darin.
+              {% elif einvoice.frozen %}
               <i class="fas fa-lock me-1"></i>Beim Versand eingefroren — das PDF enthält genau diese Daten.
               {% else %}
               Das PDF enthält die strukturierten Rechnungsdaten.
@@ -182,7 +204,7 @@
             </div>
             {% else %}
             <div class="text-muted small">
-              <i class="fas fa-exclamation-triangle text-warning me-1"></i>Kein ZUGFeRD im PDF:
+              <i class="fas fa-exclamation-triangle text-warning me-1"></i>{{ ('Keine ' ~ einvoice.format_name) if einvoice.is_xml_only else 'Kein ZUGFeRD im PDF' }}:
               <ul class="mb-0 ps-3">
                 {% for issue in einvoice.issues %}<li>{{ issue }}</li>{% endfor %}
               </ul>

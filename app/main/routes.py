@@ -227,8 +227,13 @@ def dashboard():
         .all()
     )
 
+    # E-Rechnungs-Pflicht (nur DE, nur USt-pflichtig): Unternehmer-Kunden im Blick.
+    from app.einvoice.obligation import dashboard_summary
+    einvoice_b2b = dashboard_summary()
+
     return render_template(
         "main/dashboard.html",
+        einvoice_b2b=einvoice_b2b,
         current_year=current_year,
         today=date.today(),
         active_period=active_period,

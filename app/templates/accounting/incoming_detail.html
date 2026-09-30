@@ -1,0 +1,256 @@
+{% extends "base.html" %}
+{% block title %}Eingangsrechnung {{ inv.number }}{% endblock %}
+{% block page_title %}<i class="fas fa-file-import me-2"></i> Eingangsrechnung {{ inv.number or '' }}{% endblock %}
+
+{% set unit_names = {'MTQ': 'm³', 'H87': 'Stk', 'C62': 'Stk', 'LS': 'pauschal', 'KWH': 'kWh', 'HUR': 'h',
+                     'MON': 'Monat', 'ANN': 'Jahr', 'DAY': 'Tag', 'MTR': 'm', 'MTK': 'm²', 'LTR': 'l', 'KGM': 'kg'} %}
+{% set sign = 1 if inv.is_credit_note else -1 %}
+
+{% block content %}
+<div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+  <a href="{{ url_for('accounting.incoming_list') }}" class="btn btn-sm btn-outline-secondary">
+    <i class="fas fa-arrow-left me-1"></i> Alle Eingangsrechnungen
+  </a>
+  {% if inv.is_credit_note %}<span class="badge bg-orange-lt">Gutschrift</span>{% endif %}
+  <span class="badge bg-azure-lt">{{ doc.format_label }}</span>
+  {% if doc.status == 'Verbucht' %}<span class="badge bg-success-lt">Verbucht</span>
+  {% elif doc.status == 'Verworfen' %}<span class="badge bg-secondary-lt">Verworfen</span>
+  {% else %}<span class="badge bg-blue-lt">Offen</span>{% endif %}
+  <div class="ms-auto d-flex gap-2">
+    {% if file_exists %}
+    <a href="{{ url_for('accounting.incoming_file', doc_id=doc.id) }}" class="btn btn-sm btn-outline-primary"
+       {% if doc.source_kind == 'pdf' %}target="_blank"{% endif %} hx-boost="false">
+      <i class="fas fa-file-{{ 'pdf' if doc.source_kind == 'pdf' else 'code' }} me-1"></i>
+      Original {{ 'ansehen' if doc.source_kind == 'pdf' else 'herunterladen' }}
+    </a>
+    <a href="{{ url_for('accounting.incoming_xml', doc_id=doc.id) }}" class="btn btn-sm btn-outline-secondary" hx-boost="false">
+      <i class="fas fa-file-code me-1"></i> XML
+    </a>
+    {% else %}
+    <span class="badge bg-danger-lt" title="Die Datei liegt nicht mehr im Ablageordner">Original fehlt</span>
+    {% endif %}
+  </div>
+</div>
+
+{% for w in inv.warnings %}
+<div class="alert alert-warning py-2"><i class="fas fa-exclamation-triangle me-1"></i>{{ w }}</div>
+{% endfor %}
+{% if duplicates %}
+<div class="alert alert-warning py-2">
+  <i class="fas fa-copy me-1"></i>Rechnung <strong>{{ doc.number }}</strong> dieses Lieferanten gibt es schon:
+  {% for d in duplicates %}<a href="{{ url_for('accounting.incoming_detail', doc_id=d.id) }}" class="alert-link">Beleg vom {{ d.created_at.strftime('%d.%m.%Y') }} ({{ d.status }})</a>{% if not loop.last %}, {% endif %}{% endfor %}
+  — möglicherweise doppelt.
+</div>
+{% endif %}
+
+<div class="row g-3">
+  <div class="col-lg-8">
+    <div class="card mb-3">
+      <div class="card-header"><h3 class="card-title">Rechnung</h3></div>
+      <div class="card-body">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <div class="text-muted small text-uppercase">Lieferant</div>
+            <div class="fw-medium">{{ inv.seller.name or '—' }}</div>
+            <div class="small">
+              {% if inv.seller.street %}{{ inv.seller.street }}<br>{% endif %}
+              {{ inv.seller.postcode }} {{ inv.seller.city }}{% if inv.seller.country and inv.seller.country not in ('AT', 'DE') %}, {{ inv.seller.country }}{% endif %}
+            </div>
+            <div class="small text-muted mt-1">
+              {% if inv.seller.vat_id %}USt-IdNr./UID: {{ inv.seller.vat_id }}<br>{% endif %}
+              {% if inv.seller.tax_number %}Steuernummer: {{ inv.seller.tax_number }}<br>{% endif %}
+              {% if inv.seller.legal_id %}Register-Nr.: {{ inv.seller.legal_id }}<br>{% endif %}
+              {% if inv.seller.email %}{{ inv.seller.email }}<br>{% endif %}
+              {% if inv.seller.phone %}{{ inv.seller.phone }}{% endif %}
+            </div>
+          </div>
+          <div class="col-md-6">
+            <div class="text-muted small text-uppercase">Rechnung an</div>
+            <div class="fw-medium">{{ inv.buyer.name or '—' }}</div>
+            <div class="small">
+              {% if inv.buyer.street %}{{ inv.buyer.street }}<br>{% endif %}
+              {{ inv.buyer.postcode }} {{ inv.buyer.city }}
+            </div>
+            {% if inv.buyer.vat_id %}<div class="small text-muted mt-1">USt-IdNr./UID: {{ inv.buyer.vat_id }}</div>{% endif %}
+          </div>
+        </div>
+        <hr>
+        <dl class="row mb-0 small">
+          <dt class="col-sm-3">Rechnungsdatum</dt>
+          <dd class="col-sm-9">{{ inv.issue_date.strftime('%d.%m.%Y') if inv.issue_date else '—' }}</dd>
+          {% if inv.due_date %}<dt class="col-sm-3">Fällig</dt><dd class="col-sm-9">{{ inv.due_date.strftime('%d.%m.%Y') }}</dd>{% endif %}
+          {% if inv.period_start and inv.period_end %}<dt class="col-sm-3">Leistungszeitraum</dt>
+          <dd class="col-sm-9">{{ inv.period_start.strftime('%d.%m.%Y') }} – {{ inv.period_end.strftime('%d.%m.%Y') }}</dd>{% endif %}
+          {% if inv.payment_terms %}<dt class="col-sm-3">Zahlungsbedingung</dt><dd class="col-sm-9">{{ inv.payment_terms }}</dd>{% endif %}
+          {% if inv.iban %}<dt class="col-sm-3">Bankverbindung</dt>
+          <dd class="col-sm-9"><code>{{ inv.iban }}</code>{% if inv.bic %} · {{ inv.bic }}{% endif %}</dd>{% endif %}
+          {% if inv.payment_reference %}<dt class="col-sm-3">Verwendungszweck</dt><dd class="col-sm-9">{{ inv.payment_reference }}</dd>{% endif %}
+          {% if inv.order_reference %}<dt class="col-sm-3">Bestellreferenz</dt><dd class="col-sm-9">{{ inv.order_reference }}</dd>{% endif %}
+          {% if inv.buyer_reference %}<dt class="col-sm-3">Käuferreferenz</dt><dd class="col-sm-9">{{ inv.buyer_reference }}</dd>{% endif %}
+          {% if inv.preceding_number %}<dt class="col-sm-3">Bezug auf Rechnung</dt><dd class="col-sm-9">{{ inv.preceding_number }}</dd>{% endif %}
+          {% for note in inv.notes %}<dt class="col-sm-3">{{ 'Hinweis' if loop.first else '' }}</dt><dd class="col-sm-9">{{ note }}</dd>{% endfor %}
+        </dl>
+      </div>
+    </div>
+
+    <div class="card mb-3">
+      <div class="card-header"><h3 class="card-title">Positionen</h3></div>
+      {% if inv.lines %}
+      <div class="table-responsive">
+        <table class="table table-sm table-vcenter card-table">
+          <thead><tr><th>#</th><th>Bezeichnung</th><th class="text-end">Menge</th><th class="text-end">Einzelpreis</th>
+            <th class="text-end">USt</th><th class="text-end">Netto</th></tr></thead>
+          <tbody>
+            {% for line in inv.lines %}
+            <tr>
+              <td class="text-muted">{{ line.line_id }}</td>
+              <td>{{ line.name }}</td>
+              <td class="text-end text-nowrap">{% if line.quantity is not none %}{{ line.quantity | de_number(3) }} {{ unit_names.get(line.unit, line.unit) }}{% endif %}</td>
+              <td class="text-end text-nowrap">{% if line.net_price is not none %}{{ line.net_price | de_number(4) }}{% endif %}</td>
+              <td class="text-end text-nowrap">{% if line.vat_rate %}{{ line.vat_rate | de_number(0 if line.vat_rate == line.vat_rate|round else 2) }} %{% else %}{{ line.vat_category or '—' }}{% endif %}</td>
+              <td class="text-end text-nowrap">{{ line.net_amount | de_number }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="card-body text-muted small">Diese Rechnung enthält keine Positionen (z. B. ZUGFeRD-Profil „BASIC WL“) — es gelten die Summen.</div>
+      {% endif %}
+    </div>
+
+    <div class="card mb-3">
+      <div class="card-header"><h3 class="card-title">Summen</h3></div>
+      <div class="table-responsive">
+        <table class="table table-sm card-table">
+          {% if inv.vat %}
+          <thead><tr><th>Umsatzsteuer</th><th class="text-end">Bemessung</th><th class="text-end">Steuer</th></tr></thead>
+          <tbody>
+            {% for v in inv.vat %}
+            <tr>
+              <td>{% if v.rate %}{{ v.rate | de_number(0 if v.rate == v.rate|round else 2) }} %{% else %}{{ v.exemption_reason or ('Kategorie ' ~ v.category) }}{% endif %}</td>
+              <td class="text-end">{{ v.taxable | de_number }}</td><td class="text-end">{{ v.tax | de_number }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+          {% endif %}
+          <tfoot>
+            <tr><th>Netto</th><td></td><td class="text-end">{{ inv.tax_basis_total | de_number }} {{ inv.currency }}</td></tr>
+            <tr><th>Umsatzsteuer</th><td></td><td class="text-end">{{ inv.tax_total | de_number }} {{ inv.currency }}</td></tr>
+            <tr><th>Brutto</th><td></td><td class="text-end fw-bold">{{ inv.grand_total | de_number }} {{ inv.currency }}</td></tr>
+            {% if inv.prepaid %}<tr><th>bereits bezahlt</th><td></td><td class="text-end">{{ inv.prepaid | de_number }} {{ inv.currency }}</td></tr>{% endif %}
+            <tr><th>zu zahlen</th><td></td><td class="text-end">{{ inv.payable | de_number }} {{ inv.currency }}</td></tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+
+    {% if inv.attachments %}
+    <div class="card mb-3">
+      <div class="card-header"><h3 class="card-title">Anhänge in der Rechnung</h3></div>
+      <div class="list-group list-group-flush">
+        {% for a in inv.attachments %}
+        <a class="list-group-item list-group-item-action d-flex justify-content-between"
+           href="{{ url_for('accounting.incoming_attachment', doc_id=doc.id, index=loop.index0) }}" target="_blank" hx-boost="false">
+          <span><i class="fas fa-paperclip me-2"></i>{{ a.filename }}{% if a.description %} <span class="text-muted">— {{ a.description }}</span>{% endif %}</span>
+          <span class="text-muted small">{{ a.mime }} · {{ (a.size / 1024) | round(0) | int }} KB</span>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="col-lg-4">
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">Buchung</h3></div>
+      <div class="card-body">
+        {% if doc.status == 'Verbucht' %}
+          <p class="mb-2"><i class="fas fa-check-circle text-success me-1"></i>Verbucht
+            {% if doc.supplier %}bei <a href="{{ url_for('customers.detail', customer_id=doc.supplier.id) }}">{{ doc.supplier.name }}</a>{% endif %}.</p>
+          {% if doc.booking_group_id %}
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('accounting.booking_group_edit', group_id=doc.booking_group_id) }}">Sammelbuchung ansehen</a>
+          {% elif doc.booking_id %}
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('accounting.booking_edit', booking_id=doc.booking_id) }}">Buchung ansehen</a>
+          {% endif %}
+        {% elif doc.status == 'Verworfen' %}
+          <p class="text-muted">Dieser Beleg wurde verworfen; die Originaldatei bleibt aufbewahrt.</p>
+          <form method="post" action="{{ url_for('accounting.incoming_reopen', doc_id=doc.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-sm btn-outline-secondary">Wieder öffnen</button>
+          </form>
+        {% else %}
+        {% if rows_error %}<div class="alert alert-danger py-2 small">{{ rows_error }}</div>{% endif %}
+        <form method="post" action="{{ url_for('accounting.incoming_book', doc_id=doc.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="mb-3">
+            <label class="form-label">Lieferant</label>
+            <select name="supplier_id" class="form-select tom-select" required>
+              <option value="new" {{ 'selected' if not suggested }}>Neu anlegen: {{ inv.seller.name }}</option>
+              {% for s in suppliers %}
+              <option value="{{ s.id }}" {{ 'selected' if suggested and suggested.id == s.id }}>{{ s.name }}{% if s.vat_id %} ({{ s.vat_id }}){% endif %}</option>
+              {% endfor %}
+            </select>
+            <div class="form-text">
+              {% if suggested %}Erkannt über {{ 'die USt-IdNr.' if suggested.vat_id and suggested.vat_id == inv.seller.vat_id else 'den Namen' }}.
+              {% else %}Kein passender Lieferant gefunden — er wird aus den Rechnungsdaten angelegt.{% endif %}
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Buchungsdatum</label>
+            <input type="date" name="date" class="form-control" value="{{ booking_date.isoformat() }}" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Konto (Ausgabe)</label>
+            <select name="account_id" class="form-select tom-select" required>
+              <option value="">— wählen —</option>
+              {% for a in accounts %}<option value="{{ a.id }}">{{ a.code ~ ' · ' if a.code }}{{ a.name }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Projekt <small class="text-muted">(optional)</small></label>
+            <select name="project_id" class="form-select tom-select">
+              <option value="">—</option>
+              {% for p in projects %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Bankkonto <small class="text-muted">(optional)</small></label>
+            <select name="real_account_id" class="form-select tom-select">
+              <option value="">—</option>
+              {% for r in real_accounts %}<option value="{{ r.id }}" {{ 'selected' if default_real_account and default_real_account.id == r.id }}>{{ r.name }}</option>{% endfor %}
+            </select>
+          </div>
+          {% if rows %}
+          <div class="mb-3">
+            <div class="text-muted small text-uppercase mb-1">Es wird gebucht</div>
+            <table class="table table-sm mb-0">
+              {% for r in rows %}
+              <tr><td>{{ r.label }}</td><td class="text-end text-nowrap">{{ r.gross | de_number }} €</td></tr>
+              {% endfor %}
+            </table>
+            <div class="form-text">
+              {{ 'Einzelbuchung' if rows|length == 1 else 'Sammelbuchung mit ' ~ rows|length ~ ' Zeilen (je Steuersatz)' }},
+              Beträge brutto mit Steuersatz.
+            </div>
+          </div>
+          {% endif %}
+          <button type="submit" class="btn btn-primary w-100" {{ 'disabled' if rows_error }}>
+            <i class="fas fa-check me-1"></i> Buchen
+          </button>
+        </form>
+        <form method="post" action="{{ url_for('accounting.incoming_discard', doc_id=doc.id) }}" class="mt-2"
+              onsubmit="return confirm('Beleg verwerfen? Die Originaldatei bleibt aufbewahrt.');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="btn btn-sm btn-outline-secondary w-100">Verwerfen (z. B. Dublette)</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+    <div class="text-muted small mt-2">
+      Erfasst am {{ doc.created_at.strftime('%d.%m.%Y %H:%M') }}{% if doc.created_by %} von {{ doc.created_by.username }}{% endif %}
+      · Originalname: {{ doc.original_name }} · SHA-256 <code>{{ doc.sha256[:12] }}…</code>
+    </div>
+  </div>
+</div>
+{% endblock %}

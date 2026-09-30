@@ -18,14 +18,23 @@ Normalisierungen (siehe E_RECHNUNG_PLAN.md § 4.4/4.5):
   Hinweis in nicht USt-pflichtigen Jahren, sonst ``einvoice.exempt_reason``).
   Nie O: „nicht steuerbar" darf laut BR-O-* nicht neben anderen Kategorien und
   nicht neben einer USt-IdNr. stehen.
+
+Die Profile mit reinem XML (``XML_ONLY_PROFILES``: XRechnung und UBL/Peppol)
+unterscheiden sich in drei Punkten: die Kaeuferreferenz (BT-10) faellt auf die
+Kundennummer zurueck (BR-DE-15), die elektronische Adresse des Kaeufers (BT-49)
+ist Pflicht — bei der XRechnung nimmt sie notfalls die Leitweg-ID (Schema 0204) —
+und auch ein Storno-Beleg traegt eine Zahlungsanweisung (BR-DE-1). Das UBL-Profil
+fuehrt zusaetzlich Auftragsreferenz (BT-13) und Lieferantennummer (BT-29).
 """
 import re
 from collections import OrderedDict
 from decimal import Decimal
 
 from app import country
+from app.einvoice import leitweg
 from app.einvoice.model import (
-    Address, Delivery, EInvoice, Line, Party, Payment, VatBreakdown,
+    ENDPOINT_EMAIL, ENDPOINT_LEITWEG, PROFILE_EN16931, PROFILE_PEPPOL_UBL,
+    PROFILE_XRECHNUNG, XML_ONLY_PROFILES, Address, Delivery, EInvoice, Line, Party, Payment, VatBreakdown,
 )
 from app.einvoice.units import unit_code
 from app.models import AppSetting
@@ -127,61 +136,114 @@ def country_code_for(land):
     return _FOREIGN_COUNTRIES.get(key)
 
 
-def _seller():
+# Peppol-Schema der USt-IdNr. je Land (EAS-Codeliste): 9914 = AT-UID, 9930 = DE-USt-IdNr.
+_PEPPOL_VAT_SCHEMES = {"AT": "9914", "DE": "9930"}
+
+
+def _vat_endpoint(vat_id):
+    """``(Adresse, Schema)`` aus einer USt-IdNr. fuer Peppol; ohne passendes Land ``(None, …)``."""
+    scheme = _PEPPOL_VAT_SCHEMES.get((vat_id or "")[:2])
+    return (vat_id, scheme) if vat_id and scheme else (None, ENDPOINT_EMAIL)
+
+
+def _seller(supplier_number=None, peppol=False):
     from app.settings_service import get_wg
     street, postcode, city, _ = seller_address()
     email = _clean(get_wg("email"))
     phone = _clean(get_wg("phone"))
     contact_name = _clean(get_wg("contact_name"))
+    vat_id = _compact(get_wg("vat_id"))
+    # UBL/Peppol: „EM" ist kein Peppol-Schema — der Rechnungssteller wird ueber seine UID adressiert.
+    endpoint, scheme = _vat_endpoint(vat_id) if peppol else (email, ENDPOINT_EMAIL)
     return Party(
         name=_clean(get_wg("name")) or "",
         address=Address(line1=street, postcode=postcode, city=city,
                         country_code=country.current_code()),
+        identifier=_clean(supplier_number),       # BT-29 (nur UBL/Bund)
         legal_id=_clean(get_wg("register_number")),
-        vat_id=_compact(get_wg("vat_id")),
+        vat_id=vat_id,
         tax_number=_clean(get_wg("tax_number")),
-        email=email,
+        endpoint=endpoint,
+        endpoint_scheme=scheme,
         contact_name=contact_name,
         contact_phone=phone if (contact_name or phone) else None,
         contact_email=email if contact_name else None,
     )
 
 
-def _buyer(customer):
+def _buyer_endpoint(customer, profile):
+    """Elektronische Adresse des Kaeufers (BT-49) als ``(adresse, schema)``.
+
+    ZUGFeRD: nur, wenn der Kunde Post per E-Mail bekommt — sonst stuende im XML
+    eine Adresse, die der Beleg selbst nicht nennt. XRechnung verlangt die
+    Adresse immer; Behoerden haben oft keine E-Mail hinterlegt, dort gilt die
+    Leitweg-ID (Schema 0204) als Adresse.
+    """
+    if profile == PROFILE_PEPPOL_UBL:
+        # Peppol-ID „Schema:Kennung" (z.B. 9915:b), sonst aus der USt-IdNr. des Kunden.
+        scheme, _, value = (_clean(customer.peppol_id) or "").partition(":")
+        if value and scheme.isdigit():
+            return value, scheme
+        return _vat_endpoint(_compact(customer.vat_id))
+    email = _clean(customer.email)
+    if profile not in XML_ONLY_PROFILES:
+        return (email, ENDPOINT_EMAIL) if customer.wants_email else (None, ENDPOINT_EMAIL)
+    if email:
+        return email, ENDPOINT_EMAIL
+    reference = _clean(customer.buyer_reference)
+    if profile == PROFILE_XRECHNUNG and leitweg.looks_like(reference):
+        return reference, ENDPOINT_LEITWEG
+    return None, ENDPOINT_EMAIL
+
+
+def _buyer(customer, profile):
     street = " ".join(p for p in (customer.strasse, customer.hausnummer) if p)
+    endpoint, scheme = _buyer_endpoint(customer, profile)
     return Party(
         name=customer.letter_name or customer.name or "",
         address=Address(line1=street.strip(), postcode=(customer.plz or "").strip(),
                         city=(customer.ort or "").strip(),
                         country_code=country_code_for(customer.land)),
         identifier=str(customer.customer_number) if customer.customer_number else None,
-        # Elektronische Adresse nur, wenn der Kunde Post per E-Mail bekommt —
-        # sonst stuende im XML eine Adresse, die der Beleg selbst nicht nennt.
-        email=customer.email if customer.wants_email else None,
+        vat_id=_compact(customer.vat_id),
+        endpoint=endpoint,
+        endpoint_scheme=scheme,
     )
 
 
-def _delivery(invoice, period):
+def _buyer_reference(customer, profile):
+    """BT-10: Leitweg-ID bzw. Kundenreferenz; XRechnung faellt auf die Kundennummer zurueck."""
+    reference = _clean(customer.buyer_reference)
+    if reference or profile not in XML_ONLY_PROFILES:
+        return reference
+    return str(customer.customer_number) if customer.customer_number else None
+
+
+def _delivery(invoice, period, profile):
     prop = invoice.property
     when = period[1] if period else invoice.date
     if prop is None:
         return Delivery(date=when)
     street = " ".join(p for p in (prop.strasse, prop.hausnummer) if p)
-    return Delivery(
-        date=when,
-        name=prop.label(),
-        location_id=prop.object_number or None,
-        address=Address(line1=street.strip(), postcode=(prop.plz or "").strip(),
-                        city=(prop.ort or "").strip(),
-                        country_code=country_code_for(prop.land)),
-    )
+    address = Address(line1=street.strip(), postcode=(prop.plz or "").strip(),
+                      city=(prop.ort or "").strip(),
+                      country_code=country_code_for(prop.land))
+    # BR-DE-10/11: die XRechnung verlangt an einer Lieferanschrift PLZ und Ort.
+    # Fehlen sie an der Liegenschaft, entfaellt die (freiwillige) Anschrift.
+    if profile in XML_ONLY_PROFILES and not (address.postcode and address.city):
+        address = None
+    return Delivery(date=when, name=prop.label(), location_id=prop.object_number or None,
+                    address=address)
 
 
-def _payment(invoice):
+def _payment(invoice, profile):
     from app.settings_service import get_wg
     iban = _compact(get_wg("iban"))
-    if not iban or invoice.is_credit_note:
+    if not iban:
+        return None
+    if invoice.is_credit_note and profile not in XML_ONLY_PROFILES:
         # Beim Storno-Beleg zahlt nicht der Kunde — keine Zahlungsanweisung.
+        # (Die XRechnung verlangt sie trotzdem, BR-DE-1.)
         return None
     return Payment(
         means_code=PAYMENT_MEANS_SEPA_TRANSFER,
@@ -209,7 +271,7 @@ def _payment_terms(invoice):
     return "Zahlbar sofort ohne Abzug."
 
 
-def build_einvoice(invoice):
+def build_einvoice(invoice, profile=PROFILE_EN16931):
     """Baut das EN-16931-Modell einer Rechnung. Schreibt nichts in die DB."""
     from app.accounting.services import is_year_vat_liable
     from app.invoices.services import invoice_legal_context, service_period
@@ -262,8 +324,9 @@ def build_einvoice(invoice):
         issue_date=invoice.date,
         type_code=TYPE_CREDIT_NOTE if credit else TYPE_INVOICE,
         currency="EUR",
-        seller=_seller(),
-        buyer=_buyer(invoice.customer),
+        seller=(_seller(invoice.customer.supplier_number, peppol=True)
+                if profile == PROFILE_PEPPOL_UBL else _seller()),
+        buyer=_buyer(invoice.customer, profile),
         lines=lines,
         vat=vat,
         line_total=line_total,
@@ -275,9 +338,12 @@ def build_einvoice(invoice):
         notes=[invoice.notes.strip()] if invoice.notes and invoice.notes.strip() else [],
         period_start=period[0] if period else None,
         period_end=period[1] if period else None,
-        delivery=_delivery(invoice, period),
-        payment=_payment(invoice),
+        delivery=_delivery(invoice, period, profile),
+        payment=_payment(invoice, profile),
         preceding_number=original.invoice_number if original else None,
         preceding_date=original.date if original else None,
+        profile=profile,
+        buyer_reference=_buyer_reference(invoice.customer, profile),
+        order_reference=_clean(invoice.customer.order_reference),
         mapping_errors=errors,
     )

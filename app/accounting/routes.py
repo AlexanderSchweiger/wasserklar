@@ -15,6 +15,7 @@ from flask_login import login_required, current_user
 from sqlalchemy import extract, func
 
 from app.accounting import bp
+from app.accounting import incoming_service
 from app.accounting import services as acc_svc
 from app import tax_service
 from app.extensions import db
@@ -741,6 +742,7 @@ def booking_edit(booking_id):
         return redirect(url_for("accounting.bookings"))
 
     ctx = _booking_form_context(booking=b)
+    ctx["incoming_doc"] = incoming_service.document_of(booking_id=b.id)
     return _render_booking_form(booking=b, ctx=ctx, hx=hx)
 
 
@@ -764,9 +766,11 @@ def booking_delete(booking_id):
     if fy_locked:
         flash(f"Das Buchungsjahr {fy_locked.year} ist abgeschlossen. Diese Buchung kann nicht gelöscht werden.", "danger")
         return redirect(url_for("accounting.bookings"))
+    reopened = incoming_service.release(booking_id=b.id)
     db.session.delete(b)
     db.session.commit()
-    flash("Buchung gelöscht.", "info")
+    flash("Buchung gelöscht." + (" Der Beleg unter „Eingangsrechnungen“ ist wieder offen."
+                                 if reopened else ""), "info")
     return redirect(url_for("accounting.bookings"))
 
 
@@ -828,6 +832,7 @@ def booking_stornieren(booking_id):
 
             # Ursprungsbuchung als storniert markieren
             b.status = Booking.STATUS_STORNIERT
+            incoming_service.release(booking_id=b.id)    # Beleg einer Eingangsrechnung wird wieder offen
 
             # Verknüpfte Rechnung stornieren
             cancelled_invoice_number = None
@@ -1098,6 +1103,7 @@ def booking_group_edit(group_id):
             readonly=not ok,
             readonly_reason=msg,
             fy_locked=fy_locked,
+            incoming_doc=incoming_service.document_of(group_id=group.id),
             **extra,
         )
 
@@ -1258,6 +1264,7 @@ def booking_group_delete(group_id):
         flash(msg, "warning")
         return redirect(url_for("accounting.booking_group_edit", group_id=group.id))
     try:
+        incoming_service.release(group_id=group.id)
         for child in list(group.children):
             db.session.delete(child)
         db.session.delete(group)
@@ -1299,6 +1306,7 @@ def booking_group_stornieren(group_id):
 
         try:
             acc_svc.storno_booking_group(group, reason, current_user.id)
+            incoming_service.release(group_id=group.id)
 
             # Verknüpfte Rechnung analog zur Einzel-Storno-Kaskade behandeln.
             cancelled_invoice_number = None

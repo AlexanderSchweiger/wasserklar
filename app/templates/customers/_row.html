@@ -23,6 +23,9 @@
     {% if c.is_supplier %}
     <span class="badge bg-info text-white"><i class="fas fa-truck me-1"></i>Lieferant</span>
     {% endif %}
+    {% if c.is_business and country.code == 'DE' %}
+    <span class="badge bg-azure-lt" title="Unternehmer: E-Rechnung"><i class="fas fa-file-code me-1"></i>Unternehmer</span>
+    {% endif %}
   </td>
   {% if is_wg %}
   {% set _prof = wg_profile_map.get(c.id) if wg_profile_map is defined else none %}

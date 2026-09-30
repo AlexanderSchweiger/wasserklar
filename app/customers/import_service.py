@@ -17,6 +17,11 @@ from app.country import home_country_name
 from app.imports.common import (
     PreviewRow,
     ImportStats,
+    apply_einvoice_columns,
+    check_buyer_reference,
+    normalize_vat_id,
+    parse_bool,
+    parse_einvoice_format,
     ROW_NEW,
     ROW_UPDATE,
     ROW_EXISTS,
@@ -57,6 +62,14 @@ HINTS: dict[str, list[str]] = {
     "email": ["e-mail", "email"],
     "phone": ["telefon", "tel", "handy", "mobil"],
     "notes": ["kommentar", "bemerkung", "notiz", "info", "anmerkung"],
+    # E-Rechnung
+    "is_business": ["unternehmer", "ust-pflichtig", "ustpflichtig", "umsatzsteuerpflichtig", "b2b"],
+    "vat_id": [
+        "ust-idnr", "ust-id", "ust id", "ustid", "uid-nr", "uid nr", "uid-nummer",
+        "umsatzsteuer-id", "umsatzsteuer id", "vat-id", "vat id", "vat number", "=uid", "=vat",
+    ],
+    "buyer_reference": ["leitweg", "käuferreferenz", "kaeuferreferenz", "buyer reference"],
+    "einvoice_format": ["rechnungsformat", "e-rechnung", "erechnung", "xrechnung"],
     # WG-spezifisch (nur im Genossenschafts-Modus gemappt/angewendet)
     "wg_status": ["status", "mitgliedsstatus", "mitglieds-status"],
     "member_since": [
@@ -93,6 +106,11 @@ class CustomerImportConfig:
     col_email: str = ""
     col_phone: str = ""
     col_notes: str = ""
+    # E-Rechnung
+    col_is_business: str = ""
+    col_vat_id: str = ""
+    col_buyer_reference: str = ""
+    col_einvoice_format: str = ""
     # WG-spezifisch (nur im Genossenschafts-Modus relevant)
     col_wg_status: str = ""
     col_member_since: str = ""
@@ -118,6 +136,10 @@ class CustomerImportConfig:
             "col_email": self.col_email,
             "col_phone": self.col_phone,
             "col_notes": self.col_notes,
+            "col_is_business": self.col_is_business,
+            "col_vat_id": self.col_vat_id,
+            "col_buyer_reference": self.col_buyer_reference,
+            "col_einvoice_format": self.col_einvoice_format,
             "col_wg_status": self.col_wg_status,
             "col_member_since": self.col_member_since,
             "col_member_until": self.col_member_until,
@@ -148,6 +170,10 @@ class CustomerImportConfig:
             col_email=d.get("col_email", ""),
             col_phone=d.get("col_phone", ""),
             col_notes=d.get("col_notes", ""),
+            col_is_business=d.get("col_is_business", ""),
+            col_vat_id=d.get("col_vat_id", ""),
+            col_buyer_reference=d.get("col_buyer_reference", ""),
+            col_einvoice_format=d.get("col_einvoice_format", ""),
             col_wg_status=d.get("col_wg_status", ""),
             col_member_since=d.get("col_member_since", ""),
             col_member_until=d.get("col_member_until", ""),
@@ -176,6 +202,10 @@ class CustomerImportConfig:
             col_email=form.get("col_email", ""),
             col_phone=form.get("col_phone", ""),
             col_notes=form.get("col_notes", ""),
+            col_is_business=form.get("col_is_business", ""),
+            col_vat_id=form.get("col_vat_id", ""),
+            col_buyer_reference=form.get("col_buyer_reference", ""),
+            col_einvoice_format=form.get("col_einvoice_format", ""),
             col_wg_status=form.get("col_wg_status", ""),
             col_member_since=form.get("col_member_since", ""),
             col_member_until=form.get("col_member_until", ""),
@@ -205,6 +235,10 @@ def suggest_config(columns: list[str]) -> CustomerImportConfig:
         col_email=suggest_column(columns, HINTS["email"]),
         col_phone=suggest_column(columns, HINTS["phone"]),
         col_notes=suggest_column(columns, HINTS["notes"]),
+        col_is_business=suggest_column(columns, HINTS["is_business"]),
+        col_vat_id=suggest_column(columns, HINTS["vat_id"]),
+        col_buyer_reference=suggest_column(columns, HINTS["buyer_reference"]),
+        col_einvoice_format=suggest_column(columns, HINTS["einvoice_format"]),
         col_wg_status=suggest_column(columns, HINTS["wg_status"]),
         col_member_since=suggest_column(columns, HINTS["member_since"]),
         col_member_until=suggest_column(columns, HINTS["member_until"]),
@@ -283,6 +317,12 @@ def build_preview_rows(df, cfg: CustomerImportConfig,
         email = _cell(raw_row, cfg.col_email)
         phone = _cell(raw_row, cfg.col_phone)
         notes = _cell(raw_row, cfg.col_notes)
+        # E-Rechnung-Spalten: dieselben Regeln wie im Kundenformular; ungueltige
+        # Werte entfallen mit Warnung (der Rest der Zeile wird importiert).
+        vat_id, vat_warning = normalize_vat_id(_cell(raw_row, cfg.col_vat_id))
+        buyer_reference, reference_warning = check_buyer_reference(
+            _cell(raw_row, cfg.col_buyer_reference))
+        ei_warnings = [w for w in (vat_warning, reference_warning) if w]
 
         # --- empty row guard --------------------------------------------------
         if not resolved["name"] and not cnum_raw and not ext_key:
@@ -333,6 +373,10 @@ def build_preview_rows(df, cfg: CustomerImportConfig,
             "email": email,
             "phone": phone,
             "notes": notes,
+            "is_business": "1" if parse_bool(_cell(raw_row, cfg.col_is_business)) else "",
+            "vat_id": vat_id,
+            "buyer_reference": buyer_reference,
+            "einvoice_format": parse_einvoice_format(_cell(raw_row, cfg.col_einvoice_format)),
         }
 
         if is_wg:
@@ -344,6 +388,7 @@ def build_preview_rows(df, cfg: CustomerImportConfig,
             idx=idx,
             status=status,
             fields=fields,
+            warnings=ei_warnings,
             raw=raw_row,
         ))
 
@@ -376,6 +421,7 @@ def apply_edits(form, rows: list[PreviewRow]) -> list[PreviewRow]:
             "customer_number", "externe_kennung", "name", "is_company",
             "strasse", "hausnummer", "plz", "ort", "land",
             "email", "phone", "notes",
+            "is_business", "vat_id", "buyer_reference", "einvoice_format",
             "wg_status", "member_since", "member_until",
         ):
             if field_name in row_edits:
@@ -453,6 +499,11 @@ def commit(rows: list[PreviewRow], cfg: CustomerImportConfig,
     from app.utils import bump_customer_counter_to, next_customer_number
 
     stats = ImportStats()
+    ei_mapped = {key for key, col in (
+        ("is_business", cfg.col_is_business), ("vat_id", cfg.col_vat_id),
+        ("buyer_reference", cfg.col_buyer_reference),
+        ("einvoice_format", cfg.col_einvoice_format),
+    ) if col}
 
     for row in rows:
         # skip checkbox
@@ -478,6 +529,7 @@ def commit(rows: list[PreviewRow], cfg: CustomerImportConfig,
                 continue
 
             name = row.fields.get("name", "").strip()
+            ei_warned = False
 
             if existing and cfg.duplicate_mode == "update":
                 # Update all mapped fields (empty value clears the field)
@@ -515,6 +567,7 @@ def commit(rows: list[PreviewRow], cfg: CustomerImportConfig,
                     existing.phone = row.fields.get("phone") or None
                 if cfg.col_notes:
                     existing.notes = row.fields.get("notes") or None
+                ei_warned = bool(apply_einvoice_columns(existing, row.fields, ei_mapped))
                 if is_wg:
                     _apply_wg_to_customer(existing, row.fields, cfg, is_new=False)
                 stats.updated += 1
@@ -552,11 +605,12 @@ def commit(rows: list[PreviewRow], cfg: CustomerImportConfig,
                     notes=row.fields.get("notes") or None,
                 )
                 db.session.add(customer)
+                ei_warned = bool(apply_einvoice_columns(customer, row.fields, ei_mapped))
                 if is_wg:
                     _apply_wg_to_customer(customer, row.fields, cfg, is_new=True)
                 stats.created += 1
 
-            if row.warnings:
+            if row.warnings or ei_warned:
                 stats.warnings += 1
 
             sp.commit()
