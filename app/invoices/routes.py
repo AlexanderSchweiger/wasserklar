@@ -12,48 +12,27 @@ from flask_login import login_required, current_user
 
 from app.invoices import bp
 from app.invoices.send_email_hooks import run_before_send, read_message_id
-from app.invoices.render_hooks import build_pdf_context
 from app.extensions import db
 from app.models import Invoice, InvoiceItem, EmailEvent, Customer, WaterMeter, MeterReading, WaterTariff, Booking, Account, Property, OpenItem, Project, RealAccount, InvoiceCounter, AppSetting, BillingRun, BillingPeriod, ReadingCorrection, ChargeType, TariffComponent
 from app.invoices import tariff_engine as engine
 from app.meters.estimation import apply_corrections_to_invoice, cap_invoice_at_zero, reverse_corrections_for_invoice
 from app.email_tracking import record_email_sent
 from app.utils import next_invoice_number as _next_invoice_number
-from app.settings_service import get_wg, send_mail, wg_settings, get_contact_info, get_contact_info_font_size, get_invoice_sender_address
-from app.invoices.design import get_design
+from app.settings_service import get_wg, send_mail, wg_settings
 from app.pagination import paginate_query
 
 
-def _current_design():
-    """Liest das aktuell konfigurierte Rechnungsdesign aus den AppSettings."""
-    return get_design(AppSetting.get("invoice.design", "classic"))
-
-
-def _render_pdf_html(invoice, *, for_email=False):
-    """Rendert die HTML-Vorlage für WeasyPrint mit aktuellem Design.
-
-    ``for_email``: True, wenn das PDF als E-Mail-Anhang erzeugt wird. Damit
-    koennen Provider Inhalte unterdruecken, die nur auf der gedruckten Rechnung
-    Sinn ergeben (z.B. der „Rechnung per E-Mail?"-Block).
-
-    Das Design kann ein eigenes Template ueber den Schluessel ``template``
-    vorgeben (z.B. das SaaS-„wasserklar"-Design); sonst die OSS-Standardvorlage.
-    """
-    design = _current_design()
-    template_name = design.get("template", "invoices/pdf_template.html")
-    extra = build_pdf_context(invoice, for_email=for_email)
-    from app.invoices.services import invoice_legal_context
-    return render_template(
-        template_name,
-        invoice=invoice,
-        design=design,
-        legal=invoice_legal_context(invoice),
-        contact_info=get_contact_info(),
-        contact_info_font_size=get_contact_info_font_size(),
-        invoice_sender_address=get_invoice_sender_address(),
-        for_email=for_email,
-        **extra,
-    )
+# Nach app/invoices/pdf_service.py extrahiert (ein Render-Pfad fuer alle
+# Rechnungs-PDFs, auch fuer die SaaS-Hintergrund-Jobs); die Underscore-Namen
+# bleiben fuer bestehende Aufrufer, SaaS-Importe und Tests erhalten.
+from app.invoices.pdf_service import (  # noqa: E402
+    current_design as _current_design,
+    render_invoice_html as _render_pdf_html,
+    invoice_doc_dir as _get_doc_dir,
+    versioned_path as _versioned_path,
+    render_invoice_pdf,
+    write_invoice_pdf,
+)
 
 
 # Nach app/invoices/services.py extrahiert (wiederverwendet von den
@@ -154,36 +133,6 @@ def _get_document_format(override=None):
     override kommt aus dem Request-Parameter ?fmt="""
     fmt = override or AppSetting.get("invoice.document_format", "pdf")
     return fmt if fmt in ("pdf", "docx", "both") else "pdf"
-
-
-def _get_doc_dir(invoice):
-    """Gibt den jahresspezifischen Unterordner für Rechnungsdokumente zurück und legt ihn an.
-
-    Struktur: <PDF_DIR>/<Jahr>/ z.B. instance/pdfs/2024/
-    """
-    year = invoice.date.year if invoice.date else "misc"
-    doc_dir = os.path.join(current_app.config["PDF_DIR"], str(year))
-    os.makedirs(doc_dir, exist_ok=True)
-    return doc_dir
-
-
-def _versioned_path(doc_dir: str, invoice_number: str, ext: str) -> str:
-    """Gibt einen eindeutigen Dateipfad zurück.
-
-    Existiert bereits eine Datei mit dem Basisnamen, wird _V2, _V3, … angehängt,
-    damit ältere Versionen erhalten bleiben.
-
-    Beispiel: 2025-00042.pdf → 2025-00042_V2.pdf → 2025-00042_V3.pdf
-    """
-    base = os.path.join(doc_dir, f"{invoice_number}.{ext}")
-    if not os.path.exists(base):
-        return base
-    v = 2
-    while True:
-        candidate = os.path.join(doc_dir, f"{invoice_number}_V{v}.{ext}")
-        if not os.path.exists(candidate):
-            return candidate
-        v += 1
 
 
 _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -1345,7 +1294,7 @@ def bulk_pdf_merged():
     if (resp := _bulk_print_limit_exceeded(invoice_ids)):
         return resp
     try:
-        from weasyprint import HTML
+        import weasyprint  # noqa: F401 — nur Verfügbarkeitsprüfung
     except (ImportError, OSError):
         if current_app.debug:
             flash("WeasyPrint nicht verfügbar. Einzelne PDF-Vorschau unter /invoices/<id>/pdf-preview.", "info")
@@ -1367,14 +1316,10 @@ def bulk_pdf_merged():
     # moeglich). Einzel-Render + pypdf-Concat laeuft dagegen stabil durch.
     writer = PdfWriter()
     for invoice in invoices:
-        html_content = _render_pdf_html(invoice)
-        pdf_bytes = HTML(string=html_content).render().write_pdf()
-        if _invoice_is_locked(invoice):
-            pdf_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "pdf")
-            if not invoice.pdf_path or not os.path.exists(invoice.pdf_path):
-                with open(pdf_path, "wb") as fh:
-                    fh.write(pdf_bytes)
-                invoice.pdf_path = pdf_path
+        pdf_bytes = render_invoice_pdf(invoice)
+        if _invoice_is_locked(invoice) and (
+                not invoice.pdf_path or not os.path.exists(invoice.pdf_path)):
+            invoice.pdf_path = write_invoice_pdf(invoice, pdf_bytes)
         writer.append(io.BytesIO(pdf_bytes))
     db.session.commit()
     # Byte-identische Objekte zusammenfassen (hilft bei deckenden Logos; bei
@@ -1401,7 +1346,7 @@ def bulk_pdf_zip():
     if (resp := _bulk_print_limit_exceeded(invoice_ids)):
         return resp
     try:
-        from weasyprint import HTML
+        import weasyprint  # noqa: F401 — nur Verfügbarkeitsprüfung
     except (ImportError, OSError):
         if current_app.debug:
             flash("WeasyPrint nicht verfügbar. Einzelne PDF-Vorschau unter /invoices/<id>/pdf-preview.", "info")
@@ -1415,9 +1360,7 @@ def bulk_pdf_zip():
             if _invoice_is_locked(invoice) and invoice.pdf_path and os.path.exists(invoice.pdf_path):
                 zf.write(invoice.pdf_path, f"{invoice.invoice_number}.pdf")
             else:
-                pdf_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "pdf")
-                html_content = _render_pdf_html(invoice)
-                HTML(string=html_content).write_pdf(pdf_path)
+                pdf_path = write_invoice_pdf(invoice, render_invoice_pdf(invoice))
                 if _invoice_is_locked(invoice):
                     invoice.pdf_path = pdf_path
                 zf.write(pdf_path, f"{invoice.invoice_number}.pdf")
@@ -1846,16 +1789,14 @@ def pdf(invoice_id):
         return send_file(invoice.pdf_path, as_attachment=False,
                          download_name=f"{invoice.invoice_number}.pdf")
     try:
-        from weasyprint import HTML
+        import weasyprint  # noqa: F401 — nur Verfügbarkeitsprüfung
     except (ImportError, OSError):
         if current_app.debug:
             flash("WeasyPrint nicht verfügbar – HTML-Vorschau geöffnet (Strg+P → Als PDF speichern).", "info")
             return redirect(url_for("invoices.pdf_preview", invoice_id=invoice.id))
         flash("WeasyPrint ist nicht installiert. PDF-Export nur im Docker-Container verfügbar.", "danger")
         return redirect(url_for("invoices.detail", invoice_id=invoice.id))
-    html_content = _render_pdf_html(invoice)
-    pdf_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "pdf")
-    HTML(string=html_content).write_pdf(pdf_path)
+    pdf_path = write_invoice_pdf(invoice, render_invoice_pdf(invoice))
     # Nur für Nicht-Entwürfe persistieren
     if _invoice_is_locked(invoice):
         invoice.pdf_path = pdf_path
@@ -1943,12 +1884,9 @@ def send_email(invoice_id):
 
     if fmt in ("pdf", "both"):
         try:
-            import weasyprint
-            html_content = _render_pdf_html(invoice, for_email=True)
-            pdf_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "pdf")
-            weasyprint.HTML(string=html_content).write_pdf(pdf_path)
-            with open(pdf_path, "rb") as fp:
-                msg.attach(f"{invoice.invoice_number}.pdf", "application/pdf", fp.read())
+            pdf_bytes = render_invoice_pdf(invoice, for_email=True)
+            pdf_path = write_invoice_pdf(invoice, pdf_bytes)
+            msg.attach(f"{invoice.invoice_number}.pdf", "application/pdf", pdf_bytes)
             pdf_ok = True
         except (ImportError, OSError):
             pdf_path = None
@@ -2042,12 +1980,9 @@ def send_email_ajax(invoice_id):
 
         if fmt in ("pdf", "both"):
             try:
-                import weasyprint
-                html_content = _render_pdf_html(invoice, for_email=True)
-                pdf_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "pdf")
-                weasyprint.HTML(string=html_content).write_pdf(pdf_path)
-                with open(pdf_path, "rb") as fp:
-                    msg.attach(f"{invoice.invoice_number}.pdf", "application/pdf", fp.read())
+                pdf_bytes = render_invoice_pdf(invoice, for_email=True)
+                pdf_path = write_invoice_pdf(invoice, pdf_bytes)
+                msg.attach(f"{invoice.invoice_number}.pdf", "application/pdf", pdf_bytes)
                 pdf_ok = True
             except (ImportError, OSError):
                 pdf_path = None
@@ -2646,7 +2581,7 @@ def billing_run_post_bulk(run_id):
     if (resp := _bulk_print_limit_exceeded(invoice_ids)):
         return resp
     try:
-        from weasyprint import HTML
+        import weasyprint  # noqa: F401 — nur Verfügbarkeitsprüfung
     except (ImportError, OSError):
         if current_app.debug:
             flash("WeasyPrint nicht verfügbar. PDF-Export nur im Docker-Container verfügbar.", "info")
@@ -2668,13 +2603,9 @@ def billing_run_post_bulk(run_id):
 
     writer = PdfWriter()
     for invoice in invoices:
-        html_content = _render_pdf_html(invoice)
-        pdf_bytes = HTML(string=html_content).render().write_pdf()
+        pdf_bytes = render_invoice_pdf(invoice)
         # Erzeugtes PDF immer persistieren (der heruntergeladene Post-Beleg).
-        pdf_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "pdf")
-        with open(pdf_path, "wb") as fh:
-            fh.write(pdf_bytes)
-        invoice.pdf_path = pdf_path
+        invoice.pdf_path = write_invoice_pdf(invoice, pdf_bytes)
         # Nur Entwürfe auf „Versendet" setzen; Offenen Posten wie beim Mailversand anlegen.
         if invoice.status == Invoice.STATUS_DRAFT:
             invoice.status = Invoice.STATUS_SENT

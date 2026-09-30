@@ -45,6 +45,7 @@
     color: {{ design.heading_color }};
   }
   table { width: 100%; border-collapse: collapse; margin: 0.5cm 0; }
+  tr { break-inside: avoid; }  /* Tabellenzeilen nie über einen Seitenumbruch teilen */
   th {
     background: {{ design.header_bg }};
     color: {{ design.header_text }};

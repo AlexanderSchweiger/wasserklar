@@ -13,8 +13,10 @@ Flask-Mail==0.10.0
 Flask-WTF==1.2.2
 Flask-Migrate==4.0.7
 WTForms==3.2.1
-WeasyPrint==62.3
-pydyf==0.10.0
+# WeasyPrint exakt pinnen, aber bei jedem Security-Release nachziehen. pydyf
+# kommt als Abhaengigkeit mit (>= 0.11) und wird bewusst NICHT mehr separat
+# gepinnt — pydyf==0.10.0 war nur das Notpflaster fuer das alte 62.3.
+WeasyPrint==70.0
 pypdf>=4.2
 pandas>=2.2
 openpyxl>=3.1

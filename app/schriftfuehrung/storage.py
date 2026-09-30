@@ -1,6 +1,6 @@
 """Datei-Ablage für die Schriftführung — Jahres-Unterordner im
 ``schriftverkehr``-Verzeichnis, mit Versionierung analog zu den
-Rechnungsdokumenten ([invoices/routes.py] ``_get_doc_dir``/``_versioned_path``).
+Rechnungsdokumenten ([invoices/pdf_service.py] ``invoice_doc_dir``/``versioned_path``).
 
 Der Ordner reitet auf dem pro Request umgebogenen ``PDF_DIR`` (genau wie
 ``technik.services.technik_upload_dir``): OSS-standalone landet er unter

@@ -8,12 +8,12 @@
     margin: 18mm 18mm 20mm;
     @bottom-center {
       content: "Seite " counter(page) " / " counter(pages);
-      font-family: {{ design.font_family | default("Arial, sans-serif") }};
+      font-family: {{ design.font_family | default("Arial, sans-serif") | safe }};
       font-size: 8pt; color: {{ design.muted_color | default("#888") }};
     }
   }
   body {
-    font-family: {{ design.font_family | default("Arial, sans-serif") }};
+    font-family: {{ design.font_family | default("Arial, sans-serif") | safe }};
     font-size: 11pt; color: {{ design.text_color | default("#2d3748") }}; line-height: 1.45;
   }
   .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
@@ -28,6 +28,7 @@
                    border-bottom: 1px solid {{ design.border_color | default("#e2e8f0") }};
                    padding-bottom: 2mm; margin: 6mm 0 3mm; }
   table { width: 100%; border-collapse: collapse; font-size: 10pt; }
+  tr { break-inside: avoid; }  /* Tabellenzeilen nie über einen Seitenumbruch teilen */
   th { text-align: left; background: {{ design.header_bg | default("#102a44") }};
        color: {{ design.header_text | default("#fff") }}; padding: 4px 6px; }
   td { padding: 4px 6px; border-bottom: 1px solid {{ design.border_color | default("#e2e8f0") }}; }

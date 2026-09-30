@@ -1,10 +1,12 @@
 FROM python:3.12-slim
 
-# WeasyPrint-Abhängigkeiten (Cairo, Pango, GObject)
+# WeasyPrint-Abhängigkeiten (Cairo, Pango, GObject; HarfBuzz-Subset fürs
+# Font-Subsetting, ohne fällt WeasyPrint >= 63 mit Warnung auf fontTools zurück)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libcairo2 \
     libpango-1.0-0 \
     libpangocairo-1.0-0 \
+    libharfbuzz-subset0 \
     libgdk-pixbuf-2.0-0 \
     libffi-dev \
     shared-mime-info \

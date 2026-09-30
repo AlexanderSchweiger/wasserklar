@@ -8,12 +8,12 @@
     margin: 18mm 18mm 20mm;
     @bottom-center {
       content: "Seite " counter(page) " / " counter(pages);
-      font-family: {{ design.font_family | default("Arial, sans-serif") }};
+      font-family: {{ design.font_family | default("Arial, sans-serif") | safe }};
       font-size: 8pt; color: {{ design.muted_color | default("#888") }};
     }
   }
   body {
-    font-family: {{ design.font_family | default("Arial, sans-serif") }};
+    font-family: {{ design.font_family | default("Arial, sans-serif") | safe }};
     font-size: 11pt; color: {{ design.text_color | default("#2d3748") }};
     line-height: 1.45;
   }
