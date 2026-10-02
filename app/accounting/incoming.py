@@ -4,7 +4,6 @@ Routen des ``accounting``-Blueprints (Recht ``buchhaltung``). Die Logik steckt i
 ``incoming_service.py``, der Parser in ``app/einvoice/incoming.py``.
 """
 import io
-import os
 from datetime import date
 from decimal import Decimal
 
@@ -17,6 +16,7 @@ from app.accounting import bp
 from app.accounting import incoming_service as svc
 from app.einvoice import incoming
 from app.extensions import db
+from app.file_safety import safe_tenant_path
 from app.models import Account, Customer, IncomingInvoice, Project, RealAccount
 from app.pagination import paginate_query
 
@@ -96,7 +96,7 @@ def incoming_detail(doc_id):
         real_accounts=RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all(),
         default_real_account=RealAccount.query.filter_by(is_default=True, active=True).first(),
         booking_date=svc.default_booking_date(parsed), duplicates=svc.possible_duplicates(doc),
-        file_exists=bool(doc.file_path and os.path.exists(doc.file_path)),
+        file_exists=safe_tenant_path(doc.file_path) is not None,
         form=None)
 
 
@@ -165,10 +165,11 @@ def incoming_reopen(doc_id):
 
 
 def _original(doc):
-    if not doc.file_path or not os.path.exists(doc.file_path):
+    """Pfad des Originals — nur aus dem Dateibaum des Mandanten (app/file_safety.py)."""
+    path = safe_tenant_path(doc.file_path)
+    if path is None:
         flash("Die Originaldatei ist nicht mehr vorhanden.", "danger")
-        return None
-    return doc.file_path
+    return path
 
 
 @bp.route("/incoming/<int:doc_id>/file")

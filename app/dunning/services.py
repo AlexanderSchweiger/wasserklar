@@ -104,10 +104,14 @@ def dunning_text_context(notice, summary=None, wg=None):
 
 
 def _render_text(template_str, context):
-    """Rendert einen Stufentext mit Jinja (Platzhalter), Fehler → Rohtext."""
-    from jinja2 import Environment
+    """Rendert einen Stufentext mit Jinja (Platzhalter), Fehler → Rohtext.
+
+    Sandbox: den Text pflegt der Mandant (Mahnstufe) — ein normales
+    ``Environment`` reichte ueber ``lipsum.__globals__`` bis an ``os`` (RCE).
+    """
+    from jinja2.sandbox import SandboxedEnvironment
     try:
-        return Environment(autoescape=False).from_string(
+        return SandboxedEnvironment(autoescape=False).from_string(
             template_str or ""
         ).render(**context)
     except Exception:

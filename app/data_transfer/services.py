@@ -12,6 +12,11 @@ Kontrakte:
   per natuerlichem Schluessel finden und entweder skippen oder updaten.
 - Beide Modi laufen in einer einzigen DB-Transaktion (Rollback bei jedem
   Fehler, kein Partial-State).
+- Die ZIP ist Nutzereingabe: Dateipfad-Spalten werden nie aus ihr uebernommen
+  (registry.FILE_PATH_COLS) — Pfade setzt nur _copy_pdfs fuer Dateien, die der
+  Import selbst aus dem Bundle in den Mandantenordner kopiert hat. Eintraege
+  werden einzeln und mit Obergrenzen entpackt, Tabellennamen aus dem Manifest
+  nie in SQL interpoliert.
 """
 
 from __future__ import annotations
@@ -20,6 +25,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import zipfile
 from datetime import datetime, timezone
@@ -39,17 +45,27 @@ from app.models import (
 )
 from app.data_transfer.registry import (
     CATEGORIES, INSERT_ORDER, YEAR_FILTERS, NATURAL_KEYS, FOREIGN_KEYS,
-    DEFERRED_FK_UPDATES, EXCLUDED_TABLES, NULL_ON_IMPORT_COLS, models_for_selection,
-    is_excluded_setting,
+    DEFERRED_FK_UPDATES, EXCLUDED_TABLES, FILE_PATH_COLS, LOCAL_FILE_SUBDIRS,
+    NULL_ON_IMPORT_COLS, models_for_selection, is_excluded_setting,
 )
 from app.data_transfer.serializers import (
     appsetting_skip_filter, decode_value, deserialize_record, encode_value,
     model_columns, primary_key_columns, primary_key_value,
 )
+from app.file_safety import safe_tenant_path
 from app.__version__ import __version__ as APP_VERSION
 
 
 FORMAT_VERSION = "1.0"
+
+# Obergrenzen fuer das Entpacken (ueberschreibbar per Config, siehe config.py).
+DEFAULT_MAX_UNCOMPRESSED_BYTES = 5 * 1024 ** 3
+DEFAULT_MAX_MEMBERS = 250_000
+
+# Tabellennamen aus dem hochgeladenen Manifest: nur schlichte Bezeichner, und
+# gezaehlt wird nur ueber das Model der Registry (nie Namen in SQL einsetzen).
+_TABLE_NAME_RE = re.compile(r"^[a-z0-9_]+$")
+_MODELS_BY_TABLE = {m.__tablename__: m for m in INSERT_ORDER}
 
 
 def _active_schema() -> str | None:
@@ -271,14 +287,16 @@ def export_to_zip(selection: dict, fileobj, *, exported_by: str = "system") -> d
             skip_filter = appsetting_skip_filter if model is AppSetting else None
             records = _serialize_rows(model, q, actual_cols, skip_filter)
 
-            # PDF-Pfade umschreiben (falls Bundle gewollt)
+            # PDF-Pfade umschreiben (falls Bundle gewollt). Gebundelt wird nur, was
+            # im Dateibaum des Mandanten liegt (safe_tenant_path) — ein fremder Pfad
+            # in Altdaten wuerde sonst ueber den Export ausgeleitet.
             if include_pdfs:
                 if model is Invoice:
                     for rec in records:
                         # xml_path = eingefrorene E-Rechnung (Bundle-Endung .xml)
                         for col in ("pdf_path", "doc_path", "xml_path"):
-                            src = rec.get(col)
-                            if src and os.path.isfile(src):
+                            src = safe_tenant_path(rec.get(col))
+                            if src:
                                 bundle_name = f"pdfs/invoices/{rec.get('invoice_number','id_'+str(rec.get('id')))}.{col.split('_')[0]}"
                                 if col == "doc_path":
                                     bundle_name = f"pdfs/invoices/{rec.get('invoice_number','id_'+str(rec.get('id')))}.docx"
@@ -287,8 +305,8 @@ def export_to_zip(selection: dict, fileobj, *, exported_by: str = "system") -> d
                 if model is DunningNotice:
                     for rec in records:
                         for col in ("pdf_path", "doc_path"):
-                            src = rec.get(col)
-                            if src and os.path.isfile(src):
+                            src = safe_tenant_path(rec.get(col))
+                            if src:
                                 ext = "pdf" if col == "pdf_path" else "docx"
                                 bundle_name = f"pdfs/dunning/{rec.get('id')}.{ext}"
                                 pdf_files.append((bundle_name, src))
@@ -297,8 +315,8 @@ def export_to_zip(selection: dict, fileobj, *, exported_by: str = "system") -> d
                     # Empfangene E-Rechnungen: das unveraenderte Original gehoert mit ins
                     # Bundle (Aufbewahrung, § 14b UStG) — der Dateiname traegt schon die ID.
                     for rec in records:
-                        src = rec.get("file_path")
-                        if src and os.path.isfile(src):
+                        src = safe_tenant_path(rec.get("file_path"))
+                        if src:
                             bundle_name = f"pdfs/incoming/{os.path.basename(src)}"
                             pdf_files.append((bundle_name, src))
                             rec["file_path"] = bundle_name
@@ -372,7 +390,11 @@ def _json_default(o):
 
 def extract_to_temp(uploaded_fileobj, instance_path: str) -> tuple[Path, dict]:
     """Extrahiert das hochgeladene ZIP nach instance/tmp/imports/<uuid>/ und
-    liest das Manifest. Liefert (extract_dir, manifest)."""
+    liest das Manifest. Liefert (extract_dir, manifest).
+
+    Wirft ValueError bei ungueltigen Eintraegen (Zip-Slip), zu vielen Eintraegen
+    oder zu grossem Inhalt (Zip-Bomb); das Verzeichnis wird dann wieder entfernt.
+    """
     import uuid
     base = Path(instance_path) / "tmp" / "imports"
     base.mkdir(parents=True, exist_ok=True)
@@ -382,18 +404,67 @@ def extract_to_temp(uploaded_fileobj, instance_path: str) -> tuple[Path, dict]:
     extract_dir = base / uuid.uuid4().hex
     extract_dir.mkdir(parents=True)
 
-    with zipfile.ZipFile(uploaded_fileobj) as zf:
-        zf.extractall(extract_dir)
+    try:
+        with zipfile.ZipFile(uploaded_fileobj) as zf:
+            _extract_members(zf, extract_dir)
 
-    manifest_path = extract_dir / "manifest.json"
-    if not manifest_path.exists():
+        manifest_path = extract_dir / "manifest.json"
+        if not manifest_path.is_file():
+            raise ValueError("manifest.json fehlt — keine gueltige Export-Datei.")
+        with open(manifest_path, "r", encoding="utf-8") as fh:
+            manifest = json.load(fh)
+        if not isinstance(manifest, dict):
+            raise ValueError("manifest.json ist ungueltig — keine gueltige Export-Datei.")
+    except Exception:
         shutil.rmtree(extract_dir, ignore_errors=True)
-        raise ValueError("manifest.json fehlt — keine gueltige Export-Datei.")
-
-    with open(manifest_path, "r", encoding="utf-8") as fh:
-        manifest = json.load(fh)
+        raise
 
     return extract_dir, manifest
+
+
+def _extract_members(zf: zipfile.ZipFile, dest: Path):
+    """Entpackt Eintrag fuer Eintrag nach ``dest`` (statt ``extractall``).
+
+    Die ZIP ist Nutzereingabe: Eintragsnamen werden geprueft (kein absoluter
+    Pfad, kein ``..``, keine Laufwerksangabe), Anzahl und entpackte Groesse
+    sind gedeckelt — die Groesse doppelt: vorab die deklarierte Summe, beim
+    Kopieren die tatsaechlich geschriebenen Bytes.
+    """
+    max_bytes = int(current_app.config.get("DATA_TRANSFER_MAX_UNCOMPRESSED_BYTES",
+                                           DEFAULT_MAX_UNCOMPRESSED_BYTES))
+    max_members = int(current_app.config.get("DATA_TRANSFER_MAX_MEMBERS", DEFAULT_MAX_MEMBERS))
+    too_big = f"Die Datei ist entpackt zu gross (max. {max_bytes // (1024 * 1024)} MB)."
+
+    infos = zf.infolist()
+    if len(infos) > max_members:
+        raise ValueError(f"Die Datei enthaelt zu viele Eintraege ({len(infos)}, max. {max_members}).")
+    if sum(info.file_size for info in infos) > max_bytes:
+        raise ValueError(too_big)
+
+    written = 0
+    for info in infos:
+        target = dest.joinpath(*_member_parts(info.filename))
+        if info.is_dir():
+            target.mkdir(parents=True, exist_ok=True)
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with zf.open(info) as src, open(target, "wb") as out:
+            while chunk := src.read(1024 * 1024):
+                written += len(chunk)
+                if written > max_bytes:
+                    raise ValueError(too_big)
+                out.write(chunk)
+
+
+def _member_parts(name: str) -> list[str]:
+    """Pfadteile eines ZIP-Eintrags; ValueError bei allem, was aus dem
+    Zielordner hinausfuehren koennte (Zip-Slip). Backslashes zaehlen als Trenner."""
+    norm = name.replace("\\", "/")
+    parts = [p for p in norm.split("/") if p not in ("", ".")]
+    if (not parts or norm.startswith("/") or "\x00" in norm
+            or any(p == ".." or ":" in p for p in parts)):
+        raise ValueError(f"Ungueltiger Eintrag in der ZIP-Datei: {name[:120]!r}")
+    return parts
 
 
 def _cleanup_stale_imports(base: Path, max_age_hours: int = 24):
@@ -444,11 +515,25 @@ def validate_manifest(manifest: dict, extract_dir: Path) -> dict:
                 f"Bitte erst 'flask --app run upgrade-db' ausfuehren."
             )
 
+    # Tabellennamen stammen aus der hochgeladenen Datei: nur schlichte
+    # Bezeichner (Pfad bleibt unter tables/, SQL siehe _current_table_count).
+    tables = []
+    raw_tables = manifest.get("tables", [])
+    if not isinstance(raw_tables, list):
+        errors.append("Manifest ohne gueltige Tabellenliste.")
+        raw_tables = []
+    for tm in raw_tables:
+        name = tm.get("name") if isinstance(tm, dict) else None
+        if isinstance(name, str) and _TABLE_NAME_RE.match(name):
+            tables.append(tm)
+        else:
+            errors.append(f"Ungueltiger Tabellenname im Manifest: {str(name)[:60]!r}")
+
     # Checksum
     expected = manifest.get("checksum_sha256")
     if expected:
         actual = hashlib.sha256()
-        for tm in manifest.get("tables", []):
+        for tm in tables:
             tpath = extract_dir / "tables" / f"{tm['name']}.json"
             if tpath.exists():
                 with open(tpath, "rb") as fh:
@@ -458,7 +543,7 @@ def validate_manifest(manifest: dict, extract_dir: Path) -> dict:
 
     # Tabellen-Overview (Zaehler vs. aktuelle DB)
     tables_overview = []
-    for tm in manifest.get("tables", []):
+    for tm in tables:
         cur_count = _current_table_count(tm["name"])
         tables_overview.append({
             "name": tm["name"],
@@ -497,10 +582,17 @@ def _alembic_history_revisions() -> set:
 
 
 def _current_table_count(tname: str) -> int:
-    """Zaehlt die Records einer Tabelle in der aktuellen DB. 0 bei Fehler."""
+    """Zaehlt die Records einer registrierten Tabelle. 0 bei unbekanntem Namen
+    oder Fehler.
+
+    Der Name stammt aus dem hochgeladenen Manifest — gezaehlt wird deshalb nur
+    ueber das Model der Registry; der Name landet nie im SQL (Injection).
+    """
+    model = _MODELS_BY_TABLE.get(tname)
+    if model is None:
+        return 0
     try:
-        row = db.session.execute(text(f"SELECT COUNT(*) FROM {tname}")).first()
-        return int(row[0]) if row else 0
+        return int(db.session.query(func.count()).select_from(model.__table__).scalar() or 0)
     except Exception:
         return 0
 
@@ -520,7 +612,9 @@ def import_from_zip(extract_dir: Path, manifest: dict, *, mode: str = "replace",
 
     mode: "replace" (Vollersatz) oder "merge" (alt-IDs neu vergeben)
     update_existing: nur in merge-mode relevant — bestehende Records updaten
-    instance_path: Pfad fuer PDF-Cleanup/-Kopie (nur wenn pdfs/ im Bundle)
+    instance_path: ohne Wirkung (bleibt fuer bestehende Aufrufer). Ziel der
+        Bundle-Dateien ist der Mandantenordner aus ``PDF_DIR`` — ``instance_path``
+        ist im SaaS global und wuerde Mandanten vermischen.
 
     Liefert Statistik-Dict mit per-Tabelle (inserted, updated, skipped).
     """
@@ -577,10 +671,10 @@ def import_from_zip(extract_dir: Path, manifest: dict, *, mode: str = "replace",
         db.session.rollback()
         raise ImportError_(f"Import fehlgeschlagen: {exc}") from exc
 
-    # PDFs erst nach Commit kopieren (idempotent — Failure laesst PDFs zurueck,
-    # aber verfaelscht keine DB)
-    if selection.get("include_pdfs") and instance_path:
-        _copy_pdfs(extract_dir, instance_path, table_records)
+    # PDFs erst nach Commit kopieren (idempotent — Failure laesst die Pfade
+    # NULL, verfaelscht aber keine DB; PDFs entstehen dann beim Abruf neu)
+    if selection.get("include_pdfs"):
+        _copy_pdfs(extract_dir, table_records, id_map, mode)
 
     return stats
 
@@ -685,6 +779,22 @@ def _truncate_models(models: list):
     db.session.flush()
 
 
+def _clear_file_paths(model, data: dict):
+    """Dateipfade nie aus der ZIP uebernehmen (siehe registry.FILE_PATH_COLS).
+
+    NULL bzw. "" bei NOT-NULL-Spalten; _copy_pdfs traegt danach den Pfad der
+    Datei ein, die der Import selbst aus dem Bundle kopiert hat. Ausnahme
+    (LOCAL_FILE_SUBDIRS): ein Pfad auf eine existierende Datei im eigenen
+    Ordner des Mandanten bleibt stehen.
+    """
+    subdir = LOCAL_FILE_SUBDIRS.get(model)
+    for name in FILE_PATH_COLS.get(model, ()):
+        own = safe_tenant_path(data.get(name), subdir) if subdir else None
+        if own is None:
+            own = None if model.__table__.c[name].nullable else ""
+        data[name] = own
+
+
 def _insert_replace(model, records: list, stats: dict):
     """Vollersatz-Insert: IDs 1:1 uebernehmen, ORM-Bulk-Insert pro Record."""
     deferred = DEFERRED_FK_UPDATES.get(model, [])
@@ -694,6 +804,7 @@ def _insert_replace(model, records: list, stats: dict):
         if model is AppSetting and is_excluded_setting(rec.get("key", "")):
             continue
         data = deserialize_record(model, rec, skip_columns=list(deferred) + null_cols)
+        _clear_file_paths(model, data)
         # Bei AppSetting: nicht ueberschreiben wenn Schluessel schon existiert
         # (z.B. lokal gesetzte Mail-Konfig nach Truncate eigentlich leer, aber
         # Defensive: kein Doppel-Insert)
@@ -723,6 +834,7 @@ def _insert_merge(model, records: list, id_map: dict, update_existing: bool, sta
 
         old_pk = primary_key_value(model, rec)
         data = deserialize_record(model, rec, skip_columns=list(deferred) + null_cols)
+        _clear_file_paths(model, data)   # gilt auch fuer den update_existing-Zweig
 
         # FKs remappen (ausser deferred)
         for col_name, target in fk_cols.items():
@@ -910,66 +1022,81 @@ def _bump_counters(stats: dict):
     db.session.flush()
 
 
-def _copy_pdfs(extract_dir: Path, instance_path: str, table_records: dict):
-    """Kopiert PDFs aus dem Bundle in instance/pdfs/ und korrigiert die
-    Pfade in der DB auf neue absolute Pfade.
+def _bundle_file(extract_dir: Path, value, subdir: str) -> Path | None:
+    """Datei im entpackten Bundle zu einem Pfadwert ``pdfs/<subdir>/<name>``.
 
-    Wird NACH dem Commit aufgerufen — wenn das Filesystem hier scheitert,
-    bleibt die DB konsistent (Pfade zeigen dann auf nicht-existente Files,
-    PDFs koennen ueber die UI neu generiert werden).
+    Nur wenn sie nach ``resolve()`` wirklich unter ``<bundle>/pdfs/<subdir>/``
+    liegt und eine regulaere Datei ist — absolute Pfade, ``..`` und sonstige
+    Fremdwerte liefern None.
     """
-    pdfs_src = extract_dir / "pdfs"
-    if not pdfs_src.exists():
-        return
-    pdfs_dst = Path(instance_path) / "pdfs"
-    pdfs_dst.mkdir(parents=True, exist_ok=True)
+    if not isinstance(value, str) or not value.startswith(f"pdfs/{subdir}/"):
+        return None
+    try:
+        base = (extract_dir / "pdfs" / subdir).resolve()
+        src = (extract_dir / value).resolve()
+        src.relative_to(base)
+    except (ValueError, OSError):
+        return None
+    return src if src.is_file() else None
+
+
+def _place_file(src: Path, dst_dir: Path, name: str) -> str:
+    """Kopiert ``src`` nach ``dst_dir/name`` und gibt den neuen Pfad zurueck."""
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    dst = dst_dir / name
+    shutil.copy2(src, dst)
+    return str(dst)
+
+
+def _copy_pdfs(extract_dir: Path, table_records: dict, id_map: dict, mode: str):
+    """Kopiert die Dateien aus dem Bundle in den Dateibaum des Mandanten und
+    traegt die neuen Pfade an den Zeilen ein.
+
+    Ziel ist der Mandantenordner aus ``PDF_DIR`` (im SaaS pro Request auf
+    ``instance/tenants/<slug>/pdfs`` gesetzt) — nicht ``instance_path``, der im
+    SaaS global ist. Quelle ist nur, was ``_bundle_file`` innerhalb des
+    entpackten Bundles findet. Die Pfadspalten hat der Insert bereits genullt
+    (``_clear_file_paths``) — einen Pfad bekommt also nur eine Zeile, deren
+    Datei hier wirklich kopiert wurde.
+
+    Wird NACH dem Commit aufgerufen — scheitert hier das Filesystem, bleiben
+    die Pfade NULL und die DB konsistent (PDFs entstehen beim Abruf neu).
+    """
+    pdf_dir = Path(current_app.config["PDF_DIR"])
 
     # Invoices
-    if Invoice in table_records:
-        for rec in table_records[Invoice]:
-            for col, subdir in (("pdf_path", "invoices"), ("doc_path", "invoices"),
-                                ("xml_path", "invoices")):
-                bundle_path = rec.get(col)
-                if not bundle_path or not bundle_path.startswith("pdfs/"):
-                    continue
-                src = extract_dir / bundle_path
-                if not src.exists():
-                    continue
-                dst = pdfs_dst / subdir / src.name
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, dst)
-                # DB-Pfad auf neuen absoluten Pfad setzen
+    for rec in table_records.get(Invoice, ()):
+        inv = None
+        for col in ("pdf_path", "doc_path", "xml_path"):
+            src = _bundle_file(extract_dir, rec.get(col), "invoices")
+            if src is None:
+                continue
+            if inv is None:
                 inv = Invoice.query.filter_by(invoice_number=rec.get("invoice_number")).first()
-                if inv is not None:
-                    setattr(inv, col, str(dst))
-    # Dunning
-    if DunningNotice in table_records:
-        for rec in table_records[DunningNotice]:
-            for col, subdir in (("pdf_path", "dunning"), ("doc_path", "dunning")):
-                bundle_path = rec.get(col)
-                if not bundle_path or not bundle_path.startswith("pdfs/"):
-                    continue
-                src = extract_dir / bundle_path
-                if not src.exists():
-                    continue
-                dst = pdfs_dst / subdir / src.name
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, dst)
+                if inv is None:
+                    break
+            setattr(inv, col, _place_file(src, pdf_dir / "invoices", src.name))
+    # Dunning: kein natuerlicher Schluessel — Zeile ueber die ID (merge: id_map).
+    # Dateiname nach der neuen ID, damit sich Mahnungen mehrerer Merges nicht
+    # gegenseitig ueberschreiben (im Vollersatz = Name im Bundle).
+    for rec in table_records.get(DunningNotice, ()):
+        notice_id = rec.get("id")
+        if mode == "merge":
+            notice_id = id_map.get(DunningNotice, {}).get(notice_id)
+        notice = db.session.get(DunningNotice, notice_id) if notice_id is not None else None
+        if notice is None:
+            continue
+        for col, ext in (("pdf_path", "pdf"), ("doc_path", "docx")):
+            src = _bundle_file(extract_dir, rec.get(col), "dunning")
+            if src is not None:
+                setattr(notice, col, _place_file(src, pdf_dir / "dunning", f"{notice.id}.{ext}"))
     # Eingangs-E-Rechnungen: Originale ins tenant-eigene incoming/-Verzeichnis
     # (Geschwister von PDF_DIR, im SaaS je Mandant), Pfad an der Zeile nachziehen.
-    if IncomingInvoice in table_records:
-        incoming_dst = Path(current_app.config.get("PDF_DIR", str(pdfs_dst))).parent / "incoming"
-        for rec in table_records[IncomingInvoice]:
-            bundle_path = rec.get("file_path")
-            if not bundle_path or not bundle_path.startswith("pdfs/incoming/"):
-                continue
-            src = extract_dir / bundle_path
-            if not src.exists():
-                continue
-            dst = incoming_dst / src.name
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
-            row = IncomingInvoice.query.filter_by(sha256=rec.get("sha256")).first()
-            if row is not None:
-                row.file_path = str(dst)
+    for rec in table_records.get(IncomingInvoice, ()):
+        src = _bundle_file(extract_dir, rec.get("file_path"), "incoming")
+        if src is None:
+            continue
+        row = IncomingInvoice.query.filter_by(sha256=rec.get("sha256")).first()
+        if row is not None:
+            row.file_path = _place_file(src, pdf_dir.parent / "incoming", src.name)
     db.session.commit()

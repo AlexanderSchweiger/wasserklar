@@ -75,6 +75,31 @@ NULL_ON_IMPORT_COLS = {
 }
 
 
+# Dateipfad-Spalten: zeigen auf Dateien im Dateibaum des Mandanten (siehe
+# app/file_safety.py). Beim Import stammen ihre Werte aus der hochgeladenen ZIP
+# und sind damit angreiferkontrolliert — ein absoluter Pfad auf die Dateien
+# eines fremden Mandanten waere sonst ueber die Download-Routen lesbar. Der
+# Import uebernimmt sie deshalb NIE (services._clear_file_paths): Dateien aus dem
+# Bundle (pdfs/<ordner>/...) kopiert _copy_pdfs selbst in den Mandantenordner und
+# setzt erst dann den Pfad. Neues Model mit Dateipfad → hier eintragen (der
+# Guard-Test in tests/integration/test_data_transfer_path_safety.py prueft das).
+FILE_PATH_COLS = {
+    Invoice: ("pdf_path", "doc_path", "xml_path"),
+    DunningNotice: ("pdf_path", "doc_path"),
+    IncomingInvoice: ("file_path",),
+    MeetingProtocol: ("file_path",),
+    SchriftverkehrDocument: ("file_path",),
+}
+
+# Pfadspalten, deren Dateien NICHT im Bundle mitreisen: der Pfad bleibt stehen,
+# wenn er auf eine existierende Datei im eigenen Ordner <mandant>/<subdir> des
+# importierenden Mandanten zeigt (Restore auf demselben Server), sonst NULL.
+LOCAL_FILE_SUBDIRS = {
+    MeetingProtocol: "schriftverkehr",
+    SchriftverkehrDocument: "schriftverkehr",
+}
+
+
 # Modelle pro Kategorie. Reihenfolge spielt hier keine Rolle —
 # fuer FK-sicheres Insert ist INSERT_ORDER massgeblich.
 CATEGORIES = {

@@ -120,6 +120,15 @@ class Config:
     # ggf. strenger per Env setzen.
     BULK_PRINT_MAX = int(os.environ.get("BULK_PRINT_MAX", 100))
 
+    # Daten-Import (/data-transfer): Obergrenzen fuer die hochgeladene ZIP —
+    # Summe der entpackten Groessen und Anzahl der Eintraege (Zip-Bomb-Schutz,
+    # siehe app/data_transfer/services.py:_extract_members). Grosszuegig
+    # bemessen: ein Voll-Export mit den PDFs vieler Jahre passt locker hinein.
+    DATA_TRANSFER_MAX_UNCOMPRESSED_BYTES = int(
+        os.environ.get("DATA_TRANSFER_MAX_UNCOMPRESSED_BYTES", 5 * 1024 ** 3)
+    )
+    DATA_TRANSFER_MAX_MEMBERS = int(os.environ.get("DATA_TRANSFER_MAX_MEMBERS", 250_000))
+
     # Land des Mandanten (ISO-Code, siehe app/country.py: "AT" | "DE"). Nur der
     # Fallback, solange die AppSetting ``org.country`` nicht gesetzt ist — der
     # Mandant waehlt sein Land in den Einstellungen (SaaS: bei der Registrierung).
