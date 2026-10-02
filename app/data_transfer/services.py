@@ -1041,9 +1041,24 @@ def _bundle_file(extract_dir: Path, value, subdir: str) -> Path | None:
 
 
 def _place_file(src: Path, dst_dir: Path, name: str) -> str:
-    """Kopiert ``src`` nach ``dst_dir/name`` und gibt den neuen Pfad zurueck."""
+    """Kopiert ``src`` nach ``dst_dir/name`` und gibt den neuen Pfad zurueck.
+
+    Sicherheitsnetz: ``name`` wird auf einen Dateinamen reduziert und der
+    resultierende Zielpfad muss innerhalb von ``dst_dir`` liegen.
+    """
     dst_dir.mkdir(parents=True, exist_ok=True)
-    dst = dst_dir / name
+    safe_name = Path(name).name
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", safe_name)
+    if not safe_name or safe_name in {".", ".."}:
+        raise ImportError_("Ungueltiger Dateiname im Import-Bundle.")
+
+    base = dst_dir.resolve()
+    dst = (base / safe_name).resolve()
+    try:
+        dst.relative_to(base)
+    except ValueError as exc:
+        raise ImportError_("Ungueltiger Zielpfad im Import-Bundle.") from exc
+
     shutil.copy2(src, dst)
     return str(dst)
 
