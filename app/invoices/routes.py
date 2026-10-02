@@ -17,6 +17,7 @@ from app.models import Invoice, InvoiceItem, EmailEvent, Customer, WaterMeter, M
 from app.invoices import tariff_engine as engine
 from app.meters.estimation import apply_corrections_to_invoice, cap_invoice_at_zero, reverse_corrections_for_invoice
 from app.email_tracking import record_email_sent
+from app.file_safety import safe_tenant_path
 from app.utils import next_invoice_number as _next_invoice_number
 from app.settings_service import get_wg, send_mail, wg_settings
 from app.pagination import paginate_query
@@ -185,12 +186,15 @@ def _render_email_subject(invoice):
 
     Faellt bei kaputter/leerer Vorlage auf einen simplen Default zurueck, damit
     ein Tippfehler in der Betreff-Vorlage nicht den gesamten Versand blockiert.
+
+    Sandbox: die Vorlage pflegt der Mandant selbst — ein normales
+    ``Environment`` reichte ueber ``lipsum.__globals__`` bis an ``os`` (RCE).
     """
-    from jinja2 import Environment
+    from jinja2.sandbox import SandboxedEnvironment
     tpl = AppSetting.get("email_subject_template") or DEFAULT_INVOICE_EMAIL_SUBJECT
     try:
         rendered = (
-            Environment().from_string(tpl).render(**_email_template_context(invoice)).strip()
+            SandboxedEnvironment().from_string(tpl).render(**_email_template_context(invoice)).strip()
         )
     except Exception:
         rendered = ""
@@ -200,11 +204,15 @@ def _render_email_subject(invoice):
 
 
 def _render_email_body(invoice):
-    """Rendert den E-Mail-Text: DB-Vorlage wenn vorhanden, sonst statisches Template."""
-    from jinja2 import Environment
+    """Rendert den E-Mail-Text: DB-Vorlage wenn vorhanden, sonst statisches Template.
+
+    Sandbox wie beim Betreff (Mandanten-Vorlage); ein blockierter Zugriff
+    wirft ``SecurityError`` wie sonst ein Syntaxfehler.
+    """
+    from jinja2.sandbox import SandboxedEnvironment
     custom = AppSetting.get("email_body_template")
     if custom:
-        return Environment().from_string(custom).render(**_email_template_context(invoice))
+        return SandboxedEnvironment().from_string(custom).render(**_email_template_context(invoice))
     return render_template("invoices/email_body.txt", invoice=invoice)
 
 
@@ -1335,8 +1343,7 @@ def bulk_pdf_merged():
     writer = PdfWriter()
     for invoice in invoices:
         pdf_bytes = render_invoice_pdf(invoice)
-        if _invoice_is_locked(invoice) and (
-                not invoice.pdf_path or not os.path.exists(invoice.pdf_path)):
+        if _invoice_is_locked(invoice) and not safe_tenant_path(invoice.pdf_path):
             invoice.pdf_path = write_invoice_pdf(invoice, pdf_bytes)
         writer.append(io.BytesIO(pdf_bytes))
     db.session.commit()
@@ -1375,8 +1382,8 @@ def bulk_pdf_zip():
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for invoice in invoices:
-            if _invoice_is_locked(invoice) and invoice.pdf_path and os.path.exists(invoice.pdf_path):
-                zf.write(invoice.pdf_path, f"{invoice.invoice_number}.pdf")
+            if _invoice_is_locked(invoice) and (cached := safe_tenant_path(invoice.pdf_path)):
+                zf.write(cached, f"{invoice.invoice_number}.pdf")
             else:
                 pdf_path = write_invoice_pdf(invoice, render_invoice_pdf(invoice))
                 if _invoice_is_locked(invoice):
@@ -1405,8 +1412,8 @@ def bulk_docx_zip():
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for invoice in invoices:
-            if _invoice_is_locked(invoice) and invoice.doc_path and os.path.exists(invoice.doc_path):
-                zf.write(invoice.doc_path, f"{invoice.invoice_number}.docx")
+            if _invoice_is_locked(invoice) and (cached := safe_tenant_path(invoice.doc_path)):
+                zf.write(cached, f"{invoice.invoice_number}.docx")
             else:
                 doc_data = generate_docx(invoice, wg_settings(), design=_current_design())
                 if _invoice_is_locked(invoice):
@@ -1436,8 +1443,8 @@ def bulk_docx_merged():
     invoices = Invoice.query.filter(Invoice.id.in_(invoice_ids)).order_by(Invoice.invoice_number).all()
     sources = []
     for invoice in invoices:
-        if _invoice_is_locked(invoice) and invoice.doc_path and os.path.exists(invoice.doc_path):
-            sources.append(invoice.doc_path)
+        if _invoice_is_locked(invoice) and (cached := safe_tenant_path(invoice.doc_path)):
+            sources.append(cached)
         else:
             doc_data = generate_docx(invoice, wg_settings(), design=_current_design())
             if _invoice_is_locked(invoice):
@@ -1791,8 +1798,8 @@ def pdf(invoice_id):
 
     if fmt == "docx":
         # Gecachte .docx ausliefern wenn vorhanden
-        if _invoice_is_locked(invoice) and invoice.doc_path and os.path.exists(invoice.doc_path):
-            return send_file(invoice.doc_path, as_attachment=True,
+        if _invoice_is_locked(invoice) and (cached := safe_tenant_path(invoice.doc_path)):
+            return send_file(cached, as_attachment=True,
                              download_name=f"{invoice.invoice_number}.docx",
                              mimetype=_DOCX_MIME)
         from app.invoices.document_service import generate_docx
@@ -1808,9 +1815,10 @@ def pdf(invoice_id):
                          mimetype=_DOCX_MIME)
 
     # ── PDF (Standard) ────────────────────────────────────────────────────
-    # Gesperrte Rechnungen: gecachte PDF ausliefern wenn vorhanden
-    if _invoice_is_locked(invoice) and invoice.pdf_path and os.path.exists(invoice.pdf_path):
-        return send_file(invoice.pdf_path, as_attachment=False,
+    # Gesperrte Rechnungen: gecachte PDF ausliefern wenn vorhanden (nur aus dem
+    # Dateibaum des Mandanten — siehe app/file_safety.py)
+    if _invoice_is_locked(invoice) and (cached := safe_tenant_path(invoice.pdf_path)):
+        return send_file(cached, as_attachment=False,
                          download_name=f"{invoice.invoice_number}.pdf")
     try:
         import weasyprint  # noqa: F401 — nur Verfügbarkeitsprüfung

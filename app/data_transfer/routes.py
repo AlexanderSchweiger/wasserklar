@@ -243,7 +243,14 @@ def _resolve_token(token: str) -> Path | None:
     """Validiert das Token (nur Hex-Zeichen) und liefert das Extract-Verzeichnis."""
     if not token or not all(c in "0123456789abcdef" for c in token):
         return None
-    base = Path(current_app.instance_path) / "tmp" / "imports" / token
-    if not base.exists():
+
+    imports_root = (Path(current_app.instance_path) / "tmp" / "imports").resolve()
+    try:
+        base = (imports_root / token).resolve()
+        base.relative_to(imports_root)
+    except (OSError, ValueError):
+        return None
+
+    if not base.exists() or not base.is_dir():
         return None
     return base

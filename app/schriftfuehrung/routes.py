@@ -24,6 +24,7 @@ from app.models import (
     SchriftverkehrDocument,
 )
 from app.email_tracking import record_email_sent
+from app.file_safety import safe_tenant_path
 from app.schriftfuehrung.send_email_hooks import run_before_send
 from app.settings_service import send_mail, sanitize_rich_text, wg_settings
 
@@ -946,9 +947,9 @@ def protocol_download(meeting_id):
     protocol = meeting.protocol
     if protocol is None:
         abort(404)
-    if protocol.file_path and os.path.exists(protocol.file_path):
-        return send_file(protocol.file_path, as_attachment=True,
-                         download_name=protocol.original_filename or os.path.basename(protocol.file_path))
+    if path := safe_tenant_path(protocol.file_path):
+        return send_file(path, as_attachment=True,
+                         download_name=protocol.original_filename or os.path.basename(path))
     # Kein File (z.B. lokal ohne WeasyPrint, Rich-Text-Protokoll) → HTML-Ansicht.
     if protocol.source_type == MeetingProtocol.SOURCE_RICHTEXT:
         present, total, is_quorate = services.compute_quorum(meeting)
@@ -1097,8 +1098,9 @@ def archive_upload():
 @login_required
 def archive_download(doc_id):
     doc = db.get_or_404(SchriftverkehrDocument, doc_id)
-    if not doc.file_path or not os.path.exists(doc.file_path):
+    path = safe_tenant_path(doc.file_path)
+    if path is None:
         flash("Datei nicht gefunden.", "danger")
         return redirect(url_for("schriftfuehrung.archive"))
-    return send_file(doc.file_path, as_attachment=True,
-                     download_name=doc.original_filename or os.path.basename(doc.file_path))
+    return send_file(path, as_attachment=True,
+                     download_name=doc.original_filename or os.path.basename(path))

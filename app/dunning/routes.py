@@ -11,6 +11,7 @@ from sqlalchemy import or_
 
 from app.dunning import bp
 from app.extensions import db
+from app.file_safety import safe_tenant_path
 from app.models import (
     AppSetting, Customer, DunningNotice, DunningPolicy, DunningStage, Invoice,
 )
@@ -371,8 +372,8 @@ def notice_pdf(notice_id):
         fmt = "pdf"  # Download liefert genau ein Dokument
 
     if fmt == "docx":
-        if notice.doc_path and os.path.exists(notice.doc_path):
-            return send_file(notice.doc_path, as_attachment=True,
+        if cached := safe_tenant_path(notice.doc_path):
+            return send_file(cached, as_attachment=True,
                              download_name=_dunning_filename(notice, "docx"),
                              mimetype=_DOCX_MIME)
         doc_data = _render_dunning_docx_bytes(notice)
@@ -381,8 +382,8 @@ def notice_pdf(notice_id):
                          mimetype=_DOCX_MIME)
 
     # PDF (WeasyPrint)
-    if notice.pdf_path and os.path.exists(notice.pdf_path):
-        return send_file(notice.pdf_path, as_attachment=True,
+    if cached := safe_tenant_path(notice.pdf_path):
+        return send_file(cached, as_attachment=True,
                          download_name=_dunning_filename(notice, "pdf"))
     try:
         pdf_data = _render_dunning_pdf_bytes(notice)
@@ -600,8 +601,8 @@ def bulk_docx_merged():
     sources = []
     for notice in notices:
         # Versendete Mahnungen: archivierte Datei; sonst live rendern.
-        if notice.doc_path and os.path.exists(notice.doc_path):
-            sources.append(notice.doc_path)
+        if cached := safe_tenant_path(notice.doc_path):
+            sources.append(cached)
         else:
             sources.append(_render_dunning_docx_bytes(notice))
 
@@ -648,8 +649,8 @@ def bulk_pdf_merged():
     # Versendete Mahnungen liefern ihr archiviertes PDF, sonst Live-Render.
     writer = PdfWriter()
     for notice in notices:
-        if notice.pdf_path and os.path.exists(notice.pdf_path):
-            writer.append(notice.pdf_path)
+        if cached := safe_tenant_path(notice.pdf_path):
+            writer.append(cached)
         else:
             ctx = _dunning_pdf_context(notice)
             html_str = render_template(_dunning_template_name(ctx["design"]), **ctx)

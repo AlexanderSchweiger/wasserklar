@@ -15,7 +15,6 @@ beides reines XML, das PDF haengt als Sichtkopie (BG-24) darin. Welches Profil g
 bestimmt der Kunde; einmal eingefroren, bleibt das Profil der Rechnung bestehen,
 auch wenn der Kunde spaeter umgestellt wird.
 """
-import os
 from dataclasses import dataclass, field
 
 from flask import current_app
@@ -29,6 +28,7 @@ from app.einvoice.model import (
     PROFILE_XRECHNUNG, XML_ONLY_PROFILES, Attachment,
 )
 from app.einvoice.rules import check
+from app.file_safety import safe_tenant_path
 from app.models import AppSetting, Invoice
 
 ENABLED_KEY = "einvoice.enabled"
@@ -111,15 +111,22 @@ def invoice_status(invoice):
                                  issues=check(build_einvoice(invoice, profile)))
 
 
+def _frozen_path(invoice):
+    """Eingefrorenes XML — nur aus dem Dateibaum des Mandanten (app/file_safety.py):
+    der Inhalt wird unbesehen ausgeliefert und eingebettet."""
+    return safe_tenant_path(invoice.xml_path)
+
+
 def _is_frozen(invoice):
-    return bool(invoice.xml_path and os.path.exists(invoice.xml_path))
+    return _frozen_path(invoice) is not None
 
 
 def _frozen_xml(invoice):
-    if _is_frozen(invoice):
-        with open(invoice.xml_path, "rb") as fh:
-            return fh.read()
-    return None
+    path = _frozen_path(invoice)
+    if path is None:
+        return None
+    with open(path, "rb") as fh:
+        return fh.read()
 
 
 def _visual_copy(invoice, pdf):
