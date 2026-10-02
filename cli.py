@@ -111,6 +111,26 @@ def apply_schema_upgrades(conn, dialect, *, verbose=False, schema=None):
         _add(table, col_def, col_name)
 
 
+def seed_default_einvoice_setting(db, *, verbose=False, country_code=None):
+    """Startwert der Einstellung „E-Rechnung" je Land (AT aus, DE an).
+
+    Nur, wenn der Mandant sie noch nie gesetzt hat **und** noch keine Rechnung
+    existiert: ``init-db`` laeuft auch auf Bestandsinstallationen, deren
+    E-Rechnung ohne Eintrag bisher als „an" gilt — die darf es nicht abschalten.
+    """
+    from app.models import AppSetting, Invoice
+    from app import country
+    from app.einvoice.service import ENABLED_KEY
+
+    if AppSetting.get(ENABLED_KEY) is not None or Invoice.query.first() is not None:
+        return
+    enabled = country.profile(country_code).einvoice_default
+    AppSetting.set(ENABLED_KEY, "true" if enabled else "false")
+    db.session.commit()
+    if verbose:
+        print(f"  + E-Rechnung: {'an' if enabled else 'aus'}")
+
+
 def seed_default_tax_rates(db, *, verbose=False, country_code=None):
     """Die Standard-Steuersaetze des Mandanten-Landes idempotent anlegen.
 
@@ -434,6 +454,7 @@ def register_commands(app):
             db.session.commit()
             print(f"Land des Mandanten: {country.PROFILES[code].name}")
 
+        seed_default_einvoice_setting(db)
         seed_default_tax_rates(db)
         seed_default_charge_types(db)
         seed_default_dunning_policy(db)

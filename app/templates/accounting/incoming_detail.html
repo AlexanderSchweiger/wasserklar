@@ -240,7 +240,7 @@
           </button>
         </form>
         <form method="post" action="{{ url_for('accounting.incoming_discard', doc_id=doc.id) }}" class="mt-2"
-              onsubmit="return confirm('Beleg verwerfen? Die Originaldatei bleibt aufbewahrt.');">
+              hx-confirm="Beleg verwerfen? Die Originaldatei bleibt aufbewahrt.">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button class="btn btn-sm btn-outline-secondary w-100">Verwerfen (z. B. Dublette)</button>
         </form>

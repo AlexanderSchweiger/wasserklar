@@ -57,6 +57,10 @@ class CountryProfile:
     # Sichtbare Fachbegriffe, die sich zwischen AT und DE unterscheiden
     # (Obmann/Vorsitzender, Kassa/Kasse, Jänner/Januar …) — ueber ``term()``.
     terms: dict = None
+    # Startwert der Einstellung „E-Rechnung" (``einvoice.enabled``) fuer **neue**
+    # Mandanten: in DE gilt die B2B-Pflicht, in AT interessiert sie die meisten
+    # Mandanten nicht (Bund ausgenommen — der schaltet sie in den Einstellungen ein).
+    einvoice_default: bool = True
 
     def default_tax_rate_values(self):
         return [rate for rate, _ in self.tax_rates]
@@ -92,6 +96,7 @@ _AT = CountryProfile(
         # unser Konto <pay_verb>:“
         "pay_request": "Wir ersuchen Sie", "pay_verb": "einzuzahlen",
     },
+    einvoice_default=False,
     map_center=(47.59, 14.14),
     map_zoom=7,
     # basemap.at (Verwaltungsgrundkarte Österreich, CC BY 4.0). Einzelhost

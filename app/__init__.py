@@ -253,6 +253,16 @@ def create_app(config_name=None):
         return dict(country=prof,
                     term=lambda key: _country.term(key, prof.code))
 
+    # Context Processor: E-Rechnung an/aus (Einstellungen). Aus = Kontaktformular,
+    # Filter und Badges blenden alles E-Rechnungs-Spezifische aus.
+    @app.context_processor
+    def inject_einvoice_enabled():
+        from app.einvoice.service import is_enabled
+        try:
+            return dict(einvoice_enabled=is_enabled())
+        except Exception:
+            return dict(einvoice_enabled=True)
+
     # Context Processor: OSS-Version fuer Footer/About — SaaS-Layer
     # ueberschreibt den Footer-Block selbst und kombiniert mit saas_version.
     @app.context_processor

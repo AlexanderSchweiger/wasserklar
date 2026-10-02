@@ -2,7 +2,7 @@
 import pytest
 
 from app.extensions import db
-from app.models import Customer, User
+from app.models import AppSetting, Customer, User
 from tests.conftest import _ensure_role
 
 
@@ -93,6 +93,56 @@ class TestEInvoiceFields:
         assert '<option value="xrechnung" selected>' in html
         assert 'value="992-90009-96"' in html
         assert 'value="DE123456789"' in html
+
+
+class TestEInvoiceDisabled:
+    """E-Rechnung in den Einstellungen aus: Das Kontaktformular zeigt nichts davon."""
+
+    @pytest.fixture(autouse=True)
+    def _disabled(self, app):
+        AppSetting.set("einvoice.enabled", "false")
+        db.session.commit()
+
+    def test_form_hides_the_einvoice_section(self, client, admin):
+        c = Customer(name="Gemeinde Musterdorf", is_company=True, is_customer=True,
+                     einvoice_format="xrechnung", vat_id="DE123456789")
+        db.session.add(c)
+        db.session.commit()
+        _login(client)
+        html = client.get(f"/customers/{c.id}/edit").get_data(as_text=True)
+        assert 'name="einvoice_format"' not in html
+        assert 'name="buyer_reference"' not in html
+        assert 'name="vat_id"' not in html
+        assert "Rechnungsformat" not in html
+
+    def test_saving_keeps_the_stored_values(self, client, admin):
+        c = Customer(name="Gemeinde Musterdorf", is_company=True, is_customer=True,
+                     einvoice_format="xrechnung", buyer_reference="992-90009-96",
+                     vat_id="DE123456789")
+        db.session.add(c)
+        db.session.commit()
+        _login(client)
+        client.post(f"/customers/{c.id}/edit", data={
+            "is_company": "1", "company_name": "Gemeinde Musterdorf", "is_customer": "1"})
+        c = db.session.get(Customer, c.id)
+        assert c.einvoice_format == "xrechnung"
+        assert c.buyer_reference == "992-90009-96"
+        assert c.vat_id == "DE123456789"
+
+    def test_german_tenant_keeps_the_business_switch(self, client, admin):
+        """Die gesetzliche Pflicht haengt nicht am Schalter — der Unternehmer-Haken bleibt."""
+        AppSetting.set("org.country", "DE")
+        c = Customer(name="Vermieter", is_customer=True, email="v@v.test")
+        db.session.add(c)
+        db.session.commit()
+        _login(client)
+        html = client.get(f"/customers/{c.id}/edit").get_data(as_text=True)
+        assert 'name="is_business"' in html
+        assert 'name="einvoice_format"' not in html
+        client.post(f"/customers/{c.id}/edit", data={
+            "is_company": "1", "company_name": "Vermieter", "is_customer": "1",
+            "email": "v@v.test", "einvoice_b2b_fields": "1", "is_business": "1"})
+        assert db.session.get(Customer, c.id).is_business is True
 
 
 class TestPeppolFields:

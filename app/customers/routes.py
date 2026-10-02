@@ -867,9 +867,15 @@ def _apply_einvoice_fields(customer, form) -> str | None:
     zurueck. Die Pruefziffer wird nur bei Werten geprueft, die wie eine Leitweg-ID
     aufgebaut sind — die Referenz eines Firmenkunden bleibt frei waehlbar.
     """
-    from app.einvoice import leitweg
-    from app.einvoice.obligation import set_business
+    from app.einvoice import leitweg, service as einvoice_service
     from app.einvoice.model import XML_ONLY_FORMATS
+
+    # Bei abgeschalteter E-Rechnung zeigt das Formular die Felder nicht — die
+    # Bestandswerte (UID, Leitweg-ID, ...) duerfen dann nicht geleert werden. Nur
+    # der Unternehmer-Schalter (DE) bleibt, die gesetzliche Pflicht haengt nicht daran.
+    if not einvoice_service.is_enabled():
+        _apply_business_flag(customer, form)
+        return None
 
     vat_id = re.sub(r"\s+", "", form.get("vat_id", "")).upper()
     if vat_id and not _VAT_ID_PATTERN.match(vat_id):
@@ -888,11 +894,20 @@ def _apply_einvoice_fields(customer, form) -> str | None:
     customer.order_reference = form.get("order_reference", "").strip() or None
     customer.supplier_number = form.get("supplier_number", "").strip() or None
     customer.peppol_id = peppol_id or None
-    # Der Schalter steht nur in deutschen Mandanten im Formular; das Marker-Feld
-    # verhindert, dass ein AT-Formular (ohne Checkbox) das Kennzeichen loescht.
+    _apply_business_flag(customer, form)
+    return None
+
+
+def _apply_business_flag(customer, form):
+    """Unternehmer-Kennzeichen aus dem Formular.
+
+    Der Schalter steht nur in deutschen Mandanten im Formular; das Marker-Feld
+    verhindert, dass ein AT-Formular (ohne Checkbox) das Kennzeichen loescht.
+    """
+    from app.einvoice.obligation import set_business
+
     if form.get("einvoice_b2b_fields") == "1":
         set_business(customer, form.get("is_business") == "1")
-    return None
 
 
 def _apply_wg_fields(customer, form):

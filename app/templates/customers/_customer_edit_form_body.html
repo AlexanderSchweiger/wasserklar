@@ -319,6 +319,10 @@
 </div>
 
 {# ── E-Rechnung: XRechnung für Behörden, USt-IdNr., Käuferreferenz ──────── #}
+{# Hat der Mandant die E-Rechnung abgeschaltet, entfallen Format/Referenzen/UID
+   (_apply_einvoice_fields lässt die Bestandswerte dann unangetastet). Der
+   Unternehmer-Schalter bleibt in DE, weil die gesetzliche Pflicht davon unabhängig ist. #}
+{% if einvoice_enabled or country.code == 'DE' %}
 {% set v_einvoice_format = fval('einvoice_format')|trim %}
 <hr class="my-2">
 <h6 class="text-muted mb-2"><i class="fas fa-file-code me-2"></i>E-Rechnung</h6>
@@ -340,6 +344,7 @@
   </small>
 </div>
 {% endif %}
+{% if einvoice_enabled %}
 <div class="row">
   <div class="col-md-4">
     <div class="mb-3">
@@ -400,6 +405,8 @@
   wird die XML-Datei versendet (das PDF steckt darin). Die <strong>Leitweg-ID</strong> teilt die
   Behörde mit; ohne Eintrag dient die Kundennummer als Käuferreferenz.
 </small>
+{% endif %}
+{% endif %}
 
 {% if is_wg %}
 {# ── Mitgliedschaft (nur Mandant-Typ Wassergenossenschaft) ──────────────── #}
