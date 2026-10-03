@@ -248,7 +248,11 @@ class Customer(db.Model):
     __tablename__ = "customers"
 
     id = db.Column(db.Integer, primary_key=True)
-    customer_number = db.Column(db.Integer, unique=True, nullable=True)    # fortlaufende Kundennummer (nur fuer Kunden vergeben)
+    # Zwei getrennte Nummernkreise je Rolle (app/customers/numbers.py): Kunden-/Mitgliedsnummer
+    # fuer Kunden, Lieferantennummer (Kreditor, Standard ab 70001) fuer Lieferanten. Ein Kontakt
+    # mit beiden Rollen hat beide Nummern.
+    customer_number = db.Column(db.Integer, unique=True, nullable=True)    # Kunden-/Mitgliedsnummer
+    creditor_number = db.Column(db.Integer, unique=True, nullable=True)    # Lieferantennummer
     externe_kennung = db.Column(db.String(100), nullable=True)             # optionale externe Kennung
     name = db.Column(db.String(200), nullable=False)
     # Aufgespaltener Name fuer die Brief-/Rechnungsanrede. ``name`` bleibt das
@@ -285,7 +289,9 @@ class Customer(db.Model):
     einvoice_format = db.Column(db.String(20), nullable=True)   # 'xrechnung' | 'peppol_ubl'
     buyer_reference = db.Column(db.String(100), nullable=True)
     # AT-Bund (e-Rechnung.gv.at, UBL): Auftragsreferenz (BT-13) und die Lieferantennummer
-    # der Genossenschaft beim Bund (BT-29) sind dort Pflicht.
+    # der Genossenschaft beim Bund (BT-29) sind dort Pflicht. ``supplier_number`` ist also die
+    # Nummer, unter der DIESER Kunde die WG fuehrt — nicht die Nummer des Kontakts als
+    # Lieferant (das ist ``creditor_number``).
     order_reference = db.Column(db.String(100), nullable=True)
     supplier_number = db.Column(db.String(50), nullable=True)
     # Elektronische Adresse im Peppol-Schema „Schema:Kennung“ (z.B. 9915:b); UBL verlangt
@@ -2966,6 +2972,17 @@ class CustomerCounter(db.Model):
 
     def __repr__(self):
         return f"<CustomerCounter next={self.next_seq}>"
+
+
+class SupplierCounter(db.Model):
+    """Laufender Lieferantennummer-Zähler (Singleton-Row, id=1), getrennt von den Kunden."""
+    __tablename__ = "supplier_counters"
+
+    id = db.Column(db.Integer, primary_key=True, default=1)
+    next_seq = db.Column(db.Integer, nullable=False, default=70001)
+
+    def __repr__(self):
+        return f"<SupplierCounter next={self.next_seq}>"
 
 
 class OpenItem(db.Model):

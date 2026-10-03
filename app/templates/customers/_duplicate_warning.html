@@ -22,7 +22,7 @@
         <thead>
           <tr>
             <th>Kunde</th>
-            <th>Kundennr.</th>
+            <th>Nr.</th>
             <th>Adresse</th>
             <th class="text-end">Übereinstimmung</th>
             <th style="width:1%"></th>
@@ -35,7 +35,7 @@
               <strong>{{ c.name }}</strong>
               {% if not c.active %}<span class="badge bg-secondary ms-1">Inaktiv</span>{% endif %}
             </td>
-            <td>{{ c.customer_number or '—' }}</td>
+            <td>{{ c.customer_number or c.creditor_number or '—' }}</td>
             <td>{{ c.address_display() or '—' }}</td>
             <td class="text-end">
               <span class="badge bg-warning text-dark">{{ (score * 100)|int }} %</span>

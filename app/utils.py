@@ -84,3 +84,59 @@ def bump_customer_counter_to(value: int) -> None:
     counter = _customer_counter()
     if value >= counter.next_seq:
         counter.next_seq = value + 1
+
+
+# ---------------------------------------------------------------------------
+# Lieferantennummern — eigener Nummernkreis, getrennt von den Kunden-/Mitglieds-
+# nummern. Start nach DATEV-Konvention im Kreditorenbereich (70001), damit eine
+# Lieferantennummer nie mit einer Mitgliedsnummer verwechselt wird.
+# ---------------------------------------------------------------------------
+
+SUPPLIER_START_SETTING = "numbers.supplier_start"
+SUPPLIER_START_DEFAULT = 70001
+
+
+def supplier_number_start() -> int:
+    """Startwert des Lieferanten-Nummernkreises (AppSetting, sonst 70001)."""
+    from app.models import AppSetting
+
+    raw = AppSetting.get(SUPPLIER_START_SETTING)
+    try:
+        value = int(str(raw).strip()) if raw not in (None, "") else SUPPLIER_START_DEFAULT
+    except ValueError:
+        return SUPPLIER_START_DEFAULT
+    return value if value >= 1 else SUPPLIER_START_DEFAULT
+
+
+def _supplier_counter():
+    """Singleton-Counter der Lieferantennummern; nie unter Startwert bzw. max+1."""
+    from app.extensions import db
+    from app.models import Customer, SupplierCounter
+    from sqlalchemy import func
+
+    floor = max(supplier_number_start(),
+                (db.session.query(func.max(Customer.creditor_number)).scalar() or 0) + 1)
+    counter = db.session.get(SupplierCounter, 1)
+    if counter is None:
+        counter = SupplierCounter(id=1, next_seq=floor)
+        db.session.add(counter)
+        db.session.flush()
+    elif counter.next_seq < floor:
+        counter.next_seq = floor
+    return counter
+
+
+def next_supplier_number(peek: bool = False) -> int:
+    """Nächste freie Lieferantennummer (peek=True: nur ansehen, nicht weiterzählen)."""
+    counter = _supplier_counter()
+    nr = counter.next_seq
+    if not peek:
+        counter.next_seq = nr + 1
+    return nr
+
+
+def bump_supplier_counter_to(value: int) -> None:
+    """Counter auf value+1 anheben, falls value >= aktueller next_seq."""
+    counter = _supplier_counter()
+    if value >= counter.next_seq:
+        counter.next_seq = value + 1

@@ -19,7 +19,7 @@ from app.models import (
     Invoice, InvoiceItem, BillingRun, BillingPeriod, OpenItem,
     BookingGroup, Booking, Transfer, RealAccountYearBalance,
     DunningPolicy, DunningStage, DunningNotice,
-    AppSetting, InvoiceCounter, CustomerCounter,
+    AppSetting, InvoiceCounter, CustomerCounter, SupplierCounter,
     NetworkPlan, NetworkFeature, MaintenanceLog, SpringYield, Incident,
     WaterSample, LabResult,
     CustomerWgProfile, PropertyWgProfile, WgFunction,
@@ -145,7 +145,7 @@ CATEGORIES = {
         # Verknuepfungen zu Mahnungen/Sitzungen nur, wenn deren Kategorie mitkommt (services.py).
         Document, IncomingInvoice, DocumentLink, DocumentEvent,
         BankStatement, BankStatementLine, BankStatementLineAllocation,
-        InvoiceCounter, CustomerCounter,
+        InvoiceCounter, CustomerCounter, SupplierCounter,
     ],
     "mahnwesen": [
         DunningPolicy, DunningStage, DunningNotice,
@@ -193,7 +193,7 @@ INSERT_ORDER = [
     # (BankStatementLine referenziert alle). Line VOR Allocation (FK line_id).
     BankStatement, BankStatementLine, BankStatementLineAllocation,
     DunningPolicy, DunningStage, DunningNotice,
-    AppSetting, EmailSuppression, InvoiceCounter, CustomerCounter,
+    AppSetting, EmailSuppression, InvoiceCounter, CustomerCounter, SupplierCounter,
     NetworkPlan, NetworkFeature, MaintenanceLog, SpringYield, Incident,
     WaterSample, LabResult,   # WaterSample VOR LabResult (FK water_sample_id)
     # Schriftfuehrung: Meeting-Kinder referenzieren Meeting + Customer.
@@ -302,6 +302,7 @@ NATURAL_KEYS = {
     AppSetting: ("key",),
     InvoiceCounter: ("year",),
     CustomerCounter: ("id",),           # Singleton id=1
+    SupplierCounter: ("id",),           # Singleton id=1 (Lieferantennummern)
     NetworkPlan: None,                  # immer Insert (Voll-Replace ersetzt den Seed-Hauptplan)
     NetworkFeature: None,               # kein natuerlicher Schluessel — immer Insert
     MaintenanceLog: None,

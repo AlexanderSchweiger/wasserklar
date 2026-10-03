@@ -64,7 +64,12 @@ def index():
     elif type_filter == "supplier":
         query = query.filter(Customer.is_supplier.is_(True))
     if q:
-        query = query.filter(Customer.name.ilike(f"%{q}%"))
+        conds = [Customer.name.ilike(f"%{q}%")]
+        if q.strip().isdigit():
+            # Reine Zahl: auch Kunden-/Mitglieds- und Lieferantennummer treffen.
+            nr = int(q.strip())
+            conds += [Customer.customer_number == nr, Customer.creditor_number == nr]
+        query = query.filter(or_(*conds))
     if country_filter:
         query = query.filter(Customer.land == country_filter)
     # E-Rechnung (DE): Unternehmer, ggf. nur die, die keine E-Mail bekommen koennen.
@@ -73,9 +78,10 @@ def index():
         query = query.filter(Customer.is_business.is_(True))
         if business_filter == "no_email":
             query = query.filter(no_email_clause())
-    # WG-Filter: Status (fehlendes Profil = Mitglied, Default) + Funktion.
+    # WG-Filter: Status (fehlendes Profil = Mitglied, Default) + Funktion. Der Status
+    # gilt nur fuer Kunden — reine Lieferanten sind nie Mitglieder.
     if status_filter in STATUS_LABELS:
-        query = query.outerjoin(
+        query = query.filter(Customer.is_customer.is_(True)).outerjoin(
             CustomerWgProfile, CustomerWgProfile.customer_id == Customer.id
         )
         if status_filter == "member":
@@ -252,13 +258,11 @@ def new():
         flash(f"Kontakt '{c.name}' angelegt.", "success")
         return redirect(url_for("customers.index"))
 
-    suggested_nr = next_customer_number(peek=True)
     if is_modal:
         return render_template(
-            "customers/_customer_edit_form_body.html",
-            customer=None, form_data=None, suggested_nr=suggested_nr,
+            "customers/_customer_edit_form_body.html", customer=None, form_data=None,
         )
-    return _render_new_form(form_data=None, suggested_nr=suggested_nr)
+    return _render_new_form(form_data=None)
 
 
 @bp.route("/<int:customer_id>")
@@ -620,8 +624,8 @@ def quick_create():
         email=request.form.get("email", "").strip(),
         active=True,
     )
-    if is_customer:
-        c.customer_number = next_customer_number()
+    from app.customers.numbers import assign_numbers
+    assign_numbers(c)
     db.session.add(c)
     try:
         db.session.commit()
@@ -660,7 +664,9 @@ def _apply_customer_sort(query, sort: str, direction: str):
         ]
 
     if sort == "nr":
-        return query.order_by(*order(Customer.customer_number), Customer.name.asc())
+        # Kunden-/Mitgliedsnummern zuerst, reine Lieferanten danach nach Lieferantennummer.
+        return query.order_by(*order(Customer.customer_number),
+                              *order(Customer.creditor_number), Customer.name.asc())
     if sort == "type":
         # asc: Kunden zuerst (inkl. Doppelrolle), dann reine Lieferanten.
         # desc: reine Lieferanten zuerst.
@@ -748,13 +754,8 @@ def _validate_customer_form(form) -> str | None:
     return None
 
 
-def _render_new_form(form_data, suggested_nr=None):
-    return render_template(
-        "customers/form.html",
-        customer=None,
-        form_data=form_data,
-        suggested_nr=suggested_nr,
-    )
+def _render_new_form(form_data):
+    return render_template("customers/form.html", customer=None, form_data=form_data)
 
 
 def _apply_customer_fields(customer, form, *, is_new: bool) -> str | None:
@@ -809,7 +810,7 @@ def _apply_customer_fields(customer, form, *, is_new: bool) -> str | None:
     # Modus ist der Mitgliedschafts-Block (inkl. member_since) ausgeblendet,
     # ein blindes Ueberschreiben wuerde den Wert loeschen (Kundenauswertung
     # nutzt member_since).
-    if "member_since" in form:
+    if "member_since" in form and customer.is_customer:
         ms = form.get("member_since", "").strip()
         customer.member_since = datetime.strptime(ms, "%Y-%m-%d").date() if ms else None
     customer.externe_kennung = form.get("externe_kennung", "").strip() or None
@@ -821,40 +822,34 @@ def _apply_customer_fields(customer, form, *, is_new: bool) -> str | None:
     if override_err:
         return override_err
 
-    # Kundennummer ist optional und unique. Auch reine Lieferanten duerfen
-    # eine Nummer haben — nur die Auto-Vergabe bei leerem Feld bleibt Kunden
-    # vorbehalten, damit Lieferanten nicht ungewollt Counter-Werte ziehen.
-    raw_nr = form.get("customer_number", "").strip()
-    if raw_nr:
-        try:
-            requested = int(raw_nr)
-        except ValueError:
-            return f"Kundennummer muss eine Zahl sein: {raw_nr}"
-        if requested < 1:
-            return "Kundennummer muss positiv sein."
-        # Konflikt-Check (eigene id ausschliessen)
-        existing_q = Customer.query.filter(Customer.customer_number == requested)
-        if customer.id is not None:
-            existing_q = existing_q.filter(Customer.id != customer.id)
-        if db.session.query(existing_q.exists()).scalar():
-            return f"Kundennummer {requested} ist bereits vergeben."
-        customer.customer_number = requested
-        bump_customer_counter_to(requested)
-    elif is_new:
-        # Feld leer bei Neuanlage: nur Kunden ziehen einen Counter-Wert,
-        # reine Lieferanten bleiben ohne Nummer (None).
-        if customer.is_customer:
-            customer.customer_number = next_customer_number()
-    else:
-        # Feld leer beim Bearbeiten: Nummer explizit entfernen. Gebraucht,
-        # wenn ein faelschlich als Kunde angelegter Datensatz auf reinen
-        # Lieferanten umgestellt wird und die Kundennummer wegfallen soll.
-        customer.customer_number = None
+    # Nummern (app/customers/numbers.py): je Rolle ein eigener Kreis. Leeres Feld =
+    # automatisch (auch beim Bearbeiten, z.B. Lieferant wird Kunde); eine verwendete
+    # Nummer ist geschuetzt und wird nie still geleert oder geaendert.
+    from app.customers import numbers
+    from app.utils import next_supplier_number, bump_supplier_counter_to
+    confirm_jump = form.get("confirm_number_jump") == "1"
+    nr_label = numbers.number_label(customer, status=form.get("wg_status") or None)
+    for attr, locked, peek, bump, label in (
+        ("customer_number", numbers.customer_number_locked(customer),
+         lambda: next_customer_number(peek=True), bump_customer_counter_to, nr_label),
+        ("creditor_number", numbers.creditor_number_locked(customer),
+         lambda: next_supplier_number(peek=True), bump_supplier_counter_to, "Lieferantennummer"),
+    ):
+        result = numbers.apply_number_field(
+            customer, attr=attr, raw=form.get(attr, ""), locked=locked, peek=peek,
+            bump=bump, label=label, confirm_jump=confirm_jump,
+            clear=form.get(f"clear_{attr}") == "1",
+        )
+        if result.error:
+            return result.error
+    numbers.assign_numbers(customer)
 
     # WG-Felder nur im Genossenschafts-Modus anwenden — im Versorger-Modus
     # fehlen sie im Formular, bestehende WG-Daten bleiben unangetastet.
+    # Reine Lieferanten sind keine Mitglieder: ohne Kunden-Rolle kein WG-Profil (der
+    # Mitgliedschafts-Block ist dann ausgeblendet, ein bestehendes Profil bleibt stehen).
     from app.settings_service import is_wassergenossenschaft
-    if is_wassergenossenschaft():
+    if is_wassergenossenschaft() and customer.is_customer:
         _apply_wg_fields(customer, form)
     return None
 

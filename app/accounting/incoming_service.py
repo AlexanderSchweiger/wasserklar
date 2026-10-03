@@ -75,6 +75,8 @@ def create_supplier(parsed):
         plz=seller.postcode[:10] or None, ort=seller.city[:100] or None,
         land=_country_name(seller.country) or None, email=seller.email, phone=seller.phone,
         vat_id=seller.vat_id)
+    from app.customers.numbers import assign_numbers
+    assign_numbers(supplier)    # Lieferantennummer aus dem eigenen Nummernkreis
     db.session.add(supplier)
     db.session.flush()
     return supplier

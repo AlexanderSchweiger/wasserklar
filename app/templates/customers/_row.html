@@ -10,7 +10,11 @@
 {% set prop = property_map.get(c.id) if property_map is defined else none %}
 {# Warn-Markierung nur fuer Kunden ohne Objekt — fuer Lieferanten irrelevant. #}
 <tr id="customer-row-{{ c.id }}"{% if c.is_customer and not prop %} class="table-warning"{% endif %}>
-  <td class="text-muted">{{ c.customer_number or '—' }}</td>
+  <td class="text-muted text-nowrap">
+    {%- if c.customer_number %}{{ c.customer_number }}{% endif -%}
+    {%- if c.creditor_number %}{% if c.customer_number %}<br>{% endif %}<span title="Lieferantennummer"><i class="fas fa-truck fa-xs me-1"></i>{{ c.creditor_number }}</span>{% endif -%}
+    {%- if not c.customer_number and not c.creditor_number %}—{% endif -%}
+  </td>
   <td>
     <a href="{{ url_for('customers.detail', customer_id=c.id) }}">
       <strong>{{ c.name }}</strong>
@@ -18,7 +22,7 @@
   </td>
   <td>
     {% if c.is_customer %}
-    <span class="badge bg-primary text-white"><i class="fas fa-user me-1"></i>{{ 'Mitglied' if is_wg else 'Kunde' }}</span>
+    <span class="badge bg-primary text-white"><i class="fas fa-user me-1"></i>Kunde</span>
     {% endif %}
     {% if c.is_supplier %}
     <span class="badge bg-info text-white"><i class="fas fa-truck me-1"></i>Lieferant</span>

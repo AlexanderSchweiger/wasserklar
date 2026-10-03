@@ -58,6 +58,33 @@ def _invalidate_cached_invoice_documents():
     )
 
 
+def _save_supplier_number_start(raw):
+    """Startwert der Lieferantennummern setzen (nur ohne vergebene Nummer)."""
+    from app.customers.numbers import supplier_numbers_in_use
+    from app.models import SupplierCounter
+    from app.utils import SUPPLIER_START_SETTING, supplier_number_start
+
+    if supplier_numbers_in_use():
+        return
+    raw = (raw or '').strip()
+    try:
+        start = int(raw)
+    except ValueError:
+        flash('Der Startwert der Lieferantennummern muss eine Zahl sein — nicht übernommen.',
+              'warning')
+        return
+    if start < 1:
+        flash('Der Startwert der Lieferantennummern muss positiv sein — nicht übernommen.',
+              'warning')
+        return
+    if start == supplier_number_start():
+        return
+    AppSetting.set(SUPPLIER_START_SETTING, str(start))
+    counter = db.session.get(SupplierCounter, 1)
+    if counter is not None:
+        counter.next_seq = start
+
+
 @bp.route('/', methods=['GET', 'POST'])
 @login_required
 def index():
@@ -76,6 +103,11 @@ def index():
         country_changed = new_country is not None and new_country != previous_country
         if new_country is not None:
             AppSetting.set(country_mod.SETTING_KEY, new_country)
+
+        # Startwert des Lieferanten-Nummernkreises — nur solange noch keine
+        # Lieferantennummer vergeben ist (danach ist das Feld deaktiviert und fehlt).
+        if 'supplier_number_start' in request.form:
+            _save_supplier_number_start(request.form.get('supplier_number_start'))
 
         # Optionaler Luftbild-WMS fuer alle Karten (nur https; ohne Layer
         # wirkungslos, siehe app.country.map_config).
@@ -320,6 +352,7 @@ def index():
                            einvoice=einvoice_settings_context(),
                            db_info=db_info,
                            org_type=org_type(),
+                           number_ranges=_number_ranges(),
                            org_country=country_mod.current_code(),
                            country_choices=country_mod.COUNTRY_CHOICES,
                            map_ortho={
@@ -528,3 +561,16 @@ def apply_country_defaults_route():
         flash(f'Länder-Defaults ({name}) waren bereits aktiv — nichts geändert.', 'info')
     return redirect(url_for('settings.index', _anchor='pane-tax'))
 
+
+
+def _number_ranges():
+    """Anzeige der Nummernkreise (Einstellungen → Mandant)."""
+    from app.customers.numbers import supplier_numbers_in_use
+    from app.utils import next_customer_number, next_supplier_number, supplier_number_start
+
+    return {
+        "next_customer": next_customer_number(peek=True),
+        "next_supplier": next_supplier_number(peek=True),
+        "supplier_start": supplier_number_start(),
+        "supplier_locked": supplier_numbers_in_use(),
+    }

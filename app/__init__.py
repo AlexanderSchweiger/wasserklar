@@ -200,6 +200,13 @@ def create_app(config_name=None):
     app.jinja_env.globals["wg_function_label"] = _wg_function_label
     app.jinja_env.globals["wg_function_keys_ordered"] = _wg_function_keys_ordered
 
+    # Nummernkreise am Kontakt (Kunden-/Mitgliedsnummer, Lieferantennummer):
+    # Beschriftung je WG-Status + Formular-Kontext (Vorschlag, Schutz).
+    from app.customers.numbers import (number_label as _contact_number_label,
+                                       form_context as _contact_number_context)
+    app.jinja_env.globals["contact_number_label"] = _contact_number_label
+    app.jinja_env.globals["contact_number_context"] = _contact_number_context
+
     # Adress-Land: ``{% if customer.land is foreign_country %}`` druckt das Land
     # nur bei Auslandsanschriften (Inland = Land des Mandanten, app/country.py).
     from app.country import (is_foreign as _is_foreign_country,

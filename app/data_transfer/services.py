@@ -39,7 +39,7 @@ from app.extensions import db
 from app.data_transfer.guard import import_active
 from app.models import (
     AppSetting, BankStatementLine, BankStatementLineAllocation,
-    Booking, BookingGroup, Customer, CustomerCounter,
+    Booking, BookingGroup, Customer, CustomerCounter, SupplierCounter,
     DunningNotice, Document, DocumentEvent, DocumentLink, FiscalYear, IncomingInvoice, Invoice,
     InvoiceCounter, InvoiceItem, RolePermission, SchriftverkehrDocument,
 )
@@ -1004,6 +1004,15 @@ def _insert_merge(model, records: list, id_map: dict, update_existing: bool, sta
         else:
             new_data = {k: v for k, v in data.items() if k not in pk_cols}
 
+        # Lieferantennummer ist unique, aber kein natuerlicher Schluessel (reine
+        # Lieferanten haben keine Kundennummer und werden immer neu angelegt): beim
+        # Zusammenfuehren mit einem Bestand, der die Nummer schon fuehrt, bekommt der
+        # importierte Lieferant die naechste freie Nummer statt eines Unique-Fehlers.
+        if model is Customer and new_data.get("creditor_number") is not None:
+            if Customer.query.filter_by(creditor_number=new_data["creditor_number"]).first():
+                from app.utils import next_supplier_number
+                new_data["creditor_number"] = next_supplier_number()
+
         instance = model(**new_data)
         db.session.add(instance)
         db.session.flush()
@@ -1019,7 +1028,7 @@ def _insert_merge(model, records: list, id_map: dict, update_existing: bool, sta
 # vorher schon FK-remappt). Wuerde man sie wie einen Auto-Increment-PK
 # strippen, schluege der NOT-NULL-Insert fehl.
 _NATURAL_PK_MODELS = {FiscalYear, AppSetting, InvoiceCounter, CustomerCounter,
-                      RolePermission}
+                      SupplierCounter, RolePermission}
 
 
 def _has_natural_pk(model) -> bool:
@@ -1135,6 +1144,15 @@ def _bump_counters(stats: dict):
         db.session.add(CustomerCounter(id=1, next_seq=int(max_cn) + 1))
     elif counter.next_seq <= max_cn:
         counter.next_seq = int(max_cn) + 1
+
+    # SupplierCounter (Singleton id=1) — Lieferantennummern, eigener Kreis
+    max_sn = db.session.query(func.max(Customer.creditor_number)).scalar()
+    if max_sn:
+        counter = db.session.get(SupplierCounter, 1)
+        if counter is None:
+            db.session.add(SupplierCounter(id=1, next_seq=int(max_sn) + 1))
+        elif counter.next_seq <= max_sn:
+            counter.next_seq = int(max_sn) + 1
     db.session.flush()
 
 

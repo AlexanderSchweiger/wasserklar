@@ -5,7 +5,8 @@
    Sets und Init-Skripte sind hier, damit der Body auch im Modal-Swap laeuft.
 
    Erwartet im Kontext: customer (oder None), optional form_data (nach
-   Validierungsfehler), optional suggested_nr, sowie das globale is_wg. #}
+   Validierungsfehler) sowie das globale is_wg. Nummern-Vorschlag und -Schutz
+   kommen aus dem Jinja-Global contact_number_context (app/customers/numbers.py). #}
 {% macro fval(name, default='') -%}
   {%- if form_data is defined and form_data -%}{{ form_data.get(name, default) }}
   {%- elif customer -%}{{ customer[name] if customer[name] is not none else default }}
@@ -22,14 +23,18 @@
   {% set is_cust_checked = true %}
   {% set is_supp_checked = false %}
 {% endif %}
+{# Nummern: Feld leer = automatisch beim Speichern; eine verwendete Nummer ist
+   gesperrt (steht auf Belegen bzw. ist Login der Selbstablesung). #}
+{% set nr_ctx = contact_number_context(customer) %}
+{% macro nr_value(attr, locked) -%}
+  {%- if form_data is defined and form_data and not locked -%}{{ form_data.get(attr, '') }}
+  {%- elif customer and customer[attr] is not none -%}{{ customer[attr] }}
+  {%- endif -%}
+{%- endmacro %}
 {% if form_data is defined and form_data %}
-  {% set kdnr_value = form_data.get('customer_number', '') %}
-{% elif customer and customer.customer_number is not none %}
-  {% set kdnr_value = customer.customer_number %}
-{% elif is_cust_checked and suggested_nr is defined and suggested_nr is not none %}
-  {% set kdnr_value = suggested_nr %}
+  {% set nr_status = form_data.get('wg_status') or (customer.wg_status if customer else 'member') %}
 {% else %}
-  {% set kdnr_value = '' %}
+  {% set nr_status = customer.wg_status if customer else 'member' %}
 {% endif %}
 {# Name-Aufspaltung: Vorbelegung. Altbestand/Quick-Create haben nur `name` —
    dann den kombinierten Namen ins Nachname-Feld spiegeln, damit beim Speichern
@@ -67,7 +72,8 @@
                name="is_customer" value="1"
                {% if is_cust_checked %}checked{% endif %}>
         <label class="form-check-label" for="is_customer">
-          <i class="fas fa-user me-1 text-primary"></i> {{ 'Ist Mitglied' if is_wg else 'Ist Kunde' }}
+          <i class="fas fa-user me-1 text-primary"></i> Kunde
+          <span class="text-muted">({{ 'Wasserbezug — Mitglied oder Extern' if is_wg else 'Wasserbezug, Rechnungen' }})</span>
         </label>
       </div>
       <div class="form-check form-check-inline">
@@ -75,12 +81,14 @@
                name="is_supplier" value="1"
                {% if is_supp_checked %}checked{% endif %}>
         <label class="form-check-label" for="is_supplier">
-          <i class="fas fa-truck me-1 text-info"></i> Ist Lieferant
+          <i class="fas fa-truck me-1 text-info"></i> Lieferant
+          <span class="text-muted">(Eingangsrechnungen, Ausgaben)</span>
         </label>
       </div>
       <small class="text-muted d-block mt-1">
         Mindestens ein Typ erforderlich. Beide möglich, wenn ein Kontakt
-        gleichzeitig {{ 'Mitglied' if is_wg else 'Kunde' }} und Lieferant ist.
+        gleichzeitig Kunde und Lieferant ist — jede Rolle hat ihre eigene Nummer.{% if is_wg %}
+        Ob jemand Mitglied ist, steht unter „Mitgliedschaft“.{% endif %}
       </small>
     </div>
   </div>
@@ -88,23 +96,68 @@
 <hr class="my-2">
 <h6 class="text-muted mb-2"><i class="fas fa-id-card me-2"></i>Stammdaten</h6>
 <div class="row">
-  <div class="col-md-3">
+  {% set cust_has_nr = customer and customer.customer_number is not none %}
+  <div class="col-md-4" id="cust-nr-col"
+       {% if not is_cust_checked and not cust_has_nr %}style="display:none"{% endif %}>
     <div class="mb-3">
-      <label class="form-label" for="customer_number">{{ 'Mitgl.-Nr.' if is_wg else 'Kundennr.' }}</label>
+      <label class="form-label" for="customer_number">
+        <span id="cust-nr-label" data-member="Mitgliedsnummer" data-customer="Kundennummer"
+              data-wg="{{ '1' if is_wg else '0' }}">{{ contact_number_label(customer, is_wg=is_wg, status=nr_status) }}</span>
+      </label>
       <div class="input-group">
-        <span class="input-group-text"><i class="fas fa-hashtag text-muted"></i></span>
+        <span class="input-group-text"><i class="fas fa-{{ 'lock' if nr_ctx.customer_locked else 'hashtag' }} text-muted"></i></span>
         <input type="number" name="customer_number" id="customer_number"
-          class="form-control" min="1" step="1"
-          value="{{ kdnr_value }}"
-          {% if suggested_nr is defined and suggested_nr is not none %}data-suggested="{{ suggested_nr }}"{% endif %}>
+          class="form-control" min="1" step="1" value="{{ nr_value('customer_number', nr_ctx.customer_locked) }}"
+          placeholder="automatisch (nächste: {{ nr_ctx.next_customer }})"
+          {% if nr_ctx.customer_locked %}readonly{% endif %}>
       </div>
-      <small class="text-muted" id="kdnr-hint"
-        {% if customer or not is_cust_checked %}style="display:none"{% endif %}>
-        Vorgeschlagen — überschreibbar.
-      </small>
+      {% if nr_ctx.customer_locked %}
+      <small class="text-muted">Steht auf Rechnungen bzw. Ablesebriefen — nicht mehr änderbar.</small>
+      {% elif cust_has_nr %}
+      <label class="form-check mt-1 mb-0 small">
+        <input type="checkbox" class="form-check-input" name="clear_customer_number" value="1">
+        <span class="form-check-label">Nummer entfernen (noch auf keinem Beleg)</span>
+      </label>
+      {% else %}
+      <small class="text-muted">Leer lassen = nächste freie Nummer beim Speichern.</small>
+      {% endif %}
     </div>
   </div>
-  <div class="col-md-9">
+  {% set supp_has_nr = customer and customer.creditor_number is not none %}
+  <div class="col-md-4" id="supp-nr-col"
+       {% if not is_supp_checked and not supp_has_nr %}style="display:none"{% endif %}>
+    <div class="mb-3">
+      <label class="form-label" for="creditor_number">Lieferantennummer</label>
+      <div class="input-group">
+        <span class="input-group-text"><i class="fas fa-{{ 'lock' if nr_ctx.creditor_locked else 'truck' }} text-muted"></i></span>
+        <input type="number" name="creditor_number" id="creditor_number"
+          class="form-control" min="1" step="1" value="{{ nr_value('creditor_number', nr_ctx.creditor_locked) }}"
+          placeholder="automatisch (nächste: {{ nr_ctx.next_supplier }})"
+          {% if nr_ctx.creditor_locked %}readonly{% endif %}>
+      </div>
+      {% if nr_ctx.creditor_locked %}
+      <small class="text-muted">Mit Buchungen bzw. Belegen verknüpft — nicht mehr änderbar.</small>
+      {% elif supp_has_nr %}
+      <label class="form-check mt-1 mb-0 small">
+        <input type="checkbox" class="form-check-input" name="clear_creditor_number" value="1">
+        <span class="form-check-label">Nummer entfernen (noch nicht verwendet)</span>
+      </label>
+      {% else %}
+      <small class="text-muted">Leer lassen = nächste freie Nummer beim Speichern.</small>
+      {% endif %}
+    </div>
+  </div>
+  {% if g.get('number_jump_confirm') %}
+  <div class="col-md-12">
+    <label class="form-check mb-3">
+      <input type="checkbox" class="form-check-input" name="confirm_number_jump" value="1">
+      <span class="form-check-label">Ja, diese Nummer bewusst übernehmen</span>
+    </label>
+  </div>
+  {% endif %}
+</div>
+<div class="row">
+  <div class="col-md-12">
     <div class="mb-3">
       <label class="form-label d-block">Art</label>
       <div class="btn-group" role="group" aria-label="Personentyp">
@@ -383,9 +436,10 @@
   </div>
   <div class="col-md-4">
     <div class="mb-3">
-      <label class="form-label" for="supplier_number">Lieferantennummer <small class="text-muted">(nur UBL / Bund)</small></label>
+      <label class="form-label" for="supplier_number">Unsere Lieferantennr. beim Kunden <small class="text-muted">(nur UBL / Bund)</small></label>
       <input type="text" name="supplier_number" id="supplier_number" class="form-control"
-        maxlength="50" value="{{ fval('supplier_number') }}">
+        maxlength="50" value="{{ fval('supplier_number') }}"
+        title="Nummer, unter der dieser Kunde (z. B. eine Bundesdienststelle) die Genossenschaft führt — E-Rechnung BT-29">
     </div>
   </div>
   <div class="col-md-4">
@@ -398,7 +452,7 @@
 </div>
 <small class="text-muted d-block mb-3">
   <strong>UBL / Peppol</strong> verlangen Bundesdienststellen in Österreich (e-Rechnung.gv.at): mit
-  <strong>Auftragsreferenz</strong>, der <strong>Lieferantennummer</strong> der Genossenschaft beim Bund und der
+  <strong>Auftragsreferenz</strong>, <strong>unserer Lieferantennummer</strong> beim Bund (die Nummer, unter der die Dienststelle uns führt) und der
   <strong>Peppol-ID</strong> der Dienststelle (<code>Schema:Kennung</code>, wie die Dienststelle sie mitteilt;
   ohne Eintrag dient ihre USt-IdNr.).
   <strong>XRechnung</strong> brauchen Behörden, die keine PDF-Rechnung annehmen: Statt des PDFs
@@ -420,6 +474,7 @@
   {% set cur_status = 'member' %}
   {% set cur_funcs = [] %}
 {% endif %}
+<div id="wg-membership-block" {% if not is_cust_checked %}style="display:none"{% endif %}>
 <hr class="my-2">
 <h6 class="text-muted mb-2"><i class="fas fa-users me-2"></i>Mitgliedschaft</h6>
 <div class="row">
@@ -468,6 +523,7 @@
   </div>
   <div id="wg-func-warning" class="alert alert-warning py-2 px-3 mt-2 mb-0 small d-none" role="alert"></div>
 </div>
+</div>
 {% endif %}
 
 <hr class="my-2">
@@ -499,22 +555,36 @@
 {% include "_charge_overrides_fields.html" %}
 
 <script>
-// Kundennummer-Hinweis ein/ausblenden je nach Kontakttyp.
+// Rollen-Umschalter: Nummernfelder und Mitgliedschafts-Block je Rolle ein-/
+// ausblenden; die Beschriftung der Kundennummer folgt dem WG-Status.
 (function () {
   var custCb = document.getElementById('is_customer');
-  var nrInput = document.getElementById('customer_number');
-  var hint = document.getElementById('kdnr-hint');
-  if (!custCb || !nrInput) return;
-  var suggested = nrInput.dataset.suggested || '';
-  function sync() {
-    if (hint) hint.style.display = custCb.checked ? '' : 'none';
-    if (!custCb.checked && suggested && nrInput.value === suggested) {
-      nrInput.value = '';
-    } else if (custCb.checked && nrInput.value === '' && suggested) {
-      nrInput.value = suggested;
-    }
+  var suppCb = document.getElementById('is_supplier');
+  var custCol = document.getElementById('cust-nr-col');
+  var suppCol = document.getElementById('supp-nr-col');
+  var custNr = document.getElementById('customer_number');
+  var suppNr = document.getElementById('creditor_number');
+  var membership = document.getElementById('wg-membership-block');
+  var label = document.getElementById('cust-nr-label');
+  var status = document.getElementById('wg-status');
+  function show(el, on, input) {
+    // Eine vorhandene Nummer bleibt sichtbar, auch wenn die Rolle abgewählt wird.
+    if (el) el.style.display = (on || (input && input.value !== '')) ? '' : 'none';
   }
-  custCb.addEventListener('change', sync);
+  function sync() {
+    if (custCb) {
+      show(custCol, custCb.checked, custNr);
+      if (membership) membership.style.display = custCb.checked ? '' : 'none';
+    }
+    if (suppCb) show(suppCol, suppCb.checked, suppNr);
+  }
+  function syncLabel() {
+    if (!label || !status || label.dataset.wg !== '1') return;
+    label.textContent = status.value === 'external' ? label.dataset.customer : label.dataset.member;
+  }
+  if (custCb) custCb.addEventListener('change', sync);
+  if (suppCb) suppCb.addEventListener('change', sync);
+  if (status) status.addEventListener('change', syncLabel);
 })();
 
 // Personentyp-Umschalter (Privatperson/Firma); "Familie" blendet den Vornamen aus.

@@ -107,7 +107,7 @@
             <select name="supplier_id" class="form-select tom-select" required>
               <option value="new" {{ 'selected' if not suggested }}>Neu anlegen: {{ inv.seller.name }}</option>
               {% for s in suppliers %}
-              <option value="{{ s.id }}" {{ 'selected' if suggested and suggested.id == s.id }}>{{ s.name }}{% if s.vat_id %} ({{ s.vat_id }}){% endif %}</option>
+              <option value="{{ s.id }}" {{ 'selected' if suggested and suggested.id == s.id }}>{% if s.creditor_number %}{{ s.creditor_number }} · {% endif %}{{ s.name }}{% if s.vat_id %} ({{ s.vat_id }}){% endif %}</option>
               {% endfor %}
             </select>
             <div class="form-text">
@@ -275,7 +275,7 @@
           <div class="mb-3"><label class="form-label">Lieferant</label>
             <select name="supplier_id" class="form-select tom-select">
               <option value="">—</option>
-              {% for s in suppliers %}<option value="{{ s.id }}" {{ 'selected' if doc.supplier_id == s.id }}>{{ s.name }}</option>{% endfor %}
+              {% for s in suppliers %}<option value="{{ s.id }}" {{ 'selected' if doc.supplier_id == s.id }}>{% if s.creditor_number %}{{ s.creditor_number }} · {% endif %}{{ s.name }}</option>{% endfor %}
             </select></div>
           <button class="btn btn-sm {{ 'btn-primary' if doc.meta_auto else 'btn-outline-primary' }} w-100">{{ 'Bestätigen' if doc.meta_auto else 'Speichern' }}</button>
         </form>

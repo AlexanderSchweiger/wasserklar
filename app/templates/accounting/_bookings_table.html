@@ -383,10 +383,13 @@
       <td style="max-width:100px; overflow:hidden">
         {% if b.customer %}
         <div class="d-flex align-items-center gap-1" style="min-width:0">
-          {% if b.customer.customer_number %}
+          {# Ausgabe → Lieferantennummer, sonst Kunden-/Mitgliedsnummer (je Rolle ein Kreis). #}
+          {% set kn = (b.customer.creditor_number if b.amount is not none and b.amount < 0 else none)
+                      or b.customer.customer_number or b.customer.creditor_number %}
+          {% if kn %}
           <a href="{{ url_for('customers.detail', customer_id=b.customer.id) }}"
              class="badge bg-secondary text-white flex-shrink-0"
-             title="{{ b.customer.name }}">{{ b.customer.customer_number }}</a>
+             title="{{ b.customer.name }}">{{ kn }}</a>
           <a href="{{ url_for('customers.detail', customer_id=b.customer.id) }}"
              class="text-truncate small text-decoration-none text-reset">{{ b.customer.name }}</a>
           {% else %}

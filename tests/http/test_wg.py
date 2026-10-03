@@ -52,7 +52,10 @@ class TestCustomerList:
         _member("Anna Mitglied", "member")
         body = client.get("/customers/").get_data(as_text=True)
         assert "Status" in body and "Funktion" in body
-        assert "Mitglieder" in body          # Tab "Kunden" → "Mitglieder"
+        # Der Tab heisst in beiden Modi "Kunden" (Wasserbezieher); Mitglied ist ein
+        # Status — der Statusfilter grenzt die Mitglieder ein.
+        assert "Kunden" in body
+        assert "Mitglied" in body
 
     def test_status_filter(self, client, admin):
         _login(client)

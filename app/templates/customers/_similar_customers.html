@@ -13,7 +13,7 @@
          class="text-decoration-none">
         <strong>{{ c.name }}</strong>
       </a>
-      {% if c.customer_number %}<span class="text-muted">(Nr. {{ c.customer_number }})</span>{% endif %}
+      {% if c.customer_number or c.creditor_number %}<span class="text-muted">(Nr. {{ c.customer_number or c.creditor_number }})</span>{% endif %}
       {% if not c.active %}<span class="badge bg-secondary ms-1">Inaktiv</span>{% endif %}
       – <span class="text-muted">{{ c.address_display() or '—' }}</span>
       <span class="badge bg-warning text-dark ms-1">{{ (score * 100)|int }} %</span>

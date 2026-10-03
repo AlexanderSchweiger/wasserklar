@@ -102,7 +102,7 @@
             {% endif %}
           </td>
           <td class="text-nowrap">{{ d.document_date.strftime('%d.%m.%Y') if d.document_date else '—' }}</td>
-          <td>{{ d.supplier.name if d.supplier else (d.einvoice.seller_name if d.einvoice else '—') }}</td>
+          <td>{% if d.supplier %}{% if d.supplier.creditor_number %}<span class="text-muted small">{{ d.supplier.creditor_number }}</span> {% endif %}{{ d.supplier.name }}{% else %}{{ d.einvoice.seller_name if d.einvoice else '—' }}{% endif %}</td>
           <td class="text-end text-nowrap">{% if d.amount is not none %}{{ d.amount | de_number }} €{% else %}—{% endif %}</td>
           <td>
             {% if d.id in booked_ids %}<span class="badge bg-success-lt">Verbucht</span>

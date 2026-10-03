@@ -156,6 +156,36 @@
           </div>
         </div>
       </div>
+      <div class="card mt-3">
+        <div class="card-header">
+          <h3 class="card-title"><i class="fas fa-hashtag me-1"></i> Nummernkreise</h3>
+        </div>
+        <div class="card-body">
+          <div class="row g-3 align-items-start">
+            <div class="col-md-4">
+              <label class="form-label">{{ 'Mitglieds-/Kundennummern' if org_type == 'cooperative' else 'Kundennummern' }}</label>
+              <div class="form-control-plaintext">nächste: <strong>{{ number_ranges.next_customer }}</strong></div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label" for="supplier_number_start">Lieferantennummern ab</label>
+              <input type="number" min="1" step="1" class="form-control" id="supplier_number_start"
+                     name="supplier_number_start" value="{{ number_ranges.supplier_start }}"
+                     {% if number_ranges.supplier_locked %}disabled{% endif %}>
+              <small class="text-muted">nächste: {{ number_ranges.next_supplier }}</small>
+            </div>
+            <div class="col-md-4">
+              <p class="text-muted small mb-0">
+                Kunden (Mitglieder, Wasserbezieher) und Lieferanten haben getrennte Nummernkreise.
+                Neue Nummern vergibt das Programm beim Speichern automatisch; eine Nummer, die auf
+                Belegen steht, bleibt unverändert. Lieferanten beginnen standardmäßig bei 70001
+                (Kreditorenbereich in DATEV) und sind so nie mit einer Mitgliedsnummer zu verwechseln.
+                {% if number_ranges.supplier_locked %}Der Startwert ist fest, weil bereits
+                Lieferantennummern vergeben sind.{% endif %}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     {# ── Tab: Steuern ────────────────────────────────────────────────── #}

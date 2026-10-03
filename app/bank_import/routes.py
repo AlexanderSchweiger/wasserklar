@@ -446,6 +446,7 @@ def open_item_picker(statement_id, line_id):
         ]
         if q.isdigit():
             conds.append(Customer.customer_number == int(q))
+            conds.append(Customer.creditor_number == int(q))
         amount = _parse_amount(q)
         if amount is not None:
             conds.append(OpenItem.amount == amount)
