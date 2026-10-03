@@ -14,7 +14,12 @@
    - Jede Seite kann ihren eigenen Handler definieren:
      window.onReadingSaved(e) / onMeterReplaced(e) / onMeterEdited(e).
      Default (kein Handler gesetzt): window.location.reload().
+     Handler gelten nur fuer die Seite, die sie setzt (_page_handlers.html).
+   Die Formulare tragen hx-boost="false": der Submit-Listener schickt per
+   htmx.ajax an data-action-url — ohne das Attribut postete der Boost das
+   Formular zusaetzlich an die aktuelle Seiten-URL (405).
 #}
+{% include "_page_handlers.html" %}
 <script>
 (function () {
   // Generischer Modal-Setup-Helper. Vermeidet die dreifache Code-Duplikation
@@ -65,18 +70,28 @@
       });
     });
 
-    document.addEventListener(cfg.closeEvent, function () {
-      var el = document.getElementById(cfg.modalId);
-      if (!el) { return; }
-      var modal = bootstrap.Modal.getInstance(el);
-      if (modal) modal.hide();
-    });
+    // Dokument-Listener nur einmal pro Event-Name registrieren — hx-boost
+    // fuehrt dieses Skript bei jeder Navigation erneut aus (sonst liefe der
+    // Saved-Handler bzw. der Reload nach n Navigationen n-mal). Beide Listener
+    // loesen Modal und Handler erst zur Event-Zeit auf, gelten also fuer die
+    // jeweils aktuelle Seite.
+    window.wkRegisterPageHandler(cfg.savedHandlerName);
+    window.__wkModalEvents = window.__wkModalEvents || {};
+    if (!window.__wkModalEvents[cfg.closeEvent]) {
+      window.__wkModalEvents[cfg.closeEvent] = true;
+      document.addEventListener(cfg.closeEvent, function () {
+        var el = document.getElementById(cfg.modalId);
+        if (!el) { return; }
+        var modal = bootstrap.Modal.getInstance(el);
+        if (modal) modal.hide();
+      });
 
-    document.addEventListener(cfg.saveEvent, function (e) {
-      var fn = window[cfg.savedHandlerName];
-      if (typeof fn === 'function') { fn(e); }
-      else { window.location.reload(); }
-    });
+      document.addEventListener(cfg.saveEvent, function (e) {
+        var fn = window[cfg.savedHandlerName];
+        if (typeof fn === 'function') { fn(e); }
+        else { window.location.reload(); }
+      });
+    }
 
     return openFn;
   }

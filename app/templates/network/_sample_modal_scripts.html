@@ -3,57 +3,60 @@
      die Action-URL fuer den Footer-Submit.
    - Footer-Submit: POST (X-From-Modal) -> Body-Fragment zurueck (Modal bleibt offen).
    - Server feuert HX-Trigger 'sampleSaved' nur bei echter Änderung; beim Schliessen
-     dispatcht das Modal dann 'sampleChanged' auf document — die Host-Seite
-     (Wasserqualitäts-Seite) kann darauf reagieren (Reload). Elementliste ignoriert es.
-   Setup ist auf DOMContentLoaded gegated: base.html laedt htmx/bootstrap mit `defer`,
-   daher sind sie bei hartem Reload (hx-boost="false") erst nach dem Parsen da. #}
+     dispatcht das Modal dann 'sampleChanged' auf document. Traegt das Modal
+     data-on-change="reload" (Wasserqualitaets-Seiten), laedt es die Seite neu;
+     die Elementliste lauscht selbst auf das Event und laedt nur die Tabelle.
+   base.html laedt htmx/bootstrap mit `defer`: bei hartem Reload laeuft dieses Skript
+   VOR den Libraries. Deshalb wird nichts beim Setup abgebrochen — die Libraries werden
+   erst im Klick/Event aufgeloest. Das Skript laeuft bei jedem hx-boost-Swap erneut:
+   Element-Listener gehen an die frischen Elemente, der document.body-Listener (der
+   <body> ueberlebt den Swap) wird nur einmal gebunden. #}
 <script>
 (function () {
-  function setup() {
-    var modal = document.getElementById('featureSampleModal');
-    if (!modal || !window.htmx || !window.bootstrap) { return; }
-    var form = document.getElementById('featureSampleForm');
-    var changed = false;
+  var modal = document.getElementById('featureSampleModal');
+  var form = document.getElementById('featureSampleForm');
+  if (!modal || !form) { return; }
 
-    function spinner() {
-      return '<div class="text-center text-muted py-4">' +
-             '<div class="spinner-border spinner-border-sm" role="status"></div></div>';
-    }
+  function spinner() {
+    return '<div class="text-center text-muted py-4">' +
+           '<div class="spinner-border spinner-border-sm" role="status"></div></div>';
+  }
 
-    window.openFeatureSampleModal = function (btn) {
-      var url = btn.dataset.url;
-      if (!url) { return; }
-      form.dataset.actionUrl = url;
-      document.getElementById('featureSampleModalBody').innerHTML = spinner();
-      bootstrap.Modal.getOrCreateInstance(modal).show();
-      htmx.ajax('GET', url, { target: '#featureSampleModalBody', swap: 'innerHTML', headers: {'X-From-Modal': '1'} });
-    };
+  window.openFeatureSampleModal = function (btn) {
+    var url = btn.dataset.url;
+    if (!url || !window.htmx || !window.bootstrap) { return; }
+    form.dataset.actionUrl = url;
+    document.getElementById('featureSampleModalBody').innerHTML = spinner();
+    window.bootstrap.Modal.getOrCreateInstance(modal).show();
+    window.htmx.ajax('GET', url, { target: '#featureSampleModalBody', swap: 'innerHTML', headers: {'X-From-Modal': '1'} });
+  };
 
-    form.addEventListener('submit', function (e) {
-      e.preventDefault();
-      var url = form.dataset.actionUrl;
-      if (!url) { return; }
-      var values = {};
-      new FormData(form).forEach(function (v, k) { values[k] = v; });
-      htmx.ajax('POST', url, {
-        target: '#featureSampleModalBody', swap: 'innerHTML', values: values, headers: {'X-From-Modal': '1'},
-      });
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var url = form.dataset.actionUrl;
+    if (!url || !window.htmx) { return; }
+    var values = {};
+    new FormData(form).forEach(function (v, k) { values[k] = v; });
+    window.htmx.ajax('POST', url, {
+      target: '#featureSampleModalBody', swap: 'innerHTML', values: values, headers: {'X-From-Modal': '1'},
     });
+  });
 
-    document.body.addEventListener('sampleSaved', function () { changed = true; });
-
-    modal.addEventListener('hidden.bs.modal', function () {
-      if (changed) {
-        changed = false;
-        document.dispatchEvent(new CustomEvent('sampleChanged'));
-      }
+  // Merker am Modal-Element statt in der Closure, damit der einmal gebundene
+  // body-Listener immer das aktuelle Modal trifft.
+  if (!window.__featureSampleSavedBound) {
+    window.__featureSampleSavedBound = true;
+    document.body.addEventListener('sampleSaved', function () {
+      var m = document.getElementById('featureSampleModal');
+      if (m) { m.dataset.changed = '1'; }
     });
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', setup);
-  } else {
-    setup();
-  }
+  modal.addEventListener('hidden.bs.modal', function () {
+    if (modal.dataset.changed !== '1') { return; }
+    delete modal.dataset.changed;
+    if (modal.dataset.onChange === 'reload') { window.location.reload(); return; }
+    document.dispatchEvent(new CustomEvent('sampleChanged'));
+  });
 })();
 </script>

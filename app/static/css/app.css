@@ -116,6 +116,31 @@ tr.overdue { background-color: #fff3cd !important; }
 .ts-wrapper { display: block; width: 100%; }
 .ts-wrapper .ts-control { min-height: calc(1.5em + 0.75rem + 2px); }
 
+/* Single-Select: Höhe beim Fokus nicht ändern. Fokussiert blendet TomSelect
+   neben dem gewählten Eintrag das Suchfeld ein (Theme: min-width 7rem,
+   flex-wrap: wrap) — bei langem Label bricht das Control auf zwei Zeilen um
+   und schrumpft beim Blur zurück. Weil Blur schon bei mousedown passiert,
+   rutscht ein darunterliegender Button weg und der Klick landet ins Leere.
+   Daher: einzeilig, langes Label mit Ellipse kürzen, Suchfeld klein halten.
+   Das Item ist im Theme display:flex — text-overflow greift nur auf einem
+   Block, deshalb display:block (Farbpunkt-Spans sind inline-block). */
+.ts-wrapper.single .ts-control { flex-wrap: nowrap; }
+.ts-wrapper.single .ts-control > .item {
+  display: block;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ts-wrapper.single .ts-control > input { flex: 1 1 2rem; min-width: 2rem; }
+/* Platz für den Dropdown-Pfeil des form-select-Wrappers. Die Theme-Regel
+   padding-right: max(var(--ts-pr-min), var(--ts-pr-clear-button) + var(--ts-pr-caret))
+   ist ungültig (unitless 0 + 2.25rem) und fällt auf 0 zurück — ohne diese
+   Regel liefe die Ellipse unter den Pfeil. Spezifität + !important schlagen
+   die Theme-Regel. */
+.ts-wrapper.single.form-select .ts-control { padding-right: 2.25rem !important; }
+
 /* Filter-Leisten: TomSelects auf Tabler form-control-sm-Höhe bringen.
    Tabler verwendet kleinere Sm-Werte als Standard-Bootstrap (~21px Höhe,
    12px Font, 1px vertikales Padding). Das Bootstrap5-Theme von TomSelect

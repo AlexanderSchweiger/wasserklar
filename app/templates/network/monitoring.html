@@ -118,14 +118,11 @@
 {% endblock %}
 
 {% block modals %}
-{% include "network/_yield_modal.html" %}
+{% with reload_on_change = true %}{% include "network/_yield_modal.html" %}{% endwith %}
 {% endblock %}
 
 {% block scripts %}
 {% include "network/_yield_modal_scripts.html" %}
-{# Nach einer erfassten/gelöschten Messung die Seite neu laden, damit Diagramm +
-   Kennzahlen den neuen Stand zeigen (Event aus _yield_modal_scripts.html). #}
-<script>document.addEventListener('yieldChanged', function () { window.location.reload(); });</script>
 <script>
 (function () {
   function initYieldChart() {

@@ -15,7 +15,7 @@
         <h5 class="modal-title"><i class="fas fa-edit me-2"></i>Element bearbeiten</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
       </div>
-      <form id="featureEditForm" method="post">
+      <form id="featureEditForm" method="post" hx-boost="false">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="modal-body" id="featureEditModalBody">
           <div class="text-center text-muted py-4">
@@ -42,7 +42,7 @@
         <h5 class="modal-title"><i class="fas fa-tools me-2"></i>Wartung &amp; Prüfung</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
       </div>
-      <form id="featureMaintenanceForm" method="post">
+      <form id="featureMaintenanceForm" method="post" hx-boost="false">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="modal-body" id="featureMaintenanceModalBody">
           <div class="text-center text-muted py-4">

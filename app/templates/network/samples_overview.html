@@ -95,13 +95,12 @@
 {% endblock %}
 
 {% block modals %}
-{% include "network/_sample_modal.html" %}
+{# reload_on_change: nach Erfassen/Löschen eines Befunds neu laden (Tabelle + Diagramm). #}
+{% with reload_on_change = true %}{% include "network/_sample_modal.html" %}{% endwith %}
 {% endblock %}
 
 {% block scripts %}
 {% include "network/_sample_modal_scripts.html" %}
-{# Nach Erfassen/Löschen eines Befunds neu laden (Tabelle + Diagramm aktualisieren). #}
-<script>document.addEventListener('sampleChanged', function () { window.location.reload(); });</script>
 {% if samples %}
 <script type="application/json" id="wq-series">{{ series | tojson }}</script>
 <script type="application/json" id="wq-meta">{{ {"limit": limit_value, "label": wq.parameter_label(param), "unit": wq.parameter_unit(param)} | tojson }}</script>

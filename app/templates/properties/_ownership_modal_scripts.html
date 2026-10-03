@@ -7,6 +7,7 @@
    ('ownershipEdited'); aufrufende Seite kann window.onOwnershipEdited setzen,
    Default ist window.location.reload().
 #}
+{% include "_page_handlers.html" %}
 <script>
 (function () {
   var form = document.getElementById('ownershipEditForm');
@@ -45,17 +46,24 @@
     });
   });
 
-  document.addEventListener('closeOwnershipEditModal', function () {
-    var el = document.getElementById('ownershipEditModal');
-    if (!el) { return; }
-    var modal = bootstrap.Modal.getInstance(el);
-    if (modal) { modal.hide(); }
-  });
+  // Dokument-Listener nur einmal registrieren — hx-boost fuehrt dieses Skript
+  // bei jeder Navigation erneut aus (sonst Mehrfach-Reload).
+  window.wkRegisterPageHandler('onOwnershipEdited');
+  window.__wkModalEvents = window.__wkModalEvents || {};
+  if (!window.__wkModalEvents.closeOwnershipEditModal) {
+    window.__wkModalEvents.closeOwnershipEditModal = true;
+    document.addEventListener('closeOwnershipEditModal', function () {
+      var el = document.getElementById('ownershipEditModal');
+      if (!el) { return; }
+      var modal = bootstrap.Modal.getInstance(el);
+      if (modal) { modal.hide(); }
+    });
 
-  document.addEventListener('ownershipEdited', function (e) {
-    var fn = window.onOwnershipEdited;
-    if (typeof fn === 'function') { fn(e); }
-    else { window.location.reload(); }
-  });
+    document.addEventListener('ownershipEdited', function (e) {
+      var fn = window.onOwnershipEdited;
+      if (typeof fn === 'function') { fn(e); }
+      else { window.location.reload(); }
+    });
+  }
 })();
 </script>

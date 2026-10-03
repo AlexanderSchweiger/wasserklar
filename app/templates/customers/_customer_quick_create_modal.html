@@ -15,7 +15,7 @@
         </h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
       </div>
-      <form id="customerQuickCreateForm">
+      <form id="customerQuickCreateForm" hx-boost="false">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="modal-body">
           <div id="cqc-error" class="alert alert-danger d-none" role="alert"></div>

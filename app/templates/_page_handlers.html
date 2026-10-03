@@ -1,0 +1,34 @@
+{# Seitenspezifische window-Handler (z.B. window.onReadingSaved), die ein
+   einmalig registrierter Dokument-Listener aufruft.
+
+   Hintergrund: hx-boost tauscht nur den <body>-Inhalt; window-Globals bleiben
+   ueber Navigationen hinweg stehen. Weil die Modal-Skripte ihre
+   Dokument-Listener nur noch EINMAL registrieren (sonst laeuft der Handler
+   nach n Navigationen n-mal), wuerde ein Handler der Vorseite auf einer Seite
+   ohne eigenen Handler weiterleben. wkRegisterPageHandler(name) merkt sich den
+   Namen; vor jedem Seitenwechsel wird window[name] geloescht — die neue Seite
+   definiert ihn bei Bedarf beim Ausfuehren ihrer Skripte neu.
+#}
+<script>
+if (!window.wkRegisterPageHandler) {
+  (function () {
+    var names = {};
+    function reset() {
+      Object.keys(names).forEach(function (n) { delete window[n]; });
+    }
+    // Geboostete Navigation: htmx tauscht den kompletten Body.
+    document.addEventListener('htmx:beforeSwap', function (e) {
+      if (e.detail && e.detail.shouldSwap && e.detail.target === document.body) { reset(); }
+    });
+    // Zurueck/Vor aus dem History-Cache: htmx speichert vorher die alte Seite
+    // (Pfad != aktuelle URL, die der Browser schon umgestellt hat). Bei
+    // hx-push-url-Teilupdates ist der Pfad noch gleich — dort nicht loeschen.
+    document.addEventListener('htmx:beforeHistorySave', function (e) {
+      var path = e.detail && e.detail.path;
+      if (path && path !== window.location.pathname + window.location.search) { reset(); }
+    });
+    document.addEventListener('htmx:historyCacheMiss', reset);
+    window.wkRegisterPageHandler = function (name) { names[name] = true; };
+  })();
+}
+</script>

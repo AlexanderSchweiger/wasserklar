@@ -147,13 +147,10 @@
 {% endblock %}
 
 {% block modals %}
-{% include "network/_sample_modal.html" %}
+{% with reload_on_change = true %}{% include "network/_sample_modal.html" %}{% endwith %}
 {% endblock %}
 
 {% block scripts %}
 {% include "network/_sample_modal_scripts.html" %}
-{# Nach einem erfassten/gelöschten Befund die Seite neu laden, damit Diagramm +
-   Kennzahlen aktualisiert sind (Event aus _sample_modal_scripts.html). #}
-<script>document.addEventListener('sampleChanged', function () { window.location.reload(); });</script>
 {% include "network/_wq_chart_scripts.html" %}
 {% endblock %}
