@@ -10,15 +10,19 @@ Bueroklammer in der Buchungsliste (Panel im Modal, wie die Notizen).
 """
 import io
 import json
+import tempfile
 from datetime import date
 
 from flask import (
-    abort, flash, jsonify, make_response, redirect, render_template, request, send_file, url_for,
+    abort, current_app, flash, jsonify, make_response, redirect, render_template, request, send_file, url_for,
 )
 from flask_login import current_user, login_required
+from sqlalchemy.orm import undefer
 
+from app import country
 from app.accounting import bp
 from app.accounting import incoming_service as einvoice_svc
+from app.documents import archive, extract
 from app.documents import service as svc
 from app.documents import storage
 from app.einvoice import incoming
@@ -44,6 +48,15 @@ def _wants_json():
 
 def _doc_redirect(doc):
     return redirect(url_for("accounting.document_detail", doc_id=doc.id))
+
+
+def _doc_or_404(doc_id):
+    """Ein Beleg — nur aus dem Bereich ``accounting``. Ausgangsrechnungen, Mahnungen und Protokolle
+    liegen im selben Register, gehoeren aber anderen Rechten (``app/documents/access.py``)."""
+    doc = db.get_or_404(Document, doc_id)
+    if doc.area != Document.AREA_ACCOUNTING:
+        abort(404)
+    return doc
 
 
 def _entity_or_404(entity_type, entity_id):
@@ -80,21 +93,119 @@ def documents():
     if tab not in dict(_TABS):
         tab = "inbox"
     term = (request.args.get("q") or "").strip()
-    query = Document.query
+    query = svc.accounting_documents()
     tab_filter = svc.tab_filter(tab)
     if tab_filter is not None:
         query = query.filter(tab_filter)
     if term:
-        query = query.filter(svc.search_filter(term))
+        # der Text wird nur fuer die Fundstellen-Auszuege der angezeigten Seite mitgeladen
+        query = query.filter(svc.search_filter(term)).options(undefer(Document.text_content))
     query = query.order_by(Document.created_at.desc(), Document.id.desc())
     pagination = paginate_query(query, page_key="documents")
     ids = [d.id for d in pagination.items]
     booked_ids = ({row[0] for row in db.session.query(Document.id)
                    .filter(Document.id.in_(ids), svc.booked_clause()).all()} if ids else set())
+    snippets = {}
+    if term:
+        for d in pagination.items:
+            if not svc.matches_meta(d, term):          # nur Treffer im Text bekommen einen Auszug
+                hit = extract.snippet(d.text_content, term)
+                if hit:
+                    snippets[d.id] = hit
     return render_template(
         "accounting/documents_list.html", docs=pagination.items, pagination=pagination, tab=tab,
-        tabs=_TABS, counts=svc.tab_counts(), search=term, booked_ids=booked_ids,
-        quota=svc.quota_status(), max_upload_mb=svc.max_upload_mb())
+        tabs=_TABS, counts=svc.tab_counts(), search=term, booked_ids=booked_ids, snippets=snippets,
+        quota=svc.quota_status(), max_upload_mb=svc.max_upload_mb(),
+        expired_count=svc.expired_count())
+
+
+@bp.route("/documents/archive")
+@login_required
+def documents_archive():
+    """Belegarchiv je Jahr zum Herunterladen (Steuerberater, Betriebspruefung, Jahresabschluss)."""
+    return render_template("accounting/documents_archive.html", years=archive.year_summary(),
+                           retention_years=country.current_profile().document_retention_years)
+
+
+@bp.route("/documents/archive/<int:year>/download")
+@login_required
+def documents_archive_download(year):
+    """ZIP mit den Belegdateien des Jahres, ``index.csv`` und ``sha256sums.txt``.
+
+    Gebaut wird in eine Temp-Datei im Dateibaum des Mandanten (nicht im Arbeitsspeicher — ein
+    Jahresarchiv kann Gigabyte gross sein); sie verschwindet, sobald die Antwort ausgeliefert ist.
+    """
+    if not 2000 <= year <= date.today().year + 1:
+        abort(404)
+    needed = archive.year_size(year)
+    min_free = int(current_app.config.get("DOCUMENT_MIN_FREE_DISK_MB", 0)) * svc.MB
+    try:
+        free = storage.free_bytes()
+    except OSError:
+        free = None
+    if free is not None and free < needed + min_free:
+        flash("Auf dem Server ist gerade zu wenig Speicherplatz frei, um das Archiv zu erstellen. "
+              "Bitte später erneut versuchen.", "danger")
+        return redirect(url_for("accounting.documents_archive"))
+    root = storage.tenant_root()
+    root.mkdir(parents=True, exist_ok=True)
+    tmp = tempfile.TemporaryFile(dir=root)
+    try:
+        result = archive.build(year, tmp, created_by=current_user.username)
+    except Exception:  # noqa: BLE001 — Fehler beim Zusammenstellen: melden statt halbes ZIP ausliefern
+        tmp.close()
+        current_app.logger.exception("Belegarchiv %s konnte nicht erstellt werden", year)
+        flash("Das Belegarchiv konnte nicht erstellt werden.", "danger")
+        return redirect(url_for("accounting.documents_archive"))
+    if result.missing or result.mismatched:
+        flash(f"Hinweis zum Archiv {year}: bei {len(result.missing)} Beleg(en) fehlte die Datei, bei "
+              f"{len(result.mismatched)} passte sie nicht mehr zur Prüfsumme — Einzelheiten stehen "
+              "in der Spalte „Prüfung“ der index.csv.", "warning")
+    tmp.seek(0)
+    resp = send_file(tmp, mimetype="application/zip", as_attachment=True, download_name=f"belegarchiv-{year}.zip")
+    resp.call_on_close(tmp.close)
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    return resp
+
+
+@bp.route("/documents/expired")
+@login_required
+def documents_expired():
+    """Belege, deren Aufbewahrungsfrist abgelaufen ist. Loeschen duerfen nur Administratoren."""
+    rows = svc.expired_documents()
+    return render_template(
+        "accounting/documents_expired.html", rows=rows, is_admin=current_user.is_admin,
+        total_size=sum(doc.size_bytes or 0 for doc, _end in rows),
+        retention_years=country.current_profile().document_retention_years,
+        retention_hint=svc.retention_hint())
+
+
+@bp.route("/documents/expired/delete", methods=["POST"])
+@login_required
+def documents_expired_delete():
+    """Loescht die gewaehlten Belege nach Fristablauf (nur Administratoren). Die Frist rechnet der
+    Server je Beleg neu — ein manipuliertes Formular loescht nie einen Beleg mit laufender Frist."""
+    if not current_user.is_admin:
+        flash("Belege nach Ablauf der Aufbewahrungsfrist löschen dürfen nur Administratoren.", "danger")
+        return redirect(url_for("accounting.documents_expired"))
+    ids = [int(raw) for raw in request.form.getlist("ids") if raw.isascii() and raw.isdigit()]
+    if not ids:
+        flash("Bitte mindestens einen Beleg wählen.", "warning")
+        return redirect(url_for("accounting.documents_expired"))
+    deleted, freed, problems = 0, 0, []
+    for doc in svc.by_ids(ids):
+        size = doc.size_bytes or 0
+        try:
+            svc.delete_expired(doc, current_user.id)
+            deleted, freed = deleted + 1, freed + size
+        except svc.DocumentError as exc:
+            db.session.rollback()
+            problems.append(f"„{doc.display_title}“: {exc}")
+    if deleted:
+        flash(f"{deleted} Beleg(e) gelöscht, {svc.format_size(freed)} Speicher frei.", "success")
+    for problem in problems:
+        flash(problem, "danger")
+    return redirect(url_for("accounting.documents_expired" if svc.expired_documents() else "accounting.documents"))
 
 
 @bp.route("/documents/upload", methods=["POST"])
@@ -178,13 +289,16 @@ def document_upload():
 @bp.route("/documents/<int:doc_id>")
 @login_required
 def document_detail(doc_id):
-    doc = db.get_or_404(Document, doc_id)
+    doc = _doc_or_404(doc_id)
     booked = svc.is_booked(doc)
+    detected_vat_ids, detected_ibans = svc.detected_identifiers(doc)
     ctx = dict(
         doc=doc, booked=booked, file_ok=storage.exists(doc.storage_key),
+        detected_vat_ids=detected_vat_ids, detected_ibans=detected_ibans,
         links=doc.links, events=list(reversed(doc.events)),
         link_blockers={row.id: svc.unlink_blocker(row) for row in doc.links},
         retention_end=svc.retention_end(doc), retention_hint=svc.retention_hint(),
+        retention_over=svc.retention_end(doc) < date.today(), is_admin=current_user.is_admin,
         can_delete=svc.can_delete(doc), form=None,
         suppliers=Customer.query.filter(Customer.is_supplier.is_(True), Customer.active.is_(True))
         .order_by(Customer.name).all(),
@@ -214,7 +328,7 @@ def document_detail(doc_id):
 @login_required
 def document_raw(doc_id):
     """Das unveraenderte Original: PDF und Bilder inline, XML immer als Download."""
-    doc = db.get_or_404(Document, doc_id)
+    doc = _doc_or_404(doc_id)
     inline = (doc.is_pdf or doc.is_image) and not request.args.get("download")
     resp = storage.send(doc.storage_key, download_name=doc.original_name, mimetype=doc.content_type,
                         as_attachment=not inline)
@@ -238,7 +352,7 @@ def _einvoice_xml(doc):
 @bp.route("/documents/<int:doc_id>/xml")
 @login_required
 def document_einvoice_xml(doc_id):
-    doc = db.get_or_404(Document, doc_id)
+    doc = _doc_or_404(doc_id)
     if doc.einvoice is None:
         abort(404)
     xml = _einvoice_xml(doc)
@@ -257,7 +371,7 @@ def document_einvoice_xml(doc_id):
 @login_required
 def document_einvoice_attachment(doc_id, index):
     """Ein in die Rechnung eingebetteter Anhang (BG-24), z. B. die PDF-Ansicht einer XRechnung."""
-    doc = db.get_or_404(Document, doc_id)
+    doc = _doc_or_404(doc_id)
     if doc.einvoice is None:
         abort(404)
     xml = _einvoice_xml(doc)
@@ -281,7 +395,7 @@ def document_einvoice_attachment(doc_id, index):
 @bp.route("/documents/<int:doc_id>/update", methods=["POST"])
 @login_required
 def document_update(doc_id):
-    doc = db.get_or_404(Document, doc_id)
+    doc = _doc_or_404(doc_id)
     try:
         document_date = None
         raw_date = (request.form.get("document_date") or "").strip()
@@ -297,12 +411,18 @@ def document_update(doc_id):
         supplier_id = _int_or_none(request.form.get("supplier_id"))
         if supplier_id is not None and db.session.get(Customer, supplier_id) is None:
             supplier_id = None
+        was_auto = doc.meta_auto
         changes = svc.update_meta(
             doc, title=request.form.get("title"), number=request.form.get("number"),
             document_date=document_date, amount=amount, supplier_id=supplier_id,
             kind=request.form.get("kind") or doc.kind, user_id=current_user.id)
         db.session.commit()
-        flash("Gespeichert." if changes else "Keine Änderung.", "success" if changes else "info")
+        if changes:
+            flash("Gespeichert.", "success")
+        elif was_auto:
+            flash("Angaben bestätigt.", "success")
+        else:
+            flash("Keine Änderung.", "info")
     except svc.DocumentError as exc:
         db.session.rollback()
         flash(str(exc), "danger")
@@ -313,7 +433,7 @@ def document_update(doc_id):
 @login_required
 def document_book_einvoice(doc_id):
     """Bucht eine E-Rechnung (Buchungsvorschlag je Steuersatz) und verknuepft den Beleg."""
-    doc = db.get_or_404(Document, doc_id)
+    doc = _doc_or_404(doc_id)
     if doc.einvoice is None:
         abort(404)
     parsed = doc.einvoice.parsed
@@ -350,7 +470,7 @@ def document_book_einvoice(doc_id):
 @login_required
 def document_link(doc_id):
     """Ordnet den Beleg einer bestehenden Buchung / Sammelbuchung zu (``target`` = booking:ID | group:ID)."""
-    doc = db.get_or_404(Document, doc_id)
+    doc = _doc_or_404(doc_id)
     kind, _, raw_id = (request.form.get("target") or "").partition(":")
     target_id = _int_or_none(raw_id)
     if kind not in ("booking", "group") or target_id is None:
@@ -391,7 +511,7 @@ def document_unlink(link_id):
 
 
 def _simple_action(doc_id, action, success):
-    doc = db.get_or_404(Document, doc_id)
+    doc = _doc_or_404(doc_id)
     try:
         action(doc, current_user.id)
         db.session.commit()
@@ -423,7 +543,7 @@ def document_reopen(doc_id):
 @bp.route("/documents/<int:doc_id>/delete", methods=["POST"])
 @login_required
 def document_delete(doc_id):
-    doc = db.get_or_404(Document, doc_id)
+    doc = _doc_or_404(doc_id)
     try:
         svc.delete(doc, current_user.id)
     except svc.DocumentError as exc:
@@ -476,6 +596,8 @@ def document_panel_attach(entity_type, entity_id):
     entity = _entity_or_404(entity_type, entity_id)
     error = None
     doc = db.session.get(Document, _int_or_none(request.form.get("document_id")) or 0)
+    if doc is not None and doc.area != Document.AREA_ACCOUNTING:
+        doc = None
     if doc is None:
         error = "Bitte einen Beleg wählen."
     else:

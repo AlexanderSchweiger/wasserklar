@@ -13,7 +13,7 @@ from app.dunning import bp
 from app.extensions import db
 from app.file_safety import safe_tenant_path
 from app.models import (
-    AppSetting, Customer, DunningNotice, DunningPolicy, DunningStage, Invoice,
+    AppSetting, Customer, Document, DunningNotice, DunningPolicy, DunningStage, Invoice,
 )
 from app.dunning.services import (
     cancel_dunnings_for_invoice, compute_fee, create_dunning_notice,
@@ -28,14 +28,6 @@ _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.doc
 
 def _current_design():
     return get_design(AppSetting.get("invoice.design", "classic"))
-
-
-def _get_dunning_doc_dir(notice):
-    """Gibt den Unterordner für Mahn-Dokumente zurück: <PDF_DIR>/<Jahr>/dunning/"""
-    year = notice.issued_date.year if notice.issued_date else "misc"
-    doc_dir = os.path.join(current_app.config["PDF_DIR"], str(year), "dunning")
-    os.makedirs(doc_dir, exist_ok=True)
-    return doc_dir
 
 
 def _dunning_filename(notice, ext):
@@ -80,22 +72,6 @@ def _dunning_template_name(design):
     return design.get("dunning_template", "dunning/pdf_template.html")
 
 
-def _dunning_versioned_path(notice, ext):
-    """Eindeutiger Pfad <Rechnungsnr>_M<level>[_Vn].<ext> — friert den
-    Versand-Stand ein, ältere Versionen bleiben erhalten (analog Rechnung)."""
-    doc_dir = _get_dunning_doc_dir(notice)
-    base = os.path.join(doc_dir, _dunning_filename(notice, ext))
-    if not os.path.exists(base):
-        return base
-    inv_no = notice.invoice.invoice_number
-    v = 2
-    while True:
-        cand = os.path.join(doc_dir, f"{inv_no}_M{notice.level_snapshot}_V{v}.{ext}")
-        if not os.path.exists(cand):
-            return cand
-        v += 1
-
-
 def _render_dunning_pdf_bytes(notice):
     """PDF-Bytes (WeasyPrint). Wirft ImportError/OSError ohne WeasyPrint."""
     import weasyprint
@@ -115,14 +91,27 @@ def _render_dunning_docx_bytes(notice):
 
 
 def _freeze_dunning_document(notice, ext, data):
-    """Schreibt das exakt versendete Dokument persistent und merkt sich den Pfad.
+    """Archiviert das exakt versendete Dokument im Dokumentenregister (Bereich ``dunning``:
+    Pruefsumme, Protokoll, Frist fuer Geschaeftsbriefe) und merkt sich den Pfad.
 
     Ab dann liefert der Download diese eingefrorene Datei aus (Audit-/Beleg-
-    Spur), statt live neu zu rendern.
+    Spur), statt live neu zu rendern. Ein Schreibfehler kommt als ``OSError``
+    (wie frueher beim direkten Schreiben) — die Aufrufer fangen das schon ab.
     """
-    path = _dunning_versioned_path(notice, ext)
-    with open(path, "wb") as fh:
-        fh.write(data)
+    from app.documents import service as doc_svc
+    from app.documents import storage
+    try:
+        doc = doc_svc.store_generated(
+            Document.AREA_DUNNING, Document.KIND_DUNNING_NOTICE, data, ext,
+            original_name=_dunning_filename(notice, ext),
+            title=notice.invoice.customer.letter_name if notice.invoice and notice.invoice.customer else None,
+            number=f"{notice.invoice.invoice_number} M{notice.level_snapshot}",
+            document_date=notice.issued_date,
+            user_id=current_user.id if current_user and current_user.is_authenticated else None,
+            dunning_notice=notice)
+    except doc_svc.DocumentError as exc:
+        raise OSError(str(exc)) from exc
+    path = str(storage.path_for(doc.storage_key))
     if ext == "pdf":
         notice.pdf_path = path
     else:

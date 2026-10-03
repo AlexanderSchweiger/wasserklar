@@ -408,10 +408,11 @@ def test_resolution_register_search(client, admin):
 
 # ── Schriftverkehr-Archiv: Upload-Validierung ────────────────────────────────
 
-def test_archive_upload_rejects_bad_extension(client, admin):
+def test_archive_upload_rejects_bad_content(client, admin):
+    """Gepruefte wird der Inhalt, nicht die Endung: ein Programm (Binaerdaten) wird abgelehnt."""
     _login(client)
     data = {"title": "Test", "doc_type": "incoming",
-            "document": (io.BytesIO(b"x"), "schad.exe")}
+            "document": (io.BytesIO(b"MZ\x90\x00\x03\x00\x00\x00\x04\x00"), "schad.exe")}
     client.post("/schriftfuehrung/archive/upload", data=data,
                 content_type="multipart/form-data", follow_redirects=False)
     assert SchriftverkehrDocument.query.count() == 0
@@ -431,7 +432,7 @@ def test_archive_upload_accepts_txt(client, admin, tmp_path, monkeypatch):
 
 def test_archive_upload_rejects_oversize(client, admin, monkeypatch):
     _login(client)
-    monkeypatch.setattr(constants, "MAX_UPLOAD_BYTES", 5)
+    monkeypatch.setitem(client.application.config, "DOCUMENT_MAX_UPLOAD_MB", 0)
     data = {"title": "Groß", "doc_type": "other",
             "document": (io.BytesIO(b"viel zu lang fuer 5 byte"), "gross.txt")}
     client.post("/schriftfuehrung/archive/upload", data=data,

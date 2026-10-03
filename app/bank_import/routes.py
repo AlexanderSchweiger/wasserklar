@@ -246,6 +246,11 @@ def upload():
         f"{len(parsed.lines)} Buchung(en) eingelesen. Bitte Zuordnung prüfen und committen.",
         "success",
     )
+    # Die Datei ist der Beleg der Bankbuchungen: unveraendert in die Belegablage (best effort —
+    # ein voller Belegspeicher darf den Import nie verhindern).
+    _doc, warning = services.file_statement(stmt, content, current_user.id)
+    if warning:
+        flash(warning, "warning")
     return redirect(url_for("bank_import.preview", statement_id=stmt.id))
 
 
@@ -560,7 +565,11 @@ def delete(statement_id):
         )
         return redirect(url_for("bank_import.preview", statement_id=statement_id))
 
+    from app.documents import service as documents_service
+    statement_doc = documents_service.statement_document(stmt)
     db.session.delete(stmt)
     db.session.commit()
+    # Der nie verbuchte Auszug war nur als Beleg abgelegt — ohne Buchung gibt es nichts aufzubewahren.
+    documents_service.release_statement(statement_doc, current_user.id)
     flash("Bankauszug gelöscht.", "success")
     return redirect(url_for("bank_import.index"))

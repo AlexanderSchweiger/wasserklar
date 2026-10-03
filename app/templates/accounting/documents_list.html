@@ -19,6 +19,8 @@
           PDF, Foto (JPG, PNG, WebP) oder E-Rechnung (XML) bis {{ max_upload_mb }} MB je Datei. Die Datei wird
           <strong>unverändert</strong> aufbewahrt — nur Fotos verkleinert der Browser vorher auf eine
           handliche Größe. Aufbewahrungspflicht: {{ country.document_retention_years }} Jahre.
+          Bei PDFs mit Text liest die App Datum, Betrag, Nummer und Lieferant als Vorschlag mit ein
+          (Scans und Fotos nicht).
         </div>
       </div>
       <div class="col-md-auto">
@@ -54,9 +56,19 @@
     </li>
     {% endfor %}
   </ul>
+  <a href="{{ url_for('accounting.documents_archive') }}" class="btn btn-sm btn-outline-secondary"
+     title="Belege eines Jahres als ZIP mit Verzeichnis und Prüfsummen (Steuerberater, Betriebsprüfung)">
+    <i class="fas fa-file-archive me-1"></i>Belegarchiv
+  </a>
+  {% if expired_count %}
+  <a href="{{ url_for('accounting.documents_expired') }}" class="btn btn-sm btn-outline-secondary"
+     title="Belege, deren gesetzliche Aufbewahrungsfrist abgelaufen ist">
+    <i class="fas fa-hourglass-end me-1"></i>Aufbewahrung abgelaufen <span class="badge bg-secondary-lt ms-1">{{ expired_count }}</span>
+  </a>
+  {% endif %}
   <form method="get" action="{{ url_for('accounting.documents') }}" class="ms-auto d-flex gap-2">
     <input type="hidden" name="tab" value="{{ tab }}">
-    <input type="search" name="q" value="{{ search }}" class="form-control form-control-sm" placeholder="Name, Titel, Nummer, Lieferant …">
+    <input type="search" name="q" value="{{ search }}" class="form-control form-control-sm" placeholder="Name, Nummer, Lieferant, Inhalt …" title="Durchsucht auch den Text der PDFs">
     <button class="btn btn-sm btn-outline-secondary" title="Suchen"><i class="fas fa-search"></i></button>
   </form>
 </div>
@@ -82,8 +94,12 @@
             <div class="small">
               <span class="badge bg-secondary-lt">{{ d.kind_label }}</span>
               {% if d.einvoice %}<span class="badge bg-azure-lt">{{ d.einvoice.format_label }}</span>{% endif %}
+              {% if d.meta_auto %}<span class="badge bg-yellow-lt" title="Datum, Betrag, Nummer oder Lieferant wurden automatisch aus dem Beleg erkannt — bitte auf der Belegseite prüfen und bestätigen">erkannt</span>{% endif %}
               {% if d.title and d.title != d.original_name %}<span class="text-muted">{{ d.original_name }}</span>{% endif %}
             </div>
+            {% if d.id in snippets %}{% set hit = snippets[d.id] %}
+            <div class="small text-muted"><i class="fas fa-search me-1"></i>im Text: {{ hit[0] }}<mark>{{ hit[1] }}</mark>{{ hit[2] }}</div>
+            {% endif %}
           </td>
           <td class="text-nowrap">{{ d.document_date.strftime('%d.%m.%Y') if d.document_date else '—' }}</td>
           <td>{{ d.supplier.name if d.supplier else (d.einvoice.seller_name if d.einvoice else '—') }}</td>

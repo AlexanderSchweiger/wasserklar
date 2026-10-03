@@ -10,6 +10,7 @@ __pycache__/
 # Lokale Daten & Artefakte
 *.db
 *.pdf
+!tests/fixtures/documents/*.pdf
 .DS_Store
 .venv
 

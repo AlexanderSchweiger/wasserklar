@@ -41,7 +41,7 @@ from app.models import (
     AppSetting, BankStatementLine, BankStatementLineAllocation,
     Booking, BookingGroup, Customer, CustomerCounter,
     DunningNotice, Document, DocumentEvent, DocumentLink, FiscalYear, IncomingInvoice, Invoice,
-    InvoiceCounter, InvoiceItem, RolePermission,
+    InvoiceCounter, InvoiceItem, RolePermission, SchriftverkehrDocument,
 )
 from app.data_transfer.registry import (
     CATEGORIES, INSERT_ORDER, YEAR_FILTERS, NATURAL_KEYS, FOREIGN_KEYS,
@@ -155,19 +155,53 @@ def _filtered_booking_group_ids(years: list[int]) -> set:
 
 
 def _filtered_document_ids(years: list[int]) -> set | None:
-    """IDs der Belege, die der Jahresfilter behaelt: Belege an einer Buchung bzw. Sammelbuchung der
-    gewaehlten Jahre, plus nie zugeordnete (Eingang/abgelegt) nach Ablagejahr."""
+    """IDs der Dokumente, die der Jahresfilter behaelt: Belege an einer Buchung bzw. Sammelbuchung der
+    gewaehlten Jahre, Archivdateien von Rechnungen der Jahre (auch ihre Mahnungen), nie zugeordnete
+    Belege nach Ablagejahr — und die Schriftfuehrung immer (sie haengt an keinem Buchungsjahr)."""
     if not years:
         return None
+    in_years = lambda column: func.extract("year", column).in_(years)  # noqa: E731
     on_bookings = (db.session.query(DocumentLink.document_id)
-                   .join(Booking, Booking.id == DocumentLink.booking_id)
-                   .filter(func.extract("year", Booking.date).in_(years)))
+                   .join(Booking, Booking.id == DocumentLink.booking_id).filter(in_years(Booking.date)))
     on_groups = (db.session.query(DocumentLink.document_id)
                  .join(BookingGroup, BookingGroup.id == DocumentLink.booking_group_id)
-                 .filter(func.extract("year", BookingGroup.date).in_(years)))
+                 .filter(in_years(BookingGroup.date)))
+    on_invoices = (db.session.query(DocumentLink.document_id)
+                   .join(Invoice, Invoice.id == DocumentLink.invoice_id).filter(in_years(Invoice.date)))
+    on_dunning = (db.session.query(DocumentLink.document_id)
+                  .join(DunningNotice, DunningNotice.id == DocumentLink.dunning_notice_id)
+                  .join(Invoice, Invoice.id == DunningNotice.invoice_id).filter(in_years(Invoice.date)))
     unlinked = (db.session.query(Document.id)
-                .filter(~Document.links.any(), func.extract("year", Document.created_at).in_(years)))
-    return {r[0] for r in on_bookings.all()} | {r[0] for r in on_groups.all()} | {r[0] for r in unlinked.all()}
+                .filter(Document.area == Document.AREA_ACCOUNTING, ~Document.links.any(),
+                        in_years(Document.created_at)))
+    records = db.session.query(Document.id).filter(Document.area == Document.AREA_RECORDS)
+    ids = set()
+    for query in (on_bookings, on_groups, on_invoices, on_dunning, unlinked, records):
+        ids |= {r[0] for r in query.all()}
+    return ids
+
+
+def _document_link_filter(selection: dict, years: list[int], invoice_ids: set | None,
+                          booking_group_ids: set | None):
+    """Nur Verknuepfungen, deren Bezug mitexportiert wird — sonst fehlte beim Import das FK-Ziel.
+    Mahnungen kommen nur mit „Mahnwesen“, Sitzungen nur mit „Stammdaten“."""
+    if years:
+        year_bookings = db.session.query(Booking.id).filter(func.extract("year", Booking.date).in_(years))
+        parts = [DocumentLink.booking_id.in_(year_bookings),
+                 DocumentLink.booking_group_id.in_(booking_group_ids or [-1]),
+                 DocumentLink.invoice_id.in_(invoice_ids or [-1])]
+    else:
+        parts = [DocumentLink.booking_id.isnot(None), DocumentLink.booking_group_id.isnot(None),
+                 DocumentLink.invoice_id.isnot(None)]
+    if selection.get("mahnwesen"):
+        if years:
+            notices = db.session.query(DunningNotice.id).filter(DunningNotice.invoice_id.in_(invoice_ids or [-1]))
+            parts.append(DocumentLink.dunning_notice_id.in_(notices))
+        else:
+            parts.append(DocumentLink.dunning_notice_id.isnot(None))
+    if selection.get("stammdaten"):
+        parts.append(DocumentLink.meeting_id.isnot(None))
+    return or_(*parts)
 
 
 def _filtered_bank_line_ids(years: list[int]) -> set | None:
@@ -184,7 +218,7 @@ def _filtered_bank_line_ids(years: list[int]) -> set | None:
 
 def _build_query_filtered(model, years: list[int], invoice_ids: set | None,
                           booking_group_ids: set | None, bank_line_ids: set | None,
-                          actual_cols: set, document_ids: set | None = None):
+                          actual_cols: set, document_ids: set | None = None, link_filter=None):
     """Wie _build_query, aber selektiert nur die Spalten, die in der DB
     tatsaechlich existieren (toleriert Schema-Drift in alten DBs).
 
@@ -215,13 +249,12 @@ def _build_query_filtered(model, years: list[int], invoice_ids: set | None,
         q = q.filter(Document.id.in_(document_ids or [-1]))
     elif model in (IncomingInvoice, DocumentEvent) and document_ids is not None:
         q = q.filter(model.document_id.in_(document_ids or [-1]))
-    elif model is DocumentLink and document_ids is not None:
-        # nur Verknuepfungen zu exportierten Buchungen — sonst fehlte beim Merge das FK-Ziel
-        year_bookings = db.session.query(Booking.id).filter(func.extract("year", Booking.date).in_(years))
-        q = q.filter(
-            DocumentLink.document_id.in_(document_ids or [-1]),
-            or_(DocumentLink.booking_id.in_(year_bookings),
-                DocumentLink.booking_group_id.in_(booking_group_ids or [-1])))
+    if model is DocumentLink:
+        # nur Verknuepfungen zu exportierten Dokumenten und Bezuegen (``_document_link_filter``)
+        if document_ids is not None:
+            q = q.filter(DocumentLink.document_id.in_(document_ids or [-1]))
+        if link_filter is not None:
+            q = q.filter(link_filter)
 
     return q
 
@@ -290,6 +323,17 @@ def export_to_zip(selection: dict, fileobj, *, exported_by: str = "system") -> d
                      if (years and BankStatementLineAllocation in models
                          and BankStatementLine.__tablename__ in existing_tables_pre)
                      else None)
+    link_filter = (_document_link_filter(selection, years, invoice_ids, booking_group_ids)
+                   if DocumentLink in models else None)
+    # Registrierte Dateien (Dokumentenregister) reisen nur als files/<key>; ihre Pfadspalten an
+    # Rechnung/Mahnung/Protokoll/Schriftverkehr verweisen im JSON auf das Dokument
+    # („document:<sha256>“, beim Import von ``_relink_path_columns`` wieder aufgeloest).
+    registered = {}
+    if Document in models and Document.__tablename__ in existing_tables_pre:
+        doc_query = db.session.query(Document.storage_key, Document.sha256).filter(Document.storage_key.isnot(None))
+        if document_ids is not None:
+            doc_query = doc_query.filter(Document.id.in_(document_ids or [-1]))
+        registered = dict(doc_query.all())
 
     table_meta = []
     pdf_files = []  # list of (zip_path, source_path)
@@ -313,10 +357,15 @@ def export_to_zip(selection: dict, fileobj, *, exported_by: str = "system") -> d
             actual_cols = {c["name"] for c in insp.get_columns(tname, schema=schema)}
             q = _build_query_filtered(
                 model, years, invoice_ids, booking_group_ids, bank_line_ids,
-                actual_cols, document_ids,
+                actual_cols, document_ids, link_filter,
             )
             skip_filter = appsetting_skip_filter if model is AppSetting else None
             records = _serialize_rows(model, q, actual_cols, skip_filter)
+            if model in FILE_PATH_COLS and registered:
+                _mark_registered_paths(model, records, registered)
+            if model is SchriftverkehrDocument and Document not in models:
+                for rec in records:            # Register nicht im Export → kein haengender Verweis
+                    rec["document_id"] = None
 
             # PDF-Pfade umschreiben (falls Bundle gewollt). Gebundelt wird nur, was
             # im Dateibaum des Mandanten liegt (safe_tenant_path) — ein fremder Pfad
@@ -326,7 +375,7 @@ def export_to_zip(selection: dict, fileobj, *, exported_by: str = "system") -> d
                     for rec in records:
                         # xml_path = eingefrorene E-Rechnung (Bundle-Endung .xml)
                         for col in ("pdf_path", "doc_path", "xml_path"):
-                            src = safe_tenant_path(rec.get(col))
+                            src = None if _is_marker(rec.get(col)) else safe_tenant_path(rec.get(col))
                             if src:
                                 bundle_name = f"pdfs/invoices/{rec.get('invoice_number','id_'+str(rec.get('id')))}.{col.split('_')[0]}"
                                 if col == "doc_path":
@@ -336,7 +385,7 @@ def export_to_zip(selection: dict, fileobj, *, exported_by: str = "system") -> d
                 if model is DunningNotice:
                     for rec in records:
                         for col in ("pdf_path", "doc_path"):
-                            src = safe_tenant_path(rec.get(col))
+                            src = None if _is_marker(rec.get(col)) else safe_tenant_path(rec.get(col))
                             if src:
                                 ext = "pdf" if col == "pdf_path" else "docx"
                                 bundle_name = f"pdfs/dunning/{rec.get('id')}.{ext}"
@@ -355,7 +404,7 @@ def export_to_zip(selection: dict, fileobj, *, exported_by: str = "system") -> d
                 if model in (Invoice, DunningNotice):
                     for rec in records:
                         for col in ("pdf_path", "doc_path", "xml_path"):
-                            if col in rec:
+                            if col in rec and not _is_marker(rec[col]):
                                 rec[col] = None
 
             data = json.dumps(records, ensure_ascii=False, indent=2, default=_json_default)
@@ -402,6 +451,23 @@ def export_to_zip(selection: dict, fileobj, *, exported_by: str = "system") -> d
         zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
 
     return manifest
+
+
+_MARKER = "document:"
+
+
+def _is_marker(value) -> bool:
+    return isinstance(value, str) and value.startswith(_MARKER)
+
+
+def _mark_registered_paths(model, records: list, registered: dict):
+    """Pfadspalten, deren Datei im Register steht, durch ``document:<sha256>`` ersetzen."""
+    for rec in records:
+        for col in FILE_PATH_COLS[model]:
+            src = safe_tenant_path(rec.get(col))
+            key = doc_storage.key_for_path(src) if src else None
+            if key in registered:
+                rec[col] = _MARKER + registered[key]
 
 
 def _json_default(o):
@@ -707,6 +773,7 @@ def import_from_zip(extract_dir: Path, manifest: dict, *, mode: str = "replace",
         _copy_pdfs(extract_dir, table_records, id_map, mode)
     if Document in table_records:          # auch ohne Bundle: Dateien am Platz wieder zuordnen
         _restore_document_files(extract_dir, table_records, mode)
+    _relink_path_columns(table_records, id_map, mode)
 
     return stats
 
@@ -1159,7 +1226,12 @@ def _copy_pdfs(extract_dir: Path, table_records: dict, id_map: dict, mode: str):
 
 _DOC_EXT_BY_CONTENT_TYPE = {
     "application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png",
-    "image/webp": "webp", "application/xml": "xml",
+    "image/webp": "webp", "application/xml": "xml", "text/plain": "txt",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+    "application/msword": "doc", "application/vnd.ms-excel": "xls",
+    "application/vnd.oasis.opendocument.text": "odt",
+    "application/vnd.oasis.opendocument.spreadsheet": "ods", "text/markdown": "md",
 }
 
 
@@ -1220,3 +1292,39 @@ def _restore_document_files(extract_dir: Path, table_records: dict, mode: str):
             continue
         row.storage_key = key
     db.session.commit()
+
+
+def _imported_row(model, rec: dict, id_map: dict, mode: str):
+    """Die importierte Zeile zu einem Export-Record (Rechnung ueber die Nummer, sonst ueber die ID)."""
+    if model is Invoice:
+        return Invoice.query.filter_by(invoice_number=rec.get("invoice_number")).first()
+    old_id = rec.get("id")
+    new_id = id_map.get(model, {}).get(old_id) if mode == "merge" else old_id
+    return db.session.get(model, new_id) if new_id is not None else None
+
+
+def _relink_path_columns(table_records: dict, id_map: dict, mode: str):
+    """Setzt Pfadspalten, die im Export auf ein Register-Dokument verweisen (``document:<sha256>``),
+    auf dessen Datei — sofern das Dokument samt Datei jetzt vorhanden ist (sonst bleiben sie NULL wie
+    jeder nicht wiederhergestellte Pfad). Ein Schriftverkehrs-Eintrag bekommt dabei auch seinen
+    Register-Verweis zurueck, falls der Vollersatz der Buchungen ihn geloest hat. Committet."""
+    changed = False
+    for model, cols in FILE_PATH_COLS.items():
+        for rec in table_records.get(model, ()):
+            marked = {col: rec[col][len(_MARKER):] for col in cols if _is_marker(rec.get(col))}
+            if not marked:
+                continue
+            row = _imported_row(model, rec, id_map, mode)
+            if row is None:
+                continue
+            for col, sha in marked.items():
+                doc = Document.query.filter_by(sha256=sha).first()
+                path = doc_storage.path_for(doc.storage_key) if doc is not None and doc.storage_key else None
+                if path is None or not path.is_file():
+                    continue
+                setattr(row, col, str(path))
+                if model is SchriftverkehrDocument and row.document_id is None and doc.correspondence is None:
+                    row.document_id = doc.id
+                changed = True
+    if changed:
+        db.session.commit()

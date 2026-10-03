@@ -233,6 +233,22 @@ class TestPhotos:
         r2 = client.get(f"/network/photos/{photo.id}")
         assert r2.status_code == 200
         assert r2.data == _PNG
+        assert photo.size_bytes == len(_PNG)        # zaehlt in der Speicherstatistik/im Kontingent
+
+    def test_upload_respects_the_quota(self, client, admin, tmp_path, monkeypatch):
+        from app.documents import service as doc_svc
+        monkeypatch.setitem(client.application.config, "PDF_DIR", str(tmp_path / "pdfs"))
+        monkeypatch.setattr(doc_svc, "_quota_limit_bytes", lambda: 1)
+        _login(client)
+        fid = _make_point(client).get_json()["id"]
+        r = client.post(
+            f"/network/features/{fid}/photos",
+            data={"photo": (io.BytesIO(_PNG), "hydrant.png")},
+            content_type="multipart/form-data",
+        )
+        assert r.status_code == 200
+        assert FeaturePhoto.query.filter_by(feature_id=fid).count() == 0
+        assert "Dokumentenspeicher ist voll" in r.get_data(as_text=True)
 
     def test_upload_rejects_non_image(self, client, admin, tmp_path, monkeypatch):
         monkeypatch.setitem(client.application.config, "PDF_DIR", str(tmp_path / "pdfs"))

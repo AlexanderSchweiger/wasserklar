@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Belegarchiv{% endblock %}
+{% block page_title %}<i class="fas fa-file-archive me-2"></i> Belegarchiv je Jahr{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+  <a href="{{ url_for('accounting.documents') }}" class="btn btn-sm btn-outline-secondary">
+    <i class="fas fa-arrow-left me-1"></i> Alle Belege
+  </a>
+</div>
+
+<div class="alert alert-info">
+  <p class="mb-1">
+    Das Belegarchiv eines Jahres ist ein ZIP mit allen Belegdateien <strong>unverändert</strong>, einem Verzeichnis
+    (<code>index.csv</code>, öffnet in Excel) und den Prüfsummen (<code>sha256sums.txt</code>) — gedacht für
+    Steuerberater, Betriebsprüfung und den Jahresabschluss. Die Aufbewahrungspflicht beträgt
+    {{ retention_years }} Jahre; laden Sie das Archiv am besten nach dem Jahresabschluss und vor einer Kündigung herunter.
+  </p>
+  <p class="mb-0 text-muted small">
+    Ein Beleg steht im Archiv des Jahres, in dem seine Buchung liegt (Belege ohne Buchung zählen nach ihrem
+    Belegdatum). Gehört er zu Buchungen mehrerer Jahre, steht er in jedem dieser Archive. Das Erstellen kann bei
+    vielen Belegen einen Moment dauern.
+  </p>
+</div>
+
+<div class="card">
+  {% if years %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table">
+      <thead><tr><th>Jahr</th><th>Zeitraum</th><th class="text-end">Belege</th><th class="text-end">Größe</th><th></th></tr></thead>
+      <tbody>
+        {% for y in years %}
+        <tr>
+          <td><strong>{{ y.year }}</strong></td>
+          <td class="text-muted">{{ y.von.strftime('%d.%m.%Y') }} – {{ y.bis.strftime('%d.%m.%Y') }}</td>
+          <td class="text-end">{{ y.count }}</td>
+          <td class="text-end text-muted text-nowrap">{{ y.size | filesize }}</td>
+          <td class="text-end">
+            <a href="{{ url_for('accounting.documents_archive_download', year=y.year) }}" class="btn btn-sm btn-primary" hx-boost="false">
+              <i class="fas fa-download me-1"></i> Archiv {{ y.year }} herunterladen
+            </a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="card-body text-muted">Noch keine Belege abgelegt.</div>
+  {% endif %}
+</div>
+{% endblock %}

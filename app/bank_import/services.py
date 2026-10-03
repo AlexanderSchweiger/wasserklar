@@ -83,7 +83,8 @@ def _book_against_op(op, amount, line, stmt, user_id, account_override=None):
     return group_id, booking_id
 
 
-def _commit_with_op(line: BankStatementLine, stmt: BankStatement, user_id: int) -> None:
+def _commit_with_op(line: BankStatementLine, stmt: BankStatement, user_id: int) -> list:
+    """Gibt ``[(booking_id, group_id)]`` der erzeugten Buchung zurueck (genau eins von beiden gesetzt)."""
     op = OpenItem.query.get(line.matched_open_item_id)
     if op is None:
         raise ValueError(f"Offener Posten #{line.matched_open_item_id} nicht gefunden")
@@ -92,16 +93,19 @@ def _commit_with_op(line: BankStatementLine, stmt: BankStatement, user_id: int) 
     )
     line.booking_group_id = group_id
     line.booking_id = booking_id
+    return [(booking_id, group_id)]
 
 
-def _commit_split(line: BankStatementLine, stmt: BankStatement, user_id: int) -> None:
+def _commit_split(line: BankStatementLine, stmt: BankStatement, user_id: int) -> list:
     """Verbucht eine auf mehrere offene Posten (und/oder Konten) aufgeteilte Zeile.
 
     Pro Allocation entsteht eine eigene Buchung; die Summe muss exakt dem
     Buchungsbetrag der Zeile entsprechen (sonst stimmt die Bankkonto-Bewegung
     nicht). ``line.booking_id`` bleibt leer — die Verknuepfung laeuft pro
-    Buchung ueber ``Booking.open_item_id``.
+    Buchung ueber ``Booking.open_item_id``. Gibt ``[(booking_id, group_id)]`` aller
+    erzeugten Buchungen zurueck (fuer die Belegablage).
     """
+    created = []
     allocs = list(line.allocations)
     if not allocs:
         raise ValueError("Keine Aufteilung vorhanden.")
@@ -128,7 +132,8 @@ def _commit_split(line: BankStatementLine, stmt: BankStatement, user_id: int) ->
             op = OpenItem.query.get(a.open_item_id)
             if op is None:
                 raise ValueError(f"Offener Posten #{a.open_item_id} nicht gefunden")
-            _book_against_op(op, amt, line, stmt, user_id)
+            group_id, booking_id = _book_against_op(op, amt, line, stmt, user_id)
+            created.append((booking_id, group_id))
         elif a.account_id:
             description = (line.purpose or line.counterparty_name or "Bankauszug-Import").strip()[:500]
             booking = Booking(
@@ -143,11 +148,13 @@ def _commit_split(line: BankStatementLine, stmt: BankStatement, user_id: int) ->
             )
             db.session.add(booking)
             db.session.flush()
+            created.append((booking.id, None))
         else:
             raise ValueError("Aufteilungs-Position ohne Ziel (weder Posten noch Konto).")
+    return created
 
 
-def _commit_without_op(line: BankStatementLine, stmt: BankStatement, user_id: int) -> None:
+def _commit_without_op(line: BankStatementLine, stmt: BankStatement, user_id: int) -> list:
     if line.override_account_id is None:
         raise ValueError(
             "Kein Ertrags-/Aufwandskonto gewählt. Bitte in der Vorschau ein Konto zuordnen."
@@ -167,6 +174,52 @@ def _commit_without_op(line: BankStatementLine, stmt: BankStatement, user_id: in
     db.session.add(booking)
     db.session.flush()
     line.booking_id = booking.id
+    return [(booking.id, None)]
+
+
+def file_statement(stmt: BankStatement, content: bytes, user_id: int):
+    """Legt die Datei des Auszugs als Beleg ab (``Abgelegt``); sie wird beim Verbuchen an die erzeugten
+    Buchungen geknuepft. **Nie ein Grund, den Import abzubrechen**: Gibt ``(Beleg | None, Warnung | None)``
+    zurueck — die Warnung nennt, warum die Datei nicht abgelegt werden konnte (z. B. Speicher voll)."""
+    from app.documents import service as documents_service       # lokal: haelt den Import-Zyklus fern
+
+    period = (f" {stmt.booking_date_from:%d.%m.%Y} – {stmt.booking_date_to:%d.%m.%Y}"
+              if stmt.booking_date_from and stmt.booking_date_to else "")
+    try:
+        doc = documents_service.store_bank_statement(
+            stmt.filename, content, user_id, title=f"Kontoauszug {stmt.real_account.name}{period}",
+            number=stmt.statement_reference, document_date=stmt.booking_date_to or stmt.booking_date_from)
+    except documents_service.DuplicateUpload as dup:
+        return dup.existing, None                               # dieselbe Datei liegt schon als Beleg vor
+    except documents_service.DocumentError as exc:
+        return None, f"Der Auszug wurde eingelesen, konnte aber nicht als Beleg abgelegt werden: {exc}"
+    return doc, None
+
+
+def _attach_document(doc, created, user_id) -> None:
+    """Haengt den Auszugs-Beleg an die erzeugten Buchungen (``created`` = ``[(booking_id, group_id)]``).
+
+    Eine Buchung innerhalb einer Sammelbuchung traegt den Beleg am Kopf (die Kinder werden beim
+    Bearbeiten neu angelegt). Best effort: das Verbuchen darf daran nie scheitern.
+    """
+    from app.documents import service as documents_service
+    from app.models import BookingGroup
+
+    for booking_id, group_id in created:
+        target_booking = db.session.get(Booking, booking_id) if booking_id else None
+        target_group = db.session.get(BookingGroup, group_id) if group_id else None
+        if target_group is not None:
+            target_booking = None
+        elif target_booking is not None and target_booking.group_id is not None:
+            target_booking, target_group = None, target_booking.group
+        if target_booking is None and target_group is None:
+            continue
+        sp = db.session.begin_nested()
+        try:
+            documents_service.link(doc, booking=target_booking, group=target_group, user_id=user_id)
+            sp.commit()
+        except documents_service.DocumentError:
+            sp.rollback()
 
 
 def commit_statement(statement_id: int, user_id: int) -> dict:
@@ -185,6 +238,10 @@ def commit_statement(statement_id: int, user_id: int) -> dict:
         raise ValueError(f"Bankauszug #{statement_id} nicht gefunden")
 
     stats = {"committed": 0, "skipped": 0, "errors": []}
+
+    # Die abgelegte Auszugsdatei ist der Beleg der erzeugten Buchungen (fehlt bei Altimporten).
+    from app.documents import service as documents_service
+    statement_doc = documents_service.statement_document(stmt)
 
     # Explizit nach line_index sortieren: die Buchungen sollen in exakt der
     # Reihenfolge des Bankauszugs angelegt werden, damit ihre IDs (und damit
@@ -212,17 +269,20 @@ def commit_statement(statement_id: int, user_id: int) -> dict:
         sp = db.session.begin_nested()
         try:
             if line.is_split:
-                _commit_split(line, stmt, user_id)
+                created = _commit_split(line, stmt, user_id)
             elif line.matched_open_item_id:
-                _commit_with_op(line, stmt, user_id)
+                created = _commit_with_op(line, stmt, user_id)
             else:
-                _commit_without_op(line, stmt, user_id)
+                created = _commit_without_op(line, stmt, user_id)
             line.line_status = BankStatementLine.STATUS_COMMITTED
             sp.commit()
             stats["committed"] += 1
         except Exception as e:  # noqa: BLE001
             sp.rollback()
             stats["errors"].append(f"Zeile {line.line_index}: {e}")
+        else:
+            if statement_doc is not None:
+                _attach_document(statement_doc, created, user_id)
 
     stmt.committed_at = datetime.utcnow()
     all_done = all(

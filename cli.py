@@ -1220,6 +1220,94 @@ def register_commands(app):
         db.session.commit()
         print("mail.password geloescht. Bitte in /settings neu eintragen.")
 
+    @app.cli.command("documents-index-text")
+    @click.option("--force", is_flag=True, default=False,
+                  help="Auch Belege neu lesen, deren Text schon gelesen wurde.")
+    @click.option("--limit", type=int, default=0, help="Hoechstens so viele Belege (0 = alle).")
+    def documents_index_text(force, limit):
+        """Liest den Text vorhandener PDF-Belege nach (Volltextsuche + Vorbelegung der Angaben).
+
+        Noetig fuer Belege, die vor der Textauslese abgelegt wurden oder aus einem aelteren
+        Export stammen. Die Dateien bleiben unveraendert; bestehende Angaben werden nie
+        ueberschrieben (nur leere Felder werden vorbelegt, ``meta_auto`` merkt sich das).
+        Idempotent: ohne ``--force`` werden nur noch nicht gelesene Belege bearbeitet.
+        """
+        from app.documents import service as documents_service
+        from app.extensions import db
+        from app.models import Document
+
+        query = Document.query.filter(Document.content_type == "application/pdf")
+        if not force:
+            query = query.filter(Document.text_status.is_(None))
+        ids = [doc_id for (doc_id,) in query.with_entities(Document.id).order_by(Document.id).all()]
+        if limit:
+            ids = ids[:limit]
+        counts, prefilled = {}, 0
+        for position, doc_id in enumerate(ids, 1):
+            doc = db.session.get(Document, doc_id)
+            was_auto = doc.meta_auto
+            status = documents_service.index_text(doc) or "ohne Datei"
+            counts[status] = counts.get(status, 0) + 1
+            prefilled += int(doc.meta_auto and not was_auto)
+            if position % 25 == 0:
+                db.session.commit()
+        db.session.commit()
+        print(f"{len(ids)} Beleg(e) bearbeitet: " + (", ".join(f"{k} {v}" for k, v in sorted(counts.items())) or "—"))
+        print(f"  bei {prefilled} wurden Angaben vorbelegt (bitte auf der Belegseite bestätigen).")
+
+    @app.cli.command("documents-register-files")
+    @click.option("--dry-run", is_flag=True, default=False, help="Nur berichten, nichts eintragen.")
+    def documents_register_files(dry_run):
+        """Traegt vorhandene Rechnungs-, Mahnungs-, Protokoll- und Schriftverkehrsdateien ins
+        Dokumentenregister ein und misst die Fotogroessen nach (Speicherkontingent).
+
+        Die Dateien bleiben liegen; idempotent. Nach dem Update auf das Dokumentenregister einmal
+        ausfuehren (SaaS: ``flask documents-maintenance --task register-files`` fuer alle Mandanten).
+        """
+        from app.documents.register import register_existing_files
+
+        report = register_existing_files(dry_run=dry_run)
+        print(("[Probelauf] " if dry_run else "") + report.as_text())
+
+    @app.cli.command("documents-verify")
+    @click.option("--orphans", is_flag=True, default=False,
+                  help="Auch Dateien melden, die kein Beleg kennt (es wird nie etwas geloescht).")
+    def documents_verify(orphans):
+        """Prueft jede Belegdatei gegen die gespeicherte SHA-256 (Integritaet der Ablage).
+
+        Meldet fehlende, nicht lesbare und veraenderte Dateien. Exit-Code 1 bei Auffaelligkeiten —
+        geeignet fuer einen Cron-Lauf und fuer den Restore-Test nach einem Backup. Liest alle Belege
+        einmal; bei grossen Bestaenden dauert das.
+        """
+        from app.documents import archive as documents_archive_service
+
+        report = documents_archive_service.verify_all(orphans=orphans)
+        print(f"{report.checked} Beleg(e) geprueft.")
+        for doc_id, name, kind, text in report.issues:
+            print(f"  [{kind}] Beleg {doc_id} „{name}“: {text}")
+        for key in report.orphans:
+            print(f"  [orphan] {key}")
+        if report.issues:
+            print(f"{len(report.issues)} Auffaelligkeit(en).")
+            raise SystemExit(1)
+        print("Alle Dateien stimmen mit ihrer Pruefsumme ueberein."
+              + (f" {len(report.orphans)} Datei(en) ohne Beleg." if orphans else ""))
+
+    @app.cli.command("documents-archive")
+    @click.option("--year", type=int, required=True, help="Buchungsjahr.")
+    @click.option("--out", "out_path", required=True, help="Pfad fuer die ZIP-Datei.")
+    def documents_archive_cmd(year, out_path):
+        """Schreibt das Belegarchiv eines Jahres (Belege, index.csv, sha256sums.txt) als ZIP."""
+        from app.documents import archive as documents_archive_service
+
+        with open(out_path, "wb") as fh:
+            result = documents_archive_service.build(year, fh, created_by="cli")
+        print(f"Belegarchiv {year}: {result.documents} Beleg(e), {result.size} Byte -> {out_path}")
+        if result.missing:
+            print(f"  Datei fehlt bei Beleg: {', '.join(map(str, result.missing))}")
+        if result.mismatched:
+            print(f"  Pruefsumme weicht ab bei Beleg: {', '.join(map(str, result.mismatched))}")
+
     @app.cli.command("bev-refresh")
     @click.option("--file", "local_file", default=None,
                   help="Lokales BEV-ZIP (Adressregister-Stichtagsdaten) statt Download.")

@@ -140,8 +140,9 @@ CATEGORIES = {
         OwnerChange, OwnerChangeMeterValue,
         ReadingCorrection,
         BookingGroup, Booking, Transfer, RealAccountYearBalance,
-        # Belegablage (+ gelesene E-Rechnungsdaten): Belege gehoeren zu den Buchungen
-        # (AT 7 / DE 8 Jahre Aufbewahrung); die Dateien reisen als files/<key> im Bundle.
+        # Dokumentenregister (+ gelesene E-Rechnungsdaten): alle Bereiche reisen mit den Buchungen
+        # (Belege, Ausgangsrechnungen, Mahnungen, Schriftfuehrung); die Dateien als files/<key>.
+        # Verknuepfungen zu Mahnungen/Sitzungen nur, wenn deren Kategorie mitkommt (services.py).
         Document, IncomingInvoice, DocumentLink, DocumentEvent,
         BankStatement, BankStatementLine, BankStatementLineAllocation,
         InvoiceCounter, CustomerCounter,
@@ -185,9 +186,9 @@ INSERT_ORDER = [
     # Touren NACH MeterReplacement + Invoice (Stop-FKs zeigen auf beide).
     MeterTour, MeterTourStop,
     BookingGroup, Booking, Transfer, RealAccountYearBalance,
-    # Belege NACH Customer (Lieferant); IncomingInvoice/DocumentLink/DocumentEvent NACH Document,
-    # DocumentLink zusaetzlich NACH Booking + BookingGroup (FKs darauf).
-    Document, IncomingInvoice, DocumentLink, DocumentEvent,
+    # Dokumente NACH Customer (Lieferant); IncomingInvoice/DocumentEvent NACH Document.
+    # DocumentLink steht weiter unten: es verweist auch auf DunningNotice und Meeting.
+    Document, IncomingInvoice, DocumentEvent,
     # Bankauszug NACH Booking/BookingGroup/Invoice/OpenItem/Account/RealAccount
     # (BankStatementLine referenziert alle). Line VOR Allocation (FK line_id).
     BankStatement, BankStatementLine, BankStatementLineAllocation,
@@ -199,7 +200,9 @@ INSERT_ORDER = [
     # MeetingAgendaItem VOR MeetingResolution (FK agenda_item_id).
     Meeting, MeetingAgendaItem, MeetingInvitation, MeetingDeliveryLog,
     MeetingAttendance, MeetingResolution, MeetingProtocol,
-    SchriftverkehrDocument,
+    SchriftverkehrDocument,           # NACH Document (document_id)
+    # Verknuepfungen NACH allen Bezuegen (Booking, BookingGroup, Invoice, DunningNotice, Meeting).
+    DocumentLink,
     # Rundschreiben: Circular referenziert WaterSample/Incident (beide oben) +
     # Self-FK predecessor_id (zweiter Pass). Kinder referenzieren Circular + Customer.
     Circular, CircularRecipient, CircularDeliveryLog,
@@ -287,7 +290,9 @@ NATURAL_KEYS = {
     Booking: None,
     Document: ("sha256",),              # dieselbe Datei nie doppelt (Dublettenschutz)
     IncomingInvoice: ("document_id",),  # 1:1 zum Beleg
-    DocumentLink: ("document_id", "booking_id", "booking_group_id"),   # NULL zaehlt mit (services._NULLABLE_KEYS)
+    # genau ein Bezug gesetzt, die uebrigen NULL — NULL zaehlt mit (services._NULLABLE_KEYS)
+    DocumentLink: ("document_id", "booking_id", "booking_group_id", "invoice_id", "dunning_notice_id",
+                   "meeting_id"),
     DocumentEvent: None,                # Protokoll — immer Insert
     Transfer: None,
     RealAccountYearBalance: ("real_account_id", "year"),
@@ -384,7 +389,8 @@ FOREIGN_KEYS = {
               "storno_of_id": Booking},  # Self-FK, zweiter Pass
     Document: {"supplier_id": Customer},
     IncomingInvoice: {"document_id": Document},
-    DocumentLink: {"document_id": Document, "booking_id": Booking, "booking_group_id": BookingGroup},
+    DocumentLink: {"document_id": Document, "booking_id": Booking, "booking_group_id": BookingGroup,
+                   "invoice_id": Invoice, "dunning_notice_id": DunningNotice, "meeting_id": Meeting},
     DocumentEvent: {"document_id": Document},
     Transfer: {"from_real_account_id": RealAccount, "to_real_account_id": RealAccount},
     RealAccountYearBalance: {"real_account_id": RealAccount},
@@ -416,6 +422,7 @@ FOREIGN_KEYS = {
     MeetingAttendance: {"meeting_id": Meeting, "customer_id": Customer},
     MeetingResolution: {"meeting_id": Meeting, "agenda_item_id": MeetingAgendaItem},
     MeetingProtocol: {"meeting_id": Meeting},
+    SchriftverkehrDocument: {"document_id": Document},
     # Rundschreiben.
     Circular: {"water_sample_id": WaterSample, "incident_id": Incident,
                "predecessor_id": Circular},  # predecessor_id: Self-FK, zweiter Pass

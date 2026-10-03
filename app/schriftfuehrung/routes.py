@@ -13,12 +13,13 @@ from flask import (
 )
 from flask_login import login_required, current_user
 from sqlalchemy import or_
-from werkzeug.utils import secure_filename
 
 from app.schriftfuehrung import bp, constants, services, storage, documents, ical
+from app.documents import service as doc_svc
+from app.documents import storage as doc_storage
 from app.extensions import db
 from app.models import (
-    AppSetting, Customer,
+    AppSetting, Customer, Document,
     Meeting, MeetingAgendaItem, MeetingInvitation, MeetingDeliveryLog,
     MeetingAttendance, MeetingResolution, MeetingProtocol,
     SchriftverkehrDocument,
@@ -243,7 +244,11 @@ def meeting_edit(meeting_id):
 def meeting_delete(meeting_id):
     meeting = _get_meeting(meeting_id)
     if not meeting.can_delete:
-        flash("Diese Sitzung wurde bereits versendet und kann nicht gelöscht werden.", "danger")
+        if meeting.protocol is not None and meeting.protocol.is_locked:
+            flash("Diese Sitzung hat ein abgeschlossenes Protokoll — Protokoll und Beschlüsse werden "
+                  "dauerhaft aufbewahrt, die Sitzung lässt sich nicht löschen.", "danger")
+        else:
+            flash("Diese Sitzung wurde bereits versendet und kann nicht gelöscht werden.", "danger")
         return redirect(url_for("schriftfuehrung.meeting_detail", meeting_id=meeting.id))
     meeting_type = meeting.meeting_type
     db.session.delete(meeting)
@@ -842,9 +847,15 @@ def protocol_save(meeting_id):
     return redirect(url_for("schriftfuehrung.protocol", meeting_id=meeting.id))
 
 
+def _protocol_filename(meeting, ext):
+    return (f"Protokoll_{storage.slugify_filename(meeting.title)}_"
+            f"{(meeting.meeting_date or date.today()).strftime('%Y-%m-%d')}.{ext}")
+
+
 def _write_protocol_pdf(meeting, protocol):
-    """Erzeugt das Protokoll-PDF im Schriftverkehr-Archiv (Jahr-Unterordner) und
-    setzt file_path/Meta. Gibt True zurück bei Erfolg, False ohne WeasyPrint."""
+    """Erzeugt das Protokoll-PDF und legt es im Dokumentenregister ab (Bereich ``records``,
+    dauerhaft, mit der Sitzung verknuepft); setzt file_path/Meta. Gibt True zurück bei Erfolg,
+    False ohne WeasyPrint. Erzeugt — deshalb ohne Kontingentpruefung."""
     HTML = _weasyprint()
     if HTML is None:
         return False
@@ -855,18 +866,15 @@ def _write_protocol_pdf(meeting, protocol):
         sorted(meeting.resolutions, key=lambda r: r.id),
         dict(present=present, total=total, is_quorate=is_quorate),
     )
-    year = (meeting.meeting_date or date.today()).year
-    base = f"Protokoll_{storage.slugify_filename(meeting.title)}_" \
-           f"{(meeting.meeting_date or date.today()).strftime('%Y-%m-%d')}"
-    path = storage.versioned_path(storage.get_schriftverkehr_dir(year), base, "pdf")
-    HTML(string=html).write_pdf(path)
-    protocol.file_path = path
-    protocol.original_filename = os.path.basename(path)
+    pdf = HTML(string=html).write_pdf()
+    doc = doc_svc.store_generated(
+        Document.AREA_RECORDS, Document.KIND_PROTOCOL, pdf, "pdf",
+        original_name=_protocol_filename(meeting, "pdf"), title=meeting.title,
+        document_date=meeting.meeting_date, user_id=current_user.id, meeting=meeting)
+    protocol.file_path = str(doc_storage.path_for(doc.storage_key))
+    protocol.original_filename = doc.original_name
     protocol.mime_type = "application/pdf"
-    try:
-        protocol.file_size = os.path.getsize(path)
-    except OSError:
-        protocol.file_size = None
+    protocol.file_size = doc.size_bytes
     return True
 
 
@@ -908,31 +916,28 @@ def protocol_upload(meeting_id):
         return redirect(url_for("schriftfuehrung.protocol", meeting_id=meeting.id))
 
     file = request.files.get("document")
-    error = _validate_upload(file)
-    if error:
-        flash(error, "danger")
+    if not file or not file.filename:
+        flash("Bitte eine Datei auswählen.", "danger")
         return redirect(url_for("schriftfuehrung.protocol", meeting_id=meeting.id))
-
-    data = file.read()
-    if len(data) > constants.MAX_UPLOAD_BYTES:
-        flash("Die Datei ist größer als 5 MB.", "danger")
+    try:
+        doc = doc_svc.store_record_upload(
+            file.filename, file.read(doc_svc.max_upload_bytes() + 1), current_user.id,
+            kind=Document.KIND_PROTOCOL, title=meeting.title, document_date=meeting.meeting_date,
+            meeting=meeting)
+    except doc_svc.DuplicateUpload as dup:
+        flash(f"Diese Datei ist schon abgelegt ({dup.existing.display_title}).", "warning")
         return redirect(url_for("schriftfuehrung.protocol", meeting_id=meeting.id))
-
-    ext = os.path.splitext(secure_filename(file.filename))[1].lower()
-    year = (meeting.meeting_date or date.today()).year
-    base = f"Protokoll_{storage.slugify_filename(meeting.title)}_" \
-           f"{(meeting.meeting_date or date.today()).strftime('%Y-%m-%d')}"
-    path = storage.versioned_path(storage.get_schriftverkehr_dir(year), base, ext.lstrip("."))
-    with open(path, "wb") as fh:
-        fh.write(data)
+    except doc_svc.DocumentError as exc:
+        flash(str(exc), "danger")
+        return redirect(url_for("schriftfuehrung.protocol", meeting_id=meeting.id))
 
     protocol.source_type = MeetingProtocol.SOURCE_UPLOAD
     protocol.status = MeetingProtocol.STATUS_FINAL
     protocol.finalized_at = datetime.utcnow()
-    protocol.file_path = path
+    protocol.file_path = str(doc_storage.path_for(doc.storage_key))
     protocol.original_filename = file.filename
-    protocol.mime_type = file.mimetype or None
-    protocol.file_size = len(data)
+    protocol.mime_type = doc.content_type
+    protocol.file_size = doc.size_bytes
     present, total, is_quorate = services.compute_quorum(meeting)
     protocol.quorum_present, protocol.quorum_total, protocol.is_quorate = present, total, is_quorate
     db.session.commit()
@@ -1003,17 +1008,6 @@ def resolutions():
 
 # ── Schriftverkehr-Archiv ────────────────────────────────────────────────────
 
-def _validate_upload(file):
-    if not file or not file.filename:
-        return "Bitte eine Datei auswählen."
-    ext = os.path.splitext(secure_filename(file.filename))[1].lower()
-    if ext not in constants.ALLOWED_UPLOAD_EXTENSIONS:
-        return f"Dateityp nicht erlaubt. Erlaubt: {constants.ALLOWED_UPLOAD_HINT}."
-    if request.content_length and request.content_length > constants.MAX_UPLOAD_BYTES + 1024 * 1024:
-        return "Die Datei ist größer als 5 MB."
-    return None
-
-
 @bp.route("/archive")
 @login_required
 def archive():
@@ -1052,22 +1046,20 @@ def archive():
             all_years.add(p.meeting.meeting_date.year)
     years = sorted(all_years, reverse=True)
 
+    deletable = {d.id for d in docs
+                 if d.document is not None and doc_svc.can_delete_record(d.document, current_user)[0]}
     return render_template("schriftfuehrung/archive.html", docs=docs, protocols=protocols,
-                           year_filter=year, type_filter=dtype, years=years,
+                           year_filter=year, type_filter=dtype, years=years, deletable=deletable,
                            has_filter=bool(year or dtype))
 
 
 @bp.route("/archive/upload", methods=["POST"])
 @login_required
 def archive_upload():
+    """Schriftverkehr ins Dokumentenregister (Bereich ``records``, Frist fuer Geschaeftsbriefe)."""
     file = request.files.get("document")
-    error = _validate_upload(file)
-    if error:
-        flash(error, "danger")
-        return redirect(url_for("schriftfuehrung.archive"))
-    data = file.read()
-    if len(data) > constants.MAX_UPLOAD_BYTES:
-        flash("Die Datei ist größer als 5 MB.", "danger")
+    if not file or not file.filename:
+        flash("Bitte eine Datei auswählen.", "danger")
         return redirect(url_for("schriftfuehrung.archive"))
 
     title = (request.form.get("title") or "").strip() or file.filename
@@ -1078,16 +1070,22 @@ def archive_upload():
     note = (request.form.get("note") or "").strip() or None
     year = (doc_date or date.today()).year
 
-    ext = os.path.splitext(secure_filename(file.filename))[1].lower()
-    base = storage.slugify_filename(title)
-    path = storage.versioned_path(storage.get_schriftverkehr_dir(year), base, ext.lstrip("."))
-    with open(path, "wb") as fh:
-        fh.write(data)
+    try:
+        doc = doc_svc.store_record_upload(
+            file.filename, file.read(doc_svc.max_upload_bytes() + 1), current_user.id,
+            kind=Document.KIND_CORRESPONDENCE, title=title, document_date=doc_date)
+    except doc_svc.DuplicateUpload as dup:
+        flash(f"Diese Datei ist schon abgelegt ({dup.existing.display_title}).", "warning")
+        return redirect(url_for("schriftfuehrung.archive"))
+    except doc_svc.DocumentError as exc:
+        flash(str(exc), "danger")
+        return redirect(url_for("schriftfuehrung.archive"))
 
     db.session.add(SchriftverkehrDocument(
         year=year, title=title[:300], doc_type=doc_type, document_date=doc_date,
-        file_path=path, original_filename=file.filename, mime_type=file.mimetype or None,
-        file_size=len(data), note=note, created_by_id=current_user.id,
+        file_path=str(doc_storage.path_for(doc.storage_key)), original_filename=file.filename,
+        mime_type=doc.content_type, file_size=doc.size_bytes, note=note, document_id=doc.id,
+        created_by_id=current_user.id,
     ))
     db.session.commit()
     flash("Dokument im Schriftverkehr abgelegt.", "success")
@@ -1104,3 +1102,25 @@ def archive_download(doc_id):
         return redirect(url_for("schriftfuehrung.archive"))
     return send_file(path, as_attachment=True,
                      download_name=doc.original_filename or os.path.basename(path))
+
+
+@bp.route("/archive/<int:doc_id>/delete", methods=["POST"])
+@login_required
+def archive_delete(doc_id):
+    """Loescht ein Schriftverkehrs-Dokument — nur am Tag des Hochladens (Fehlablage) oder nach
+    Fristablauf durch Administratoren (``documents.service.can_delete_record``)."""
+    entry = db.get_or_404(SchriftverkehrDocument, doc_id)
+    if entry.document is None:
+        flash("Dieses Dokument stammt aus der Zeit vor dem Dokumentenregister und lässt sich "
+              "hier nicht löschen.", "danger")
+        return redirect(url_for("schriftfuehrung.archive"))
+    allowed, why = doc_svc.can_delete_record(entry.document, current_user)
+    if not allowed:
+        flash(why, "danger")
+        return redirect(url_for("schriftfuehrung.archive"))
+    document = entry.document
+    db.session.delete(entry)
+    db.session.flush()
+    doc_svc.delete_record(document, current_user, reason=(request.form.get("reason") or "").strip()[:200] or None)
+    flash("Dokument gelöscht.", "info")
+    return redirect(url_for("schriftfuehrung.archive"))

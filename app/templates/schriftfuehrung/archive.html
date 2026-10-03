@@ -67,10 +67,19 @@
           </td>
           <td><span class="badge bg-secondary-lt">{{ sf_doc_type_labels.get(d.doc_type, d.doc_type) }}</span></td>
           <td>{{ d.document_date.strftime('%d.%m.%Y') if d.document_date else '—' }}</td>
-          <td class="text-end">
+          <td class="text-end text-nowrap">
             <a href="{{ url_for('schriftfuehrung.archive_download', doc_id=d.id) }}" class="btn btn-sm btn-outline-secondary">
               <i class="fas fa-download me-1"></i> Download
             </a>
+            {% if d.id in deletable %}
+            <form method="post" class="d-inline" action="{{ url_for('schriftfuehrung.archive_delete', doc_id=d.id) }}"
+                  hx-confirm="„{{ d.title }}“ löschen? Das geht nur am Tag des Hochladens (Fehlablage) — danach ist Schriftverkehr aufbewahrungspflichtig.">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-sm btn-outline-danger" title="Löschen (Fehlablage)">
+                <i class="fas fa-trash"></i>
+              </button>
+            </form>
+            {% endif %}
           </td>
         </tr>
         {% endfor %}
@@ -118,7 +127,7 @@
           <div class="mb-2">
             <label class="form-label">Datei</label>
             <input type="file" name="document" class="form-control" required
-                   accept=".pdf,.doc,.docx,.xls,.xlsx,.odt,.ods,.md,.txt">
+                   accept="{{ sf_upload_accept }}">
             <div class="form-text">{{ sf_upload_hint }}</div>
           </div>
         </div>

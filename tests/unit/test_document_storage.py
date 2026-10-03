@@ -25,6 +25,10 @@ class TestKeys:
         "documents/2026/01/99999_ab12cd34.xml",
         "incoming/2026/5_ab12cd34_Rechnung-1.xml",
         "incoming/ohne-datum/5_ab12cd34_r.pdf",
+        "documents/2026/10/12_ab12cd34.docx", "documents/2026/10/12_ab12cd34.odt",
+        # Altdateien, die das Register an Ort und Stelle uebernimmt
+        "pdfs/2025/2025-00042.pdf", "pdfs/2025/2025-00042_V2.xml", "pdfs/misc/2025-00001.docx",
+        "pdfs/2025/dunning/2025-00042_M1.pdf", "schriftverkehr/2024/Protokoll_Vorstand_2024-03-01.pdf",
     ])
     def test_valid(self, key):
         assert storage.is_valid_key(key)
@@ -37,6 +41,9 @@ class TestKeys:
         "documents/٢٠٢٦/10/12_ab12cd34.pdf",              # Ziffern anderer Schriften
         "incoming/2026/5_ab12cd34_a/b.xml", "incoming/2026/5_ab12cd34_",
         "C:\\Windows\\win.ini", "\\\\server\\share\\x.pdf", "documents/2026/10/12_ab12cd34.pdf\n",
+        "pdfs/2025/..", "pdfs/2025/.versteckt.pdf", "pdfs/_bulk_merged.pdf", "pdfs/_jobs/x.zip",
+        "pdfs/2025/a/b.pdf", "pdfs/2025/dunning/../x.pdf", "schriftverkehr/2024/../../x",
+        "schriftverkehr/2024/Brief mit Leerzeichen.pdf", "backups/db/x.sql.gz", "pdfs/2025/x.pdf\n",
     ])
     def test_invalid(self, key):
         assert not storage.is_valid_key(key)
@@ -51,6 +58,12 @@ class TestPaths:
     def test_inside_the_tenant_root(self, app, root):
         path = storage.path_for("documents/2026/10/12_ab12cd34.pdf")
         assert path == (root / "documents" / "2026" / "10" / "12_ab12cd34.pdf").resolve()
+
+    def test_key_for_path(self, app, root):
+        assert storage.key_for_path(str(root / "pdfs" / "2025" / "2025-00042.pdf")) == "pdfs/2025/2025-00042.pdf"
+        assert storage.key_for_path(str(root / "pdfs" / "_bulk_merged.pdf")) is None
+        assert storage.key_for_path(str(root.parent / "fremd" / "pdfs" / "2025" / "x.pdf")) is None
+        assert storage.key_for_path(None) is None and storage.key_for_path("") is None
 
     def test_invalid_keys_have_no_path(self, app, root):
         assert storage.path_for("../x.pdf") is None and storage.path_for(None) is None

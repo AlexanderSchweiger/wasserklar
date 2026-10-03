@@ -2,8 +2,8 @@
 
 Alle Wege, auf denen ein Rechnungs-PDF entsteht — Einzel-PDF, Sammel-PDF,
 ZIP, Mail-Anhang, Post-Versand eines Rechnungslaufs und die gleichnamigen
-Hintergrund-Jobs der SaaS — rendern ueber ``render_invoice_pdf`` und legen
-Dateien ueber ``write_invoice_pdf`` ab. Hier wird auch die E-Rechnung
+Hintergrund-Jobs der SaaS — rendern ueber ``render_invoice_pdf``; die
+Archivfassung legt ``app/invoices/archive.archive_invoice_file`` ab. Hier wird auch die E-Rechnung
 (ZUGFeRD/Factur-X) eingebettet — wer den Inhalt eines Rechnungs-PDFs
 erweitert, tut das hier und nicht an den Aufrufstellen.
 
@@ -125,11 +125,12 @@ def versioned_path(doc_dir: str, invoice_number: str, ext: str) -> str:
 
 
 def write_invoice_pdf(invoice, pdf_bytes):
-    """Legt das PDF unter einem neuen versionierten Pfad ab und gibt ihn zurück.
+    """Veraltet — nur noch fuer Alt-Aufrufer (z. B. aeltere SaaS-Renderer).
 
-    Setzt ``invoice.pdf_path`` bewusst NICHT: ob die Datei zum Archiv-PDF der
-    Rechnung wird, entscheidet der Aufrufer (ein Entwurfs-Ausdruck wird z.B.
-    nur abgelegt, nicht archiviert).
+    Archivfassungen gehen ueber ``app/invoices/archive.archive_invoice_file`` ins
+    Dokumentenregister (Pruefsumme, Frist); Entwurfsausdrucke werden gar nicht mehr
+    abgelegt. Diese Funktion legt das PDF nur noch unter einem versionierten Pfad ab
+    und setzt ``invoice.pdf_path`` nicht.
     """
     path = versioned_path(invoice_doc_dir(invoice), invoice.invoice_number, "pdf")
     with open(path, "wb") as fh:

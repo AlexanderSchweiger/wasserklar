@@ -198,7 +198,7 @@ class TestCapacity:
     def test_the_quota_from_the_config(self, app, tenant, monkeypatch):
         monkeypatch.setitem(app.config, "DOCUMENT_QUOTA_MB", 1)
         store(pdf(11) + b"0" * 600_000)
-        with pytest.raises(svc.QuotaExceeded, match="Belegspeicher ist voll"):
+        with pytest.raises(svc.QuotaExceeded, match="Dokumentenspeicher ist voll"):
             store(pdf(12) + b"0" * 600_000)
         assert Document.query.count() == 1
 

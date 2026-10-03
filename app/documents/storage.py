@@ -24,14 +24,25 @@ from flask import current_app, send_file
 from app.file_safety import tenant_file_root
 
 # Erlaubte Dateiendungen im Schluessel (Inhalt wird beim Upload ueber Magic Bytes bestimmt).
-EXTENSIONS = ("pdf", "xml", "jpg", "png", "webp")
+# ``txt`` gibt es fuer Kontoauszugsdateien (MT940/OFX) aus dem Bankimport und fuer Schriftverkehr;
+# ``docx`` fuer die Word-Fassung einer Rechnung/Mahnung; die Office-Formate nur im Schriftverkehr.
+EXTENSIONS = ("pdf", "xml", "jpg", "png", "webp", "txt", "docx", "doc", "xlsx", "xls", "odt", "ods", "md")
 
-# documents/<Jahr>/<Monat>/<id>_<sha8>.<ext>    — neue Ablage
+# Dateiname eines Altschluessels: nur [A-Za-z0-9._-], beginnt nicht mit einem Punkt (keine
+# versteckten Dateien, keine Namen nur aus Punkten).
+_LEGACY_NAME = r"[A-Za-z0-9_-][A-Za-z0-9._-]{0,199}"
+
+# documents/<Jahr>/<Monat>/<id>_<sha8>.<ext>    — neue Ablage (jedes neue Dokument)
 # incoming/<Jahr|ohne-datum>/<id>_<sha8>_<name>  — Altablage der Eingangsrechnungen (migriert)
+# pdfs/<Jahr|misc>/[dunning/]<name>              — Altdateien der Rechnungen/Mahnungen (registriert,
+#                                                  die Datei bleibt liegen)
+# schriftverkehr/<Jahr>/<name>                   — Altdateien der Protokolle/des Schriftverkehrs
 # [0-9] statt \d: \d trifft in Python-Strings auch Ziffern anderer Schriften.
 _KEY_RE = re.compile(
     r"^(?:documents/[0-9]{4}/[0-9]{2}/[0-9]{1,12}_[0-9a-f]{8}\.(?:" + "|".join(EXTENSIONS) + r")"
-    r"|incoming/(?:[0-9]{4}|ohne-datum)/[0-9]{1,12}_[0-9a-f]{8}_[A-Za-z0-9._-]{1,200})$"
+    r"|incoming/(?:[0-9]{4}|ohne-datum)/[0-9]{1,12}_[0-9a-f]{8}_[A-Za-z0-9._-]{1,200}"
+    r"|pdfs/(?:[0-9]{4}|misc)/(?:dunning/)?" + _LEGACY_NAME +
+    r"|schriftverkehr/[0-9]{4}/" + _LEGACY_NAME + r")$"
 )
 
 
@@ -46,6 +57,19 @@ def tenant_root() -> Path:
 def is_valid_key(key) -> bool:
     # fullmatch: ``$`` trifft in Python auch vor einem abschliessenden Zeilenumbruch.
     return isinstance(key, str) and _KEY_RE.fullmatch(key) is not None
+
+
+def key_for_path(path) -> str | None:
+    """Schluessel zu einem absoluten Pfad im Dateibaum des Mandanten (z. B. ``invoices.pdf_path``) —
+    ``None``, wenn der Pfad ausserhalb liegt oder kein gueltiger Schluessel waere."""
+    if not path:
+        return None
+    root = tenant_root()
+    try:
+        key = Path(path).resolve().relative_to(root).as_posix()
+    except (ValueError, OSError):
+        return None
+    return key if is_valid_key(key) else None
 
 
 def new_key(doc_id, sha256, ext, when=None) -> str:

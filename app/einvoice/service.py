@@ -153,9 +153,9 @@ def einvoice_xml(invoice, *, freeze=False, visual_pdf=None):
     """XML der Rechnung (ZUGFeRD oder XRechnung) oder ``None`` (abgeschaltet/unvollstaendig).
 
     Eingefrorenes XML hat Vorrang. Sonst wird neu erzeugt und — bei gesperrten
-    Rechnungen oder mit ``freeze=True`` (Versand eines Entwurfs) — neben dem PDF
-    abgelegt (``<PDF_DIR>/<Jahr>/<Nr>.xml``). ``xml_path`` wird am Objekt
-    gesetzt; committen muss der Aufrufer (tun alle Render-Wege ohnehin).
+    Rechnungen oder mit ``freeze=True`` (Versand eines Entwurfs) — im Dokumentenregister
+    archiviert (``archive_invoice_file``). ``xml_path`` wird am Objekt gesetzt;
+    committen muss der Aufrufer (tun alle Render-Wege ohnehin).
     ``visual_pdf``: fertig gerendertes PDF als Anhang einer XRechnung/UBL-Rechnung
     (spart den zweiten Renderlauf).
     """
@@ -172,11 +172,10 @@ def einvoice_xml(invoice, *, freeze=False, visual_pdf=None):
         e.attachment = _visual_copy(invoice, visual_pdf)
     xml = ubl.serialize(e) if profile == PROFILE_PEPPOL_UBL else cii.serialize(e)
     if freeze or invoice.status != Invoice.STATUS_DRAFT:
-        from app.invoices.pdf_service import invoice_doc_dir, versioned_path
-        path = versioned_path(invoice_doc_dir(invoice), invoice.invoice_number, "xml")
-        with open(path, "wb") as fh:
-            fh.write(xml)
-        invoice.xml_path = path
+        # Einfrieren = archivieren: das XML kommt ins Dokumentenregister (Pruefsumme, Frist) und
+        # ``xml_path`` zeigt darauf (app/invoices/archive.py).
+        from app.invoices.archive import archive_invoice_file
+        archive_invoice_file(invoice, xml, "xml")
         invoice.einvoice_profile = profile
     return xml
 

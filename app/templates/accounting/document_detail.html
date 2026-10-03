@@ -154,7 +154,7 @@
             <i class="fas fa-check me-1"></i> Buchen
           </button>
         </form>
-        {% elif not doc.einvoice %}
+        {% elif not doc.einvoice and doc.kind != 'bank_statement' %}
         <a href="{{ url_for('accounting.booking_new', document_id=doc.id) }}" class="btn btn-primary w-100 mb-3" hx-boost="false">
           <i class="fas fa-plus me-1"></i> Buchung aus diesem Beleg erstellen
         </a>
@@ -220,6 +220,15 @@
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button class="btn btn-sm btn-outline-danger"><i class="fas fa-trash me-1"></i> Löschen</button>
         </form>
+        {% elif retention_over and is_admin %}
+        <form method="post" action="{{ url_for('accounting.documents_expired_delete') }}"
+              hx-confirm="Die Aufbewahrungsfrist ist abgelaufen. Beleg samt Datei endgültig löschen? Das lässt sich nicht rückgängig machen.">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="ids" value="{{ doc.id }}">
+          <button class="btn btn-sm btn-outline-danger" title="Die Aufbewahrungsfrist ist abgelaufen"><i class="fas fa-trash me-1"></i> Löschen (Frist abgelaufen)</button>
+        </form>
+        {% elif retention_over %}
+        <span class="text-muted small"><i class="fas fa-hourglass-end me-1"></i>Frist abgelaufen — Löschen durch einen Administrator möglich</span>
         {% else %}
         <span class="text-muted small" title="{{ can_delete[1] }}"><i class="fas fa-lock me-1"></i>Nicht löschbar (Aufbewahrungspflicht)</span>
         {% endif %}
@@ -231,6 +240,12 @@
     <div class="card mb-3">
       <div class="card-header"><h3 class="card-title">Angaben zum Beleg</h3></div>
       <div class="card-body">
+        {% if doc.meta_auto %}
+        <div class="alert alert-warning py-2 small">
+          <i class="fas fa-magic me-1"></i>Diese Angaben wurden <strong>automatisch aus dem Belegtext erkannt</strong>.
+          Bitte mit dem Beleg vergleichen und mit „Bestätigen“ übernehmen.
+        </div>
+        {% endif %}
         <form method="post" action="{{ url_for('accounting.document_update', doc_id=doc.id) }}">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <div class="mb-2">
@@ -254,8 +269,32 @@
               <option value="">—</option>
               {% for s in suppliers %}<option value="{{ s.id }}" {{ 'selected' if doc.supplier_id == s.id }}>{{ s.name }}</option>{% endfor %}
             </select></div>
-          <button class="btn btn-sm btn-outline-primary w-100">Speichern</button>
+          <button class="btn btn-sm {{ 'btn-primary' if doc.meta_auto else 'btn-outline-primary' }} w-100">{{ 'Bestätigen' if doc.meta_auto else 'Speichern' }}</button>
         </form>
+      </div>
+    </div>
+    {% endif %}
+
+    {# --- Belegtext (Textebene des PDFs) ----------------------------------------------- #}
+    {% if doc.text_status %}
+    <div class="card mb-3">
+      <div class="card-header"><h3 class="card-title">Belegtext</h3></div>
+      <div class="card-body small">
+        {% if doc.text_status == 'ok' %}
+        <div class="text-muted mb-2">Der Text dieses PDFs ist in der Belegsuche durchsuchbar.</div>
+        {% if detected_vat_ids %}<div class="mb-1">USt-IdNr.: {% for v in detected_vat_ids %}<code>{{ v }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</div>{% endif %}
+        {% if detected_ibans %}<div class="mb-1">IBAN: {% for v in detected_ibans %}<code>{{ v }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</div>{% endif %}
+        <details class="mt-2">
+          <summary class="text-muted" style="cursor:pointer">Gelesenen Text anzeigen</summary>
+          <pre class="mt-2 mb-0 small" style="white-space:pre-wrap;max-height:20rem;overflow:auto">{{ (doc.text_content or '')[:5000] }}{% if (doc.text_content or '') | length > 5000 %}
+…{% endif %}</pre>
+        </details>
+        {% elif doc.text_status == 'empty' %}
+        <div class="text-muted"><i class="fas fa-info-circle me-1"></i>Dieses PDF enthält keinen lesbaren Text (vermutlich ein Scan).
+          Es ist nur über Name und Angaben auffindbar — Datum und Betrag bitte von Hand eintragen.</div>
+        {% else %}
+        <div class="text-muted"><i class="fas fa-info-circle me-1"></i>Der Text dieses PDFs ließ sich nicht lesen.</div>
+        {% endif %}
       </div>
     </div>
     {% endif %}
@@ -272,11 +311,14 @@
         <ul class="list-unstyled mb-0">
           {% for e in events %}
           <li class="mb-1">
-            <span class="text-muted text-nowrap">{{ e.created_at.strftime('%d.%m.%Y %H:%M') }}</span>
-            {{ {'uploaded': 'abgelegt', 'linked': 'zugeordnet', 'unlinked': 'Zuordnung gelöst', 'filed': 'ohne Buchung abgelegt',
-                'discarded': 'verworfen', 'reopened': 'zurück in den Eingang', 'edited': 'Angaben geändert'}.get(e.action, e.action) }}
-            {% if e.user %}<span class="text-muted">· {{ e.user.username }}</span>{% endif %}
             {% set d = e.detail_dict %}
+            <span class="text-muted text-nowrap">{{ e.created_at.strftime('%d.%m.%Y %H:%M') }}</span>
+            {% if e.action == 'edited' and d.get('bestaetigt') and d | length == 1 %}Angaben bestätigt
+            {% else %}{{ {'uploaded': 'abgelegt', 'autofilled': 'Angaben automatisch erkannt', 'linked': 'zugeordnet',
+                'unlinked': 'Zuordnung gelöst', 'filed': 'ohne Buchung abgelegt', 'discarded': 'verworfen',
+                'reopened': 'zurück in den Eingang', 'edited': 'Angaben geändert'}.get(e.action, e.action) }}{% endif %}
+            {% if e.user %}<span class="text-muted">· {{ e.user.username }}</span>{% endif %}
+            {% if e.action == 'autofilled' %}<span class="text-muted">· {{ d.keys() | reject('equalto', 'lieferant_erkannt_ueber') | join(', ') }}</span>{% endif %}
             {% if d.get('verkleinert') %}<span class="text-muted">· im Browser verkleinert (vorher {{ (d.get('original_groesse') or 0) | filesize }})</span>{% endif %}
             {% if d.get('reason') %}<span class="text-muted">· {{ d.get('reason') }}</span>{% endif %}
           </li>

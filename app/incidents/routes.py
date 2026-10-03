@@ -26,6 +26,7 @@ from flask import (
 from flask_login import login_required, current_user
 from werkzeug.utils import secure_filename
 
+from app.documents import service as doc_svc
 from app.incidents import bp
 from app.incidents import services as svc
 from app.incidents import vocab
@@ -293,13 +294,23 @@ def photo_upload(incident_id):
         flash("Nur Bilddateien (JPG, PNG, WebP, GIF) erlaubt.", "warning")
         return render_template("incidents/_photos.html", inc=inc)
 
+    # Fotos zaehlen im Speicher-Kontingent mit (``documents.usage``) — Grenze und Kontingent wie bei
+    # jedem Upload, die Groesse wird gespeichert.
+    data = file.read(doc_svc.max_upload_bytes() + 1)
+    try:
+        doc_svc.check_upload_limits(len(data))
+    except doc_svc.DocumentError as exc:
+        flash(str(exc), "warning")
+        return render_template("incidents/_photos.html", inc=inc)
     fname = f"{uuid.uuid4().hex}{ext}"
-    file.save(os.path.join(svc.incident_upload_dir(), fname))
+    with open(os.path.join(svc.incident_upload_dir(), fname), "wb") as fh:
+        fh.write(data)
     photo = IncidentPhoto(
         incident_id=inc.id,
         filename=fname,
         original_name=secure_filename(file.filename),
         content_type=file.mimetype,
+        size_bytes=len(data),
         caption=(request.form.get("caption") or "").strip() or None,
         uploaded_by_id=current_user.id,
     )

@@ -78,10 +78,8 @@ DOC_TYPE_LABELS = {
     SchriftverkehrDocument.TYPE_OTHER: "Sonstiges",
 }
 
-# Upload: erlaubte Dateitypen + Größenlimit (Protokolle + Schriftverkehr).
-ALLOWED_UPLOAD_EXTENSIONS = {
-    ".pdf", ".doc", ".docx", ".xls", ".xlsx",
-    ".odt", ".ods", ".md", ".txt",
-}
-MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB
-ALLOWED_UPLOAD_HINT = "PDF, Word, Excel, OpenOffice/LibreOffice, Markdown oder Text — max. 5 MB"
+# Upload (Protokolle + Schriftverkehr): die Pruefung macht das Dokumentenregister
+# (``documents.service.store_record_upload`` — Inhalt statt Endung, Grenze
+# ``DOCUMENT_MAX_UPLOAD_MB``). Hier nur die Auswahl im Datei-Dialog und der Hinweistext.
+UPLOAD_ACCEPT = ".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.odt,.ods,.md,.txt"
+ALLOWED_UPLOAD_HINT = "PDF, Foto, Word, Excel, OpenOffice/LibreOffice, Markdown oder Text"

@@ -435,6 +435,44 @@
 
       </div>
     </div>
+
+    {% if archive_docs %}
+    <!-- Archiv: die abgelegten Fassungen (Dokumentenregister) -->
+    <div class="card mt-3">
+      <div class="card-header">
+        <h3 class="card-title">Archiv</h3>
+      </div>
+      <div class="list-group list-group-flush">
+        {% for d in archive_docs %}
+        <div class="list-group-item d-flex align-items-start justify-content-between gap-3 py-2 px-3">
+          <div class="small" style="min-width: 0">
+            <div class="fw-medium">
+              {{ d.original_name }}
+              {% if d.id in archive_current_ids %}<span class="badge bg-green-lt ms-1">aktuell</span>{% endif %}
+              {% if d.id in archive_regenerated_ids %}
+              <span class="badge bg-yellow-lt ms-1"
+                    title="Neu erzeugt, weil die frühere Archivdatei fehlte — nicht das Original.">neu erzeugt</span>
+              {% endif %}
+            </div>
+            <div class="text-muted">abgelegt {{ d.created_at.strftime('%d.%m.%Y %H:%M') }} · {{ d.size_bytes | filesize }}</div>
+            <div class="text-muted text-truncate" title="SHA-256 {{ d.sha256 }}">SHA-256 {{ d.sha256[:16] }}…</div>
+          </div>
+          <a href="{{ url_for('invoices.archive_file', invoice_id=invoice.id, doc_id=d.id) }}"
+             class="btn btn-sm btn-outline-secondary" {% if d.is_pdf %}target="_blank"{% endif %}
+             title="{{ 'Ansehen' if d.is_pdf else 'Herunterladen' }}">
+            <i class="fas fa-{{ 'file-pdf' if d.is_pdf else ('file-code' if d.is_xml else 'file-word') }}"></i>
+          </a>
+        </div>
+        {% endfor %}
+        {% if archive_until %}
+        <div class="list-group-item small text-muted py-2 px-3">
+          <i class="fas fa-archive me-1"></i>Aufbewahren bis {{ archive_until.strftime('%d.%m.%Y') }}.
+          {{ archive_hint }}
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
   </div>
 
   <!-- Positionen -->

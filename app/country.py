@@ -65,6 +65,10 @@ class CountryProfile:
     # Hinweistext zu den Sonderfaellen — nur Anzeige in der Belegablage, keine Rechtsberatung.
     document_retention_years: int = 7
     document_retention_hint: str = ""
+    # Frist fuer Geschaeftsbriefe (Mahnungen, Schriftverkehr) — gleiche Rechenregel, eigene Jahre.
+    # Protokolle/Beschluesse haben keine Frist (dauerhaft, ``app/documents/retention.py``).
+    business_letter_retention_years: int = 7
+    business_letter_retention_hint: str = ""
 
     def default_tax_rate_values(self):
         return [rate for rate, _ in self.tax_rates]
@@ -105,6 +109,11 @@ _AT = CountryProfile(
     document_retention_hint=(
         "§ 132 BAO: 7 Jahre ab Ende des Kalenderjahres, länger solange ein Verfahren offen ist. "
         "Unterlagen zu Grundstücken: 22 Jahre (§ 18 Abs. 10 UStG)."
+    ),
+    business_letter_retention_years=7,
+    business_letter_retention_hint=(
+        "Geschäftsbriefe (Mahnungen, Schriftverkehr): 7 Jahre ab Ende des Kalenderjahres "
+        "(§ 132 BAO, § 212 UGB)."
     ),
     map_center=(47.59, 14.14),
     map_zoom=7,
@@ -153,6 +162,11 @@ _DE = CountryProfile(
         "§ 147 AO / § 14b UStG: 8 Jahre für Buchungsbelege und Rechnungen (seit 2025), "
         "10 Jahre für Bücher und Jahresabschlüsse, 6 Jahre für Geschäftsbriefe; die Frist "
         "läuft nicht ab, solange die Festsetzungsfrist noch nicht abgelaufen ist."
+    ),
+    business_letter_retention_years=6,
+    business_letter_retention_hint=(
+        "Geschäftsbriefe (Mahnungen, Schriftverkehr): 6 Jahre ab Ende des Kalenderjahres "
+        "(§ 147 AO, § 257 HGB)."
     ),
     map_center=(51.16, 10.45),
     map_zoom=6,

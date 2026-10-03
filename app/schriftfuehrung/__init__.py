@@ -56,6 +56,7 @@ def _inject_labels():
         "sf_delivery_action_labels": constants.DELIVERY_ACTION_LABELS,
         "sf_doc_type_labels": constants.DOC_TYPE_LABELS,
         "sf_upload_hint": constants.ALLOWED_UPLOAD_HINT,
+        "sf_upload_accept": constants.UPLOAD_ACCEPT,
     }
 
 

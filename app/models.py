@@ -1,6 +1,7 @@
 from datetime import datetime, date, timedelta
 from decimal import Decimal
 import sqlalchemy as sa
+from sqlalchemy.dialects import mysql
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_login import UserMixin
 from app.extensions import db, login_manager
@@ -2589,7 +2590,19 @@ class BookingGroup(db.Model):
 
 
 class Document(db.Model):
-    """Belegablage: eine gespeicherte Datei (Rechnung, Kassenbon, Kontoauszug, Scan …).
+    """Dokumentenregister: eine gespeicherte, aufbewahrungspflichtige Datei.
+
+    Der Bereich (``area``) bestimmt, wer das Dokument sieht (``app/documents/access.py``), die Art
+    (``kind``) die Aufbewahrungsklasse (``app/documents/retention.py``):
+
+    * ``accounting`` — Belege (Rechnung, Kassenbon, Kontoauszug, Scan …), Recht ``buchhaltung``
+    * ``invoices``   — Ausgangsrechnungen und Gutschriften (PDF/XML/DOCX), Recht ``rechnungen_op``
+    * ``dunning``    — Mahnungen, Recht ``mahnwesen``
+    * ``records``    — Protokolle (dauerhaft) und Schriftverkehr, Recht ``schriftfuehrung``
+
+    Erzeugte Dokumente (Rechnungen, Mahnungen, Protokoll-PDF) legt ``documents.service.store_generated``
+    ab, Uploads ``store_upload``. Die folgenden Regeln stammen aus der Belegablage und gelten fuer
+    den Bereich ``accounting``:
 
     Die Datei liegt **unveraendert** im Dateibaum des Mandanten (``storage_key`` ist ein
     relativer, geprueter Schluessel — siehe ``app/documents/storage.py``), die Zeile haelt
@@ -2612,18 +2625,42 @@ class Document(db.Model):
     STATUS_DISCARDED = "Verworfen"
 
     AREA_ACCOUNTING = "accounting"
+    AREA_INVOICES = "invoices"
+    AREA_DUNNING = "dunning"
+    AREA_RECORDS = "records"
+    AREA_LABELS = {
+        AREA_ACCOUNTING: "Belege",
+        AREA_INVOICES: "Ausgangsrechnungen",
+        AREA_DUNNING: "Mahnungen",
+        AREA_RECORDS: "Schriftführung",
+    }
 
     KIND_INVOICE = "invoice"
     KIND_CREDIT_NOTE = "credit_note"
     KIND_RECEIPT = "receipt"
     KIND_BANK_STATEMENT = "bank_statement"
     KIND_OTHER = "other"
+    # Arten der Belegablage (Bereich ``accounting``) — waehlbar auf der Belegseite.
     KIND_LABELS = {
         KIND_INVOICE: "Rechnung",
         KIND_CREDIT_NOTE: "Gutschrift",
         KIND_RECEIPT: "Kassenbon / Quittung",
         KIND_BANK_STATEMENT: "Kontoauszug",
         KIND_OTHER: "Sonstiges",
+    }
+    # Arten der uebrigen Bereiche — vom System gesetzt, nicht waehlbar.
+    KIND_SALES_INVOICE = "sales_invoice"
+    KIND_SALES_CREDIT = "sales_credit"
+    KIND_DUNNING_NOTICE = "dunning_notice"
+    KIND_PROTOCOL = "protocol"
+    KIND_CORRESPONDENCE = "correspondence"
+    ALL_KIND_LABELS = {
+        **KIND_LABELS,
+        KIND_SALES_INVOICE: "Ausgangsrechnung",
+        KIND_SALES_CREDIT: "Gutschrift (Storno)",
+        KIND_DUNNING_NOTICE: "Mahnung",
+        KIND_PROTOCOL: "Protokoll",
+        KIND_CORRESPONDENCE: "Schriftverkehr",
     }
 
     id = db.Column(db.Integer, primary_key=True)
@@ -2643,6 +2680,15 @@ class Document(db.Model):
     amount = db.Column(db.Numeric(12, 2))                        # brutto, positiv
     supplier_id = db.Column(db.Integer, db.ForeignKey("customers.id", name="fk_documents_supplier_id"),
                             nullable=True)
+    # Stufe 2: Text der PDF-Textebene (Volltextsuche; ``app/documents/extract.py``). Abgeleitet,
+    # nie Teil des Belegs — die Datei bleibt Byte fuer Byte. ``deferred``: Listen laden den
+    # Text nicht mit. ``text_status``: ok | empty (Scan, keine Textebene) | error | NULL (nicht gelesen).
+    text_content = db.deferred(db.Column(
+        db.Text().with_variant(mysql.MEDIUMTEXT(), "mysql", "mariadb"), nullable=True))
+    text_status = db.Column(db.String(10), nullable=True)
+    # True = Titel/Nummer/Datum/Betrag/Lieferant stammen aus der automatischen Erkennung und sind
+    # noch nicht bestaetigt; „Speichern“ in den Angaben setzt es zurueck (``service.update_meta``).
+    meta_auto = db.Column(db.Boolean, nullable=False, default=False, server_default=sa.false())
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id", name="fk_documents_created_by_id"),
                               nullable=True)
@@ -2680,7 +2726,16 @@ class Document(db.Model):
 
     @property
     def kind_label(self):
-        return self.KIND_LABELS.get(self.kind, self.kind)
+        return self.ALL_KIND_LABELS.get(self.kind, self.kind)
+
+    @property
+    def area_label(self):
+        return self.AREA_LABELS.get(self.area, self.area)
+
+    @property
+    def is_office(self):
+        """Office-/Textdatei (Schriftverkehr) — wird immer als Download ausgeliefert."""
+        return not (self.is_pdf or self.is_image or self.is_xml)
 
     @property
     def display_title(self):
@@ -2691,12 +2746,13 @@ class Document(db.Model):
 
 
 class DocumentLink(db.Model):
-    """Verknuepfung Beleg ↔ Buchung bzw. Sammelbuchung (n:m).
+    """Verknuepfung Dokument ↔ Bezug (n:m).
 
-    Genau **eines** von ``booking_id`` / ``booking_group_id`` ist gesetzt (der Service
-    erzwingt das; spaeter kommen ``customer_id``/``property_id`` dazu). Belege einer
-    Sammelbuchung haengen an der ``BookingGroup``, nie an einem Kind: das Bearbeiten
-    der Sammelbuchung loescht und legt alle Kind-Buchungen neu an.
+    Genau **eine** der Spalten ``booking_id`` / ``booking_group_id`` (Belege), ``invoice_id``
+    (Ausgangsrechnung), ``dunning_notice_id`` (Mahnung) oder ``meeting_id`` (Protokoll) ist
+    gesetzt — der Service erzwingt das. Belege einer Sammelbuchung haengen an der
+    ``BookingGroup``, nie an einem Kind: das Bearbeiten der Sammelbuchung loescht und legt alle
+    Kind-Buchungen neu an.
     """
     __tablename__ = "document_links"
 
@@ -2710,6 +2766,15 @@ class DocumentLink(db.Model):
     booking_group_id = db.Column(
         db.Integer, db.ForeignKey("booking_groups.id", name="fk_document_links_booking_group_id",
                                   ondelete="CASCADE"), nullable=True, index=True)
+    invoice_id = db.Column(
+        db.Integer, db.ForeignKey("invoices.id", name="fk_document_links_invoice_id",
+                                  ondelete="CASCADE"), nullable=True, index=True)
+    dunning_notice_id = db.Column(
+        db.Integer, db.ForeignKey("dunning_notices.id", name="fk_document_links_dunning_notice_id",
+                                  ondelete="CASCADE"), nullable=True, index=True)
+    meeting_id = db.Column(
+        db.Integer, db.ForeignKey("meetings.id", name="fk_document_links_meeting_id",
+                                  ondelete="CASCADE"), nullable=True, index=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id", name="fk_document_links_created_by_id"),
                               nullable=True)
@@ -2717,6 +2782,9 @@ class DocumentLink(db.Model):
     __table_args__ = (
         db.UniqueConstraint("document_id", "booking_id", name="uq_document_links_booking"),
         db.UniqueConstraint("document_id", "booking_group_id", name="uq_document_links_group"),
+        db.UniqueConstraint("document_id", "invoice_id", name="uq_document_links_invoice"),
+        db.UniqueConstraint("document_id", "dunning_notice_id", name="uq_document_links_dunning_notice"),
+        db.UniqueConstraint("document_id", "meeting_id", name="uq_document_links_meeting"),
     )
 
     document = db.relationship("Document", back_populates="links")
@@ -2726,15 +2794,29 @@ class DocumentLink(db.Model):
                               backref=db.backref("document_links", cascade="all"))
     booking_group = db.relationship("BookingGroup", foreign_keys=[booking_group_id],
                                     backref=db.backref("document_links", cascade="all"))
+    invoice = db.relationship("Invoice", foreign_keys=[invoice_id],
+                              backref=db.backref("document_links", cascade="all"))
+    dunning_notice = db.relationship("DunningNotice", foreign_keys=[dunning_notice_id],
+                                     backref=db.backref("document_links", cascade="all"))
+    meeting = db.relationship("Meeting", foreign_keys=[meeting_id],
+                              backref=db.backref("document_links", cascade="all"))
     created_by = db.relationship("User", foreign_keys=[created_by_id])
+
+    @property
+    def target(self):
+        """Der Bezug der Verknuepfung (Buchung, Sammelbuchung, Rechnung, Mahnung oder Sitzung)."""
+        return (self.booking or self.booking_group or self.invoice or self.dunning_notice
+                or self.meeting)
 
 
 class DocumentEvent(db.Model):
     """Protokoll der Beleg-Aktionen (Nachvollziehbarkeit: AT § 131 BAO, DE GoBD).
 
     ``document_id`` wird beim Loeschen eines Belegs NULL — der Snapshot von Name und
-    Pruefsumme am Ereignis belegt, was es war. Aktionen: ``uploaded``, ``linked``,
-    ``unlinked``, ``filed``, ``discarded``, ``reopened``, ``edited``, ``deleted``.
+    Pruefsumme am Ereignis belegt, was es war. Aktionen: ``uploaded``, ``autofilled``
+    (Angaben aus dem Belegtext vorbelegt), ``linked``, ``unlinked``, ``filed``, ``discarded``,
+    ``reopened``, ``edited``, ``deleted`` (nie verknuepft ODER Aufbewahrungsfrist abgelaufen —
+    dann steht der Grund im Detail).
     """
     __tablename__ = "document_events"
 
@@ -3578,6 +3660,7 @@ class FeaturePhoto(db.Model):
     filename = db.Column(db.String(255), nullable=False)        # gespeicherter Dateiname (UUID)
     original_name = db.Column(db.String(255), nullable=True)
     content_type = db.Column(db.String(80), nullable=True)
+    size_bytes = db.Column(db.BigInteger, nullable=True)        # Speicherstatistik/Kontingent; NULL = Bestand
     caption = db.Column(db.String(255), nullable=True)
     uploaded_at = db.Column(db.DateTime, default=datetime.utcnow)
     uploaded_by_id = db.Column(
@@ -3780,6 +3863,7 @@ class IncidentPhoto(db.Model):
     filename = db.Column(db.String(255), nullable=False)        # gespeicherter Dateiname (UUID)
     original_name = db.Column(db.String(255), nullable=True)
     content_type = db.Column(db.String(80), nullable=True)
+    size_bytes = db.Column(db.BigInteger, nullable=True)        # Speicherstatistik/Kontingent; NULL = Bestand
     caption = db.Column(db.String(255), nullable=True)
     uploaded_at = db.Column(db.DateTime, default=datetime.utcnow)
     uploaded_by_id = db.Column(
@@ -3861,7 +3945,10 @@ class Meeting(db.Model):
 
     @property
     def can_delete(self):
-        """Vor dem ersten Versand löschbar; danach bleibt sie erhalten (History)."""
+        """Vor dem ersten Versand löschbar; danach bleibt sie erhalten (History). Mit einem
+        abgeschlossenen Protokoll nie — Protokoll und Beschlüsse werden dauerhaft aufbewahrt."""
+        if self.protocol is not None and self.protocol.is_locked:
+            return False
         return self.status == self.STATUS_PLANNING
 
     def __repr__(self):
@@ -4135,11 +4222,22 @@ class SchriftverkehrDocument(db.Model):
     mime_type = db.Column(db.String(120), nullable=True)
     file_size = db.Column(db.Integer, nullable=True)
     note = db.Column(db.Text, nullable=True)
+    # Eintrag im Dokumentenregister (Pruefsumme, Protokoll, Frist). NULL = Altbestand vor dem
+    # Register, bis ``documents-register-files`` ihn nachtraegt.
+    document_id = db.Column(
+        db.Integer, db.ForeignKey("documents.id", name="fk_schriftverkehr_documents_document_id",
+                                  ondelete="SET NULL"), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"),
                               nullable=True)
 
+    __table_args__ = (
+        db.UniqueConstraint("document_id", name="uq_schriftverkehr_documents_document_id"),
+    )
+
     created_by = db.relationship("User", foreign_keys=[created_by_id])
+    document = db.relationship("Document", foreign_keys=[document_id],
+                               backref=db.backref("correspondence", uselist=False))
 
     def __repr__(self):
         return f"<SchriftverkehrDocument #{self.id} {self.year} {self.title!r}>"

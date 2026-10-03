@@ -47,9 +47,16 @@ def create_app(config_name=None):
     # Formular schon in seinem before_request, danach waere die Grenze wirkungslos.
     from flask import request as _doc_request
 
+    # Upload-Endpunkte des Dokumentenregisters → Seite, auf die ein zu grosser Upload zurueckfuehrt.
+    _DOCUMENT_UPLOADS = {
+        "accounting.document_upload": "accounting.documents",
+        "schriftfuehrung.archive_upload": "schriftfuehrung.archive",
+        "schriftfuehrung.protocol_upload": None,          # zurueck zur Sitzung (Referrer)
+    }
+
     @app.before_request
     def _limit_document_uploads():
-        if _doc_request.method == "POST" and _doc_request.endpoint == "accounting.document_upload":
+        if _doc_request.method == "POST" and _doc_request.endpoint in _DOCUMENT_UPLOADS:
             _doc_request.max_content_length = (int(app.config["DOCUMENT_MAX_UPLOAD_MB"]) + 1) * 1024 * 1024
 
     csrf.init_app(app)
@@ -244,7 +251,10 @@ def create_app(config_name=None):
         if best.accept_json and not best.accept_html:
             return _jsonify(ok=False, error=message), 413
         _flash(message, "danger")
-        return _redirect(_url_for("accounting.documents"))
+        target = _DOCUMENT_UPLOADS.get(_doc_request.endpoint, "accounting.documents")
+        if target is None:
+            return _redirect(_doc_request.referrer or _url_for("schriftfuehrung.archive"))
+        return _redirect(_url_for(target))
 
     # Context Processor: WG-Einstellungen in alle Templates injizieren
     @app.context_processor

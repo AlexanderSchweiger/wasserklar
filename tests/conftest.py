@@ -5,9 +5,16 @@ from app.extensions import db as _db
 
 
 @pytest.fixture(scope="session")
-def app():
-    """Erstellt die Flask-App einmalig für die gesamte Test-Session."""
+def app(tmp_path_factory):
+    """Erstellt die Flask-App einmalig für die gesamte Test-Session.
+
+    ``PDF_DIR`` zeigt auf einen Temp-Ordner: Rechnungs-/Mahnungsdateien und das
+    Dokumentenregister landen sonst im echten ``instance/`` der Entwicklungsumgebung.
+    """
     _app = create_app("testing")
+    tenant = tmp_path_factory.mktemp("tenant")
+    _app.config["PDF_DIR"] = str(tenant / "pdfs")
+    (tenant / "pdfs").mkdir()
     ctx = _app.app_context()
     ctx.push()
     _db.create_all()

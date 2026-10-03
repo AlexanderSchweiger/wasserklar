@@ -1,4 +1,5 @@
 import json
+import io
 import os
 import re
 from datetime import date, datetime, timedelta
@@ -34,6 +35,9 @@ from app.invoices.pdf_service import (  # noqa: E402
     render_invoice_pdf,
     write_invoice_pdf,
 )
+# Archivfassungen (gesperrte Rechnungen, versendete Entwuerfe) gehen ins Dokumentenregister;
+# Entwurfsausdrucke werden nicht abgelegt.
+from app.invoices.archive import archive_invoice_file  # noqa: E402
 
 
 # Nach app/invoices/services.py extrahiert (wiederverwendet von den
@@ -1050,6 +1054,7 @@ def detail(invoice_id):
     return render_template(
         "invoices/detail.html",
         invoice=invoice,
+        **_archive_context(invoice),
         einvoice=einvoice_status(invoice),
         einvoice_required=required_for(invoice),
         einvoice_delivery=delivery_problem(invoice),
@@ -1344,7 +1349,7 @@ def bulk_pdf_merged():
     for invoice in invoices:
         pdf_bytes = render_invoice_pdf(invoice)
         if _invoice_is_locked(invoice) and not safe_tenant_path(invoice.pdf_path):
-            invoice.pdf_path = write_invoice_pdf(invoice, pdf_bytes)
+            archive_invoice_file(invoice, pdf_bytes, "pdf")
         writer.append(io.BytesIO(pdf_bytes))
     db.session.commit()
     # Byte-identische Objekte zusammenfassen (hilft bei deckenden Logos; bei
@@ -1385,10 +1390,10 @@ def bulk_pdf_zip():
             if _invoice_is_locked(invoice) and (cached := safe_tenant_path(invoice.pdf_path)):
                 zf.write(cached, f"{invoice.invoice_number}.pdf")
             else:
-                pdf_path = write_invoice_pdf(invoice, render_invoice_pdf(invoice))
+                pdf_bytes = render_invoice_pdf(invoice)
                 if _invoice_is_locked(invoice):
-                    invoice.pdf_path = pdf_path
-                zf.write(pdf_path, f"{invoice.invoice_number}.pdf")
+                    archive_invoice_file(invoice, pdf_bytes, "pdf")
+                zf.writestr(f"{invoice.invoice_number}.pdf", pdf_bytes)
     db.session.commit()
     buf.seek(0)
     return send_file(buf, as_attachment=True, download_name="Rechnungen.zip",
@@ -1417,10 +1422,7 @@ def bulk_docx_zip():
             else:
                 doc_data = generate_docx(invoice, wg_settings(), design=_current_design())
                 if _invoice_is_locked(invoice):
-                    doc_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "docx")
-                    with open(doc_path, "wb") as f:
-                        f.write(doc_data)
-                    invoice.doc_path = doc_path
+                    archive_invoice_file(invoice, doc_data, "docx")
                 zf.writestr(f"{invoice.invoice_number}.docx", doc_data)
     db.session.commit()
     buf.seek(0)
@@ -1448,10 +1450,7 @@ def bulk_docx_merged():
         else:
             doc_data = generate_docx(invoice, wg_settings(), design=_current_design())
             if _invoice_is_locked(invoice):
-                doc_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "docx")
-                with open(doc_path, "wb") as f:
-                    f.write(doc_data)
-                invoice.doc_path = doc_path
+                archive_invoice_file(invoice, doc_data, "docx")
             sources.append(doc_data)
     db.session.commit()
     merged = merge_docx_files(sources)
@@ -1805,10 +1804,7 @@ def pdf(invoice_id):
         from app.invoices.document_service import generate_docx
         doc_data = generate_docx(invoice, wg_settings(), design=_current_design())
         if _invoice_is_locked(invoice):
-            doc_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "docx")
-            with open(doc_path, "wb") as f:
-                f.write(doc_data)
-            invoice.doc_path = doc_path
+            archive_invoice_file(invoice, doc_data, "docx")
             db.session.commit()
         return send_file(_io.BytesIO(doc_data), as_attachment=True,
                          download_name=f"{invoice.invoice_number}.docx",
@@ -1828,12 +1824,12 @@ def pdf(invoice_id):
             return redirect(url_for("invoices.pdf_preview", invoice_id=invoice.id))
         flash("WeasyPrint ist nicht installiert. PDF-Export nur im Docker-Container verfügbar.", "danger")
         return redirect(url_for("invoices.detail", invoice_id=invoice.id))
-    pdf_path = write_invoice_pdf(invoice, render_invoice_pdf(invoice))
-    # Nur für Nicht-Entwürfe persistieren
+    pdf_bytes = render_invoice_pdf(invoice)
+    # Nur Nicht-Entwürfe archivieren; ein Entwurfsausdruck geht direkt an den Browser.
     if _invoice_is_locked(invoice):
-        invoice.pdf_path = pdf_path
+        archive_invoice_file(invoice, pdf_bytes, "pdf")
         db.session.commit()
-    return send_file(pdf_path, as_attachment=False,
+    return send_file(io.BytesIO(pdf_bytes), as_attachment=False, mimetype="application/pdf",
                      download_name=f"{invoice.invoice_number}.pdf")
 
 
@@ -1847,6 +1843,43 @@ def pdf_preview(invoice_id):
     """
     invoice = db.get_or_404(Invoice, invoice_id)
     return _render_pdf_html(invoice)
+
+
+def _archive_context(invoice):
+    """Karte „Archiv“: die archivierten Fassungen der Rechnung (Dokumentenregister)."""
+    from app.documents import retention
+    from app.invoices.archive import archived_documents, is_current
+    docs = archived_documents(invoice)
+    if not docs:
+        return {"archive_docs": []}
+    return {
+        "archive_docs": docs,
+        "archive_current_ids": {d.id for d in docs if is_current(invoice, d)},
+        "archive_regenerated_ids": {
+            d.id for d in docs
+            if any(e.action == "archived" and e.detail_dict.get("neu_erzeugt") for e in d.events)},
+        "archive_until": max((retention.retention_end(d) for d in docs), default=None),
+        "archive_hint": retention.hint(docs[0]),
+    }
+
+
+@bp.route("/<int:invoice_id>/archive/<int:doc_id>")
+@login_required
+def archive_file(invoice_id, doc_id):
+    """Eine archivierte Fassung der Rechnung, unveraendert so wie abgelegt (PDF inline, sonst Download)."""
+    from app.documents import storage
+    from app.models import Document, DocumentLink
+    invoice = db.get_or_404(Invoice, invoice_id)
+    doc = (Document.query.join(DocumentLink, DocumentLink.document_id == Document.id)
+           .filter(Document.id == doc_id, DocumentLink.invoice_id == invoice.id).first())
+    if doc is None:
+        abort(404)
+    resp = storage.send(doc.storage_key, download_name=doc.original_name, mimetype=doc.content_type,
+                        as_attachment=not doc.is_pdf)
+    if resp is None:
+        flash("Die archivierte Datei ist nicht mehr vorhanden.", "danger")
+        return redirect(url_for("invoices.detail", invoice_id=invoice.id))
+    return resp
 
 
 @bp.route("/<int:invoice_id>/einvoice.xml")
@@ -1929,7 +1962,7 @@ def send_email(invoice_id):
     msg = Message(subject=subject, recipients=[recipient], body=body)
 
     doc_data = None
-    pdf_path = None
+    sent_pdf = None
     pdf_ok = False
 
     # XRechnung (Behoerdenkunde): statt PDF/Word geht die XML-Datei raus.
@@ -1946,11 +1979,11 @@ def send_email(invoice_id):
         try:
             pdf_bytes = render_invoice_pdf(invoice, for_email=True,
                                            freeze_einvoice=not test_mode)
-            pdf_path = write_invoice_pdf(invoice, pdf_bytes)
+            sent_pdf = pdf_bytes
             msg.attach(f"{invoice.invoice_number}.pdf", "application/pdf", pdf_bytes)
             pdf_ok = True
         except (ImportError, OSError):
-            pdf_path = None
+            sent_pdf = None
             if fmt == "pdf":
                 flash("WeasyPrint ist nicht installiert. E-Mail-Versand mit PDF-Anhang "
                       "nur im Docker-Container verfügbar.", "danger")
@@ -1980,13 +2013,12 @@ def send_email(invoice_id):
 
     _record_invoice_sent(invoice, msg, recipient=recipient)
 
+    # Archiviert wird genau die versendete Fassung. Die Mail ist schon draussen — ein Schreibfehler
+    # bricht hier nichts mehr ab (strict=False, steht im Log).
     if doc_data and _invoice_is_locked(invoice):
-        doc_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "docx")
-        with open(doc_path, "wb") as f:
-            f.write(doc_data)
-        invoice.doc_path = doc_path
-    if pdf_path:
-        invoice.pdf_path = pdf_path
+        archive_invoice_file(invoice, doc_data, "docx", strict=False)
+    if sent_pdf:
+        archive_invoice_file(invoice, sent_pdf, "pdf", strict=False)
 
     _create_or_update_open_item(invoice)
     db.session.commit()
@@ -2036,7 +2068,7 @@ def send_email_ajax(invoice_id):
         msg = Message(subject=subject, recipients=[recipient], body=body)
 
         doc_data = None
-        pdf_path = None
+        sent_pdf = None
         pdf_ok = False
 
         # XRechnung (Behoerdenkunde): statt PDF/Word geht die XML-Datei raus.
@@ -2053,11 +2085,11 @@ def send_email_ajax(invoice_id):
             try:
                 pdf_bytes = render_invoice_pdf(invoice, for_email=True,
                                                freeze_einvoice=not test_mode)
-                pdf_path = write_invoice_pdf(invoice, pdf_bytes)
+                sent_pdf = pdf_bytes
                 msg.attach(f"{invoice.invoice_number}.pdf", "application/pdf", pdf_bytes)
                 pdf_ok = True
             except (ImportError, OSError):
-                pdf_path = None
+                sent_pdf = None
                 if fmt == "pdf":
                     preview_url = url_for("invoices.pdf_preview", invoice_id=invoice_id)
                     return jsonify({"ok": False, "error": "WeasyPrint nicht verfügbar",
@@ -2078,12 +2110,9 @@ def send_email_ajax(invoice_id):
         if not test_mode:
             _record_invoice_sent(invoice, msg, recipient=recipient)
             if doc_data and _invoice_is_locked(invoice):
-                doc_path = _versioned_path(_get_doc_dir(invoice), invoice.invoice_number, "docx")
-                with open(doc_path, "wb") as f:
-                    f.write(doc_data)
-                invoice.doc_path = doc_path
-            if pdf_path:
-                invoice.pdf_path = pdf_path
+                archive_invoice_file(invoice, doc_data, "docx", strict=False)
+            if sent_pdf:
+                archive_invoice_file(invoice, sent_pdf, "pdf", strict=False)
             _create_or_update_open_item(invoice)
             db.session.commit()
 
@@ -2706,8 +2735,8 @@ def billing_run_post_bulk(run_id):
         # Der Post-Beleg wird jetzt versendet — seine E-Rechnungsdaten einfrieren,
         # auch wenn die Rechnung in diesem Moment noch Entwurf ist.
         pdf_bytes = render_invoice_pdf(invoice, freeze_einvoice=True)
-        # Erzeugtes PDF immer persistieren (der heruntergeladene Post-Beleg).
-        invoice.pdf_path = write_invoice_pdf(invoice, pdf_bytes)
+        # Der heruntergeladene Post-Beleg ist die versendete Fassung → archivieren.
+        archive_invoice_file(invoice, pdf_bytes, "pdf")
         # Nur Entwürfe auf „Versendet" setzen; Offenen Posten wie beim Mailversand anlegen.
         if invoice.status == Invoice.STATUS_DRAFT:
             invoice.status = Invoice.STATUS_SENT

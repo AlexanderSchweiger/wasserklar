@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Aufbewahrung abgelaufen{% endblock %}
+{% block page_title %}<i class="fas fa-hourglass-end me-2"></i> Belege mit abgelaufener Aufbewahrungsfrist{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+  <a href="{{ url_for('accounting.documents') }}" class="btn btn-sm btn-outline-secondary">
+    <i class="fas fa-arrow-left me-1"></i> Alle Belege
+  </a>
+</div>
+
+<div class="alert alert-info">
+  <p class="mb-1">
+    Für diese Belege ist die gesetzliche Aufbewahrungsfrist von <strong>{{ retention_years }} Jahren</strong>
+    abgelaufen (gerechnet ab Ende des Jahres der Buchung bzw. des Belegs).
+  </p>
+  <p class="mb-1 text-muted small">{{ retention_hint }}</p>
+  <p class="mb-0">
+    <strong>Bitte vor dem Löschen prüfen:</strong> Gilt für einen Beleg eine längere Frist (laufendes Verfahren,
+    Unterlagen zu Grundstücken, Förderabrechnung …), lassen Sie ihn stehen. Gelöschte Belege sind nicht
+    wiederherstellbar — das Änderungsprotokoll hält nur fest, <em>dass</em> und von wem sie gelöscht wurden.
+    Sichern Sie das Jahr vorher als <a href="{{ url_for('accounting.documents_archive') }}">Belegarchiv</a>.
+  </p>
+</div>
+
+<div class="card">
+  {% if rows %}
+  <form method="post" action="{{ url_for('accounting.documents_expired_delete') }}"
+        hx-confirm="Die gewählten Belege samt Dateien endgültig löschen? Das lässt sich nicht rückgängig machen.">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="table-responsive">
+      <table class="table table-vcenter card-table">
+        <thead>
+          <tr>
+            {% if is_admin %}<th class="w-1"><input class="form-check-input" type="checkbox" id="expired-all" title="Alle wählen"></th>{% endif %}
+            <th>Beleg</th><th>Belegdatum</th><th>Lieferant</th><th class="text-end">Betrag</th>
+            <th>Zugeordnet</th><th>Aufbewahrt bis</th><th class="text-end">Größe</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for d, end in rows %}
+          <tr>
+            {% if is_admin %}<td><input class="form-check-input expired-row" type="checkbox" name="ids" value="{{ d.id }}"></td>{% endif %}
+            <td>
+              <a href="{{ url_for('accounting.document_detail', doc_id=d.id) }}"><strong>{{ d.display_title }}</strong></a>
+              {% if d.number %}<span class="text-muted small ms-1">Nr. {{ d.number }}</span>{% endif %}
+              <div class="small"><span class="badge bg-secondary-lt">{{ d.kind_label }}</span></div>
+            </td>
+            <td class="text-nowrap">{{ d.document_date.strftime('%d.%m.%Y') if d.document_date else '—' }}</td>
+            <td>{{ d.supplier.name if d.supplier else '—' }}</td>
+            <td class="text-end text-nowrap">{% if d.amount is not none %}{{ d.amount | de_number }} €{% else %}—{% endif %}</td>
+            <td class="text-muted small">{% if d.links %}{{ d.links | length }} Buchung{{ 'en' if d.links | length != 1 }}{% else %}—{% endif %}</td>
+            <td class="text-nowrap">{{ end.strftime('%d.%m.%Y') }}</td>
+            <td class="text-end text-muted small text-nowrap">{{ d.size_bytes | filesize }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="card-footer d-flex flex-wrap align-items-center gap-2">
+      <span class="text-muted small">{{ rows | length }} Beleg(e), zusammen {{ total_size | filesize }}</span>
+      {% if is_admin %}
+      <button type="submit" class="btn btn-danger ms-auto"><i class="fas fa-trash me-1"></i> Gewählte löschen</button>
+      {% else %}
+      <span class="text-muted small ms-auto"><i class="fas fa-lock me-1"></i>Löschen können nur Administratoren.</span>
+      {% endif %}
+    </div>
+  </form>
+  {% else %}
+  <div class="card-body text-muted">Keine Belege mit abgelaufener Aufbewahrungsfrist.</div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var all = document.getElementById('expired-all');
+  if (!all) { return; }
+  all.addEventListener('change', function () {
+    document.querySelectorAll('.expired-row').forEach(function (box) { box.checked = all.checked; });
+  });
+})();
+</script>
+{% endblock %}

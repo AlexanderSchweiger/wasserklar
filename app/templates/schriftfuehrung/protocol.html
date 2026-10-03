@@ -229,7 +229,7 @@ Protokoll — {{ meeting.title }}
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="d-flex" style="gap:.5rem">
           <input type="file" name="document" class="form-control"
-                 accept=".pdf,.doc,.docx,.xls,.xlsx,.odt,.ods,.md,.txt" required>
+                 accept="{{ sf_upload_accept }}" required>
           <button type="submit" class="btn btn-outline-secondary"
                   onclick="return confirm('Dokument hochladen und Protokoll abschließen?');">
             <i class="fas fa-upload me-1"></i> Hochladen

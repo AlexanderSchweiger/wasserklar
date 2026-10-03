@@ -183,6 +183,14 @@ class TestRoundTrip:
         assert again.einvoice.parsed.number == "123456XX" and svc.is_booked(again) and again.supplier_id
         assert svc.is_booked(Document.query.filter_by(sha256=plain.sha256).one())
 
+    def test_the_read_text_and_the_unconfirmed_flag_survive(self, app, tenant, books):
+        data = (Path(__file__).resolve().parent.parent / "fixtures" / "documents" / "zeilen.pdf").read_bytes()
+        sha = store(data, "rechnung.pdf").sha256
+        do_import(export(), tenant)
+        again = Document.query.filter_by(sha256=sha).one()
+        assert again.text_status == "ok" and "Pumpenhaus" in again.text_content       # sofort durchsuchbar
+        assert again.meta_auto is True and again.number == "RE-2026-0042"
+
     def test_without_the_bundle_existing_files_are_found_again(self, app, tenant, books):
         d = store(pdf(1))
         key = d.storage_key
@@ -355,3 +363,101 @@ class TestYearFilter:
         do_import(export(years=[2025]), tenant, mode="merge")          # kein FK-Ziel fehlt
         assert Document.query.count() == 1 and DocumentLink.query.count() == 3      # 2 alte + die der kopierten 2025-Buchung
         assert all(l.booking_id and db.session.get(Booking, l.booking_id) for l in DocumentLink.query)
+
+
+class TestRegisterAreas:
+    """Ausgangsrechnungen, Mahnungen und Schriftfuehrung im Export: die Datei reist einmal (files/<key>),
+    die Pfadspalten verweisen auf das Dokument und werden beim Import wieder gesetzt."""
+
+    def _invoice_with_archive(self, data=b"%PDF-1.7 rechnung"):
+        from app.invoices.archive import archive_invoice_file
+        from app.models import Invoice
+        customer = Customer(name="Kunde", customer_number=1)
+        db.session.add(customer)
+        db.session.flush()
+        invoice = Invoice(invoice_number="2025-00001", customer_id=customer.id, date=date(2025, 2, 1),
+                          status=Invoice.STATUS_SENT, total_amount=Decimal("10"))
+        db.session.add(invoice)
+        db.session.flush()
+        archive_invoice_file(invoice, data, "pdf")
+        db.session.commit()
+        return invoice
+
+    def _letter(self):
+        from app.models import SchriftverkehrDocument
+        doc = svc.store_record_upload("brief.txt", b"Sehr geehrte Damen und Herren", None,
+                                      kind=Document.KIND_CORRESPONDENCE, title="Brief")
+        entry = SchriftverkehrDocument(year=2025, title="Brief", doc_type="incoming", document_id=doc.id,
+                                       file_path=str(storage.path_for(doc.storage_key)))
+        db.session.add(entry)
+        db.session.commit()
+        return entry
+
+    def test_the_invoice_file_travels_once_and_its_path_comes_back(self, app, tenant, books):
+        from app.models import Invoice
+        number = self._invoice_with_archive().invoice_number
+        key = Document.query.one().storage_key
+        bundle = export()
+        names = zipfile.ZipFile(io.BytesIO(bundle)).namelist()
+        assert f"files/{key}" in names and not [n for n in names if n.startswith("pdfs/invoices/")]
+        record = json.loads(zipfile.ZipFile(io.BytesIO(bundle)).read("tables/invoices.json"))[0]
+        assert record["pdf_path"] == "document:" + Document.query.one().sha256
+        storage.delete(key)
+        do_import(bundle, tenant)
+        again = Invoice.query.filter_by(invoice_number=number).one()
+        assert again.pdf_path == str(storage.path_for(key)) and storage.read(key) == b"%PDF-1.7 rechnung"
+        assert [l.invoice_id for l in DocumentLink.query.all()] == [again.id]
+
+    def test_merge_into_another_database_relinks_the_invoice(self, app, tenant, books):
+        from app.models import Invoice
+        self._invoice_with_archive()
+        bundle = export()
+        db.session.query(DocumentLink).delete()
+        db.session.query(DocumentEvent).delete()
+        db.session.query(Document).delete()
+        db.session.query(Invoice).delete()
+        db.session.commit()
+        do_import(bundle, tenant, mode="merge")
+        invoice = Invoice.query.one()
+        doc = Document.query.one()
+        assert invoice.pdf_path == str(storage.path_for(doc.storage_key))
+        assert [l.invoice_id for l in doc.links] == [invoice.id]
+
+    def test_correspondence_survives_a_round_trip(self, app, tenant, books):
+        from app.models import SchriftverkehrDocument
+        entry = self._letter()
+        key = entry.document.storage_key
+        do_import(export(), tenant)
+        again = SchriftverkehrDocument.query.one()
+        assert again.document is not None and again.document.storage_key == key
+        assert again.file_path == str(storage.path_for(key))
+
+    def test_without_master_data_no_meeting_links_travel(self, app, tenant, books):
+        from app.models import Meeting
+        meeting = Meeting(meeting_type="board", title="Vorstand", status="held")
+        db.session.add(meeting)
+        db.session.commit()
+        doc = svc.store_record_upload("protokoll.pdf", pdf(9), None, kind=Document.KIND_PROTOCOL, meeting=meeting)
+        zf = zipfile.ZipFile(io.BytesIO(export(stammdaten=False)))
+        assert json.loads(zf.read("tables/document_links.json")) == []
+        assert doc.sha256 in {r["sha256"] for r in json.loads(zf.read("tables/documents.json"))}
+        zf = zipfile.ZipFile(io.BytesIO(export()))
+        assert [l["meeting_id"] for l in json.loads(zf.read("tables/document_links.json"))] == [meeting.id]
+
+    def test_master_data_alone_drops_the_register_reference(self, app, tenant, books):
+        self._letter()
+        zf = zipfile.ZipFile(io.BytesIO(export(buchungen=False)))
+        records = json.loads(zf.read("tables/schriftverkehr_documents.json"))
+        assert records[0]["document_id"] is None and "tables/documents.json" not in zf.namelist()
+
+    def test_the_year_filter_keeps_invoice_archives_of_that_year(self, app, tenant, books):
+        invoice = self._invoice_with_archive()
+        doc = Document.query.one()
+        letter = self._letter()
+        zf = zipfile.ZipFile(io.BytesIO(export(years=[2025])))
+        shas = {r["sha256"] for r in json.loads(zf.read("tables/documents.json"))}
+        assert {doc.sha256, letter.document.sha256} <= shas
+        zf = zipfile.ZipFile(io.BytesIO(export(years=[2016])))
+        shas = {r["sha256"] for r in json.loads(zf.read("tables/documents.json"))}
+        assert doc.sha256 not in shas and letter.document.sha256 in shas      # Schriftfuehrung immer
+        assert invoice.id
