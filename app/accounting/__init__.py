@@ -52,4 +52,4 @@ def _check_accounting_permission():
 
 
 from app.accounting import routes  # noqa
-from app.accounting import incoming  # noqa  (Eingangsrechnungen)
+from app.accounting import documents  # noqa  (Belegablage inkl. Eingangsrechnungen)

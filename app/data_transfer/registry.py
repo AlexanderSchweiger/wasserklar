@@ -33,7 +33,7 @@ from app.models import (
     Circular, CircularRecipient, CircularDeliveryLog,
     ConsumptionYear, FundingGoal,
     ChargeType, TariffComponent, ChargeOverride,
-    IncomingInvoice,
+    IncomingInvoice, Document, DocumentLink, DocumentEvent,
 )
 
 # Spalten die auf users.id verweisen — werden beim Import auf NULL gesetzt,
@@ -50,7 +50,9 @@ NULL_ON_IMPORT_COLS = {
     Transfer: ["created_by_id"],
     Booking: ["created_by_id"],
     BookingGroup: ["created_by_id"],
-    IncomingInvoice: ["created_by_id"],
+    Document: ["created_by_id"],
+    DocumentLink: ["created_by_id"],
+    DocumentEvent: ["user_id"],
     OpenItem: ["created_by_id"],
     FiscalYear: ["closed_by_id"],
     DunningNotice: ["reset_by_id", "created_by_id"],
@@ -86,7 +88,6 @@ NULL_ON_IMPORT_COLS = {
 FILE_PATH_COLS = {
     Invoice: ("pdf_path", "doc_path", "xml_path"),
     DunningNotice: ("pdf_path", "doc_path"),
-    IncomingInvoice: ("file_path",),
     MeetingProtocol: ("file_path",),
     SchriftverkehrDocument: ("file_path",),
 }
@@ -97,6 +98,14 @@ FILE_PATH_COLS = {
 LOCAL_FILE_SUBDIRS = {
     MeetingProtocol: "schriftverkehr",
     SchriftverkehrDocument: "schriftverkehr",
+}
+
+# Ablage-Schluessel der Belegablage (documents.storage_key): relativ zum Mandanten-Dateibaum, also
+# kein Pfad (FILE_PATH_COLS) — aber ebenso nie blind aus der ZIP uebernommen. Der Insert setzt sie
+# auf NULL (services._clear_storage_keys); services._restore_document_files traegt den Schluessel
+# erst nach, wenn die Datei (Bundle ``files/<key>`` oder schon am Platz) zur Pruefsumme passt.
+STORAGE_KEY_COLS = {
+    Document: ("storage_key",),
 }
 
 
@@ -131,8 +140,9 @@ CATEGORIES = {
         OwnerChange, OwnerChangeMeterValue,
         ReadingCorrection,
         BookingGroup, Booking, Transfer, RealAccountYearBalance,
-        # Eingangs-E-Rechnungen: Belege gehoeren zu den Buchungen (8 Jahre Aufbewahrung).
-        IncomingInvoice,
+        # Belegablage (+ gelesene E-Rechnungsdaten): Belege gehoeren zu den Buchungen
+        # (AT 7 / DE 8 Jahre Aufbewahrung); die Dateien reisen als files/<key> im Bundle.
+        Document, IncomingInvoice, DocumentLink, DocumentEvent,
         BankStatement, BankStatementLine, BankStatementLineAllocation,
         InvoiceCounter, CustomerCounter,
     ],
@@ -175,8 +185,9 @@ INSERT_ORDER = [
     # Touren NACH MeterReplacement + Invoice (Stop-FKs zeigen auf beide).
     MeterTour, MeterTourStop,
     BookingGroup, Booking, Transfer, RealAccountYearBalance,
-    # Eingangsrechnung NACH Customer + Booking + BookingGroup (FKs darauf).
-    IncomingInvoice,
+    # Belege NACH Customer (Lieferant); IncomingInvoice/DocumentLink/DocumentEvent NACH Document,
+    # DocumentLink zusaetzlich NACH Booking + BookingGroup (FKs darauf).
+    Document, IncomingInvoice, DocumentLink, DocumentEvent,
     # Bankauszug NACH Booking/BookingGroup/Invoice/OpenItem/Account/RealAccount
     # (BankStatementLine referenziert alle). Line VOR Allocation (FK line_id).
     BankStatement, BankStatementLine, BankStatementLineAllocation,
@@ -217,7 +228,7 @@ YEAR_FILTERS = {
     OpenItem: "period_year",
     ReadingCorrection: ("date_year", "created_at"),
     Booking: ("date_year", "date"),
-    IncomingInvoice: ("date_year", "issue_date"),
+    # Document/IncomingInvoice/DocumentLink/DocumentEvent: services._filtered_document_ids
     Transfer: ("date_year", "date"),
     RealAccountYearBalance: "year",
     InvoiceCounter: "year",
@@ -274,7 +285,10 @@ NATURAL_KEYS = {
     ReadingCorrection: None,
     BookingGroup: None,
     Booking: None,
-    IncomingInvoice: ("sha256",),       # dieselbe Datei nie doppelt (Dublettenschutz)
+    Document: ("sha256",),              # dieselbe Datei nie doppelt (Dublettenschutz)
+    IncomingInvoice: ("document_id",),  # 1:1 zum Beleg
+    DocumentLink: ("document_id", "booking_id", "booking_group_id"),   # NULL zaehlt mit (services._NULLABLE_KEYS)
+    DocumentEvent: None,                # Protokoll — immer Insert
     Transfer: None,
     RealAccountYearBalance: ("real_account_id", "year"),
     DunningPolicy: ("name",),
@@ -368,8 +382,10 @@ FOREIGN_KEYS = {
               "project_id": Project, "real_account_id": RealAccount,
               "customer_id": Customer, "group_id": BookingGroup,
               "storno_of_id": Booking},  # Self-FK, zweiter Pass
-    IncomingInvoice: {"supplier_id": Customer, "booking_id": Booking,
-                      "booking_group_id": BookingGroup},
+    Document: {"supplier_id": Customer},
+    IncomingInvoice: {"document_id": Document},
+    DocumentLink: {"document_id": Document, "booking_id": Booking, "booking_group_id": BookingGroup},
+    DocumentEvent: {"document_id": Document},
     Transfer: {"from_real_account_id": RealAccount, "to_real_account_id": RealAccount},
     RealAccountYearBalance: {"real_account_id": RealAccount},
     DunningStage: {"policy_id": DunningPolicy},

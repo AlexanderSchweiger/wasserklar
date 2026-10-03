@@ -125,10 +125,11 @@ def _clear_tenant_files() -> None:
     """Erzeugte Dokumente und Foto-Anhaenge des Mandanten von der Platte raeumen.
 
     Alle Datei-Ablagen reiten auf dem pro Request umgebogenen ``PDF_DIR``:
-    ``PDF_DIR`` selbst (Rechnungs-/Mahn-PDFs), das Geschwister-Verzeichnis
-    ``schriftverkehr`` und ``network`` (Feature-Fotos). Es werden NUR diese drei
-    namentlich bekannten Verzeichnisse entfernt — niemals das Eltern-Verzeichnis
-    (im OSS-Standalone ist das ``instance/`` samt SQLite-DB!).
+    ``PDF_DIR`` selbst (Rechnungs-/Mahn-PDFs) und die Geschwister-Verzeichnisse
+    ``schriftverkehr``, ``network`` (Feature-Fotos), ``incidents`` (Stoerungsfotos),
+    ``documents`` (Belegablage) und ``incoming`` (Belege der alten Eingangsrechnungs-Ablage).
+    Es werden NUR diese namentlich bekannten Verzeichnisse entfernt — niemals das
+    Eltern-Verzeichnis (im OSS-Standalone ist das ``instance/`` samt SQLite-DB!).
 
     Laeuft nach dem DB-Commit und ist best-effort: schlaegt das Filesystem fehl,
     bleibt die DB trotzdem konsistent (verwaiste Dateien koennen neu erzeugt
@@ -142,6 +143,9 @@ def _clear_tenant_files() -> None:
         pdf_dir,
         os.path.join(parent, "schriftverkehr"),
         os.path.join(parent, "network"),
+        os.path.join(parent, "incidents"),
+        os.path.join(parent, "documents"),
+        os.path.join(parent, "incoming"),
     ]
     for path in targets:
         try:

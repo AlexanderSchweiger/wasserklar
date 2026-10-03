@@ -455,6 +455,8 @@ def delete(customer_id):
         blockers.append("Sammelbuchungen")
     if OpenItem.query.filter_by(customer_id=customer_id).first():
         blockers.append("Offene Posten")
+    if customer.documents.first() is not None:        # Belegablage (Lieferant am Beleg)
+        blockers.append("Belege")
 
     if blockers:
         flash(

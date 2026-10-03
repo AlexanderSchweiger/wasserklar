@@ -1,0 +1,4 @@
+{# Dünner Wrapper: rendert den Zeilen-Pin über das gemeinsame Makro (Live-Refresh nach einer
+   Mutation im Beleg-Modal, Route ``accounting.document_pin``). #}
+{% from "documents/_macros.html" import doc_pin %}
+{{ doc_pin(entity_type, entity_id, count) }}

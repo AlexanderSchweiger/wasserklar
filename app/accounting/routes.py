@@ -12,14 +12,15 @@ from flask import (
     Response, stream_with_context, make_response,
 )
 from flask_login import login_required, current_user
+from werkzeug.datastructures import MultiDict
 from sqlalchemy import extract, func
 
 from app.accounting import bp
-from app.accounting import incoming_service
+from app.documents import service as documents_svc
 from app.accounting import services as acc_svc
 from app import tax_service
 from app.extensions import db
-from app.models import Account, Booking, BookingGroup, Invoice, OpenItem, WaterTariff, Customer, Project, RealAccount, RealAccountYearBalance, FiscalYear, FiscalYearReopenLog, Transfer, BillingPeriod, Property, PropertyOwnership, WaterMeter
+from app.models import Account, Booking, BookingGroup, Document, Invoice, OpenItem, WaterTariff, Customer, Project, RealAccount, RealAccountYearBalance, FiscalYear, FiscalYearReopenLog, Transfer, BillingPeriod, Property, PropertyOwnership, WaterMeter
 from app.utils import next_invoice_number
 from app.pagination import paginate_list, paginate_query
 
@@ -462,6 +463,20 @@ def _valid_fk(raw, model_cls):
     return pk if db.session.get(model_cls, pk) is not None else None
 
 
+def _document_picker_ctx(form_data=None, *, entity_type=None, entity=None):
+    """Kontext der Beleg-Auswahl (documents/_picker.html): die im Formular gewaehlten, noch nicht
+    gespeicherten Belege (ueberstehen einen Validierungsfehler), die schon zugeordneten und die
+    waehlbaren aus dem Belegeingang."""
+    ids = []
+    if form_data is not None and hasattr(form_data, "getlist"):
+        ids = documents_svc.parse_document_ids(form_data.getlist("document_ids"))[0]
+    linked = documents_svc.links_for(entity_type, entity.id) if entity is not None else []
+    taken = set(ids) | {row.document_id for row in linked}
+    return dict(
+        picked_documents=documents_svc.by_ids(ids), linked_links=linked,
+        doc_choices=[c for c in documents_svc.inbox_choices() if c.id not in taken])
+
+
 def _booking_form_context(booking=None):
     """Gemeinsamer Render-Kontext fuer das Buchungsformular (Modal + Vollseite).
 
@@ -570,6 +585,11 @@ def _parse_booking_form(form, today, *, booking=None):
         # Belegnummer (optional)
         data["reference"] = (form.get("reference") or "").strip()
 
+    # Belege (Beleg-Auswahl): nur pruefen, verknuepft wird nach dem Speichern der Buchung.
+    data["document_ids"], document_error = documents_svc.parse_document_ids(form.getlist("document_ids"))
+    if document_error:
+        errors["document_ids"] = document_error
+
     return data, errors
 
 
@@ -592,6 +612,7 @@ def _render_booking_form(*, booking, ctx, hx, keep_date="", form_data=None,
         errors=errors or {},
         keep_date=keep_date,
         sticky=sticky or {},
+        **_document_picker_ctx(form_data, entity_type="booking", entity=booking),
         **ctx,
     )
 
@@ -669,7 +690,13 @@ def booking_new():
             created_by_id=current_user.id,
         )
         db.session.add(b)
-        db.session.commit()
+        try:
+            db.session.flush()
+            documents_svc.link_many(data["document_ids"], booking=b, user_id=current_user.id)
+            db.session.commit()
+        except documents_svc.DocumentError as exc:
+            db.session.rollback()
+            return _booking_form_error({"document_ids": str(exc)}, request.form, booking=None, hx=hx)
         action = request.form.get("action")
         if hx:
             return _booking_saved_response(
@@ -677,6 +704,9 @@ def booking_new():
                 last_real_account_id=data["real_account_id"],
             )
         flash("Buchung gespeichert.", "success")
+        return_doc = _opt_int(request.form.get("return_doc"))
+        if return_doc:                      # kam von der Belegseite („Buchung aus diesem Beleg erstellen“)
+            return redirect(url_for("accounting.document_detail", doc_id=return_doc))
         if action == "weiteres":
             return redirect(url_for("accounting.booking_new", date=data["date"].isoformat()))
         return redirect(url_for("accounting.bookings"))
@@ -688,7 +718,21 @@ def booking_new():
     if ra_raw.isdigit() and db.session.get(RealAccount, int(ra_raw)) is not None:
         sticky["real_account_id"] = int(ra_raw)
     ctx = _booking_form_context(booking=None)
-    return _render_booking_form(booking=None, ctx=ctx, hx=hx, keep_date=keep_date, sticky=sticky)
+    form_data = None
+    prefill_doc = db.session.get(Document, request.args.get("document_id", type=int) or 0)
+    if prefill_doc is not None and prefill_doc.status != Document.STATUS_DISCARDED:
+        # „Buchung aus diesem Beleg erstellen“: Betrag/Datum/Nummer/Lieferant aus dem Beleg vorbelegen.
+        prefill = documents_svc.booking_prefill(prefill_doc)
+        fields = [("date", prefill["date"].isoformat()),
+                  ("amount", str(prefill["amount"]) if prefill["amount"] is not None else ""),
+                  ("reference", prefill["reference"]), ("description", prefill["description"]),
+                  ("customer_id", str(prefill["customer_id"] or "")),
+                  ("document_ids", str(prefill_doc.id)), ("return_doc", str(prefill_doc.id))]
+        if ctx["default_real_account"] is not None:
+            fields.append(("real_account_id", str(ctx["default_real_account"].id)))
+        form_data = MultiDict(fields)
+    return _render_booking_form(booking=None, ctx=ctx, hx=hx, keep_date=keep_date, sticky=sticky,
+                                form_data=form_data)
 
 
 @bp.route("/bookings/<int:booking_id>/edit", methods=["GET", "POST"])
@@ -735,14 +779,18 @@ def booking_edit(booking_id):
             b.date = data["date"]
             b.reference = data["reference"]
             b.tax_rate = data["tax_rate"]
-        db.session.commit()
+        try:
+            documents_svc.link_many(data["document_ids"], booking=b, user_id=current_user.id)
+            db.session.commit()
+        except documents_svc.DocumentError as exc:
+            db.session.rollback()
+            return _booking_form_error({"document_ids": str(exc)}, request.form, booking=b, hx=hx)
         if hx:
             return _booking_saved_response(action="save")
         flash("Buchung aktualisiert.", "success")
         return redirect(url_for("accounting.bookings"))
 
     ctx = _booking_form_context(booking=b)
-    ctx["incoming_doc"] = incoming_service.document_of(booking_id=b.id)
     return _render_booking_form(booking=b, ctx=ctx, hx=hx)
 
 
@@ -766,11 +814,11 @@ def booking_delete(booking_id):
     if fy_locked:
         flash(f"Das Buchungsjahr {fy_locked.year} ist abgeschlossen. Diese Buchung kann nicht gelöscht werden.", "danger")
         return redirect(url_for("accounting.bookings"))
-    reopened = incoming_service.release(booking_id=b.id)
+    docs = [link.document for link in b.document_links]
+    documents_svc.on_booking_deleted(booking=b, user_id=current_user.id)
     db.session.delete(b)
     db.session.commit()
-    flash("Buchung gelöscht." + (" Der Beleg unter „Eingangsrechnungen“ ist wieder offen."
-                                 if reopened else ""), "info")
+    flash("Buchung gelöscht." + documents_svc.deleted_note(docs), "info")
     return redirect(url_for("accounting.bookings"))
 
 
@@ -831,8 +879,7 @@ def booking_stornieren(booking_id):
             db.session.add(storno)
 
             # Ursprungsbuchung als storniert markieren
-            b.status = Booking.STATUS_STORNIERT
-            incoming_service.release(booking_id=b.id)    # Beleg einer Eingangsrechnung wird wieder offen
+            b.status = Booking.STATUS_STORNIERT           # Belege: die Verknüpfung bleibt als Nachweis
 
             # Verknüpfte Rechnung stornieren
             cancelled_invoice_number = None
@@ -911,6 +958,7 @@ def booking_group_new():
             tax_rates=tax_rates,
             default_real_account=default_real_account,
             today=today,
+            **_document_picker_ctx(extra.get("form_data")),
             **extra,
         )
 
@@ -931,6 +979,10 @@ def booking_group_new():
         description = request.form.get("description", "").strip()
         if not description:
             flash("Bitte eine Beschreibung angeben.", "danger")
+            return _render_new(form_data=request.form)
+        document_ids, document_error = documents_svc.parse_document_ids(request.form.getlist("document_ids"))
+        if document_error:
+            flash(document_error, "danger")
             return _render_new(form_data=request.form)
 
         reference = request.form.get("reference", "").strip() or None
@@ -1028,6 +1080,7 @@ def booking_group_new():
 
             db.session.flush()
             acc_svc.recompute_group_total(group.id)
+            documents_svc.link_many(document_ids, group=group, user_id=current_user.id)
             db.session.commit()
         except Exception as e:
             db.session.rollback()
@@ -1103,7 +1156,7 @@ def booking_group_edit(group_id):
             readonly=not ok,
             readonly_reason=msg,
             fy_locked=fy_locked,
-            incoming_doc=incoming_service.document_of(group_id=group.id),
+            **_document_picker_ctx(extra.get("form_data"), entity_type="booking_group", entity=group),
             **extra,
         )
 
@@ -1132,6 +1185,10 @@ def booking_group_edit(group_id):
         description = request.form.get("description", "").strip()
         if not description:
             flash("Bitte eine Beschreibung angeben.", "danger")
+            return _render_edit(form_data=request.form)
+        document_ids, document_error = documents_svc.parse_document_ids(request.form.getlist("document_ids"))
+        if document_error:
+            flash(document_error, "danger")
             return _render_edit(form_data=request.form)
 
         reference = request.form.get("reference", "").strip() or None
@@ -1234,6 +1291,8 @@ def booking_group_edit(group_id):
 
             db.session.flush()
             acc_svc.recompute_group_total(group.id)
+            # Belege hängen am Header, nicht an den Kindern — sie überstehen das Neuanlegen der Zeilen.
+            documents_svc.link_many(document_ids, group=group, user_id=current_user.id)
             db.session.commit()
         except Exception as e:
             db.session.rollback()
@@ -1263,8 +1322,9 @@ def booking_group_delete(group_id):
     if not ok:
         flash(msg, "warning")
         return redirect(url_for("accounting.booking_group_edit", group_id=group.id))
+    docs = [link.document for link in group.document_links]
     try:
-        incoming_service.release(group_id=group.id)
+        documents_svc.on_booking_deleted(group=group, user_id=current_user.id)
         for child in list(group.children):
             db.session.delete(child)
         db.session.delete(group)
@@ -1273,7 +1333,7 @@ def booking_group_delete(group_id):
         db.session.rollback()
         flash(f"Fehler beim Löschen der Sammelbuchung: {e}", "danger")
         return redirect(url_for("accounting.booking_group_edit", group_id=group.id))
-    flash("Sammelbuchung gelöscht.", "info")
+    flash("Sammelbuchung gelöscht." + documents_svc.deleted_note(docs), "info")
     return redirect(url_for("accounting.bookings"))
 
 
@@ -1306,7 +1366,6 @@ def booking_group_stornieren(group_id):
 
         try:
             acc_svc.storno_booking_group(group, reason, current_user.id)
-            incoming_service.release(group_id=group.id)
 
             # Verknüpfte Rechnung analog zur Einzel-Storno-Kaskade behandeln.
             cancelled_invoice_number = None

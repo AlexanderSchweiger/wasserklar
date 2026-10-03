@@ -1,0 +1,196 @@
+{# Globales Beleg-Modal + Upload-Helfer. In base.html einmal eingebunden (Recht ``buchhaltung``), damit
+   jede Seite mit Büroklammer-Pins bzw. Beleg-Auswahl es nutzen kann.
+
+   * ``openDocsModal(type, id)`` lädt das Panel (documents/_panel.html) in den Modal-Body.
+   * ``wkDocShrink(file)``      verkleinert große Fotos im Browser (Canvas, JPEG).
+   * ``wkDocUpload(files, o)``  lädt Datei für Datei hoch (fetch, JSON).
+   * Delegierte Listener für Panel-Upload und Beleg-Auswahl im Buchungsformular (einmal gebunden).
+
+   Bewusst Inline-Skript statt app.js: app.js wird bei hx-boost nicht neu geladen, ein offener Tab
+   hätte nach einem Deploy den alten Stand. #}
+<div class="modal modal-blur fade" id="docsModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="fas fa-paperclip me-2 text-azure"></i>Belege</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <div class="modal-body" id="docsModalBody">
+        <div class="text-center text-muted py-3">
+          <div class="spinner-border spinner-border-sm" role="status"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  var CSRF = '{{ csrf_token() }}';
+  var UPLOAD_URL = '{{ url_for("accounting.document_upload") }}';
+  var PANEL_URL = '{{ url_for("accounting.document_panel", entity_type="booking", entity_id=0) }}'.replace('/booking/0', '');
+  var SHRINK_BYTES = 3 * 1024 * 1024;   // erst darüber (oder über SHRINK_EDGE) wird verkleinert
+  var SHRINK_EDGE = 3000, TARGET_EDGE = 2400, QUALITY = 0.85;
+
+  function esc(text) { var d = document.createElement('div'); d.textContent = text == null ? '' : String(text); return d.innerHTML; }
+
+  // Bei jedem hx-boost-Swap neu definiert — htmx/bootstrap sind beim Klick da.
+  window.openDocsModal = function (entityType, entityId) {
+    if (!window.bootstrap || !window.htmx) { return; }
+    var body = document.getElementById('docsModalBody');
+    if (body) {
+      body.innerHTML = '<div class="text-center text-muted py-3"><div class="spinner-border spinner-border-sm" role="status"></div></div>';
+    }
+    window.htmx.ajax('GET', PANEL_URL + '/' + encodeURIComponent(entityType) + '/' + encodeURIComponent(entityId),
+      { target: '#docsModalBody', swap: 'innerHTML' });
+    window.bootstrap.Modal.getOrCreateInstance(document.getElementById('docsModal')).show();
+  };
+
+  // Foto verkleinern: nur JPEG/PNG/WebP, nur wenn zu groß; bleibt das Ergebnis nicht kleiner, gilt das Original.
+  window.wkDocShrink = async function (file) {
+    var keep = { file: file, shrunk: false };
+    if (!/^image\/(jpeg|png|webp)$/.test(file.type) || !window.createImageBitmap) { return keep; }
+    var bmp = await window.createImageBitmap(file, { imageOrientation: 'from-image' });
+    var longEdge = Math.max(bmp.width, bmp.height);
+    if (file.size <= SHRINK_BYTES && longEdge <= SHRINK_EDGE) { if (bmp.close) { bmp.close(); } return keep; }
+    var scale = Math.min(1, TARGET_EDGE / longEdge);
+    var w = Math.round(bmp.width * scale), h = Math.round(bmp.height * scale);
+    var canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    var ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);     // PNG-Transparenz → weiß (JPEG kennt keine)
+    ctx.drawImage(bmp, 0, 0, w, h);
+    if (bmp.close) { bmp.close(); }
+    var blob = await new Promise(function (resolve) { canvas.toBlob(resolve, 'image/jpeg', QUALITY); });
+    if (!blob || blob.size >= file.size) { return keep; }
+    return { file: new File([blob], file.name.replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' }),
+             shrunk: true, originalName: file.name, originalSize: file.size };
+  };
+
+  // opts: shrink (Standard an), linkType/linkId (sofort zuordnen), onFile(result, index, total)
+  window.wkDocUpload = async function (files, opts) {
+    opts = opts || {};
+    var results = [];
+    for (var i = 0; i < files.length; i++) {
+      var f = files[i], prepared = { file: f, shrunk: false };
+      if (opts.shrink !== false) { try { prepared = await window.wkDocShrink(f); } catch (e) { prepared = { file: f, shrunk: false }; } }
+      var fd = new FormData();
+      fd.append('csrf_token', CSRF);
+      fd.append('file', prepared.file, prepared.file.name);
+      if (prepared.shrunk) {
+        fd.append('shrunk', '1'); fd.append('original_name', prepared.originalName); fd.append('original_size', prepared.originalSize);
+      }
+      if (opts.linkType) { fd.append('link_type', opts.linkType); fd.append('link_id', opts.linkId); }
+      var result;
+      try {
+        var resp = await fetch(UPLOAD_URL, { method: 'POST', body: fd, headers: { 'Accept': 'application/json' }, spinner: false });
+        result = await resp.json();
+      } catch (e) {
+        result = { ok: false, error: 'Der Upload ist fehlgeschlagen (Verbindung unterbrochen oder Sitzung abgelaufen?).' };
+      }
+      result.name = result.name || f.name;
+      results.push(result);
+      if (opts.onFile) { opts.onFile(result, i, files.length); }
+    }
+    return results;
+  };
+
+  function showStatus(host, results) {
+    var status = host.querySelector('[data-doc-status]');
+    if (!status) { return; }
+    status.innerHTML = results.map(function (r) {
+      var cls = !r.ok ? 'text-danger' : (r.duplicate || r.warning ? 'text-warning' : 'text-success');
+      var text = !r.ok ? r.error : (r.message || r.warning || 'abgelegt');
+      return '<div class="' + cls + '"><strong>' + esc(r.name) + '</strong>: ' + esc(text) + '</div>';
+    }).join('');
+  }
+
+  function rawUrl(id) { return '{{ url_for("accounting.document_raw", doc_id=0) }}'.replace('/0/file', '/' + id + '/file'); }
+
+  // Beleg in die Auswahl eines Buchungsformulars aufnehmen (verstecktes document_ids-Feld + Zeile).
+  function addPicked(host, doc) {
+    var list = host.querySelector('[data-doc-picked]');
+    if (!list || list.querySelector('input[name="document_ids"][value="' + doc.id + '"]')) { return; }
+    var row = document.createElement('div');
+    row.className = 'd-flex align-items-center gap-2 small mb-1';
+    row.setAttribute('data-doc-item', '');
+    row.innerHTML = '<input type="hidden" name="document_ids" value="' + doc.id + '">' +
+      '<i class="fas fa-paperclip text-muted"></i>' +
+      '<a href="' + rawUrl(doc.id) + '" target="_blank" hx-boost="false">' + esc(doc.title) + '</a>' +
+      '<span class="text-muted">' + esc(doc.sizeText || '') + '</span>' +
+      '<button type="button" class="btn btn-sm btn-ghost-danger py-0" data-doc-unpick title="Entfernen">&times;</button>';
+    list.appendChild(row);
+  }
+
+  function fmtSize(n) {
+    if (n >= 1048576) { return (n / 1048576).toFixed(1).replace('.', ',') + ' MB'; }
+    if (n >= 1024) { return Math.round(n / 1024) + ' KB'; }
+    return n + ' B';
+  }
+
+  // Dokument-Listener nur einmal binden (hx-boost führt das Skript je Swap erneut aus).
+  if (!window.__docsBound) {
+    window.__docsBound = true;
+
+    // Pin-Refresh nach einer Mutation im Panel.
+    document.body.addEventListener('documents:changed', function (e) {
+      var d = e.detail || {};
+      if (!d.entity_type) { return; }
+      var el = document.getElementById('doc-pin-' + d.entity_type + '-' + d.entity_id);
+      if (el && window.htmx) { window.htmx.trigger(el, 'refresh'); }
+    });
+
+    document.addEventListener('change', async function (e) {
+      var input = e.target;
+      if (!input || !input.matches) { return; }
+
+      // (a) Upload im Panel einer Buchung → sofort zuordnen, Panel neu laden.
+      if (input.matches('input[data-doc-upload]')) {
+        var panel = input.closest('[data-doc-panel]');
+        if (!panel || !input.files.length) { return; }
+        var shrinkBox = panel.querySelector('[data-doc-shrink]');
+        var files = Array.prototype.slice.call(input.files);
+        input.value = '';
+        var results = await window.wkDocUpload(files, {
+          shrink: shrinkBox ? shrinkBox.checked : true,
+          linkType: panel.dataset.entityType, linkId: panel.dataset.entityId });
+        var url = panel.dataset.panelUrl, id = panel.id;
+        await window.htmx.ajax('GET', url, { target: panel, swap: 'outerHTML' });
+        var fresh = document.getElementById(id);
+        if (fresh) { showStatus(fresh, results); }
+        document.body.dispatchEvent(new CustomEvent('documents:changed',
+          { detail: { entity_type: panel.dataset.entityType, entity_id: Number(panel.dataset.entityId) } }));
+        return;
+      }
+
+      // (b) Upload im Buchungsformular → Beleg in den Eingang, Auswahl merkt sich die ID.
+      if (input.matches('input[data-doc-pick-upload]')) {
+        var host = input.closest('[data-doc-picker]');
+        if (!host || !input.files.length) { return; }
+        var box = host.querySelector('[data-doc-shrink]');
+        var picked = Array.prototype.slice.call(input.files);
+        input.value = '';
+        var res = await window.wkDocUpload(picked, { shrink: box ? box.checked : true });
+        res.forEach(function (r) {
+          if (r.ok && r.id) { addPicked(host, { id: r.id, title: r.title, sizeText: fmtSize(r.size || 0) }); }
+        });
+        showStatus(host, res);
+        return;
+      }
+
+      // (c) Auswahl „aus dem Belegeingang" im Buchungsformular.
+      if (input.matches('select[data-doc-pick-select]')) {
+        var h = input.closest('[data-doc-picker]');
+        var opt = input.options[input.selectedIndex];
+        if (h && opt && opt.value) { addPicked(h, { id: opt.value, title: opt.dataset.title, sizeText: opt.dataset.size }); }
+        input.selectedIndex = 0;
+      }
+    });
+
+    // Gewählten (noch nicht gespeicherten) Beleg wieder aus der Auswahl nehmen.
+    document.addEventListener('click', function (e) {
+      var btn = e.target.closest && e.target.closest('[data-doc-unpick]');
+      if (btn) { var item = btn.closest('[data-doc-item]'); if (item) { item.remove(); } }
+    });
+  }
+})();
+</script>

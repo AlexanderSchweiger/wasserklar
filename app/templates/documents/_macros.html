@@ -1,0 +1,18 @@
+{# Wiederverwendbare Beleg-Makros. Wie notes/_macros.html bewusst frei von ``current_user``/``request``
+   — ``url_for`` und ``document_counts_for`` sind Jinja-Globals. #}
+
+{# Zeilen-Pin: Büroklammer in einer Buchungszeile. ``count`` ist die vorgeladene Zahl (die Liste
+   zieht sie in EINER Abfrage je Tabelle, kein N+1); fehlt sie (Einzel-Refresh), fragt das Makro
+   einmal nach. Klick öffnet das gemeinsame Beleg-Modal (documents/_modal.html). #}
+{% macro doc_pin(entity_type, entity_id, count=none) %}
+{% set _n = count if count is not none else document_counts_for(entity_type, [entity_id]).get(entity_id, 0) %}
+<span class="doc-pin-wrap d-inline-block" id="doc-pin-{{ entity_type }}-{{ entity_id }}"
+      hx-get="{{ url_for('accounting.document_pin', entity_type=entity_type, entity_id=entity_id) }}"
+      hx-trigger="refresh" hx-swap="outerHTML">
+  <button type="button" class="btn btn-sm {{ 'btn-ghost-primary' if _n else 'btn-ghost-secondary' }}"
+          onclick="openDocsModal('{{ entity_type }}', {{ entity_id }})"
+          title="{{ 'Belege anzeigen (' ~ _n ~ ')' if _n else 'Beleg anhängen' }}">
+    <i class="fas fa-paperclip {{ '' if _n else 'opacity-50' }}"></i>{% if _n > 1 %}<span class="badge bg-azure-lt ms-1">{{ _n }}</span>{% endif %}
+  </button>
+</span>
+{% endmacro %}

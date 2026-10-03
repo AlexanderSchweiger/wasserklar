@@ -40,18 +40,19 @@ from app.data_transfer.guard import import_active
 from app.models import (
     AppSetting, BankStatementLine, BankStatementLineAllocation,
     Booking, BookingGroup, Customer, CustomerCounter,
-    DunningNotice, FiscalYear, IncomingInvoice, Invoice, InvoiceCounter, InvoiceItem,
-    RolePermission,
+    DunningNotice, Document, DocumentEvent, DocumentLink, FiscalYear, IncomingInvoice, Invoice,
+    InvoiceCounter, InvoiceItem, RolePermission,
 )
 from app.data_transfer.registry import (
     CATEGORIES, INSERT_ORDER, YEAR_FILTERS, NATURAL_KEYS, FOREIGN_KEYS,
     DEFERRED_FK_UPDATES, EXCLUDED_TABLES, FILE_PATH_COLS, LOCAL_FILE_SUBDIRS,
-    NULL_ON_IMPORT_COLS, models_for_selection, is_excluded_setting,
+    NULL_ON_IMPORT_COLS, STORAGE_KEY_COLS, models_for_selection, is_excluded_setting,
 )
 from app.data_transfer.serializers import (
     appsetting_skip_filter, decode_value, deserialize_record, encode_value,
     model_columns, primary_key_columns, primary_key_value,
 )
+from app.documents import storage as doc_storage
 from app.file_safety import safe_tenant_path
 from app.__version__ import __version__ as APP_VERSION
 
@@ -153,6 +154,22 @@ def _filtered_booking_group_ids(years: list[int]) -> set:
     return {r[0] for r in sub.all()}
 
 
+def _filtered_document_ids(years: list[int]) -> set | None:
+    """IDs der Belege, die der Jahresfilter behaelt: Belege an einer Buchung bzw. Sammelbuchung der
+    gewaehlten Jahre, plus nie zugeordnete (Eingang/abgelegt) nach Ablagejahr."""
+    if not years:
+        return None
+    on_bookings = (db.session.query(DocumentLink.document_id)
+                   .join(Booking, Booking.id == DocumentLink.booking_id)
+                   .filter(func.extract("year", Booking.date).in_(years)))
+    on_groups = (db.session.query(DocumentLink.document_id)
+                 .join(BookingGroup, BookingGroup.id == DocumentLink.booking_group_id)
+                 .filter(func.extract("year", BookingGroup.date).in_(years)))
+    unlinked = (db.session.query(Document.id)
+                .filter(~Document.links.any(), func.extract("year", Document.created_at).in_(years)))
+    return {r[0] for r in on_bookings.all()} | {r[0] for r in on_groups.all()} | {r[0] for r in unlinked.all()}
+
+
 def _filtered_bank_line_ids(years: list[int]) -> set | None:
     """IDs aller BankStatementLines, die der Jahresfilter (Buchungsdatum)
     behaelt — fuer die FK-Kaskade auf BankStatementLineAllocation, die selbst
@@ -167,7 +184,7 @@ def _filtered_bank_line_ids(years: list[int]) -> set | None:
 
 def _build_query_filtered(model, years: list[int], invoice_ids: set | None,
                           booking_group_ids: set | None, bank_line_ids: set | None,
-                          actual_cols: set):
+                          actual_cols: set, document_ids: set | None = None):
     """Wie _build_query, aber selektiert nur die Spalten, die in der DB
     tatsaechlich existieren (toleriert Schema-Drift in alten DBs).
 
@@ -194,6 +211,17 @@ def _build_query_filtered(model, years: list[int], invoice_ids: set | None,
         q = q.filter(BookingGroup.id.in_(booking_group_ids or [-1]))
     elif model is BankStatementLineAllocation and bank_line_ids is not None:
         q = q.filter(BankStatementLineAllocation.line_id.in_(bank_line_ids or [-1]))
+    elif model is Document and document_ids is not None:
+        q = q.filter(Document.id.in_(document_ids or [-1]))
+    elif model in (IncomingInvoice, DocumentEvent) and document_ids is not None:
+        q = q.filter(model.document_id.in_(document_ids or [-1]))
+    elif model is DocumentLink and document_ids is not None:
+        # nur Verknuepfungen zu exportierten Buchungen — sonst fehlte beim Merge das FK-Ziel
+        year_bookings = db.session.query(Booking.id).filter(func.extract("year", Booking.date).in_(years))
+        q = q.filter(
+            DocumentLink.document_id.in_(document_ids or [-1]),
+            or_(DocumentLink.booking_id.in_(year_bookings),
+                DocumentLink.booking_group_id.in_(booking_group_ids or [-1])))
 
     return q
 
@@ -255,6 +283,9 @@ def export_to_zip(selection: dict, fileobj, *, exported_by: str = "system") -> d
                          if (years and BookingGroup in models
                              and Booking.__tablename__ in existing_tables_pre)
                          else None)
+    document_ids = (_filtered_document_ids(years)
+                    if (years and Document in models and Document.__tablename__ in existing_tables_pre)
+                    else None)
     bank_line_ids = (_filtered_bank_line_ids(years)
                      if (years and BankStatementLineAllocation in models
                          and BankStatementLine.__tablename__ in existing_tables_pre)
@@ -282,7 +313,7 @@ def export_to_zip(selection: dict, fileobj, *, exported_by: str = "system") -> d
             actual_cols = {c["name"] for c in insp.get_columns(tname, schema=schema)}
             q = _build_query_filtered(
                 model, years, invoice_ids, booking_group_ids, bank_line_ids,
-                actual_cols,
+                actual_cols, document_ids,
             )
             skip_filter = appsetting_skip_filter if model is AppSetting else None
             records = _serialize_rows(model, q, actual_cols, skip_filter)
@@ -311,15 +342,14 @@ def export_to_zip(selection: dict, fileobj, *, exported_by: str = "system") -> d
                                 bundle_name = f"pdfs/dunning/{rec.get('id')}.{ext}"
                                 pdf_files.append((bundle_name, src))
                                 rec[col] = bundle_name
-                if model is IncomingInvoice:
-                    # Empfangene E-Rechnungen: das unveraenderte Original gehoert mit ins
-                    # Bundle (Aufbewahrung, § 14b UStG) — der Dateiname traegt schon die ID.
+                if model is Document:
+                    # Belegablage: die unveraenderte Originaldatei gehoert mit ins Bundle
+                    # (Aufbewahrungspflicht). Der Schluessel ist relativ und bleibt im JSON stehen
+                    # (auch ohne Bundle — ein Restore in denselben Mandanten findet die Dateien).
                     for rec in records:
-                        src = safe_tenant_path(rec.get("file_path"))
-                        if src:
-                            bundle_name = f"pdfs/incoming/{os.path.basename(src)}"
-                            pdf_files.append((bundle_name, src))
-                            rec["file_path"] = bundle_name
+                        path = doc_storage.path_for(rec.get("storage_key"))
+                        if path is not None and path.is_file():
+                            pdf_files.append((f"files/{rec['storage_key']}", str(path)))
             else:
                 # Pfade nullen — Empfaenger soll PDFs neu generieren
                 if model in (Invoice, DunningNotice):
@@ -327,9 +357,6 @@ def export_to_zip(selection: dict, fileobj, *, exported_by: str = "system") -> d
                         for col in ("pdf_path", "doc_path", "xml_path"):
                             if col in rec:
                                 rec[col] = None
-                if model is IncomingInvoice:
-                    for rec in records:
-                        rec["file_path"] = None      # Original fehlt dann (Daten bleiben)
 
             data = json.dumps(records, ensure_ascii=False, indent=2, default=_json_default)
             data_bytes = data.encode("utf-8")
@@ -339,14 +366,17 @@ def export_to_zip(selection: dict, fileobj, *, exported_by: str = "system") -> d
                 "name": tname,
                 "rows": len(records),
                 "filtered": bool(years) and (
-                    model in YEAR_FILTERS or model in (InvoiceItem, DunningNotice, BookingGroup)
+                    model in YEAR_FILTERS or model in (
+                        InvoiceItem, DunningNotice, BookingGroup,
+                        Document, IncomingInvoice, DocumentLink, DocumentEvent)
                 ),
             })
 
         # PDFs einbetten
         for bundle_name, src in pdf_files:
             try:
-                zf.write(src, bundle_name)
+                zf.write(src, bundle_name,
+                         compress_type=zipfile.ZIP_STORED if bundle_name.startswith("files/") else None)
             except OSError:
                 pass  # Datei verschwunden zwischen Listing und Lesen — ueberspringen
 
@@ -553,8 +583,8 @@ def validate_manifest(manifest: dict, extract_dir: Path) -> dict:
 
     # PDF-Plausibilitaet
     if manifest.get("selection", {}).get("include_pdfs"):
-        if not (extract_dir / "pdfs").exists():
-            warnings.append("Manifest sagt include_pdfs=true, aber pdfs/-Ordner fehlt im Bundle.")
+        if not ((extract_dir / "pdfs").exists() or (extract_dir / "files").exists()):
+            warnings.append("Manifest sagt include_pdfs=true, aber pdfs/- und files/-Ordner fehlen im Bundle.")
 
     return {
         "errors": errors,
@@ -675,6 +705,8 @@ def import_from_zip(extract_dir: Path, manifest: dict, *, mode: str = "replace",
     # NULL, verfaelscht aber keine DB; PDFs entstehen dann beim Abruf neu)
     if selection.get("include_pdfs"):
         _copy_pdfs(extract_dir, table_records, id_map, mode)
+    if Document in table_records:          # auch ohne Bundle: Dateien am Platz wieder zuordnen
+        _restore_document_files(extract_dir, table_records, mode)
 
     return stats
 
@@ -795,6 +827,18 @@ def _clear_file_paths(model, data: dict):
         data[name] = own
 
 
+def _clear_storage_keys(model, data: dict):
+    """Ablage-Schluessel nie aus der ZIP uebernehmen (siehe registry.STORAGE_KEY_COLS):
+    ``_restore_document_files`` traegt sie erst nach, wenn die Datei zur Pruefsumme passt."""
+    for name in STORAGE_KEY_COLS.get(model, ()):
+        data[name] = None
+
+
+# Natuerliche Schluessel, bei denen NULL ein gueltiger Teil ist (Beleg-Verknuepfung: entweder Buchung
+# oder Sammelbuchung) — der Duplikat-Check filtert dann auch auf IS NULL.
+_NULLABLE_KEYS = {DocumentLink}
+
+
 def _insert_replace(model, records: list, stats: dict):
     """Vollersatz-Insert: IDs 1:1 uebernehmen, ORM-Bulk-Insert pro Record."""
     deferred = DEFERRED_FK_UPDATES.get(model, [])
@@ -805,6 +849,7 @@ def _insert_replace(model, records: list, stats: dict):
             continue
         data = deserialize_record(model, rec, skip_columns=list(deferred) + null_cols)
         _clear_file_paths(model, data)
+        _clear_storage_keys(model, data)
         # Bei AppSetting: nicht ueberschreiben wenn Schluessel schon existiert
         # (z.B. lokal gesetzte Mail-Konfig nach Truncate eigentlich leer, aber
         # Defensive: kein Doppel-Insert)
@@ -835,6 +880,7 @@ def _insert_merge(model, records: list, id_map: dict, update_existing: bool, sta
         old_pk = primary_key_value(model, rec)
         data = deserialize_record(model, rec, skip_columns=list(deferred) + null_cols)
         _clear_file_paths(model, data)   # gilt auch fuer den update_existing-Zweig
+        _clear_storage_keys(model, data)
 
         # FKs remappen (ausser deferred)
         for col_name, target in fk_cols.items():
@@ -860,9 +906,12 @@ def _insert_merge(model, records: list, id_map: dict, update_existing: bool, sta
         # Natuerlicher Schluessel — Duplikat-Check
         existing = None
         if natural_key:
-            filters = {k: data.get(k) for k in natural_key if data.get(k) is not None}
-            if len(filters) == len(natural_key):
-                existing = model.query.filter_by(**filters).first()
+            if model in _NULLABLE_KEYS:
+                existing = model.query.filter_by(**{k: data.get(k) for k in natural_key}).first()
+            else:
+                filters = {k: data.get(k) for k in natural_key if data.get(k) is not None}
+                if len(filters) == len(natural_key):
+                    existing = model.query.filter_by(**filters).first()
 
         if existing is not None:
             # Bestehender Record gefunden
@@ -1105,13 +1154,69 @@ def _copy_pdfs(extract_dir: Path, table_records: dict, id_map: dict, mode: str):
             src = _bundle_file(extract_dir, rec.get(col), "dunning")
             if src is not None:
                 setattr(notice, col, _place_file(src, pdf_dir / "dunning", f"{notice.id}.{ext}"))
-    # Eingangs-E-Rechnungen: Originale ins tenant-eigene incoming/-Verzeichnis
-    # (Geschwister von PDF_DIR, im SaaS je Mandant), Pfad an der Zeile nachziehen.
-    for rec in table_records.get(IncomingInvoice, ()):
-        src = _bundle_file(extract_dir, rec.get("file_path"), "incoming")
-        if src is None:
+    db.session.commit()
+
+
+_DOC_EXT_BY_CONTENT_TYPE = {
+    "application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png",
+    "image/webp": "webp", "application/xml": "xml",
+}
+
+
+def _bundle_document_bytes(extract_dir: Path, key, sha256: str) -> bytes | None:
+    """Inhalt von ``files/<key>`` im entpackten Bundle — nur wenn der Schluessel gueltig ist, die Datei
+    wirklich unter ``<bundle>/files/`` liegt und zur Pruefsumme passt."""
+    if not doc_storage.is_valid_key(key):
+        return None
+    try:
+        base = (extract_dir / "files").resolve()
+        src = (extract_dir / "files" / key).resolve()
+        src.relative_to(base)
+    except (ValueError, OSError):
+        return None
+    if not src.is_file():
+        return None
+    data = src.read_bytes()
+    return data if hashlib.sha256(data).hexdigest() == sha256 else None
+
+
+def _key_taken(key: str, row) -> bool:
+    """Gehoert der Schluessel schon einem *anderen* Beleg (Unique auf ``storage_key``)?"""
+    return Document.query.filter(Document.storage_key == key, Document.id != row.id).first() is not None
+
+
+def _restore_document_files(extract_dir: Path, table_records: dict, mode: str):
+    """Stellt die Belegdateien wieder her und traegt die Ablage-Schluessel nach.
+
+    Der Insert hat ``storage_key`` auf NULL gesetzt. Hier bekommt jede Zeile ohne (vorhandene) Datei
+    ihren Schluessel zurueck: (1) am Platz liegt schon eine Datei mit passender Pruefsumme (Restore in
+    denselben Mandanten) → Schluessel wieder setzen; (2) die Datei liegt im Bundle (``files/<key>``,
+    Pruefsumme muss passen) → in den Mandanten-Dateibaum schreiben, nie ueberschreiben. Im Vollersatz
+    bleibt der alte Schluessel (die IDs sind gleich), im Merge entsteht ein neuer aus der neuen ID.
+    Ohne Datei bleibt der Schluessel NULL („Datei fehlt“).
+    """
+    for rec in table_records.get(Document, ()):
+        sha = rec.get("sha256")
+        row = Document.query.filter_by(sha256=sha).first()
+        if row is None or (row.storage_key and doc_storage.exists(row.storage_key)):
             continue
-        row = IncomingInvoice.query.filter_by(sha256=rec.get("sha256")).first()
-        if row is not None:
-            row.file_path = _place_file(src, pdf_dir.parent / "incoming", src.name)
+        wanted = rec.get("storage_key") if doc_storage.is_valid_key(rec.get("storage_key")) else None
+        in_place = doc_storage.read(wanted) if wanted else None
+        if in_place is not None and hashlib.sha256(in_place).hexdigest() == sha and not _key_taken(wanted, row):
+            row.storage_key = wanted
+            continue
+        data = _bundle_document_bytes(extract_dir, wanted, sha)
+        ext = _DOC_EXT_BY_CONTENT_TYPE.get(row.content_type)
+        if data is None or ext is None:
+            continue
+        key = wanted if (mode == "replace" and wanted and not doc_storage.exists(wanted)) else None
+        if key is None:
+            key = doc_storage.new_key(row.id, sha, ext, when=row.created_at.date() if row.created_at else None)
+        if doc_storage.exists(key) or _key_taken(key, row):
+            continue
+        try:
+            doc_storage.put(key, data)
+        except doc_storage.StorageError:
+            continue
+        row.storage_key = key
     db.session.commit()

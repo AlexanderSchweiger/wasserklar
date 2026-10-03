@@ -36,7 +36,7 @@ from app.data_transfer.services import (
 from app.extensions import db
 from app.file_safety import safe_tenant_path
 from app.models import (
-    Customer, DunningNotice, IncomingInvoice, Invoice, InvoiceItem, Meeting,
+    Customer, DunningNotice, Document, Invoice, InvoiceItem, Meeting,
     MeetingProtocol, SchriftverkehrDocument, User,
 )
 from tests.conftest import _ensure_role
@@ -197,8 +197,6 @@ class TestImportNeverTrustsPaths:
         meeting = Meeting(meeting_type=Meeting.TYPE_BOARD, title="Vorstand")
         db.session.add_all([
             DunningNotice(invoice_id=inv.id, level_snapshot=1, name_snapshot="1. Mahnung"),
-            IncomingInvoice(original_name="r.xml", sha256="b" * 64, source_kind="xml",
-                            syntax="cii", data="{}"),
             SchriftverkehrDocument(year=2025, title="Brief", file_path=""),
             meeting,
         ])
@@ -403,14 +401,24 @@ class TestForeignPathsInExistingRows:
         _login(client)
         assert SECRET not in client.get(f"/dunning/notices/{notice.id}/pdf?fmt={fmt}").get_data()
 
-    def test_incoming_invoice_original(self, app, client, tenant, admin):
-        doc = IncomingInvoice(original_name="rechnung.xml", file_path=str(tenant.foreign),
-                              sha256="a" * 64, source_kind="xml", syntax="cii", data="{}")
+    @pytest.mark.parametrize("key", [
+        "{foreign}",                                              # absoluter Pfad
+        "../../other/backups/db/dump.sql.gz",                     # Ausbruch nach oben
+        "documents/../../../other/backups/db/dump.sql.gz",        # Ausbruch mitten im Schluessel
+        "documents/2025/01/1_aaaaaaaa.pdf/../../../../../other/backups/db/dump.sql.gz",
+        "incoming/2025/1_aaaaaaaa_..",
+    ])
+    def test_document_storage_key(self, app, client, tenant, admin, key):
+        """Die Belegablage speichert nur relative, geprueft Schluessel — ein manipulierter Wert
+        in einer bestehenden Zeile verhaelt sich wie „Datei fehlt“ und liefert nie fremde Bytes."""
+        doc = Document(original_name="rechnung.pdf", content_type="application/pdf", sha256="a" * 64,
+                       storage_key=key.format(foreign=tenant.foreign), size_bytes=1)
         db.session.add(doc)
         db.session.commit()
         _login(client)
-        for suffix in ("file", "xml", "attachment/0"):
-            assert SECRET not in client.get(f"/accounting/incoming/{doc.id}/{suffix}").get_data()
+        for suffix in ("file", "file?download=1", "xml", "attachment/0"):
+            assert SECRET not in client.get(f"/accounting/documents/{doc.id}/{suffix}").get_data()
+        assert SECRET not in client.get(f"/accounting/documents/{doc.id}").get_data()
 
     def test_schriftverkehr_and_protocol(self, app, client, tenant, admin):
         foreign = str(tenant.foreign)

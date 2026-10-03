@@ -43,6 +43,11 @@ class IncomingError(Exception):
     """Die Datei ist keine lesbare E-Rechnung; die Meldung ist fuer den Nutzer gedacht."""
 
 
+class NotAnEInvoice(IncomingError):
+    """Ein PDF ohne eingebettete E-Rechnungsdaten — kein Fehler der Datei, sondern ein
+    ganz normales Dokument (die Belegablage legt es als solches ab)."""
+
+
 # ---------------------------------------------------------------------------
 # Datenmodell
 # ---------------------------------------------------------------------------
@@ -224,10 +229,10 @@ def _xml_from_pdf(data):
     for name, blobs in by_name.items():
         if name.endswith(".xml") and _root_kind(blobs[0]):
             return blobs[0]
-    raise IncomingError(
+    raise NotAnEInvoice(
         "Das PDF enthält keine E-Rechnungsdaten (kein ZUGFeRD/Factur-X-Anhang). Ein PDF ohne "
-        "strukturierten Anteil ist keine E-Rechnung und lässt sich hier nicht einlesen — bitte "
-        "die Rechnung wie bisher von Hand buchen oder beim Lieferanten eine E-Rechnung anfordern.")
+        "strukturierten Anteil ist keine E-Rechnung — es lässt sich als Beleg ablegen und von "
+        "Hand buchen.")
 
 
 def _safe_parse(data):

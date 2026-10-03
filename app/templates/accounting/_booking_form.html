@@ -19,13 +19,6 @@
 =========================================================================== #}
 {% set locked = is_verbucht %}
 {% set fd = form_data if (form_data is defined and form_data) else None %}
-{% if incoming_doc is defined and incoming_doc %}
-<div class="alert alert-info py-2 small">
-  <i class="fas fa-file-import me-1"></i>Gebucht aus der Eingangsrechnung
-  <a href="{{ url_for('accounting.incoming_detail', doc_id=incoming_doc.id) }}" class="alert-link">{{ incoming_doc.number or incoming_doc.original_name }}</a>
-  von {{ incoming_doc.seller_name }} — das unveränderte Original ist dort aufbewahrt.
-</div>
-{% endif %}
 
 {# --- Vorausgewaehlte Werte robust aufloesen ------------------------------ #}
 {% set date_val = (fd.get('date') if fd else (booking.date.isoformat() if booking else (keep_date or (today.isoformat() if today else '')))) %}
@@ -49,6 +42,8 @@
       method="post" action="{{ form_action_url }}"
       {% endif %}>
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  {# Kam das Formular von der Belegseite, geht es nach dem Speichern dorthin zurück. #}
+  {% if fd and fd.get('return_doc') %}<input type="hidden" name="return_doc" value="{{ fd.get('return_doc') }}">{% endif %}
 
   {% if errors and is_modal %}
   <div class="alert alert-danger" role="alert">
@@ -192,6 +187,9 @@
       </select>
     </div>
   </div>
+
+  {# Belege: hochladen oder aus dem Belegeingang wählen (bereits zugeordnete stehen als Liste darüber) #}
+  <div class="row g-3 mt-1"><div class="col-12">{% include "documents/_picker.html" %}</div></div>
 
   {# --- Aktionen ---------------------------------------------------------- #}
   <div class="d-flex flex-wrap gap-2 mt-4 pt-3 border-top">

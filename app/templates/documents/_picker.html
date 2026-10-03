@@ -1,0 +1,49 @@
+{# Beleg-Auswahl im Buchungs-/Sammelbuchungsformular (innerhalb des <form>). Variablen:
+   picked_documents  — die für diese Buchung gewählten, noch nicht gespeicherten Belege
+   linked_links      — bereits zugeordnete Belege (nur Bearbeiten; gelöst wird im Beleg-Panel)
+   doc_choices       — Belege im Eingang zur Auswahl
+   Die Skripte (Upload, Auswahl) liegen delegiert in documents/_modal.html (base.html). #}
+<div class="mb-3" data-doc-picker>
+  <label class="form-label"><i class="fas fa-paperclip me-1"></i>Belege <small class="text-muted">(optional)</small></label>
+  {% if linked_links %}
+  <ul class="list-unstyled small mb-2">
+    {% for row in linked_links %}
+    <li><i class="fas fa-link text-muted me-1"></i>
+      <a href="{{ url_for('accounting.document_raw', doc_id=row.document.id) }}" target="_blank" hx-boost="false">{{ row.document.display_title }}</a>
+      <span class="text-muted">· {{ row.document.size_bytes | filesize }} · zugeordnet ·
+        <a href="{{ url_for('accounting.document_detail', doc_id=row.document.id) }}" hx-boost="false">Beleg öffnen</a></span></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <div data-doc-picked class="mb-2">
+    {% for d in picked_documents %}
+    <div class="d-flex align-items-center gap-2 small mb-1" data-doc-item>
+      <input type="hidden" name="document_ids" value="{{ d.id }}">
+      <i class="fas fa-paperclip text-muted"></i>
+      <a href="{{ url_for('accounting.document_raw', doc_id=d.id) }}" target="_blank" hx-boost="false">{{ d.display_title }}</a>
+      <span class="text-muted">{{ d.size_bytes | filesize }}</span>
+      <button type="button" class="btn btn-sm btn-ghost-danger py-0" data-doc-unpick title="Entfernen">&times;</button>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="d-flex flex-wrap gap-2 align-items-center">
+    <label class="btn btn-sm btn-outline-primary mb-0">
+      <i class="fas fa-upload me-1"></i> Beleg hochladen
+      <input type="file" multiple hidden data-doc-pick-upload
+             accept=".pdf,.jpg,.jpeg,.png,.webp,.xml,application/pdf,image/jpeg,image/png,image/webp,application/xml,text/xml">
+    </label>
+    {% if doc_choices %}
+    <select class="form-select form-select-sm w-auto" data-doc-pick-select style="max-width:18rem">
+      <option value="">Aus dem Belegeingang …</option>
+      {% for c in doc_choices %}
+      <option value="{{ c.id }}" data-title="{{ c.display_title }}" data-size="{{ c.size_bytes | filesize }}">{{ c.display_title | truncate(40) }}{% if c.amount is not none %} · {{ c.amount | de_number }} €{% endif %}</option>
+      {% endfor %}
+    </select>
+    {% endif %}
+    <label class="form-check form-switch mb-0">
+      <input class="form-check-input" type="checkbox" data-doc-shrink checked>
+      <span class="form-check-label small">Fotos verkleinern</span>
+    </label>
+  </div>
+  <div data-doc-status class="small mt-1"></div>
+</div>

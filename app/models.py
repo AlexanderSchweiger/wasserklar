@@ -2588,32 +2588,199 @@ class BookingGroup(db.Model):
         return f"<BookingGroup {self.date} {self.total_amount}>"
 
 
+class Document(db.Model):
+    """Belegablage: eine gespeicherte Datei (Rechnung, Kassenbon, Kontoauszug, Scan …).
+
+    Die Datei liegt **unveraendert** im Dateibaum des Mandanten (``storage_key`` ist ein
+    relativer, geprueter Schluessel — siehe ``app/documents/storage.py``), die Zeile haelt
+    nur Metadaten. ``sha256`` ist der Dublettenschutz und der Integritaetsnachweis.
+
+    „Verbucht" ist **kein** gespeicherter Status: ein Beleg gilt als verbucht, solange
+    eine *wirksame* Verknuepfung (``DocumentLink``) existiert — Buchung nicht storniert
+    bzw. Sammelbuchung aktiv (``documents.service.booked_clause``). Ein Storno braucht
+    deshalb keinen Hook; der Beleg taucht von selbst wieder im Eingang auf.
+    ``status`` ist nur der Arbeitsstand: Neu → Abgelegt (ohne Buchung) / Verworfen.
+
+    Aufbewahrung: AT § 132 BAO 7 Jahre, DE § 147 AO / § 14b UStG 8 Jahre — fuer jeden
+    Buchungsbeleg, unabhaengig von B2B/B2C. Alles Gebuchte bleibt deshalb unloeschbar,
+    jede Aktion steht im ``DocumentEvent``-Protokoll.
+    """
+    __tablename__ = "documents"
+
+    STATUS_NEW = "Neu"
+    STATUS_FILED = "Abgelegt"
+    STATUS_DISCARDED = "Verworfen"
+
+    AREA_ACCOUNTING = "accounting"
+
+    KIND_INVOICE = "invoice"
+    KIND_CREDIT_NOTE = "credit_note"
+    KIND_RECEIPT = "receipt"
+    KIND_BANK_STATEMENT = "bank_statement"
+    KIND_OTHER = "other"
+    KIND_LABELS = {
+        KIND_INVOICE: "Rechnung",
+        KIND_CREDIT_NOTE: "Gutschrift",
+        KIND_RECEIPT: "Kassenbon / Quittung",
+        KIND_BANK_STATEMENT: "Kontoauszug",
+        KIND_OTHER: "Sonstiges",
+    }
+
+    id = db.Column(db.Integer, primary_key=True)
+    area = db.Column(db.String(20), nullable=False, default=AREA_ACCOUNTING,
+                     server_default=AREA_ACCOUNTING)
+    kind = db.Column(db.String(20), nullable=False, default=KIND_OTHER, server_default=KIND_OTHER)
+    status = db.Column(db.String(20), nullable=False, default=STATUS_NEW,
+                       server_default=STATUS_NEW, index=True)
+    storage_key = db.Column(db.String(255), nullable=True)      # relativ; NULL = Datei fehlt
+    original_name = db.Column(db.String(255), nullable=False)
+    content_type = db.Column(db.String(100), nullable=False)
+    size_bytes = db.Column(db.BigInteger, nullable=False, default=0, server_default="0")
+    sha256 = db.Column(db.String(64), nullable=False)
+    title = db.Column(db.String(200))
+    number = db.Column(db.String(100))
+    document_date = db.Column(db.Date)
+    amount = db.Column(db.Numeric(12, 2))                        # brutto, positiv
+    supplier_id = db.Column(db.Integer, db.ForeignKey("customers.id", name="fk_documents_supplier_id"),
+                            nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id", name="fk_documents_created_by_id"),
+                              nullable=True)
+
+    __table_args__ = (
+        db.UniqueConstraint("sha256", name="uq_documents_sha256"),
+        db.UniqueConstraint("storage_key", name="uq_documents_storage_key"),
+    )
+
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+    supplier = db.relationship("Customer", foreign_keys=[supplier_id],
+                               backref=db.backref("documents", lazy="dynamic"))
+    # Kein delete-orphan: ein Link hat genau einen von zwei Eltern (Buchung | Sammelbuchung),
+    # SQLAlchemy wuerde sonst jeden Link als verwaist behandeln.
+    links = db.relationship("DocumentLink", back_populates="document", cascade="all",
+                            order_by="DocumentLink.id")
+    # Ohne Delete-Cascade: beim Loeschen setzt SQLAlchemy ``document_id`` auf NULL —
+    # das Protokoll ueberlebt (Snapshot von Name + Pruefsumme steht am Ereignis).
+    events = db.relationship("DocumentEvent", back_populates="document",
+                             order_by="DocumentEvent.id")
+    einvoice = db.relationship("IncomingInvoice", back_populates="document", uselist=False,
+                               cascade="all")
+
+    @property
+    def is_pdf(self):
+        return self.content_type == "application/pdf"
+
+    @property
+    def is_image(self):
+        return (self.content_type or "").startswith("image/")
+
+    @property
+    def is_xml(self):
+        return self.content_type == "application/xml"
+
+    @property
+    def kind_label(self):
+        return self.KIND_LABELS.get(self.kind, self.kind)
+
+    @property
+    def display_title(self):
+        return self.title or self.original_name
+
+    def __repr__(self):
+        return f"<Document {self.id} {self.original_name}>"
+
+
+class DocumentLink(db.Model):
+    """Verknuepfung Beleg ↔ Buchung bzw. Sammelbuchung (n:m).
+
+    Genau **eines** von ``booking_id`` / ``booking_group_id`` ist gesetzt (der Service
+    erzwingt das; spaeter kommen ``customer_id``/``property_id`` dazu). Belege einer
+    Sammelbuchung haengen an der ``BookingGroup``, nie an einem Kind: das Bearbeiten
+    der Sammelbuchung loescht und legt alle Kind-Buchungen neu an.
+    """
+    __tablename__ = "document_links"
+
+    id = db.Column(db.Integer, primary_key=True)
+    document_id = db.Column(
+        db.Integer, db.ForeignKey("documents.id", name="fk_document_links_document_id",
+                                  ondelete="CASCADE"), nullable=False, index=True)
+    booking_id = db.Column(
+        db.Integer, db.ForeignKey("bookings.id", name="fk_document_links_booking_id",
+                                  ondelete="CASCADE"), nullable=True, index=True)
+    booking_group_id = db.Column(
+        db.Integer, db.ForeignKey("booking_groups.id", name="fk_document_links_booking_group_id",
+                                  ondelete="CASCADE"), nullable=True, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id", name="fk_document_links_created_by_id"),
+                              nullable=True)
+
+    __table_args__ = (
+        db.UniqueConstraint("document_id", "booking_id", name="uq_document_links_booking"),
+        db.UniqueConstraint("document_id", "booking_group_id", name="uq_document_links_group"),
+    )
+
+    document = db.relationship("Document", back_populates="links")
+    # cascade="all" (ohne delete-orphan): wird eine Buchung geloescht, gehen ihre Links mit —
+    # auch auf SQLite, wo die DB keine Fremdschluessel erzwingt.
+    booking = db.relationship("Booking", foreign_keys=[booking_id],
+                              backref=db.backref("document_links", cascade="all"))
+    booking_group = db.relationship("BookingGroup", foreign_keys=[booking_group_id],
+                                    backref=db.backref("document_links", cascade="all"))
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+
+
+class DocumentEvent(db.Model):
+    """Protokoll der Beleg-Aktionen (Nachvollziehbarkeit: AT § 131 BAO, DE GoBD).
+
+    ``document_id`` wird beim Loeschen eines Belegs NULL — der Snapshot von Name und
+    Pruefsumme am Ereignis belegt, was es war. Aktionen: ``uploaded``, ``linked``,
+    ``unlinked``, ``filed``, ``discarded``, ``reopened``, ``edited``, ``deleted``.
+    """
+    __tablename__ = "document_events"
+
+    id = db.Column(db.Integer, primary_key=True)
+    document_id = db.Column(
+        db.Integer, db.ForeignKey("documents.id", name="fk_document_events_document_id",
+                                  ondelete="SET NULL"), nullable=True, index=True)
+    action = db.Column(db.String(30), nullable=False)
+    document_name = db.Column(db.String(255))
+    document_sha256 = db.Column(db.String(64))
+    detail = db.Column(db.Text)                                   # JSON
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", name="fk_document_events_user_id"),
+                        nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    document = db.relationship("Document", back_populates="events")
+    user = db.relationship("User", foreign_keys=[user_id])
+
+    @property
+    def detail_dict(self):
+        import json
+        try:
+            return json.loads(self.detail) if self.detail else {}
+        except ValueError:
+            return {}
+
+
 class IncomingInvoice(db.Model):
-    """Eingangsrechnung eines Lieferanten als E-Rechnung (XML oder ZUGFeRD-PDF).
+    """Gelesene Daten einer empfangenen E-Rechnung (XML oder ZUGFeRD-PDF).
 
     Seit 2025 muessen Unternehmen in Deutschland E-Rechnungen empfangen und lesbar
-    aufbewahren koennen (§ 14b UStG, 8 Jahre). Das Original liegt **unveraendert** als
-    Datei (``file_path``, Geschwister von ``PDF_DIR``: ``instance/incoming/``), die
-    gelesenen Daten als JSON (``data``) plus ein paar Spalten fuer die Liste. Aus dem
-    Beleg entsteht per Buchungsvorschlag eine Ausgabenbuchung (``booking_id`` bzw.
-    ``booking_group_id``). Parser: ``app/einvoice/incoming.py``.
+    aufbewahren koennen (§ 14b UStG, 8 Jahre). Die **Datei** (unveraendert), Status,
+    Verknuepfung zur Buchung und Lieferant liegen am zugehoerigen ``Document``; hier
+    stehen nur die unveraenderlichen, aus dem Original gelesenen Daten (``data`` als JSON
+    plus ein paar Spalten fuer die Liste). Aus dem Beleg entsteht per Buchungsvorschlag
+    eine Ausgabenbuchung. Parser: ``app/einvoice/incoming.py``.
     """
     __tablename__ = "incoming_invoices"
 
-    STATUS_NEW = "Neu"
-    STATUS_BOOKED = "Verbucht"
-    STATUS_DISCARDED = "Verworfen"
-
     id = db.Column(db.Integer, primary_key=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
-    original_name = db.Column(db.String(255), nullable=False)
-    file_path = db.Column(db.String(500), nullable=True)
-    sha256 = db.Column(db.String(64), nullable=False, index=True)   # Dublettenschutz je Datei
+    document_id = db.Column(
+        db.Integer, db.ForeignKey("documents.id", name="fk_incoming_invoices_document_id",
+                                  ondelete="CASCADE"), nullable=False)
     source_kind = db.Column(db.String(10), nullable=False)          # xml | pdf
     syntax = db.Column(db.String(10), nullable=False)               # cii | ubl
     guideline = db.Column(db.String(255))
-    status = db.Column(db.String(20), nullable=False, default=STATUS_NEW)
     number = db.Column(db.String(100))
     issue_date = db.Column(db.Date)
     currency = db.Column(db.String(3))
@@ -2622,15 +2789,12 @@ class IncomingInvoice(db.Model):
     seller_vat_id = db.Column(db.String(30))
     grand_total = db.Column(db.Numeric(12, 2))
     data = db.Column(db.Text, nullable=False)                        # ParsedInvoice als JSON
-    supplier_id = db.Column(db.Integer, db.ForeignKey("customers.id"), nullable=True)
-    booking_id = db.Column(db.Integer, db.ForeignKey("bookings.id"), nullable=True)
-    booking_group_id = db.Column(db.Integer, db.ForeignKey("booking_groups.id"), nullable=True)
 
-    created_by = db.relationship("User", foreign_keys=[created_by_id])
-    supplier = db.relationship("Customer", foreign_keys=[supplier_id],
-                               backref=db.backref("incoming_invoices", lazy="dynamic"))
-    booking = db.relationship("Booking", foreign_keys=[booking_id])
-    booking_group = db.relationship("BookingGroup", foreign_keys=[booking_group_id])
+    __table_args__ = (
+        db.UniqueConstraint("document_id", name="uq_incoming_invoices_document_id"),
+    )
+
+    document = db.relationship("Document", back_populates="einvoice")
 
     @property
     def parsed(self):

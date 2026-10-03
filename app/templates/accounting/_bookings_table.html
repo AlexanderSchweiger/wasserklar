@@ -1,5 +1,6 @@
 {% from "_pagination.html" import render_pagination %}
 {% from "notes/_macros.html" import note_pin %}
+{% from "documents/_macros.html" import doc_pin %}
 {# Zeilen-Notiz-Pins der sichtbaren Einzelbuchungen in EINER Query (kein N+1).
    Sammelbuchungen/Umbuchungen tragen keinen Pin (Notiz hängt an einer Buchung). #}
 {% set _bk_ids = [] %}
@@ -9,6 +10,16 @@
   {% endif %}
 {% endfor %}
 {% set notes_by_entity = notes_by_entity_for('booking', _bk_ids) %}
+{# Beleg-Büroklammern: Anzahl je Einzelbuchung bzw. Sammelbuchung, je eine Abfrage für die ganze Tabelle.
+   Belege einer Sammelbuchung hängen am Header — auch im flachen Modus (Filter aktiv) zeigen die
+   Kind-Zeilen deshalb die Büroklammer ihrer Gruppe. #}
+{% set _grp_ids = [] %}
+{% for _r in rows %}
+  {% if _r.type == 'booking_group' %}{% set _ = _grp_ids.append(_r.group.id) %}
+  {% elif _r.type != 'transfer' and _r.obj and _r.obj.group_id and _r.obj.group_id not in _grp_ids %}{% set _ = _grp_ids.append(_r.obj.group_id) %}{% endif %}
+{% endfor %}
+{% set doc_counts_b = document_counts_for('booking', _bk_ids) %}
+{% set doc_counts_g = document_counts_for('booking_group', _grp_ids) %}
 {# Bestaetigung nach Massen-Bearbeitung — wird per Out-of-Band-Swap in die
    #bookings-bulk-flash-Zone (in bookings.html) gehoben. Nur im Bulk-Refresh
    gesetzt (bulk_done_count), beim normalen Filter-/Voll-Render = None. #}
@@ -144,6 +155,7 @@
         {{ total_gross|de_number }}&nbsp;€
       </td>
       <td class="text-end col-actions" style="white-space:nowrap">
+        {{ doc_pin('booking_group', g.id, doc_counts_g.get(g.id, 0)) }}
         {% set fy_locked = effective_children and (effective_children|first).id in locked_booking_ids %}
         {% if fy_locked %}
           <span class="text-muted" title="Buchungsjahr abgeschlossen"><i class="fas fa-lock"></i></span>
@@ -406,6 +418,7 @@
       </td>
       <td class="text-end col-actions" style="white-space:nowrap">
         {{ note_pin('booking', b.id, notes_by_entity.get(b.id, []) if notes_by_entity is defined else none) }}
+        {% if b.group_id %}{{ doc_pin('booking_group', b.group_id, doc_counts_g.get(b.group_id, 0)) }}{% else %}{{ doc_pin('booking', b.id, doc_counts_b.get(b.id, 0)) }}{% endif %}
         {% set fy_locked = b.id in locked_booking_ids %}
         {% if fy_locked %}
         <span class="text-muted" title="Buchungsjahr abgeschlossen"><i class="fas fa-lock"></i></span>

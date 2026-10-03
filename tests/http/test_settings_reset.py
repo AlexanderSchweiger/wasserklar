@@ -116,3 +116,29 @@ def test_non_admin_forbidden(client, verwalter):
     # Trotz korrektem Passwort: kein Admin -> keine Loeschung.
     assert Customer.query.count() == 1
     assert any("administrator" in m.lower() for m in _flashes(client))
+
+
+def test_reset_clears_the_document_folders_and_rows(client, admin, tmp_path):
+    """Belege (documents/), die alte Eingangsrechnungs-Ablage (incoming/) und Stoerungsfotos
+    (incidents/) liegen als Geschwister von PDF_DIR — der Reset raeumt sie mit ab, nie das Elternverzeichnis."""
+    from app.documents import service as documents_svc
+    from tests.integration.test_document_service import pdf
+
+    client.get("/auth/logout")
+    _login(client)
+    doc = documents_svc.store_upload("beleg.pdf", pdf(), None)
+    for folder in ("incoming/2016", "incidents"):
+        (tmp_path / folder).mkdir(parents=True)
+        (tmp_path / folder / "alt.bin").write_bytes(b"x")
+    keep = tmp_path / "wg.db"
+    keep.write_bytes(b"datenbank")
+    key = doc.storage_key
+    assert (tmp_path / key).exists()
+
+    client.post("/einstellungen/reset", data={"confirm_password": "secret"})
+
+    from app.models import Document
+    assert Document.query.count() == 0
+    assert not (tmp_path / "documents").exists() and not (tmp_path / "incoming").exists()
+    assert not (tmp_path / "incidents").exists()
+    assert keep.exists()                                   # das Elternverzeichnis bleibt unangetastet

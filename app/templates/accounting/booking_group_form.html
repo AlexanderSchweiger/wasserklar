@@ -51,15 +51,6 @@
       <strong>2 Zeilen</strong> benötigt.
     </div>
   </div>
-  {% if incoming_doc is defined and incoming_doc %}
-  <div class="card-body pb-0">
-    <div class="alert alert-info py-2 small mb-0">
-      <i class="fas fa-file-import me-1"></i>Gebucht aus der Eingangsrechnung
-      <a href="{{ url_for('accounting.incoming_detail', doc_id=incoming_doc.id) }}" class="alert-link">{{ incoming_doc.number or incoming_doc.original_name }}</a>
-      von {{ incoming_doc.seller_name }} — das unveränderte Original ist dort aufbewahrt.
-    </div>
-  </div>
-  {% endif %}
   <form method="post" id="groupForm"
         action="{% if is_edit %}{{ url_for('accounting.booking_group_edit', group_id=group.id) }}{% else %}{{ url_for('accounting.booking_group_new') }}{% endif %}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -127,6 +118,22 @@
                  placeholder="ID der verknüpften Rechnung">
         </div>
       </div>
+
+      {# ───────── Belege ───────── #}
+      <div class="row g-3 mt-1"><div class="col-12">
+        {% if not readonly %}
+        {% include "documents/_picker.html" %}
+        {% elif linked_links %}
+        <label class="form-label"><i class="fas fa-paperclip me-1"></i>Belege</label>
+        <ul class="list-unstyled small mb-0">
+          {% for row in linked_links %}
+          <li><i class="fas fa-link text-muted me-1"></i>
+            <a href="{{ url_for('accounting.document_raw', doc_id=row.document.id) }}" target="_blank" hx-boost="false">{{ row.document.display_title }}</a>
+            <span class="text-muted">· <a href="{{ url_for('accounting.document_detail', doc_id=row.document.id) }}" hx-boost="false">Beleg öffnen</a></span></li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+      </div></div>
 
       <hr>
 

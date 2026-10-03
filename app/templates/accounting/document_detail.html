@@ -1,0 +1,289 @@
+{% extends "base.html" %}
+{% block title %}Beleg {{ doc.display_title }}{% endblock %}
+{% block page_title %}<i class="fas fa-paperclip me-2"></i> {{ doc.display_title }}{% if doc.number %} <small class="text-muted ms-2">Nr. {{ doc.number }}</small>{% endif %}{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+  <a href="{{ url_for('accounting.documents') }}" class="btn btn-sm btn-outline-secondary">
+    <i class="fas fa-arrow-left me-1"></i> Alle Belege
+  </a>
+  <span class="badge bg-secondary-lt">{{ doc.kind_label }}</span>
+  {% if doc.einvoice %}<span class="badge bg-azure-lt">{{ doc.einvoice.format_label }}</span>{% endif %}
+  {% if booked %}<span class="badge bg-success-lt">Verbucht</span>
+  {% elif doc.status == 'Verworfen' %}<span class="badge bg-secondary-lt">Verworfen</span>
+  {% elif doc.status == 'Abgelegt' %}<span class="badge bg-azure-lt">Abgelegt</span>
+  {% else %}<span class="badge bg-blue-lt">Eingang</span>{% endif %}
+  <div class="ms-auto d-flex gap-2">
+    {% if file_ok %}
+    <a href="{{ url_for('accounting.document_raw', doc_id=doc.id) }}" class="btn btn-sm btn-outline-primary"
+       {% if doc.is_pdf or doc.is_image %}target="_blank"{% endif %} hx-boost="false">
+      <i class="fas fa-file-{{ 'pdf' if doc.is_pdf else ('image' if doc.is_image else 'code') }} me-1"></i>
+      Original {{ 'ansehen' if (doc.is_pdf or doc.is_image) else 'herunterladen' }}
+    </a>
+    <a href="{{ url_for('accounting.document_raw', doc_id=doc.id, download=1) }}" class="btn btn-sm btn-outline-secondary" hx-boost="false">
+      <i class="fas fa-download me-1"></i> Herunterladen
+    </a>
+    {% if doc.einvoice %}
+    <a href="{{ url_for('accounting.document_einvoice_xml', doc_id=doc.id) }}" class="btn btn-sm btn-outline-secondary" hx-boost="false">
+      <i class="fas fa-file-code me-1"></i> XML
+    </a>
+    {% endif %}
+    {% else %}
+    <span class="badge bg-danger-lt" title="Die Datei liegt nicht mehr im Ablageordner">Datei fehlt</span>
+    {% endif %}
+  </div>
+</div>
+
+{% if duplicates %}
+<div class="alert alert-warning py-2">
+  <i class="fas fa-copy me-1"></i>Rechnung <strong>{{ doc.number }}</strong> dieses Lieferanten gibt es schon:
+  {% for d in duplicates %}<a href="{{ url_for('accounting.document_detail', doc_id=d.id) }}" class="alert-link">Beleg vom {{ d.created_at.strftime('%d.%m.%Y') }} ({{ d.status }})</a>{% if not loop.last %}, {% endif %}{% endfor %}
+  — möglicherweise doppelt.
+</div>
+{% endif %}
+
+<div class="row g-3">
+  <div class="col-lg-8">
+    {% if doc.einvoice %}
+      {% include "accounting/_einvoice_view.html" %}
+    {% elif not file_ok %}
+      <div class="alert alert-danger">Die Datei ist nicht mehr im Ablageordner vorhanden. Die Angaben zum Beleg bleiben erhalten.</div>
+    {% elif doc.is_pdf %}
+      <div class="card"><iframe src="{{ url_for('accounting.document_raw', doc_id=doc.id) }}" title="{{ doc.display_title }}"
+        style="width:100%;height:78vh;border:0" loading="lazy"></iframe></div>
+    {% elif doc.is_image %}
+      <div class="card"><div class="card-body text-center">
+        <img src="{{ url_for('accounting.document_raw', doc_id=doc.id) }}" alt="{{ doc.display_title }}" class="img-fluid" style="max-height:80vh">
+      </div></div>
+    {% endif %}
+  </div>
+
+  <div class="col-lg-4">
+    {# --- Zuordnung ---------------------------------------------------------------- #}
+    <div class="card mb-3">
+      <div class="card-header"><h3 class="card-title">Zuordnung</h3></div>
+      <div class="card-body">
+        {% if links %}
+        <ul class="list-unstyled mb-3">
+          {% for row in links %}
+          <li class="d-flex align-items-center gap-2 mb-1">
+            {% if row.booking %}
+            <a href="{{ url_for('accounting.booking_edit', booking_id=row.booking_id) }}" hx-boost="false" class="flex-fill">
+              <i class="fas fa-book me-1"></i>{{ row.booking.date.strftime('%d.%m.%Y') }} · {{ row.booking.description | truncate(40) }} · {{ row.booking.amount | de_number }} €
+            </a>
+            {% else %}
+            <a href="{{ url_for('accounting.booking_group_edit', group_id=row.booking_group_id) }}" class="flex-fill">
+              <i class="fas fa-layer-group me-1"></i>Sammelbuchung {{ row.booking_group.date.strftime('%d.%m.%Y') }} · {{ row.booking_group.description | truncate(40) }}
+            </a>
+            {% endif %}
+            {% if link_blockers[row.id] %}
+            <span class="text-muted" title="{{ link_blockers[row.id] }}"><i class="fas fa-lock"></i></span>
+            {% else %}
+            <form method="post" action="{{ url_for('accounting.document_unlink', link_id=row.id) }}"
+                  hx-confirm="Zuordnung lösen? Der Beleg ist danach wieder im Eingang.">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button class="btn btn-sm btn-ghost-danger" title="Zuordnung lösen"><i class="fas fa-unlink"></i></button>
+            </form>
+            {% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="text-muted mb-3">Noch keiner Buchung zugeordnet.</p>
+        {% endif %}
+
+        {% if doc.status != 'Verworfen' %}
+        {% if doc.einvoice and not booked %}
+        {# E-Rechnung: Buchungsvorschlag je Steuersatz #}
+        {% if rows_error %}<div class="alert alert-danger py-2 small">{{ rows_error }}</div>{% endif %}
+        <form method="post" action="{{ url_for('accounting.document_book_einvoice', doc_id=doc.id) }}" class="mb-3">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="mb-3">
+            <label class="form-label">Lieferant</label>
+            <select name="supplier_id" class="form-select tom-select" required>
+              <option value="new" {{ 'selected' if not suggested }}>Neu anlegen: {{ inv.seller.name }}</option>
+              {% for s in suppliers %}
+              <option value="{{ s.id }}" {{ 'selected' if suggested and suggested.id == s.id }}>{{ s.name }}{% if s.vat_id %} ({{ s.vat_id }}){% endif %}</option>
+              {% endfor %}
+            </select>
+            <div class="form-text">
+              {% if suggested %}Erkannt über {{ 'die USt-IdNr.' if suggested.vat_id and suggested.vat_id == inv.seller.vat_id else 'den Namen' }}.
+              {% else %}Kein passender Lieferant gefunden — er wird aus den Rechnungsdaten angelegt.{% endif %}
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Buchungsdatum</label>
+            <input type="date" name="date" class="form-control" value="{{ booking_date.isoformat() }}" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Konto (Ausgabe)</label>
+            <select name="account_id" class="form-select tom-select" required>
+              <option value="">— wählen —</option>
+              {% for a in accounts %}<option value="{{ a.id }}">{{ a.code ~ ' · ' if a.code }}{{ a.name }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Projekt <small class="text-muted">(optional)</small></label>
+            <select name="project_id" class="form-select tom-select">
+              <option value="">—</option>
+              {% for p in projects %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Bankkonto <small class="text-muted">(optional)</small></label>
+            <select name="real_account_id" class="form-select tom-select">
+              <option value="">—</option>
+              {% for r in real_accounts %}<option value="{{ r.id }}" {{ 'selected' if default_real_account and default_real_account.id == r.id }}>{{ r.name }}</option>{% endfor %}
+            </select>
+          </div>
+          {% if rows %}
+          <div class="mb-3">
+            <div class="text-muted small text-uppercase mb-1">Es wird gebucht</div>
+            <table class="table table-sm mb-0">
+              {% for r in rows %}
+              <tr><td>{{ r.label }}</td><td class="text-end text-nowrap">{{ r.gross | de_number }} €</td></tr>
+              {% endfor %}
+            </table>
+            <div class="form-text">
+              {{ 'Einzelbuchung' if rows|length == 1 else 'Sammelbuchung mit ' ~ rows|length ~ ' Zeilen (je Steuersatz)' }},
+              Beträge brutto mit Steuersatz.
+            </div>
+          </div>
+          {% endif %}
+          <button type="submit" class="btn btn-primary w-100" {{ 'disabled' if rows_error }}>
+            <i class="fas fa-check me-1"></i> Buchen
+          </button>
+        </form>
+        {% elif not doc.einvoice %}
+        <a href="{{ url_for('accounting.booking_new', document_id=doc.id) }}" class="btn btn-primary w-100 mb-3" hx-boost="false">
+          <i class="fas fa-plus me-1"></i> Buchung aus diesem Beleg erstellen
+        </a>
+        {% endif %}
+
+        <form method="post" action="{{ url_for('accounting.document_link', doc_id=doc.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <label class="form-label">{{ 'Weiterer Buchung zuordnen' if links else 'Bestehender Buchung zuordnen' }}</label>
+          <select name="target" class="form-select tom-select mb-2" required>
+            <option value="">— Buchung wählen —</option>
+            {% if candidates %}
+            <optgroup label="Passend (gleicher Betrag, ohne Beleg)">
+              {% for typ, obj in candidates %}
+              <option value="{{ 'booking' if typ == 'booking' else 'group' }}:{{ obj.id }}">{{ obj.date.strftime('%d.%m.%Y') }} · {{ obj.description | truncate(60) }} · {{ (obj.amount if typ == 'booking' else obj.total_amount) | de_number }} €{{ ' (Sammelbuchung)' if typ == 'booking_group' }}</option>
+              {% endfor %}
+            </optgroup>
+            {% endif %}
+            <optgroup label="Einzelbuchungen (neueste)">
+              {% for b in booking_choices %}
+              <option value="booking:{{ b.id }}">{{ b.date.strftime('%d.%m.%Y') }} · {{ b.description | truncate(60) }} · {{ b.amount | de_number }} €</option>
+              {% endfor %}
+            </optgroup>
+            {% if group_choices %}
+            <optgroup label="Sammelbuchungen (neueste)">
+              {% for g in group_choices %}
+              <option value="group:{{ g.id }}">{{ g.date.strftime('%d.%m.%Y') }} · {{ g.description | truncate(60) }} · {{ g.total_amount | de_number }} €</option>
+              {% endfor %}
+            </optgroup>
+            {% endif %}
+          </select>
+          <button class="btn btn-outline-primary w-100"><i class="fas fa-link me-1"></i> Zuordnen</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+
+    {# --- Arbeitsstand ---------------------------------------------------------------- #}
+    <div class="card mb-3">
+      <div class="card-header"><h3 class="card-title">Arbeitsstand</h3></div>
+      <div class="card-body d-flex flex-wrap gap-2">
+        {% if doc.status == 'Neu' and not booked %}
+        <form method="post" action="{{ url_for('accounting.document_shelve', doc_id=doc.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="btn btn-sm btn-outline-primary" title="Aufbewahren, ohne zu buchen (z. B. Lieferschein, Vertrag)"><i class="fas fa-archive me-1"></i> Ohne Buchung ablegen</button>
+        </form>
+        {% endif %}
+        {% if doc.status in ('Verworfen', 'Abgelegt') %}
+        <form method="post" action="{{ url_for('accounting.document_reopen', doc_id=doc.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="btn btn-sm btn-outline-secondary"><i class="fas fa-undo me-1"></i> Zurück in den Eingang</button>
+        </form>
+        {% endif %}
+        {% if doc.status != 'Verworfen' and not booked %}
+        <form method="post" action="{{ url_for('accounting.document_discard', doc_id=doc.id) }}"
+              hx-confirm="Beleg verwerfen? Die Datei bleibt aufbewahrt.">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="btn btn-sm btn-outline-secondary" title="z. B. Dublette oder falsche Datei"><i class="fas fa-ban me-1"></i> Verwerfen</button>
+        </form>
+        {% endif %}
+        {% if can_delete[0] %}
+        <form method="post" action="{{ url_for('accounting.document_delete', doc_id=doc.id) }}"
+              hx-confirm="Beleg samt Datei endgültig löschen? Das geht nur, weil er nie gebucht oder abgelegt war.">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="btn btn-sm btn-outline-danger"><i class="fas fa-trash me-1"></i> Löschen</button>
+        </form>
+        {% else %}
+        <span class="text-muted small" title="{{ can_delete[1] }}"><i class="fas fa-lock me-1"></i>Nicht löschbar (Aufbewahrungspflicht)</span>
+        {% endif %}
+      </div>
+    </div>
+
+    {# --- Angaben (nur ohne E-Rechnung: dort stammen sie aus der Datei) ------------------ #}
+    {% if not doc.einvoice and doc.status != 'Verworfen' %}
+    <div class="card mb-3">
+      <div class="card-header"><h3 class="card-title">Angaben zum Beleg</h3></div>
+      <div class="card-body">
+        <form method="post" action="{{ url_for('accounting.document_update', doc_id=doc.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="mb-2">
+            <label class="form-label">Art</label>
+            <select name="kind" class="form-select form-select-sm">
+              {% for key, label in kinds.items() %}<option value="{{ key }}" {{ 'selected' if doc.kind == key }}>{{ label }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="mb-2"><label class="form-label">Titel</label>
+            <input type="text" name="title" class="form-control form-control-sm" maxlength="200" value="{{ doc.title or '' }}" placeholder="{{ doc.original_name }}"></div>
+          <div class="row g-2 mb-2">
+            <div class="col-6"><label class="form-label">Belegnummer</label>
+              <input type="text" name="number" class="form-control form-control-sm" maxlength="100" value="{{ doc.number or '' }}"></div>
+            <div class="col-6"><label class="form-label">Belegdatum</label>
+              <input type="date" name="document_date" class="form-control form-control-sm" value="{{ doc.document_date.isoformat() if doc.document_date else '' }}"></div>
+          </div>
+          <div class="mb-2"><label class="form-label">Betrag brutto (€)</label>
+            <input type="text" name="amount" inputmode="decimal" class="form-control form-control-sm" value="{{ (doc.amount | de_number) if doc.amount is not none else '' }}"></div>
+          <div class="mb-3"><label class="form-label">Lieferant</label>
+            <select name="supplier_id" class="form-select tom-select">
+              <option value="">—</option>
+              {% for s in suppliers %}<option value="{{ s.id }}" {{ 'selected' if doc.supplier_id == s.id }}>{{ s.name }}</option>{% endfor %}
+            </select></div>
+          <button class="btn btn-sm btn-outline-primary w-100">Speichern</button>
+        </form>
+      </div>
+    </div>
+    {% endif %}
+
+    {# --- Aufbewahrung + Verlauf -------------------------------------------------------- #}
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">Aufbewahrung &amp; Verlauf</h3></div>
+      <div class="card-body small">
+        <div class="mb-2"><strong>Aufbewahren bis {{ retention_end.strftime('%d.%m.%Y') }}</strong>
+          <div class="text-muted">{{ retention_hint }}</div></div>
+        <div class="text-muted mb-3">
+          {{ doc.original_name }} · {{ doc.size_bytes | filesize }} · SHA-256 <code>{{ doc.sha256[:16] }}…</code>
+        </div>
+        <ul class="list-unstyled mb-0">
+          {% for e in events %}
+          <li class="mb-1">
+            <span class="text-muted text-nowrap">{{ e.created_at.strftime('%d.%m.%Y %H:%M') }}</span>
+            {{ {'uploaded': 'abgelegt', 'linked': 'zugeordnet', 'unlinked': 'Zuordnung gelöst', 'filed': 'ohne Buchung abgelegt',
+                'discarded': 'verworfen', 'reopened': 'zurück in den Eingang', 'edited': 'Angaben geändert'}.get(e.action, e.action) }}
+            {% if e.user %}<span class="text-muted">· {{ e.user.username }}</span>{% endif %}
+            {% set d = e.detail_dict %}
+            {% if d.get('verkleinert') %}<span class="text-muted">· im Browser verkleinert (vorher {{ (d.get('original_groesse') or 0) | filesize }})</span>{% endif %}
+            {% if d.get('reason') %}<span class="text-muted">· {{ d.get('reason') }}</span>{% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

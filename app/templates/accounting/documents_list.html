@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% from "_pagination.html" import render_pagination %}
+{% block title %}Belege{% endblock %}
+{% block page_title %}<i class="fas fa-paperclip me-2"></i> Belege{% endblock %}
+
+{% block content %}
+{# Upload: JS lädt Datei für Datei hoch (Fotos werden vorher im Browser verkleinert); das Formular
+   ist der Rückfall ohne JavaScript. hx-boost aus, damit ein normaler Datei-Post läuft. #}
+<div class="card mb-3">
+  <div class="card-body">
+    <form method="post" action="{{ url_for('accounting.document_upload') }}" enctype="multipart/form-data"
+          class="row g-3 align-items-end" hx-boost="false" id="doc-upload-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="col-md">
+        <label class="form-label" for="doc-files">Belege hochladen</label>
+        <input type="file" id="doc-files" name="files" class="form-control" multiple required
+               accept=".pdf,.jpg,.jpeg,.png,.webp,.xml,application/pdf,image/jpeg,image/png,image/webp,application/xml,text/xml">
+        <div class="form-text">
+          PDF, Foto (JPG, PNG, WebP) oder E-Rechnung (XML) bis {{ max_upload_mb }} MB je Datei. Die Datei wird
+          <strong>unverändert</strong> aufbewahrt — nur Fotos verkleinert der Browser vorher auf eine
+          handliche Größe. Aufbewahrungspflicht: {{ country.document_retention_years }} Jahre.
+        </div>
+      </div>
+      <div class="col-md-auto">
+        <div class="form-check form-switch mb-1">
+          <input class="form-check-input" type="checkbox" id="doc-shrink" checked>
+          <label class="form-check-label" for="doc-shrink">Fotos verkleinern</label>
+        </div>
+        <div class="text-muted small" title="Belegspeicher dieses Mandanten">
+          <i class="fas fa-database me-1"></i>{{ quota.used | filesize }}{% if quota.limit %} von {{ quota.limit | filesize }}{% endif %}
+        </div>
+        {% if quota.limit %}
+        {% set pct = (quota.used * 100 / quota.limit) | round | int %}
+        <div class="progress progress-sm mt-1" style="width:10rem">
+          <div class="progress-bar" style="width: {{ [pct, 100] | min }}%; {{ 'background-color:#d63939;' if pct >= 90 else ('background-color:#f59f00;' if pct >= 75 else '') }}"></div>
+        </div>
+        {% endif %}
+      </div>
+      <div class="col-auto">
+        <button type="submit" class="btn btn-primary" id="doc-upload-btn"><i class="fas fa-upload me-1"></i> Hochladen</button>
+      </div>
+    </form>
+    <div id="doc-upload-status" class="mt-2 small"></div>
+  </div>
+</div>
+
+<div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+  <ul class="nav nav-pills">
+    {% for key, label in tabs %}
+    <li class="nav-item">
+      <a class="nav-link {{ 'active' if tab == key }}" href="{{ url_for('accounting.documents', tab=key, q=search or None) }}">
+        {{ label }}{% if key != 'all' %} <span class="badge bg-secondary-lt ms-1">{{ counts[key] }}</span>{% endif %}
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+  <form method="get" action="{{ url_for('accounting.documents') }}" class="ms-auto d-flex gap-2">
+    <input type="hidden" name="tab" value="{{ tab }}">
+    <input type="search" name="q" value="{{ search }}" class="form-control form-control-sm" placeholder="Name, Titel, Nummer, Lieferant …">
+    <button class="btn btn-sm btn-outline-secondary" title="Suchen"><i class="fas fa-search"></i></button>
+  </form>
+</div>
+
+<div class="card">
+  {% if docs %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table">
+      <thead>
+        <tr>
+          <th>Beleg</th><th>Datum</th><th>Lieferant</th><th class="text-end">Betrag</th>
+          <th>Status</th><th class="text-end">Größe</th><th>Erfasst</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in docs %}
+        <tr>
+          <td>
+            <a href="{{ url_for('accounting.document_detail', doc_id=d.id) }}">
+              <i class="fas fa-{{ 'file-pdf' if d.is_pdf else ('file-image' if d.is_image else 'file-code') }} me-1 text-muted"></i><strong>{{ d.display_title }}</strong>
+            </a>
+            {% if d.number %}<span class="text-muted small ms-1">Nr. {{ d.number }}</span>{% endif %}
+            <div class="small">
+              <span class="badge bg-secondary-lt">{{ d.kind_label }}</span>
+              {% if d.einvoice %}<span class="badge bg-azure-lt">{{ d.einvoice.format_label }}</span>{% endif %}
+              {% if d.title and d.title != d.original_name %}<span class="text-muted">{{ d.original_name }}</span>{% endif %}
+            </div>
+          </td>
+          <td class="text-nowrap">{{ d.document_date.strftime('%d.%m.%Y') if d.document_date else '—' }}</td>
+          <td>{{ d.supplier.name if d.supplier else (d.einvoice.seller_name if d.einvoice else '—') }}</td>
+          <td class="text-end text-nowrap">{% if d.amount is not none %}{{ d.amount | de_number }} €{% else %}—{% endif %}</td>
+          <td>
+            {% if d.id in booked_ids %}<span class="badge bg-success-lt">Verbucht</span>
+            {% elif d.status == 'Verworfen' %}<span class="badge bg-secondary-lt">Verworfen</span>
+            {% elif d.status == 'Abgelegt' %}<span class="badge bg-azure-lt">Abgelegt</span>
+            {% else %}<span class="badge bg-blue-lt">Eingang</span>{% endif %}
+          </td>
+          <td class="text-end text-muted small text-nowrap">{{ d.size_bytes | filesize }}</td>
+          <td class="text-muted small text-nowrap">{{ d.created_at.strftime('%d.%m.%Y') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ render_pagination(pagination) }}
+  {% else %}
+  <div class="card-body text-muted">
+    {% if search %}Keine Belege zur Suche „{{ search }}“.
+    {% elif tab == 'inbox' %}Der Belegeingang ist leer. Lade oben Rechnungen, Kassenbons oder Fotos hoch — du buchst sie anschließend oder ordnest sie einer bestehenden Buchung zu.
+    {% else %}Keine Belege in dieser Ansicht.{% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var input = document.getElementById('doc-files');
+  var status = document.getElementById('doc-upload-status');
+  var button = document.getElementById('doc-upload-btn');
+  var form = document.getElementById('doc-upload-form');
+  if (!input || !status || !window.wkDocUpload) { return; }   // ohne JS: normales Formular
+  button.classList.add('d-none');
+  input.removeAttribute('required');
+
+  function esc(text) {
+    var d = document.createElement('div'); d.textContent = text; return d.innerHTML;
+  }
+  input.addEventListener('change', async function () {
+    var files = Array.prototype.slice.call(input.files);
+    if (!files.length) { return; }
+    status.innerHTML = '';
+    var okCount = 0, problems = 0;
+    await window.wkDocUpload(files, {
+      shrink: document.getElementById('doc-shrink').checked,
+      onFile: function (r, i, n) {
+        var cls = !r.ok ? 'text-danger' : (r.duplicate || r.warning ? 'text-warning' : 'text-success');
+        var icon = !r.ok ? 'times-circle' : (r.duplicate || r.warning ? 'exclamation-triangle' : 'check-circle');
+        var text = !r.ok ? r.error : (r.message || r.warning || 'abgelegt');
+        status.insertAdjacentHTML('beforeend', '<div class="' + cls + '"><i class="fas fa-' + icon + ' me-1"></i><strong>' +
+          esc(r.name) + '</strong>: ' + esc(text) + '</div>');
+        if (r.ok && !r.duplicate) { okCount++; }
+        if (!r.ok || r.duplicate || r.warning) { problems++; }
+      }
+    });
+    input.value = '';
+    if (okCount && !problems) {
+      window.location.href = '{{ url_for("accounting.documents") }}';
+    } else {
+      status.insertAdjacentHTML('beforeend', '<a class="btn btn-sm btn-outline-primary mt-2" href="{{ url_for("accounting.documents") }}" hx-boost="false">Liste aktualisieren</a>');
+    }
+  });
+})();
+</script>
+{% endblock %}

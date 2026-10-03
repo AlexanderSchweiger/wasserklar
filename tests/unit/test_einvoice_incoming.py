@@ -160,6 +160,18 @@ class TestPdf:
         with pytest.raises(IncomingError, match="keine E-Rechnungsdaten"):
             parse(_pdf_with(None))
 
+    def test_a_plain_pdf_is_a_distinct_case_the_document_store_accepts(self):
+        """Kein Dateifehler, sondern ein normales Dokument: eigene Unterklasse, damit die Belegablage
+        es als Beleg ablegen kann, waehrend defekte/verschluesselte PDFs ein Fehler bleiben."""
+        from app.einvoice.incoming import NotAnEInvoice
+        with pytest.raises(NotAnEInvoice):
+            parse(_pdf_with(None))
+        with pytest.raises(NotAnEInvoice):
+            parse(_pdf_with(b"<notiz>hallo</notiz>", "notiz.xml"))
+        with pytest.raises(IncomingError) as broken:
+            parse(b"%PDF-1.7\nkein echtes PDF")
+        assert not isinstance(broken.value, NotAnEInvoice)
+
     def test_an_unrelated_xml_attachment_does_not_count(self):
         with pytest.raises(IncomingError, match="keine E-Rechnungsdaten"):
             parse(_pdf_with(b"<notiz>hallo</notiz>", "notiz.xml"))

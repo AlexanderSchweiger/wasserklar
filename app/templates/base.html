@@ -82,7 +82,7 @@
 
             {# Buchhaltung #}
             {% set _nav_buchungen      = request.endpoint in ('accounting.bookings','accounting.booking_new','accounting.booking_edit') %}
-            {% set _nav_eingang        = request.endpoint in ('accounting.incoming_list','accounting.incoming_detail') %}
+            {% set _nav_eingang        = (request.endpoint or '').startswith('accounting.document') %}
             {% set _nav_umbuchungen    = request.endpoint in ('accounting.transfers','accounting.transfer_new') %}
             {% set _nav_buchungsjahre  = request.endpoint in ('accounting.fiscal_years','accounting.fiscal_year_new','accounting.fiscal_year_close','accounting.fiscal_year_reopen') %}
             {% set _nav_bankkonten     = request.endpoint in ('accounting.real_accounts','accounting.real_account_new','accounting.real_account_edit') %}
@@ -313,8 +313,8 @@
                   </li>
                   <li class="nav-item">
                     <a class="nav-link {% if _nav_eingang %}active{% endif %}"
-                      href="{{ url_for('accounting.incoming_list') }}">
-                      <i class="fas fa-file-import me-2"></i>Eingangsrechnungen
+                      href="{{ url_for('accounting.documents') }}">
+                      <i class="fas fa-paperclip me-2"></i>Belege
                     </a>
                   </li>
                   <li class="nav-item">
@@ -843,6 +843,10 @@
      eingeloggten User. #}
   {% if current_user.is_authenticated %}
   {% include "notes/_modal.html" %}
+  {# Beleg-Modal + Upload-Helfer (Büroklammer in der Buchungsliste, Beleg-Auswahl im Buchungsformular). #}
+  {% if current_user.has_permission('buchhaltung') %}
+  {% include "documents/_modal.html" %}
+  {% endif %}
   {% endif %}
   {% block modals %}{% endblock %}
 

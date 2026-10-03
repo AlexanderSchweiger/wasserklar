@@ -41,6 +41,17 @@ def create_app(config_name=None):
     login_manager.init_app(app)
     mail.init_app(app)
     migrate.init_app(app, db)
+
+    # Belegablage: Upload-Obergrenze je Request (bewusst nicht global — der Daten-Import
+    # nimmt grosse ZIPs an). MUSS vor csrf.init_app stehen: der CSRF-Schutz liest das
+    # Formular schon in seinem before_request, danach waere die Grenze wirkungslos.
+    from flask import request as _doc_request
+
+    @app.before_request
+    def _limit_document_uploads():
+        if _doc_request.method == "POST" and _doc_request.endpoint == "accounting.document_upload":
+            _doc_request.max_content_length = (int(app.config["DOCUMENT_MAX_UPLOAD_MB"]) + 1) * 1024 * 1024
+
     csrf.init_app(app)
 
     # Blueprints registrieren
@@ -216,6 +227,24 @@ def create_app(config_name=None):
     from app.notes import services as _notes_svc
     app.jinja_env.globals["notes_by_entity_for"] = _notes_svc.notes_by_entity_for
     app.jinja_env.globals["notes_for"] = _notes_svc.notes_for
+
+    # Belegablage: Bueroklammer-Pins in Buchungslisten (eine Abfrage je Tabelle), Groessenformat.
+    from app.documents import service as _documents_svc
+    app.jinja_env.globals["document_counts_for"] = _documents_svc.counts_by_entity
+    app.jinja_env.filters["filesize"] = _documents_svc.format_size
+
+    # Zu grosser Upload (Request ueber der Grenze, siehe _limit_document_uploads): deutsche
+    # Meldung, fuer fetch (Beleg-Upload) als JSON, sonst als Hinweis auf der Belegseite.
+    from flask import flash as _flash, jsonify as _jsonify, redirect as _redirect, url_for as _url_for
+
+    @app.errorhandler(413)
+    def _request_too_large(_error):
+        message = f"Die Datei ist größer als {app.config['DOCUMENT_MAX_UPLOAD_MB']} MB."
+        best = _doc_request.accept_mimetypes
+        if best.accept_json and not best.accept_html:
+            return _jsonify(ok=False, error=message), 413
+        _flash(message, "danger")
+        return _redirect(_url_for("accounting.documents"))
 
     # Context Processor: WG-Einstellungen in alle Templates injizieren
     @app.context_processor

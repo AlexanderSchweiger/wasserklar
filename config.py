@@ -129,6 +129,15 @@ class Config:
     )
     DATA_TRANSFER_MAX_MEMBERS = int(os.environ.get("DATA_TRANSFER_MAX_MEMBERS", 250_000))
 
+    # Belegablage (app/documents): DOCUMENT_MAX_UPLOAD_MB = Obergrenze je Datei (der Upload
+    # wird schon vor dem Einlesen mit 413 abgewiesen); DOCUMENT_QUOTA_MB = Kontingent des
+    # Mandanten, 0 = unbegrenzt (die SaaS ersetzt es je Tarif ueber den Resolver
+    # app.extensions["documents.quota_resolver"]); DOCUMENT_MIN_FREE_DISK_MB = Upload-Sperre,
+    # wenn auf dem Datentraeger weniger frei ist (schuetzt den Server vor einer vollen Platte).
+    DOCUMENT_MAX_UPLOAD_MB = int(os.environ.get("DOCUMENT_MAX_UPLOAD_MB", 15))
+    DOCUMENT_MIN_FREE_DISK_MB = int(os.environ.get("DOCUMENT_MIN_FREE_DISK_MB", 1024))
+    DOCUMENT_QUOTA_MB = int(os.environ.get("DOCUMENT_QUOTA_MB", 0))
+
     # Land des Mandanten (ISO-Code, siehe app/country.py: "AT" | "DE"). Nur der
     # Fallback, solange die AppSetting ``org.country`` nicht gesetzt ist — der
     # Mandant waehlt sein Land in den Einstellungen (SaaS: bei der Registrierung).
@@ -167,6 +176,7 @@ class TestingConfig(Config):
     TESTING = True
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
     WTF_CSRF_ENABLED = False
+    DOCUMENT_MIN_FREE_DISK_MB = 0      # Tests laufen auf beliebigen Platten
     SECRET_KEY = "test-secret-key"
     # Fester Test-Key (32-Byte urlsafe-base64) — Tests duerfen nicht von der
     # User-.env abhaengen.
