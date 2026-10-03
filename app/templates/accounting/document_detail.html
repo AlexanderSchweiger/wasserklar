@@ -68,7 +68,11 @@
           {% for row in links %}
           <li class="d-flex align-items-center gap-2 mb-1">
             {% if row.booking %}
-            <a href="{{ url_for('accounting.booking_edit', booking_id=row.booking_id) }}" hx-boost="false" class="flex-fill">
+            {# Modal-first: Buchung im Buchungs-Modal öffnen (href bleibt als Fallback ohne JS). #}
+            <a href="{{ url_for('accounting.booking_edit', booking_id=row.booking_id) }}" hx-boost="false" class="flex-fill"
+               data-bs-toggle="modal" data-bs-target="#bookingFormModal" data-modal-title="Buchung bearbeiten"
+               hx-get="{{ url_for('accounting.booking_edit', booking_id=row.booking_id) }}"
+               hx-target="#booking-form-host" hx-swap="innerHTML">
               <i class="fas fa-book me-1"></i>{{ row.booking.date.strftime('%d.%m.%Y') }} · {{ row.booking.description | truncate(40) }} · {{ row.booking.amount | de_number }} €
             </a>
             {% else %}
@@ -155,9 +159,13 @@
           </button>
         </form>
         {% elif not doc.einvoice and doc.kind != 'bank_statement' %}
-        <a href="{{ url_for('accounting.booking_new', document_id=doc.id) }}" class="btn btn-primary w-100 mb-3" hx-boost="false">
+        {# Modal-first: Formular wird bei jedem Oeffnen frisch geladen (Beleg vorbelegt). #}
+        <button type="button" class="btn btn-primary w-100 mb-3"
+                data-bs-toggle="modal" data-bs-target="#bookingFormModal" data-modal-title="Neue Buchung"
+                hx-get="{{ url_for('accounting.booking_new', document_id=doc.id) }}"
+                hx-target="#booking-form-host" hx-swap="innerHTML">
           <i class="fas fa-plus me-1"></i> Buchung aus diesem Beleg erstellen
-        </a>
+        </button>
         {% endif %}
 
         <form method="post" action="{{ url_for('accounting.document_link', doc_id=doc.id) }}">
@@ -328,4 +336,59 @@
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block modals %}
+{{ super() }}
+{# Buchung aus dem Beleg erstellen — gleiches Modal-Muster wie accounting/bookings.html. #}
+<div class="modal fade" id="bookingFormModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="fas fa-book me-2"></i><span id="bookingFormModalTitle">Neue Buchung</span></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <div id="booking-form-host" class="modal-body"
+           hx-on::before-swap="this.querySelectorAll('select.tom-select').forEach(function(s){ if (s.tomselect) { try { s.tomselect.destroy(); } catch(e){} } })">
+        <div class="text-center py-5 text-muted">
+          <div class="spinner-border" role="status"><span class="visually-hidden">Wird geladen…</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+(function () {
+  var m = document.getElementById('bookingFormModal');
+  if (!m) return;
+  // Titel je nach Ausloeser („Neue Buchung" / „Buchung bearbeiten").
+  m.addEventListener('show.bs.modal', function (e) {
+    var t = e.relatedTarget, titleEl = document.getElementById('bookingFormModalTitle');
+    if (titleEl) titleEl.textContent = (t && t.getAttribute('data-modal-title')) || 'Buchung';
+  });
+  // Beim Schliessen TomSelects zerstoeren und Host leeren (frisch laden beim naechsten Oeffnen).
+  m.addEventListener('hidden.bs.modal', function () {
+    var host = document.getElementById('booking-form-host');
+    if (!host) return;
+    host.querySelectorAll('select.tom-select').forEach(function (el) {
+      if (el.tomselect) { try { el.tomselect.destroy(); } catch (err) {} }
+    });
+    host.innerHTML = '<div class="text-center py-5 text-muted"><div class="spinner-border" role="status"></div></div>';
+  });
+  // Gespeichert → Seite neu laden, damit Verknuepfung/Status des Belegs sichtbar werden.
+  if (!window.__docBookingSavedBound) {
+    window.__docBookingSavedBound = true;
+    document.body.addEventListener('booking-saved', function () {
+      var modalEl = document.getElementById('bookingFormModal');
+      if (!modalEl) return;
+      modalEl.addEventListener('hidden.bs.modal', function () { window.location.reload(); }, {once: true});
+      if (window.bootstrap) bootstrap.Modal.getOrCreateInstance(modalEl).hide(); else window.location.reload();
+    });
+  }
+})();
+</script>
 {% endblock %}

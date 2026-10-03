@@ -12,6 +12,7 @@ from sqlalchemy import or_
 from app.dunning import bp
 from app.extensions import db
 from app.file_safety import safe_tenant_path
+from app.temp_files import send_pdf_writer
 from app.models import (
     AppSetting, Customer, Document, DunningNotice, DunningPolicy, DunningStage, Invoice,
 )
@@ -645,16 +646,8 @@ def bulk_pdf_merged():
             html_str = render_template(_dunning_template_name(ctx["design"]), **ctx)
             pdf_bytes = weasyprint.HTML(string=html_str).render().write_pdf()
             writer.append(io.BytesIO(pdf_bytes))
-    writer.compress_identical_objects()
-    doc_dir = os.path.join(current_app.config["PDF_DIR"], "_bulk")
-    os.makedirs(doc_dir, exist_ok=True)
-    merged_path = os.path.join(doc_dir, "Mahnungen_gesamt.pdf")
-    with open(merged_path, "wb") as fh:
-        writer.write(fh)
-    writer.close()
-
-    return send_file(merged_path, as_attachment=True,
-                     download_name="Mahnungen_gesamt.pdf")
+    # Anonyme Temp-Datei statt festem Namen (gleichzeitige Sammeldrucke, kein Rest auf der Platte).
+    return send_pdf_writer(writer, "Mahnungen_gesamt.pdf")
 
 
 @bp.route("/bulk-post-pdf", methods=["POST"])
@@ -713,16 +706,7 @@ def bulk_post_pdf():
         writer.append(io.BytesIO(pdf_bytes))
     db.session.commit()
 
-    writer.compress_identical_objects()
-    doc_dir = os.path.join(current_app.config["PDF_DIR"], "_bulk")
-    os.makedirs(doc_dir, exist_ok=True)
-    merged_path = os.path.join(doc_dir, "Mahnungen_Post.pdf")
-    with open(merged_path, "wb") as fh:
-        writer.write(fh)
-    writer.close()
-
-    return send_file(merged_path, as_attachment=True,
-                     download_name="Mahnungen_Post.pdf")
+    return send_pdf_writer(writer, "Mahnungen_Post.pdf")
 
 
 # ---------------------------------------------------------------------------

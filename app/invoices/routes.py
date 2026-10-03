@@ -38,6 +38,7 @@ from app.invoices.pdf_service import (  # noqa: E402
 # Archivfassungen (gesperrte Rechnungen, versendete Entwuerfe) gehen ins Dokumentenregister;
 # Entwurfsausdrucke werden nicht abgelegt.
 from app.invoices.archive import archive_invoice_file  # noqa: E402
+from app.temp_files import send_pdf_writer  # noqa: E402
 
 
 # Nach app/invoices/services.py extrahiert (wiederverwendet von den
@@ -1352,15 +1353,11 @@ def bulk_pdf_merged():
             archive_invoice_file(invoice, pdf_bytes, "pdf")
         writer.append(io.BytesIO(pdf_bytes))
     db.session.commit()
-    # Byte-identische Objekte zusammenfassen (hilft bei deckenden Logos; bei
-    # transparenten PNGs mit SMask greift es kaum — bekannte Einschraenkung).
-    writer.compress_identical_objects()
-    merged_path = os.path.join(current_app.config["PDF_DIR"], "_bulk_merged.pdf")
-    os.makedirs(current_app.config["PDF_DIR"], exist_ok=True)
-    with open(merged_path, "wb") as fh:
-        writer.write(fh)
-    writer.close()
-    return send_file(merged_path, as_attachment=True, download_name="Rechnungen_gesamt.pdf")
+    # Byte-identische Objekte fasst send_pdf_writer zusammen (hilft bei deckenden Logos;
+    # bei transparenten PNGs mit SMask greift es kaum — bekannte Einschraenkung). Anonyme
+    # Temp-Datei statt festem Dateinamen: zwei gleichzeitige Sammeldrucke ueberschreiben
+    # sich nicht, und die Datei verschwindet nach dem Download.
+    return send_pdf_writer(writer, "Rechnungen_gesamt.pdf")
 
 
 @bp.route("/bulk-pdf-zip", methods=["POST"])
@@ -2743,13 +2740,7 @@ def billing_run_post_bulk(run_id):
             _create_or_update_open_item(invoice)
         writer.append(io.BytesIO(pdf_bytes))
     db.session.commit()
-    writer.compress_identical_objects()
-    merged_path = os.path.join(current_app.config["PDF_DIR"], "_bulk_merged.pdf")
-    os.makedirs(current_app.config["PDF_DIR"], exist_ok=True)
-    with open(merged_path, "wb") as fh:
-        writer.write(fh)
-    writer.close()
-    return send_file(merged_path, as_attachment=True, download_name="Rechnungen_Post.pdf")
+    return send_pdf_writer(writer, "Rechnungen_Post.pdf")
 
 
 @bp.route("/billing-runs/<int:run_id>/export/excel")

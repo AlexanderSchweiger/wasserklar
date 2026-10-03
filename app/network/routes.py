@@ -36,6 +36,7 @@ from app.network import services as svc
 from app.network import vocab
 from app.network import water_quality as wq
 from app.network import wlk_import as wlk
+from app.temp_files import resolve_wizard_file, wizard_path
 from app.extensions import db
 from app.pagination import paginate_list
 from app.models import (
@@ -1249,9 +1250,8 @@ def import_shapefile():
         return redirect(url_for("network.import_view"))
 
     stats = result["stats"]
-    token = uuid.uuid4().hex
-    os.makedirs(current_app.instance_path, exist_ok=True)
-    path = os.path.join(current_app.instance_path, f"network_import_{token}.json")
+    # Zwischenstand im Mandantenordner (tmp/wizard, nach 24 h aufgeraeumt)
+    path = wizard_path("network_import_", "json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"type": "FeatureCollection", "features": result["features"]}, f)
     session["network_import_file"] = path
@@ -1276,8 +1276,8 @@ def import_shapefile_commit():
         flash("Kein Ziel-Plan vorhanden. Bitte zuerst einen Plan anlegen.", "warning")
         return redirect(url_for("network.plans_index"))
 
-    path = session.get("network_import_file")
-    if not path or not os.path.exists(path):
+    path = resolve_wizard_file(session.get("network_import_file"))
+    if path is None:
         flash("Die Import-Sitzung ist abgelaufen. Bitte die ZIP-Datei erneut hochladen.", "warning")
         return redirect(url_for("network.import_view"))
 

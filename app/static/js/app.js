@@ -386,6 +386,13 @@
     var form = e.target;
     if (!form || form.tagName !== 'FORM') return;
     if (!isBoosted(form)) return;
+    // Formulare mit eigenem hx-post/-get/... (Modal-Formulare) sind keine
+    // geboosteten Navigationen: htmx MUSS sie abfangen, auch wenn sie ein
+    // File-Input tragen (Beleg-Picker im Buchungsformular). Sonst geht das
+    // Submit nativ als GET an die aktuelle Seite (Filter statt Speichern).
+    if (form.hasAttribute('hx-post') || form.hasAttribute('hx-put') ||
+        form.hasAttribute('hx-patch') || form.hasAttribute('hx-delete') ||
+        form.hasAttribute('hx-get')) return;
     var action = form.getAttribute('action') || '';
     // formaction auf Submit-Buttons beruecksichtigen
     var submitter = e.submitter;

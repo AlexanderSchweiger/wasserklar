@@ -511,7 +511,8 @@ def register_commands(app):
         alembic_upgrade()
         print("Datenbankschema auf head migriert.")
 
-        seed_default_tax_rates(db, verbose=True)
+        # Steuersaetze werden hier bewusst nicht geseedet: sie sind Mandantendaten
+        # (Einstellungen -> Steuern) und wuerden sonst bei jedem Update zurueckkehren.
         seed_default_charge_types(db, verbose=True)
         seed_default_dunning_policy(db, verbose=True)
         seed_default_billing_period(db, verbose=True)
@@ -1254,6 +1255,23 @@ def register_commands(app):
         db.session.commit()
         print(f"{len(ids)} Beleg(e) bearbeitet: " + (", ".join(f"{k} {v}" for k, v in sorted(counts.items())) or "—"))
         print(f"  bei {prefilled} wurden Angaben vorbelegt (bitte auf der Belegseite bestätigen).")
+
+    @app.cli.command("cleanup-temp")
+    @click.option("--hours", type=int, default=24, show_default=True,
+                  help="Nur Dateien loeschen, die aelter sind.")
+    def cleanup_temp(hours):
+        """Raeumt vorübergehende Dateien auf (app/temp_files.py): abgebrochene Import-Assistenten
+        (tmp/wizard), entpackte Datenimporte (tmp/imports), Sammel-PDFs alter Versionen
+        (pdfs/_bulk_merged.pdf, pdfs/_bulk/) und Assistenten-Reste im Instanzordner.
+
+        Nie ein Dokument des Registers. Laeuft taeglich ueber den Scheduler (scheduler/crontab).
+        """
+        from app.temp_files import cleanup_legacy_instance_files, cleanup_stale
+        from app.documents.service import format_size
+
+        removed, freed = cleanup_stale(max_age_hours=hours)
+        legacy, legacy_freed = cleanup_legacy_instance_files(app.instance_path, max_age_hours=hours)
+        print(f"{removed + legacy} vorübergehende Datei(en) entfernt, {format_size(freed + legacy_freed)} frei.")
 
     @app.cli.command("documents-register-files")
     @click.option("--dry-run", is_flag=True, default=False, help="Nur berichten, nichts eintragen.")

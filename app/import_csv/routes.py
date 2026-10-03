@@ -1,6 +1,5 @@
 import os
 import re
-import uuid
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
@@ -12,6 +11,7 @@ from flask_login import login_required
 
 from app.country import home_country_name
 from app.import_csv import bp
+from app.temp_files import resolve_wizard_file, wizard_path
 from app.extensions import db
 from app.imports.common import (
     apply_einvoice_columns, resolve_contact_name, split_street_number,
@@ -751,11 +751,10 @@ def upload():
     df.columns = [str(c).strip() for c in df.columns]
     df = df.apply(lambda col: col.map(lambda x: x.strip() if isinstance(x, str) else x))
 
-    # Pickle in instance/ speichern
-    filename = f"import_{uuid.uuid4().hex}.pkl"
-    filepath = os.path.join(current_app.instance_path, filename)
+    # Zwischenstand im Mandantenordner (tmp/wizard, nach 24 h aufgeraeumt)
+    filepath = wizard_path("import_", "pkl")
     df.to_pickle(filepath)
-    session["import_file"] = filename
+    session["import_file"] = filepath
     session.pop("import_col_map", None)
     session.pop("import_duplicate_mode", None)
 
@@ -770,8 +769,8 @@ def mapping():
         flash("Keine hochgeladene Datei gefunden. Bitte neu hochladen.", "warning")
         return redirect(url_for("import_csv.upload"))
 
-    filepath = os.path.join(current_app.instance_path, filename)
-    if not os.path.exists(filepath):
+    filepath = resolve_wizard_file(filename)
+    if filepath is None:
         flash("Die hochgeladene Datei ist nicht mehr verfügbar. Bitte neu hochladen.", "warning")
         session.pop("import_file", None)
         return redirect(url_for("import_csv.upload"))
@@ -825,8 +824,8 @@ def preview():
         flash("Keine Import-Daten gefunden. Bitte neu hochladen.", "warning")
         return redirect(url_for("import_csv.upload"))
 
-    filepath = os.path.join(current_app.instance_path, filename)
-    if not os.path.exists(filepath):
+    filepath = resolve_wizard_file(filename)
+    if filepath is None:
         flash("Die hochgeladene Datei ist nicht mehr verfügbar. Bitte neu hochladen.", "warning")
         session.pop("import_file", None)
         return redirect(url_for("import_csv.upload"))

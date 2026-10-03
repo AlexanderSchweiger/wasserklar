@@ -6,7 +6,8 @@ and meters importers can all reuse them without duplication.
 Conventions:
 - pandas is imported LOCALLY inside each function that needs it (never at
   module level) to keep the import-time cost low.
-- No Flask-request access.  ``current_app`` is only used for ``instance_path``
+- No Flask-request access.  Pickled intermediate files live in the tenant's
+  ``tmp/wizard`` folder (``app/temp_files.py``), never in the global ``instance_path``
   inside the save/load/delete helpers.
 - All user-facing strings (warnings, errors) are in German; identifiers and
   comments are in English.
@@ -16,13 +17,10 @@ from __future__ import annotations
 import os
 import pickle
 import re
-import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
-
-from flask import current_app
 
 
 # ---------------------------------------------------------------------------
@@ -162,22 +160,27 @@ def read_table(file_storage) -> "pd.DataFrame":
 
 
 def save_dataframe(df, prefix: str = "import_") -> str:
-    """Pickle the DataFrame into the Flask instance directory.
+    """Pickle the DataFrame into the tenant's ``tmp/wizard`` folder.
 
-    Returns the absolute file path (store it in the session).
+    Returns the absolute file path (store it in the session). Stale files (> 24 h,
+    abandoned wizards) are removed on the way (``app.temp_files.wizard_path``).
     """
-    instance_dir = current_app.instance_path
-    os.makedirs(instance_dir, exist_ok=True)
-    fname = f"{prefix}{uuid.uuid4().hex}.pkl"
-    path = os.path.join(instance_dir, fname)
+    from app.temp_files import wizard_path
+    path = wizard_path(prefix, "pkl")
     df.to_pickle(path)
     return path
 
 
 def load_dataframe(path: str) -> "pd.DataFrame | None":
-    """Load a previously pickled DataFrame, or return None on any error."""
+    """Load a previously pickled DataFrame, or return None on any error.
+
+    Only files inside the tenant's ``tmp/wizard`` folder are read — the path comes from
+    the session and ``read_pickle`` must never see anything else.
+    """
     import pandas as pd
-    if not path or not os.path.exists(path):
+    from app.temp_files import resolve_wizard_file
+    path = resolve_wizard_file(path)
+    if path is None:
         return None
     try:
         return pd.read_pickle(path)
@@ -186,9 +189,11 @@ def load_dataframe(path: str) -> "pd.DataFrame | None":
 
 
 def delete_dataframe(path: str) -> None:
-    """Remove a pickled DataFrame file; silently ignores missing files."""
+    """Remove a pickled DataFrame file; silently ignores missing (or foreign) files."""
+    from app.temp_files import resolve_wizard_file
+    path = resolve_wizard_file(path)
     try:
-        if path and os.path.exists(path):
+        if path:
             os.remove(path)
     except OSError:
         pass

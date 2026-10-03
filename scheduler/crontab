@@ -1,2 +1,6 @@
 # Täglich um 00:05 Uhr alle offenen Buchungen der Vortage auf "Verbucht" setzen
 5 0 * * * flask --app run mark-posted
+
+# Täglich um 03:30 Uhr vorübergehende Dateien aufräumen (abgebrochene Import-Assistenten,
+# entpackte Datenimporte, Sammel-PDFs alter Versionen — nie ein Dokument des Registers)
+30 3 * * * flask --app run cleanup-temp

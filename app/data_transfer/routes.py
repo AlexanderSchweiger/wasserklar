@@ -21,6 +21,7 @@ from flask_login import current_user, login_required
 from sqlalchemy import func
 
 from app.data_transfer import bp
+from app.file_safety import tenant_file_root
 from app.data_transfer.services import (
     ImportError_, export_to_zip, extract_to_temp, import_from_zip,
     validate_manifest,
@@ -162,7 +163,8 @@ def import_upload():
         return redirect(url_for("data_transfer.import_form"))
 
     try:
-        extract_dir, manifest = extract_to_temp(upload, current_app.instance_path)
+        # Mandantenordner statt globalem instance_path (im SaaS sonst mandantenuebergreifend)
+        extract_dir, manifest = extract_to_temp(upload, str(tenant_file_root()))
     except Exception as exc:
         flash(f"Datei konnte nicht entpackt werden: {exc}", "danger")
         return redirect(url_for("data_transfer.import_form"))
@@ -244,7 +246,7 @@ def _resolve_token(token: str) -> Path | None:
     if not token or not all(c in "0123456789abcdef" for c in token):
         return None
 
-    imports_root = (Path(current_app.instance_path) / "tmp" / "imports").resolve()
+    imports_root = (tenant_file_root() / "tmp" / "imports").resolve()
     try:
         base = (imports_root / token).resolve()
         base.relative_to(imports_root)

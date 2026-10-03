@@ -146,6 +146,7 @@ def _clear_tenant_files() -> None:
         os.path.join(parent, "incidents"),
         os.path.join(parent, "documents"),
         os.path.join(parent, "incoming"),
+        os.path.join(parent, "tmp"),          # Import-Zwischenstaende, entpackte Datenimporte
     ]
     for path in targets:
         try:
