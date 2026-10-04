@@ -51,8 +51,12 @@
           aria-controls="sidebar-menu" aria-expanded="false" aria-label="Navigation umschalten">
           <span class="navbar-toggler-icon"></span>
         </button>
-        <a href="{{ url_for('main.dashboard') }}" class="navbar-brand navbar-brand-autodark">
-          {% block navbar_brand %}<i class="fas fa-tint me-2"></i>{% endblock %}{{ wg.name | truncate(22, true, '…') }}
+        {# Voller Name, gekürzt wird per CSS (app.css „Sidebar-Kopf"); is-long
+           setzt lange Namen kleiner, damit „Wassergenossenschaft" in eine Zeile passt. #}
+        {% set _brand_name = wg.name or '' %}
+        <a href="{{ url_for('main.dashboard') }}" class="navbar-brand navbar-brand-autodark wk-sidebar-brand"
+           title="{{ _brand_name }}">
+          {% block navbar_brand %}<i class="fas fa-tint me-2"></i>{% endblock %}<span class="wk-sidebar-brand-name{% if _brand_name | length > 16 %} is-long{% endif %}">{{ _brand_name }}</span>
         </a>
 
         <div class="collapse navbar-collapse" id="sidebar-menu">

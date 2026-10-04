@@ -1000,7 +1000,10 @@ def register_commands(app):
     @app.cli.command("seed-demo")
     @click.option("--yes", is_flag=True, default=False,
                   help="Bestaetigungs-Prompt 'SEED' ueberspringen (fuer CI / Test-Setup).")
-    def seed_demo(yes):
+    @click.option("--country", "country_code", default=None,
+                  help="Datensatz AT (Hagenberg) oder DE (Habach, inkl. E-Rechnung). "
+                       "Ohne Angabe: Land laut DEFAULT_COUNTRY.")
+    def seed_demo(yes, country_code):
         """Reproduzierbaren Demo-Datensatz erzeugen (100 Kunden, 150 Zaehler, ...).
 
         Wirft alle Geschaefts-Daten weg und erzeugt einen deterministischen
@@ -1032,17 +1035,28 @@ def register_commands(app):
         (``now=date.today()``): Vorjahre abgeschlossen, ein offenes Buchungsjahr
         im laufenden Jahr und laufende Buchungen/Posten/Umbuchung bis heute.
 
+        ``--country DE`` erzeugt den deutschen Datensatz (Habach, Oberbayern) mit
+        E-Rechnung (ZUGFeRD, XRechnung/Leitweg-ID, Eingangs-E-Rechnungen) und
+        stellt das Land des Mandanten um. Leere Stammdaten der Genossenschaft
+        werden mit Demo-Werten belegt (der Wipe leert die Einstellungen ohnehin).
+
         Login: admin / demo1234.
         """
         from datetime import date
-        from app.seed.demo import seed_demo_data
+        from app import country
+        from app.seed.demo import fill_demo_identity, seed_demo_data
 
+        if country_code is not None and country.normalize_code(country_code) is None:
+            raise click.ClickException(
+                f"Unbekanntes Land {country_code!r} — erlaubt: " + ", ".join(country.PROFILES))
         _assert_demo_seed_allowed(app, yes=yes)
 
         print("Wipe und Demo-Seed laeuft...")
         _wipe_business_data(db, verbose=True)
         # ``now`` = echtes heute -> Buchhaltung bis ins aktuelle Jahr fortschreiben.
-        seed_demo_data(db, verbose=True, now=date.today())
+        code = country.normalize_code(country_code) or country.current_code()
+        fill_demo_identity(code)
+        seed_demo_data(db, verbose=True, now=date.today(), country=code)
         # OpenItems fuer SENT-Rechnungen + ggf. Kundennummern nachziehen
         run_data_migrations(db, verbose=True)
         db.session.commit()

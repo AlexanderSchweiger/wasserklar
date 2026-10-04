@@ -28,14 +28,33 @@ Tagesordnung, Anwesenheit, Protokoll (inkl. Quorum, eine HV nach Wartefrist
 erneut eroeffnet) und einem Register an **Beschluessen** (angenommen / abgelehnt
 / vertagt mit Stimmenzahlen); je eine geplante Sitzung ohne Protokoll.
 
-Wird von zwei CLI-Wrappern aufgerufen:
-- OSS: ``flask --app run seed-demo`` (cli.py)
-- SaaS: ``flask --app run seed-demo --slug <tenant>`` (saas/cli.py)
+Dazu in **beiden Ländern** eine kleine **Belegablage**: PDF-Rechnungen von
+Lieferanten an Buchungen geknuepft, ein unbestaetigter Beleg mit erkannten
+Angaben im Eingang und ein abgelegter Beleg ohne Buchung.
 
-Beide Wrapper haben mehrstufige Production-Gates und wipen die DB davor. Diese
-Funktion selbst macht KEIN wipe und KEIN initial commit — sie erwartet eine
-DB mit Defaults (TaxRates, DunningPolicy "Standard", Rollen), aber leeren
-Geschaeftsdaten.
+**Zwei Länder** (``country``, Inhalte in ``demo_locale.py``):
+
+* **Österreich** — Hagenberg im Mühlkreis (``demo_geo.py``), der bisherige
+  Datensatz Zeichen für Zeichen.
+* **Deutschland** — Habach in Oberbayern (``demo_geo_de.py``): eigenes Ortsnetz
+  mit 132 Hausanschluessen, deshalb besitzen 40 statt 20 Kunden ein zweites
+  Objekt (140 Objekte); deutsche Namen/Adressen, USt-pflichtige Buchungsjahre mit
+  7 %/19 %, bayerischer Wassercent ab 1.7.2026 als Tarifposition mit Stichtag,
+  TrinkwV-Parameter. Zusaetzlich die **E-Rechnung**: Unternehmer-Kunden mit
+  USt-IdNr. (ZUGFeRD), Gemeinde und Schulverband mit XRechnung und Leitweg-ID,
+  Ausgangsrechnungen dazu (u. a. ein Entwurf, der nur elektronisch zustellbar
+  ist) und **Eingangs-E-Rechnungen** von Lieferanten (XRechnung-XML,
+  ZUGFeRD-PDF) — verbucht als Einzel- bzw. Sammelbuchung, eine noch im Eingang.
+
+Wird von zwei CLI-Wrappern aufgerufen:
+- OSS: ``flask --app run seed-demo [--country AT|DE]`` (cli.py)
+- SaaS: ``flask --app run seed-demo --slug <tenant> [--country AT|DE]`` (saas/cli.py)
+und von der SaaS-Danger-Zone („Testdaten laden").
+
+Die Wrapper wipen die DB davor. Diese Funktion selbst macht KEIN wipe und KEIN
+commit — sie erwartet eine DB mit Defaults (TaxRates, DunningPolicy "Standard",
+Rollen), aber leeren Geschaeftsdaten. Mit ``country`` stellt sie das Land des
+Mandanten vorher um (``switch_country``).
 
 Determinismus: ``random.Random(42)`` als einziger RNG, ``today`` als Parameter
 (kein ``date.today()``-Aufruf im Modul).
@@ -77,8 +96,76 @@ _STRASSEN = [
 ]
 
 
+def switch_country(db, code) -> bool:
+    """Stellt das Land des Mandanten fuer den Demo-Datensatz um (``True`` = gewechselt).
+
+    Wie ein neu angelegter Mandant dieses Landes: Steuersaetze des Landes aktiv, die
+    fremden deaktiviert (nie geloescht), Wasser-USt/Eichfrist hart auf die Defaults,
+    Wassercent ein-/ausgeblendet, Startwert der E-Rechnung, Kassier/Kassierer-Rolle.
+    Laeuft nach dem Wipe — es gibt keine Belege, die an alten Saetzen haengen.
+
+    **Committet nicht** (auch nicht indirekt): im SaaS-CLI-Pfad setzt jeder Commit den
+    ``search_path`` der naechsten Connection auf ``public`` zurueck. Deshalb benennt die
+    Funktion die Kassier-Rolle selbst um, statt ``cli.seed_default_roles`` zu rufen.
+    """
+    from app import country as country_mod
+    from app.models import AppSetting, Role, User
+    from app.settings.country_defaults import apply_country_defaults
+
+    target = country_mod.normalize_code(code)
+    if target is None:
+        raise ValueError(f"Unbekanntes Land {code!r} — erlaubt: {', '.join(country_mod.PROFILES)}")
+    previous = country_mod.current_code()
+    # Immer ausdruecklich speichern: nach einem Wipe der Einstellungen (CLI) gilt
+    # sonst nur der Config-Default, und der kann ein anderes Land sein.
+    AppSetting.set(country_mod.SETTING_KEY, target)
+    if target == previous:
+        return False
+    apply_country_defaults(target, previous_code=previous, overwrite=True,
+                           deactivate_foreign=True)
+    AppSetting.set("einvoice.enabled",
+                   "true" if country_mod.profile(target).einvoice_default else "false")
+    # Kassier (AT) / Kassierer (DE): unbenutzte Rolle auf die Schreibweise des Landes
+    # umbenennen (dieselbe Regel wie cli.seed_default_roles, nur ohne Commit).
+    treasurer = country_mod.term("role_treasurer", target)
+    role = Role.query.filter(Role.name.in_(country_mod.role_treasurer_names())).first()
+    if (role is not None and role.name != treasurer
+            and not User.query.filter_by(role_id=role.id).first()):
+        role.name = treasurer
+    db.session.flush()
+    return True
+
+
+# Beschriftung der vorbelegten Stammdaten (Flash-Meldung der SaaS-Danger-Zone).
+IDENTITY_LABELS = {
+    "name": "Name", "address": "Anschrift", "street": "Straße", "postal_code": "PLZ",
+    "city": "Ort", "email": "E-Mail", "phone": "Telefon", "contact_name": "Ansprechpartner",
+    "iban": "IBAN", "bic": "BIC", "account_holder": "Kontoinhaber",
+    "vat_id": "USt-IdNr./UID", "tax_number": "Steuernummer",
+    "register_number": "Registernummer",
+}
+
+
+def fill_demo_identity(code=None) -> list[str]:
+    """Belegt **leere** Stammdaten der Genossenschaft (``wg.*``) mit den Demo-Werten des
+    Landes vor — damit Rechnungen samt ZUGFeRD/XRechnung vollstaendig entstehen.
+    Vorhandene Werte bleiben unangetastet. Gibt die Schluessel der gefuellten Felder
+    zurueck; der Aufrufer committet."""
+    from app import country as country_mod
+    from app.models import AppSetting
+    from app.seed.demo_locale import locale_for
+
+    loc = locale_for(code or country_mod.current_code())
+    filled = []
+    for key, value in loc.identity.items():
+        if not (AppSetting.get(f"wg.{key}") or "").strip():
+            AppSetting.set(f"wg.{key}", value)
+            filled.append(key)
+    return filled
+
+
 def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
-                   verbose: bool = True, author=None) -> dict:
+                   verbose: bool = True, author=None, country: str = None) -> dict:
     """Seedet den vollstaendigen Demo-Datensatz.
 
     Voraussetzung: DB hat die Defaults (TaxRates, DunningPolicy "Standard",
@@ -103,6 +190,9 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
             Service-Pfad, z.B. SaaS-Danger-Zone), legt der Seeder KEINE Demo-
             Logins an. ``None`` (CLI-Pfad) -> die Demo-User ``admin``/``kassier``
             mit Passwort ``demo1234`` werden wie gehabt angelegt.
+        country: ``"AT"`` / ``"DE"`` — stellt das Land des Mandanten vorher um
+            (``switch_country``) und waehlt den Datensatz. ``None`` -> der Datensatz
+            des aktuellen Mandanten-Landes.
 
     Rueckgabe: Dict mit Counts pro Entitaet (fuer Tests / Smoke-Asserts).
     """
@@ -120,12 +210,20 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         MeetingProtocol,
     )
 
+    from app import country as country_mod
+    from app.seed.demo_locale import locale_for
+
     if now is None:
         now = today
+    if country is not None:
+        switch_country(db, country)
+    loc = locale_for(country_mod.current_code())
+    is_de = loc.code == "DE"
+    names = loc.names
     rng = random.Random(42)
     current_year = today.year
     prev_year = current_year - 1
-    counts: dict[str, int] = {}
+    counts: dict = {"country": loc.code}
 
     # ------------------------------------------------------------------
     # Autor-User (fuer created_by_id auf allen Folge-Eintraegen)
@@ -198,14 +296,14 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         closed=True,
         closed_at=datetime(current_year, 1, 31, 12, 0, 0),
         closed_by_id=admin.id,
-        is_vat_liable=False,
+        is_vat_liable=loc.vat_liable,
     )
     fy_curr = FiscalYear(
         year=current_year,
         start_date=date(current_year, 1, 1),
         end_date=date(current_year, 12, 31),
         closed=False,
-        is_vat_liable=False,
+        is_vat_liable=loc.vat_liable,
     )
     db.session.add_all([fy_prev, fy_curr])
     db.session.flush()
@@ -216,22 +314,31 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     # ------------------------------------------------------------------
     from app.invoices.charges import build_tariff
     # USt je Position: der Wasser-Satz des Mandanten-Landes (AT 10 %, DE 7 %).
-    # Der Wassercent (Landesabgabe je m³) nur, wo es ihn gibt (DE, Satz je
-    # Bundesland verschieden — hier 10 ct wie in Bayern/Baden-Württemberg).
-    from app import country as _country
-    _levy = Decimal("0.10") if _country.current_code() == "DE" else None
+    # Der Wassercent (Landesabgabe je m³) nur, wo es ihn gibt: im deutschen
+    # Datensatz der bayerische Wassercent (10 ct/m³) ab 1.7.2026 — als Position
+    # des laufenden Tarifs mit Stichtag, die Engine grenzt zeitanteilig ab.
+    base_prev, add_prev, price_prev = loc.tariff_prev
+    base_curr, add_curr, price_curr = loc.tariff_curr
     t_prev = build_tariff(
         name=f"Tarif {prev_year}", valid_from=prev_year, valid_to=prev_year,
-        base_fee=Decimal("32.00"), additional_fee=Decimal("8.00"),
-        water_price=Decimal("1.40"), water_levy=_levy,
+        base_fee=base_prev, additional_fee=add_prev,
+        water_price=price_prev, water_levy=None,
         notes=f"Tarif für Periode {prev_year}.",
     )
+    curr_notes = "Preisanpassung wegen gestiegener Betriebskosten."
+    if loc.water_levy is not None:
+        curr_notes += (f" Wassercent {int(loc.water_levy * 100)} ct/m³ ab "
+                       f"{loc.water_levy_from.strftime('%d.%m.%Y')} (zeitanteilig).")
     t_curr = build_tariff(
         name=f"Tarif {current_year}", valid_from=current_year, valid_to=None,
-        base_fee=Decimal("36.00"), additional_fee=Decimal("9.00"),
-        water_price=Decimal("1.55"), water_levy=_levy,
-        notes="Preisanpassung wegen gestiegener Betriebskosten.",
+        base_fee=base_curr, additional_fee=add_curr,
+        water_price=price_curr, water_levy=loc.water_levy,
+        notes=curr_notes,
     )
+    if loc.water_levy is not None:
+        for comp in t_curr.components:
+            if comp.charge_type.is_levy:
+                comp.valid_from = loc.water_levy_from
     counts["tariffs"] = 2
 
     # ------------------------------------------------------------------
@@ -247,8 +354,15 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     acc_bank = Account(code="220", name="Bankkosten", description="Kontoführungs- und Kreditzinsen")
     db.session.add_all([acc_wasser, acc_grund, acc_anschluss, acc_mahn,
                         acc_reparatur, acc_buero, acc_bank])
+    # Der Wassercent ist eine Abgabe an das Land (durchlaufender Posten) —
+    # eigenes Konto, damit er in der Auswertung nicht als Wasserumsatz zaehlt.
+    acc_levy = None
+    if loc.water_levy is not None:
+        acc_levy = Account(code="130", name="Wassercent (Wasserentnahmeentgelt)",
+                           description="Landesabgabe je m³, an den Freistaat abzuführen")
+        db.session.add(acc_levy)
     db.session.flush()
-    counts["accounts"] = 7
+    counts["accounts"] = 8 if acc_levy is not None else 7
 
     # Tarife kontieren (Konten existieren erst jetzt). Verbrauch und
     # Bereitstellungsgebühren laufen bewusst auf verschiedene Konten — so zeigt
@@ -256,8 +370,11 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     # mit einer Zeile je Konto, ohne dass jemand ein Konto eintippen muss.
     for t in (t_prev, t_curr):
         for comp in t.components:
-            comp.account_id = (acc_wasser.id if comp.charge_type.is_per_m3
-                               else acc_grund.id)
+            if comp.charge_type.is_levy and acc_levy is not None:
+                comp.account_id = acc_levy.id
+            else:
+                comp.account_id = (acc_wasser.id if comp.charge_type.is_per_m3
+                                   else acc_grund.id)
     db.session.flush()
 
     # ------------------------------------------------------------------
@@ -282,18 +399,18 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     # Bankkonten (Giro Default + Kredit)
     # ------------------------------------------------------------------
     giro = RealAccount(
-        name="Girokonto Raika",
-        description="Hauptkonto WG",
-        iban="AT12 3456 7890 1111 0000",
+        name=loc.bank_giro[0],
+        description=loc.bank_giro[1],
+        iban=loc.bank_giro[2],
         opening_balance=Decimal("8500.00"),
         is_default=True,
         active=True,
         icon="fa-university",
     )
     kredit = RealAccount(
-        name="Kreditkonto Bauspar",
-        description="Investitionskredit Quellsanierung",
-        iban="AT12 3456 7890 2222 0000",
+        name=loc.bank_credit[0],
+        description=loc.bank_credit[1],
+        iban=loc.bank_credit[2],
         opening_balance=Decimal("-25000.00"),
         is_default=False,
         active=True,
@@ -308,67 +425,81 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     # ------------------------------------------------------------------
     customers: list[Customer] = []
     member_since_base = date(prev_year - 10, 1, 1)
-    for i in range(1, 101):
-        vorname = rng.choice(_VORNAMEN)
-        nachname = rng.choice(_NACHNAMEN)
-        plz, ort = rng.choice(_ORTE)
-        strasse = rng.choice(_STRASSEN)
-        hausnummer = str(rng.randint(1, 120))
-        # 90% mit Email, 60% mit Telefon
-        email = f"{vorname.lower()}.{nachname.lower()}{i:03d}@example.at" if rng.random() < 0.9 else None
-        phone = f"0664 {rng.randint(1000000, 9999999)}" if rng.random() < 0.6 else None
-        member_since = member_since_base + timedelta(days=rng.randint(0, 365 * 10))
-        c = Customer(
-            customer_number=i,
-            name=f"{vorname} {nachname}",
-            is_customer=True,
-            is_supplier=False,
-            strasse=strasse, hausnummer=hausnummer,
-            plz=plz, ort=ort, land="Österreich",
-            email=email, phone=phone,
-            member_since=member_since,
-            rechnung_per_email=bool(email) and rng.random() < 0.4,
-            active=True,
-        )
-        db.session.add(c)
-        customers.append(c)
+    # Kunden mit zwei Objekten: AT 20 (120 Objekte). Das deutsche Ortsnetz hat
+    # 132 Hausanschluesse, also besitzen dort 40 Kunden ein zweites Objekt.
+    two_obj = 40 if is_de else 20
+    if is_de:
+        from app.seed import demo_de
+        de_addresses = demo_de.property_addresses(rng, loc.geo, 100 + two_obj)
+        customers = demo_de.create_customers(db, rng, loc, de_addresses, two_obj=two_obj,
+                                             member_since_base=member_since_base)
+    else:
+        for i in range(1, 101):
+            vorname = rng.choice(_VORNAMEN)
+            nachname = rng.choice(_NACHNAMEN)
+            plz, ort = rng.choice(_ORTE)
+            strasse = rng.choice(_STRASSEN)
+            hausnummer = str(rng.randint(1, 120))
+            # 90% mit Email, 60% mit Telefon
+            email = f"{vorname.lower()}.{nachname.lower()}{i:03d}@example.at" if rng.random() < 0.9 else None
+            phone = f"0664 {rng.randint(1000000, 9999999)}" if rng.random() < 0.6 else None
+            member_since = member_since_base + timedelta(days=rng.randint(0, 365 * 10))
+            c = Customer(
+                customer_number=i,
+                name=f"{vorname} {nachname}",
+                is_customer=True,
+                is_supplier=False,
+                strasse=strasse, hausnummer=hausnummer,
+                plz=plz, ort=ort, land="Österreich",
+                email=email, phone=phone,
+                member_since=member_since,
+                rechnung_per_email=bool(email) and rng.random() < 0.4,
+                active=True,
+            )
+            db.session.add(c)
+            customers.append(c)
     db.session.flush()
     counts["customers"] = len(customers)
 
     # ------------------------------------------------------------------
-    # Objekte (120): 80 Kunden bekommen 1, 20 Kunden bekommen 2
+    # Objekte (AT 120): 80 Kunden bekommen 1, 20 Kunden bekommen 2
+    # (DE 140: 40 Kunden mit 2, Reihenfolge = Hausanschluesse, demo_de.py)
     # ------------------------------------------------------------------
     properties: list[Property] = []
     ownership_map: dict[int, Customer] = {}  # property.id -> customer (fuer Rechnungen)
     obj_counter = 0
-    # zwei Objekte fuer Kunden 1..20, eins fuer den Rest
-    for idx, customer in enumerate(customers):
-        obj_count = 2 if idx < 20 else 1
-        for k in range(obj_count):
-            obj_counter += 1
-            obj_type = rng.choice(Property.TYPES)
-            # Adresse: meist gleich wie Kunde, aber bei Zweit-Objekt anders
-            if k == 0:
-                p = Property(
-                    object_number=f"OBJ-{obj_counter:04d}",
-                    object_type=obj_type,
-                    strasse=customer.strasse, hausnummer=customer.hausnummer,
-                    plz=customer.plz, ort=customer.ort, land="Österreich",
-                    active=True,
-                )
-            else:
-                plz, ort = rng.choice(_ORTE)
-                p = Property(
-                    object_number=f"OBJ-{obj_counter:04d}",
-                    object_type=obj_type,
-                    strasse=rng.choice(_STRASSEN),
-                    hausnummer=str(rng.randint(1, 120)),
-                    plz=plz, ort=ort, land="Österreich",
-                    notes="Zweitobjekt",
-                    active=True,
-                )
-            db.session.add(p)
-            properties.append(p)
+    if is_de:
+        properties = demo_de.create_properties(db, rng, loc, customers, de_addresses,
+                                               two_obj=two_obj)
+    else:
+        # zwei Objekte fuer Kunden 1..20, eins fuer den Rest
+        for idx, customer in enumerate(customers):
+            obj_count = 2 if idx < 20 else 1
+            for k in range(obj_count):
+                obj_counter += 1
+                obj_type = rng.choice(Property.TYPES)
+                # Adresse: meist gleich wie Kunde, aber bei Zweit-Objekt anders
+                if k == 0:
+                    p = Property(
+                        object_number=f"OBJ-{obj_counter:04d}",
+                        object_type=obj_type,
+                        strasse=customer.strasse, hausnummer=customer.hausnummer,
+                        plz=customer.plz, ort=customer.ort, land="Österreich",
+                        active=True,
+                    )
+                else:
+                    plz, ort = rng.choice(_ORTE)
+                    p = Property(
+                        object_number=f"OBJ-{obj_counter:04d}",
+                        object_type=obj_type,
+                        strasse=rng.choice(_STRASSEN),
+                        hausnummer=str(rng.randint(1, 120)),
+                        plz=plz, ort=ort, land="Österreich",
+                        notes="Zweitobjekt",
+                        active=True,
+                    )
+                db.session.add(p)
+                properties.append(p)
     db.session.flush()
     counts["properties"] = len(properties)
 
@@ -388,7 +519,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     counts["property_wg_profiles"] = len(properties)
 
     # PropertyOwnerships
-    for prop, cust_idx in _zip_props_to_owners(properties):
+    for prop, cust_idx in _zip_props_to_owners(properties, two_obj):
         customer = customers[cust_idx]
         owner = PropertyOwnership(
             property_id=prop.id,
@@ -402,14 +533,16 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     counts["ownerships"] = len(properties)
 
     # ------------------------------------------------------------------
-    # Zaehler (150): 90 Objekte mit 1 Hauptzaehler, 30 Objekte mit Haupt + Sub
+    # Zaehler (AT 150): 90 Objekte mit 1 Hauptzaehler, die letzten 30 Objekte mit
+    # Haupt + Sub (DE: 110 + 30 Objekte -> 170 Zaehler)
     # ------------------------------------------------------------------
     meters: list[WaterMeter] = []
     main_meter_for_prop: dict[int, WaterMeter] = {}
     meter_counter = 0
 
-    # Erste 90 Objekte: nur Hauptzaehler
-    for prop in properties[:90]:
+    split = len(properties) - 30
+    # Erste Objekte (AT 90): nur Hauptzaehler
+    for prop in properties[:split]:
         meter_counter += 1
         m = WaterMeter(
             property_id=prop.id,
@@ -425,8 +558,8 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         meters.append(m)
         main_meter_for_prop[prop.id] = m
 
-    # Naechste 30 Objekte: Hauptzaehler + Subzaehler
-    for prop in properties[90:120]:
+    # Letzte 30 Objekte: Hauptzaehler + Subzaehler
+    for prop in properties[split:]:
         meter_counter += 1
         m_main = WaterMeter(
             property_id=prop.id,
@@ -617,7 +750,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         verbrauch = Decimal(rng.randint(70, 240))
         base = t_prev.component("base_fee").amount
         wasser = (t_prev.water_price * verbrauch).quantize(Decimal("0.01"))
-        # Reparatur-Position fuer 20% steuersatz auf manche Rechnungen
+        # Reparatur-Position (Normalsatz) auf manche Rechnungen
         with_repair = rng.random() < 0.35
         repair_net = Decimal(str(rng.randint(40, 150))) if with_repair else Decimal("0.00")
 
@@ -635,13 +768,14 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         db.session.add(inv)
         db.session.flush()
 
-        # Positionen: Grundgebuehr (10%), Wasser (10%), evtl. Reparatur (20%)
+        # Positionen: Grundgebuehr + Wasser (Wasser-USt: AT 10 %, DE 7 %),
+        # evtl. Reparatur (Normalsatz: AT 20 %, DE 19 %)
         db.session.add(InvoiceItem(
             invoice_id=inv.id,
             description="Grundgebühr Wasserversorgung",
             quantity=Decimal("1"), unit="Stk",
             unit_price=base, amount=base,
-            tax_rate=Decimal("10.00"),
+            tax_rate=loc.water_rate,
             account_id=acc_grund.id,
             charge_key="base_fee",
         ))
@@ -650,7 +784,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
             description=f"Wasserverbrauch {prev_year} ({verbrauch} m³)",
             quantity=verbrauch, unit="m³",
             unit_price=t_prev.water_price, amount=wasser,
-            tax_rate=Decimal("10.00"),
+            tax_rate=loc.water_rate,
             account_id=acc_wasser.id,
             charge_key="water",
         ))
@@ -660,7 +794,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
                 description="Anteilige Reparatur Hausanschluss",
                 quantity=Decimal("1"), unit="Stk",
                 unit_price=repair_net, amount=repair_net,
-                tax_rate=Decimal("20.00"),
+                tax_rate=loc.std_rate,
                 account_id=acc_anschluss.id,
                 project_id=projects[rng.randint(0, len(projects) - 1)].id,
             ))
@@ -685,7 +819,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
                 invoice_id=inv.id,
                 customer_id=cust.id,
                 real_account_id=giro.id,
-                tax_rate=Decimal("10.00"),
+                tax_rate=loc.water_rate,
                 status=Booking.STATUS_VERBUCHT,
                 created_by_id=admin.id,
             )
@@ -774,21 +908,26 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     # ab 2 Positionen mit unterschiedlichen Steuersaetzen relevant).
     # ------------------------------------------------------------------
     # 3 davon auf Kreditkonto (Reparatur / Bankgebuehren / Wartung)
+    std = loc.std_rate
+    # Hausanschluss-Herstellung: in DE Teil der Wasserlieferung (ermaessigter Satz,
+    # BFH V R 61/09); der AT-Datensatz bleibt beim Normalsatz.
+    conn = loc.water_rate if is_de else std
     booking_plan = [
         # (date, description, account, project_index, tax_rate, amount, real_account)
-        (date(prev_year, 3, 10), "Reparatur Hydrant Kirchenplatz", acc_reparatur, 2, Decimal("20.00"), Decimal("-450.00"), giro),
-        (date(prev_year, 5, 22), "Büromaterial Q2", acc_buero, 3, Decimal("20.00"), Decimal("-89.50"), giro),
-        (date(prev_year, 6, 15), "Wartung Druckkessel", acc_reparatur, 4, Decimal("20.00"), Decimal("-1250.00"), kredit),
+        (date(prev_year, 3, 10), f"Reparatur Hydrant {names['street_hydrant_repair']}", acc_reparatur, 2, std, Decimal("-450.00"), giro),
+        (date(prev_year, 5, 22), "Büromaterial Q2", acc_buero, 3, std, Decimal("-89.50"), giro),
+        (date(prev_year, 6, 15), "Wartung Druckkessel", acc_reparatur, 4, std, Decimal("-1250.00"), kredit),
         (date(prev_year, 9, 5), "Bankkosten Q3", acc_bank, None, None, Decimal("-32.40"), giro),
-        (date(prev_year, 11, 18), "Anschlussgebühr Neuanlage", acc_anschluss, 1, Decimal("20.00"), Decimal("450.00"), giro),
+        (date(prev_year, 11, 18), "Anschlussgebühr Neuanlage", acc_anschluss, 1, conn, Decimal("450.00"), giro),
         (date(prev_year, 12, 28), "Kreditzinsen Q4", acc_bank, None, None, Decimal("-185.00"), kredit),
-        (date(current_year, 2, 11), "Leitungstausch Material", acc_reparatur, 1, Decimal("20.00"), Decimal("-2350.00"), kredit),
-        (date(current_year, 3, 14), "Büromaterial Toner", acc_buero, 3, Decimal("20.00"), Decimal("-65.00"), giro),
-        (date(current_year, 5, 9), "Quellsanierung Vorarbeiten", acc_reparatur, 0, Decimal("20.00"), Decimal("-1820.00"), giro),
+        (date(current_year, 2, 11), "Leitungstausch Material", acc_reparatur, 1, std, Decimal("-2350.00"), kredit),
+        (date(current_year, 3, 14), "Büromaterial Toner", acc_buero, 3, std, Decimal("-65.00"), giro),
+        (date(current_year, 5, 9), "Quellsanierung Vorarbeiten", acc_reparatur, 0, std, Decimal("-1820.00"), giro),
         (date(current_year, 6, 21), "Bankkosten Q2", acc_bank, None, None, Decimal("-28.90"), giro),
-        (date(current_year, 7, 2), "Hydrantenwartung Sommer", acc_reparatur, 2, Decimal("20.00"), Decimal("-540.00"), giro),
-        (date(current_year, 8, 30), "Sonder-Anschluss Bauplatz", acc_anschluss, 1, Decimal("20.00"), Decimal("900.00"), giro),
+        (date(current_year, 7, 2), "Hydrantenwartung Sommer", acc_reparatur, 2, std, Decimal("-540.00"), giro),
+        (date(current_year, 8, 30), "Sonder-Anschluss Bauplatz", acc_anschluss, 1, conn, Decimal("900.00"), giro),
     ]
+    plan_bookings = {}      # Beschreibung -> Buchung (Belege werden spaeter angehaengt)
     for bdate, desc, account, proj_idx, tax, amt, ra in booking_plan:
         proj_id = projects[proj_idx].id if proj_idx is not None else None
         b = Booking(
@@ -800,6 +939,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
             created_by_id=admin.id,
         )
         db.session.add(b)
+        plan_bookings[desc] = b
     db.session.flush()
     counts["bookings"] = len(booking_plan)
 
@@ -837,7 +977,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     import json
     import math
     from app.network import services as net_svc
-    from app.seed import demo_geo as geo
+    geo = loc.geo
 
     # Die Geometrie kommt komplett aus ``demo_geo``: Versorgungsleitungen folgen
     # echten Strassenachsen, Hausanschluesse sitzen auf echten Gebaeuden, die
@@ -910,32 +1050,33 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     #   (Hausanschluesse via Anbohrschelle + Stichleitung; Strangenden:
     #   Endhydrant, Endkappe, Entleerung bzw. Notverbund zum Nachbarversorger).
     behaelter = add_point(
-        "behaelter", "Hochbehälter Sonnberg", geo.RESERVOIR,
+        "behaelter", names["reservoir"], geo.RESERVOIR,
         accuracy="exakt", material="Beton", year_built=1987,
         ground_level_m=geo.RESERVOIR_ELEVATION,
-        notes="Nutzinhalt 150 m³, zwei Kammern.",
+        notes=names["reservoir_notes"],
     )
     add_point("verteiler", "Quellsammelschacht", geo.COLLECTOR,
               accuracy="exakt", year_built=1987,
               ground_level_m=geo.COLLECTOR_ELEVATION,
               notes="Sammelt die drei Quellzubringer.")
+    lift = round(geo.RESERVOIR_ELEVATION - geo.COLLECTOR_ELEVATION)
     pumpe = add_point(
-        "pumpe", "Druckerhöhung Sonnberg", lerp(geo.COLLECTOR, geo.RESERVOIR, 0.45),
+        "pumpe", names["pump"], lerp(geo.COLLECTOR, geo.RESERVOIR, 0.45),
         accuracy="exakt", year_built=2009, manufacturer="Grundfos",
-        notes="Fördert vom Sammelschacht in den 36 m höher liegenden Hochbehälter.")
+        notes=f"Fördert vom Sammelschacht in den {lift} m höher liegenden Hochbehälter.")
     add_point("verteiler", "Ortsverteiler", geo.DISTRIBUTOR, accuracy="gut",
               ground_level_m=geo.DISTRIBUTOR_ELEVATION,
               notes="Knoten Hauptleitung → Ortsnetz.")
-    add_point("entlueftung", "Entlüftung Hochpunkt Sonnberg", geo.AIR_VALVE,
+    add_point("entlueftung", names["air_valve"], geo.AIR_VALVE,
               accuracy="gut", year_built=1992,
-              notes="Automatischer Be-/Entlüfter am Hochpunkt der Hauptleitung.")
+              notes=names["air_valve_notes"])
     add_point("materialwechsel", "Materialwechsel GGG → PE", geo.MATERIAL_CHANGE,
               accuracy="gut",
               notes="Übergang Duktilguss DN 150 auf PE DN 125 (Teilsanierung 2014).")
     add_point("sonstiges", f"Druckminderschacht {geo.PRESSURE_REDUCER[2]}",
               geo.PRESSURE_REDUCER, accuracy="gut", year_built=2014,
               manufacturer="HAWLE",
-              notes="Druckminderer am Eintritt in die tiefer liegende Unterortszone.")
+              notes=names["pressure_reducer_notes"])
     probe_behaelter = add_point(
         "probenahme", "Probenahmestelle Behälterabgang",
         toward(geo.RESERVOIR, geo.MAIN_LINE[1], 25.0), accuracy="gut",
@@ -948,9 +1089,9 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     # 3 Quellen mit je (Basis-Schuettung l/s, Saison-Amplitude, Sommer-
     # Trockenheitsfaktor) — Steinbruendl faellt im Trockensommer fast trocken.
     spring_cfg = [
-        ("Quelle Brunnertal",  2.40, 0.28, 0.62),
-        ("Quelle Lärchwald",   1.10, 0.34, 0.48),
-        ("Quelle Steinbründl", 0.50, 0.42, 0.28),
+        (names["springs"][0], 2.40, 0.28, 0.62),
+        (names["springs"][1], 1.10, 0.34, 0.48),
+        (names["springs"][2], 0.50, 0.42, 0.28),
     ]
     springs = []
     for (sp_name, base, amp, drought), sp_pos, sp_elev in zip(
@@ -963,7 +1104,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         springs.append({"f": sp, "pos": sp_pos, "base": base, "amp": amp,
                         "drought": drought})
     probe_quelle = add_point(
-        "probenahme", "Probenahmestelle Quelle Brunnertal",
+        "probenahme", f"Probenahmestelle {names['springs'][0]}",
         toward(geo.SPRINGS[0], geo.COLLECTOR, 12.0), accuracy="gut",
         notes="Rohwasser-Beprobung an der Quellfassung.")
 
@@ -986,13 +1127,13 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     # geteilte Vertex liegt in beiden Geometrien -> Netz bleibt zusammenhaengend.
     _mc = geo.MATERIAL_CHANGE_INDEX
     hauptleitung = add_line(
-        "hauptleitung", "Hauptleitung Hochbehälter–Ortseingang",
+        "hauptleitung", names["main_line_1"],
         geo.MAIN_LINE[:_mc + 1],
         accuracy="gut", material="Duktilguss (GGG)", dimension_dn=150,
         year_built=1992, pressure_rating="PN 10",
     )
     add_line(
-        "hauptleitung", "Hauptleitung Ortseingang–Ortsverteiler",
+        "hauptleitung", names["main_line_2"],
         geo.MAIN_LINE[_mc:],
         accuracy="gut", material="PE", dimension_dn=125,
         year_built=2014, pressure_rating="PN 10",
@@ -1051,12 +1192,11 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
                     "mitspülen (Stagnationsgefahr).")
     add_point("auslauf", f"Entleerung {geo.DRAIN[2]}", geo.DRAIN,
               accuracy="gut", dimension_dn=50,
-              notes="Entleerung am Tiefpunkt des Netzes in den Vorfluter.")
+              notes=names["drain_notes"])
     add_line("sonstige_leitung", "Notverbund Nachbarversorger",
              [geo.TIE_IN, geo.TIE_IN_END],
              accuracy="geschaetzt", material="PE", dimension_dn=100,
-             notes="Verbindungsleitung zur Nachbargenossenschaft — "
-                   "Übergabeschieber normal geschlossen.")
+             notes=names["tie_in_notes"])
 
     # 3 unzugeordnete Hausanschluesse NAHE je einer freien geocodeten
     # Liegenschaft -> per „Zuordnen"-Button (assign-hausanschluss) loesbar.
@@ -1133,7 +1273,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
             feature_id=feat.id, date=last_date, kind=kind, result=result,
             interval_months=interval,
             next_due=net_svc.add_months(last_date, interval),
-            performed_by="Wassermeister Huber", created_by_id=admin.id,
+            performed_by=loc.maintenance_by, created_by_id=admin.id,
             notes=("Mangel dokumentiert, Nacharbeit veranlasst." if result == "mangel"
                    else None),
         ))
@@ -1215,39 +1355,41 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
 
     p_inc = assigned_props[2]
     c_inc = ownership_map.get(p_inc.id)
+    s_leak, s_pressure = names["street_leak"], names["street_pressure"]
+    s_slow, s_break = names["street_slow_leak"], names["street_break"]
 
     add_incident(
         title="Rohrbruch Hauptleitung Hochbehälter", itype=Incident.TYPE_ROHRBRUCH,
         sev=Incident.SEVERITY_CRITICAL, status=Incident.STATUS_RESOLVED,
         cause="frostschaden", detected_off=420, repair_days=1, feature=hauptleitung,
         water_loss=Decimal("85.00"), affected=42, cost=Decimal("3200.00"),
-        performed_by="Tiefbau Mayr GmbH", loc_desc="Böschung unterhalb Hochbehälter",
+        performed_by=loc.contractor, loc_desc="Böschung unterhalb Hochbehälter",
         desc="Längsriss an der Gussleitung nach Frostperiode, großflächiger "
              "Wasseraustritt an der Böschung.",
         repair="Rohrabschnitt (3 m) getauscht, Bettung erneuert, Fahrbahn "
                "provisorisch verschlossen.")
     add_incident(
-        title="Undichtheit Versorgungsleitung Gruberstraße", itype=Incident.TYPE_UNDICHTHEIT,
+        title=f"Undichtheit Versorgungsleitung {s_leak}", itype=Incident.TYPE_UNDICHTHEIT,
         sev=Incident.SEVERITY_MEDIUM, status=Incident.STATUS_RESOLVED,
         cause="korrosion", detected_off=300, repair_days=3,
-        feature=versorg_by_street["Gruberstraße"],
+        feature=versorg_by_street[s_leak],
         water_loss=Decimal("22.50"), affected=0, cost=Decimal("780.00"),
-        performed_by="Eigene Crew", loc_desc="Muffe Höhe Gruberstraße 14",
+        performed_by=loc.crew, loc_desc=f"Muffe Höhe {s_leak} 14",
         desc="Schleichendes Muffenleck, durch feuchte Stelle im Belag aufgefallen.",
         repair="Muffe nachgezogen und abgedichtet.")
     add_incident(
         title="Druckverlust Netzbereich Ost", itype=Incident.TYPE_DRUCKVERLUST,
         sev=Incident.SEVERITY_HIGH, status=Incident.STATUS_IN_PROGRESS,
         cause="ueberdruck", detected_off=12, repair_days=None,
-        feature=versorg_by_street["Löschfeld"], affected=0, loc_desc="Löschfeld",
+        feature=versorg_by_street[s_pressure], affected=0, loc_desc=s_pressure,
         desc="Wiederkehrender Druckabfall in den Abendstunden, Ursache wird "
              "eingegrenzt (Schieberstellung / verdeckte Leckage).")
     add_incident(
         title="Trübung nach Starkregen", itype=Incident.TYPE_VERSCHMUTZUNG,
         sev=Incident.SEVERITY_HIGH, status=Incident.STATUS_RESOLVED,
         cause="unbekannt", detected_off=210, repair_days=5, feature=behaelter,
-        affected=60, cost=Decimal("450.00"), performed_by="Eigene Crew + Labor",
-        loc_desc="Hochbehälter Sonnberg",
+        affected=60, cost=Decimal("450.00"), performed_by=f"{loc.crew} + Labor",
+        loc_desc=names["reservoir"],
         desc="Eintrübung im Zulauf nach Starkregen, Verdacht Oberflächenwasser-"
              "eintrag an der Quellfassung.",
         repair="Behälter gespült, Beprobung veranlasst (Befund unauffällig), "
@@ -1257,7 +1399,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         sev=Incident.SEVERITY_MEDIUM, status=Incident.STATUS_RESOLVED,
         cause="fremdeinwirkung", detected_off=150, repair_days=1, feature=ha_stub_example,
         water_loss=Decimal("6.00"), affected=1, cost=Decimal("540.00"),
-        performed_by="Tiefbau Mayr GmbH",
+        performed_by=loc.contractor,
         customer_id=(c_inc.id if c_inc else None), property_id=p_inc.id,
         loc_desc="Grundstückszufahrt",
         desc="Hausanschlussleitung bei Erdarbeiten eines Anrainers beschädigt.",
@@ -1266,29 +1408,29 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         title="Versorgungsausfall durch Stromausfall", itype=Incident.TYPE_AUSFALL,
         sev=Incident.SEVERITY_MEDIUM, status=Incident.STATUS_RESOLVED,
         cause="unbekannt", detected_off=95, repair_days=1, feature=pumpe,
-        affected=120, performed_by="Eigene Crew", loc_desc="Druckerhöhung Sonnberg",
+        affected=120, performed_by=loc.crew, loc_desc=names["pump"],
         desc="Stromausfall legte die Druckerhöhung lahm, Druckabfall in Hochzonen.",
         repair="Notstrom angeschlossen, nach Netzwiederkehr Normalbetrieb.")
     add_incident(
-        title="Schleichendes Leck Hauptstraße", itype=Incident.TYPE_UNDICHTHEIT,
+        title=f"Schleichendes Leck {s_slow}", itype=Incident.TYPE_UNDICHTHEIT,
         sev=Incident.SEVERITY_LOW, status=Incident.STATUS_OPEN,
         cause="materialermuedung", detected_off=8, repair_days=None,
-        feature=versorg_by_street["Hauptstraße"], loc_desc="Hauptstraße",
+        feature=versorg_by_street[s_slow], loc_desc=s_slow,
         desc="Geringe Dauerleckage anhand der Nachtmengenmessung vermutet, "
              "Ortung steht aus.")
     add_incident(
-        title="Rohrbruch Raiffeisenstraße (Setzung)", itype=Incident.TYPE_ROHRBRUCH,
+        title=f"Rohrbruch {s_break} (Setzung)", itype=Incident.TYPE_ROHRBRUCH,
         sev=Incident.SEVERITY_HIGH, status=Incident.STATUS_IN_PROGRESS,
         cause="erddruck", detected_off=20, repair_days=None,
-        feature=versorg_by_street["Raiffeisenstraße"],
-        water_loss=Decimal("40.00"), affected=8, loc_desc="Raiffeisenstraße",
+        feature=versorg_by_street[s_break],
+        water_loss=Decimal("40.00"), affected=8, loc_desc=s_break,
         desc="Rohrbruch nach Hangsetzung, Versorgung über Schieber umgeleitet.")
     add_incident(
         title="Hydrant undicht", itype=Incident.TYPE_SONSTIGES,
         sev=Incident.SEVERITY_LOW, status=Incident.STATUS_RESOLVED,
         cause="montagefehler", detected_off=60, repair_days=2, feature=hydranten[1],
         water_loss=Decimal("1.50"), affected=0, cost=Decimal("120.00"),
-        performed_by="Eigene Crew", loc_desc="Hydrant H02",
+        performed_by=loc.crew, loc_desc="Hydrant H02",
         desc="Entwässerung des Hydranten undicht, ständiger Wasseraustritt.",
         repair="Dichtung getauscht, Funktionsprüfung ok.")
     db.session.flush()
@@ -1307,7 +1449,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     from app.network import water_quality as wq
 
     def _panel(**ov):
-        """Unauffaelliger TWV-Standardbefund; ``ov`` ueberschreibt einzelne Werte."""
+        """Unauffaelliger Standardbefund (TWV bzw. TrinkwV); ``ov`` ueberschreibt einzelne Werte."""
         base = {
             "e_coli": 0, "enterokokken": 0, "coliforme": 0,
             "koloniezahl_22": 5, "koloniezahl_37": 1,
@@ -1315,6 +1457,9 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
             "ph": 7.4, "leitfaehigkeit": 470, "truebung": 0.20,
             "eisen": 0.02, "mangan": 0.01, "gesamthaerte": 12,
         }
+        if is_de:
+            # TrinkwV 2023: Uran und die Summe PFAS-20 gehoeren dort zum Standardbefund.
+            base.update({"uran": 1.4, "pfas_20": 0.006})
         base.update(ov)
         return base
 
@@ -1325,7 +1470,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
             if _d <= today:
                 probe_dates.append(_d)
 
-    _labs = ["Landeslabor OÖ", "AGES Linz", "Hydro-Labor GmbH"]
+    _labs = list(loc.labs)
     ws_count = lr_count = ws_alarm = befund_seq = 0
 
     def add_sample(feature, when, values, *, notes=None, sample_type="Routine"):
@@ -1339,12 +1484,12 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         had_alarm = False
         for key, val in values.items():
             num = Decimal(str(val))
-            status = wq.assess(key, num)
+            status = wq.assess(key, num, when)
             had_alarm = had_alarm or (status == wq.STATUS_ALARM)
             s.results.append(LabResult(
                 parameter_key=key, value_num=num,
                 unit=wq.parameter_unit(key) or None,
-                limit_text=wq.limit_display(key) or None,
+                limit_text=wq.limit_display(key, when) or None,
                 status=status,
             ))
             lr_count += 1
@@ -1406,6 +1551,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     # ``now.year`` ein Buchungsjahr anlegen (nur das letzte offen) und ein paar
     # laufende Buchungen / Offene Posten / eine Umbuchung bis ``now`` erzeugen.
     # ``now == today`` (Default/Tests) -> Block uebersprungen, alles unveraendert.
+    bridge_booking_objs = []
     if now.year > current_year:
         # 1) Bisher offenes aktuelles Jahr abschliessen.
         fy_curr.closed = True
@@ -1421,7 +1567,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
                 closed=not is_latest,
                 closed_at=(None if is_latest else datetime(y + 1, 1, 31, 12, 0, 0)),
                 closed_by_id=(None if is_latest else admin.id),
-                is_vat_liable=False,
+                is_vat_liable=loc.vat_liable,
             ))
         db.session.flush()
         counts["fiscal_years"] += len(bridge_years)
@@ -1431,16 +1577,16 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         #    Jahres bis ``now`` (Mitte des Monats). Plan wird zyklisch genutzt;
         #    Buchungen der letzten ~40 Tage bleiben „Offen" (noch nicht verbucht).
         bridge_plan = [
-            (acc_reparatur, 1, Decimal("20.00"), Decimal("-380.00"),  giro,   "Reparatur Schieber Weingarten"),
-            (acc_buero,     3, Decimal("20.00"), Decimal("-54.90"),   giro,   "Büromaterial"),
+            (acc_reparatur, 1, std, Decimal("-380.00"),  giro,   f"Reparatur Schieber {names['street_valve_repair']}"),
+            (acc_buero,     3, std, Decimal("-54.90"),   giro,   "Büromaterial"),
             (acc_bank,   None, None,             Decimal("-26.50"),   giro,   "Bankkosten"),
-            (acc_wasser, None, Decimal("10.00"), Decimal("1240.00"),  giro,   "Sammel-Zahlungseingang Wassergebühren"),
-            (acc_reparatur, 2, Decimal("20.00"), Decimal("-210.00"),  giro,   "Hydrantenwartung Frühjahr"),
-            (acc_anschluss, 1, Decimal("20.00"), Decimal("450.00"),   giro,   "Anschlussgebühr Neubau"),
-            (acc_reparatur, 4, Decimal("20.00"), Decimal("-1340.00"), kredit, "Pumpentausch Material"),
-            (acc_buero,     3, Decimal("20.00"), Decimal("-72.00"),   giro,   "Toner / Porto"),
+            (acc_wasser, None, loc.water_rate, Decimal("1240.00"),  giro,   "Sammel-Zahlungseingang Wassergebühren"),
+            (acc_reparatur, 2, std, Decimal("-210.00"),  giro,   "Hydrantenwartung Frühjahr"),
+            (acc_anschluss, 1, conn, Decimal("450.00"),   giro,   "Anschlussgebühr Neubau"),
+            (acc_reparatur, 4, std, Decimal("-1340.00"), kredit, "Pumpentausch Material"),
+            (acc_buero,     3, std, Decimal("-72.00"),   giro,   "Toner / Porto"),
             (acc_bank,   None, None,             Decimal("-185.00"),  kredit, "Kreditzinsen"),
-            (acc_reparatur, 0, Decimal("20.00"), Decimal("-560.00"),  giro,   "Quellschacht-Sanierung Material"),
+            (acc_reparatur, 0, std, Decimal("-560.00"),  giro,   "Quellschacht-Sanierung Material"),
         ]
         offen_cutoff = now - timedelta(days=40)
         bridge_bookings = 0
@@ -1452,12 +1598,14 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
             status_b = (Booking.STATUS_OFFEN if bdate > offen_cutoff
                         else Booking.STATUS_VERBUCHT)
             ref = f"BG-{bdate.year}-{bdate.month:02d}{bdate.day:02d}"
-            db.session.add(Booking(
+            bridge_b = Booking(
                 date=bdate, account_id=account.id, amount=amt, description=desc,
                 reference=ref, project_id=(projects[proj_idx].id if proj_idx is not None else None),
                 real_account_id=ra.id, tax_rate=tax,
                 status=status_b, created_by_id=admin.id,
-            ))
+            )
+            db.session.add(bridge_b)
+            bridge_booking_objs.append(bridge_b)
             bridge_bookings += 1
             plan_i += 1
             gm += 1
@@ -1476,7 +1624,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
                 created_by_id=admin.id),
             OpenItem(
                 customer_id=customers[31].id,
-                description="Akontozahlung Wasser offen",
+                description=names["advance_payment"],
                 amount=Decimal("95.00"), date=now - timedelta(days=12),
                 due_date=now + timedelta(days=18), period_year=now.year,
                 status=OpenItem.STATUS_OPEN, account_id=acc_wasser.id,
@@ -1591,14 +1739,19 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         return m
 
     R = MeetingResolution  # kuerzere Statuskonstanten unten
+    # Fachbegriffe des Landes (Obmann/Vorsitzender, Kassier/Kassierer …)
+    t_chair = country_mod.term("The_chairman")
+    t_treasurer = country_mod.term("treasurer")
+    t_auditor = country_mod.term("auditor")
+    crew_lc = loc.crew[0].lower() + loc.crew[1:]
     _board_agenda = [
         ("Begrüßung und Feststellung der Beschlussfähigkeit", None, False),
         ("Genehmigung des Protokolls der letzten Sitzung", None, True),
-        ("Kassabericht", "Aktueller Kontostand, offene Posten, Mahnstand.", False),
+        (names["cash_report"], "Aktueller Kontostand, offene Posten, Mahnstand.", False),
         ("Anstehende Investitionen und Reparaturen", "Beschlussfassung über Vergaben.", True),
-        ("Allfälliges", None, False),
+        (names["misc_item"], None, False),
     ]
-    _board_intro = ("<p>Der Obmann begrüßt die Anwesenden und stellt die "
+    _board_intro = (f"<p>{t_chair} begrüßt die Anwesenden und stellt die "
                     "fristgerechte Einladung sowie die Beschlussfähigkeit fest.</p>")
 
     # --- Vorstandssitzungen (abgehalten) ------------------------------
@@ -1607,14 +1760,14 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         when=date(prev_year, 3, 12), start=_time(19, 0), end=_time(20, 45),
         status=Meeting.STATUS_HELD, agenda=_board_agenda,
         attendees=board_members, present_ratio=0.83, intro=_board_intro,
-        protocol_html="<p>Die laufenden Geschäfte wurden besprochen; der Kassier "
-                      "berichtet einen ausgeglichenen Kontostand.</p>",
+        protocol_html=(f"<p>Die laufenden Geschäfte wurden besprochen; der {t_treasurer} "
+                       "berichtet einen ausgeglichenen Kontostand.</p>"),
         resolutions=[
             ("Genehmigung des Protokolls der letzten Sitzung",
              R.STATUS_ACCEPTED, 6, 0, 0, "Einstimmig angenommen.", 1),
             ("Beauftragung Frühjahrs-Hydrantenwartung",
              R.STATUS_ACCEPTED, 5, 0, 1,
-             "Vergabe an die eigene Crew, Materialbudget 500 €.", 3),
+             f"Vergabe an die {crew_lc}, Materialbudget 500 €.", 3),
         ])
     add_meeting(
         mtype=Meeting.TYPE_BOARD, title=f"Vorstandssitzung Juni {prev_year}",
@@ -1635,11 +1788,11 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         protocol_html="<p>Investitionsplanung für das kommende Jahr; Vergabe des "
                       "Pumpentauschs beschlossen, Leitungstausch vertagt.</p>",
         resolutions=[
-            ("Vergabe Pumpentausch Druckerhöhung Sonnberg",
+            (f"Vergabe Pumpentausch {names['pump']}",
              R.STATUS_ACCEPTED, 6, 0, 0, "Angebot Grundfos einstimmig angenommen.", 3),
-            ("Leitungstausch Gruberstraße",
+            (f"Leitungstausch {names['street_leak']}",
              R.STATUS_POSTPONED, 0, 0, 0,
-             "Vertagt bis zur Klärung der Förderzusage des Landes.", 3),
+             f"Vertagt bis zur Klärung der Förderzusage {names['state_funding']}.", 3),
         ])
     add_meeting(
         mtype=Meeting.TYPE_BOARD, title=f"Vorstandssitzung März {current_year}",
@@ -1651,8 +1804,8 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         resolutions=[
             ("Genehmigung des Protokolls der Hauptversammlung",
              R.STATUS_ACCEPTED, 6, 0, 0, "Einstimmig angenommen.", 1),
-            ("Beauftragung Sanierung Quellschacht Brunnertal",
-             R.STATUS_ACCEPTED, 5, 1, 0, "Angebot Tiefbau Mayr GmbH angenommen.", 3),
+            (f"Beauftragung Sanierung Quellschacht {names['springs'][0].removeprefix('Quelle ')}",
+             R.STATUS_ACCEPTED, 5, 1, 0, f"Angebot {loc.contractor} angenommen.", 3),
         ])
     add_meeting(
         mtype=Meeting.TYPE_BOARD, title=f"Vorstandssitzung Juni {current_year}",
@@ -1662,7 +1815,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         protocol_html="<p>Diskussion über die Beschaffung eines Notstromaggregats; "
                       "Antrag abgelehnt, zunächst Mietlösung prüfen.</p>",
         resolutions=[
-            ("Anschaffung eines Notstromaggregats für die Druckerhöhung",
+            (f"Anschaffung eines Notstromaggregats für {names['pump_ref']}",
              R.STATUS_REJECTED, 2, 4, 0,
              "Abgelehnt — kostengünstigere Mietlösung wird geprüft.", 3),
         ])
@@ -1676,21 +1829,21 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     # --- Hauptversammlungen -------------------------------------------
     _assembly_agenda = [
         ("Begrüßung und Feststellung der ordnungsgemäßen Einladung", None, False),
-        ("Bericht des Obmanns über das abgelaufene Geschäftsjahr", None, False),
-        ("Kassabericht und Bericht der Rechnungsprüfer", None, False),
+        (f"Bericht {names['of_chairman']} über das abgelaufene Geschäftsjahr", None, False),
+        (f"{names['cash_report']} und Bericht der {t_auditor}", None, False),
         ("Entlastung des Vorstands", None, True),
         ("Beschluss über die Wassergebühren",
          "Anpassung der Grund- und Verbrauchsgebühren.", True),
-        ("Allfälliges", None, False),
+        (names["misc_item"], None, False),
     ]
-    _assembly_close = ("<p>Der Obmann dankt den Mitgliedern für ihr Erscheinen und "
+    _assembly_close = (f"<p>{t_chair} dankt den Mitgliedern für ihr Erscheinen und "
                        "schließt die Versammlung.</p>")
 
     add_meeting(
         mtype=Meeting.TYPE_ASSEMBLY,
         title=f"Ordentliche Hauptversammlung {prev_year}",
         when=date(prev_year, 5, 6), start=_time(19, 30), end=_time(22, 0),
-        location="Gasthaus zur Quelle, Saal", status=Meeting.STATUS_HELD,
+        location=loc.venue, status=Meeting.STATUS_HELD,
         agenda=_assembly_agenda, attendees=assembly_members, present_ratio=0.62,
         quorum_total=len(assembly_members), closing=_assembly_close,
         protocol_html="<p>Die Versammlung war beschlussfähig. Jahresabschluss "
@@ -1708,7 +1861,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         mtype=Meeting.TYPE_ASSEMBLY,
         title=f"Ordentliche Hauptversammlung {current_year}",
         when=date(current_year, 5, 13), start=_time(19, 30), end=_time(22, 15),
-        location="Gasthaus zur Quelle, Saal", status=Meeting.STATUS_HELD,
+        location=loc.venue, status=Meeting.STATUS_HELD,
         agenda=_assembly_agenda + [("Neuwahl des Vorstands", None, True)],
         attendees=assembly_members, present_ratio=0.44,
         quorum_total=len(assembly_members), reconvened=True, reconvene_wait=30,
@@ -1721,7 +1874,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
              R.STATUS_ACCEPTED, 23, 0, 1, "Angenommen.", 2),
             ("Entlastung des Vorstands",
              R.STATUS_ACCEPTED, 22, 1, 1, "Angenommen.", 3),
-            ("Anhebung der Verbrauchsgebühr auf 1,55 €/m³",
+            (f"Anhebung der Verbrauchsgebühr auf {str(price_curr).replace('.', ',')} €/m³",
              R.STATUS_ACCEPTED, 18, 5, 1,
              "Nach Diskussion mehrheitlich angenommen.", 4),
             ("Neuwahl des Vorstands für die laufende Funktionsperiode",
@@ -1732,12 +1885,12 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         mtype=Meeting.TYPE_ASSEMBLY,
         title="Außerordentliche Hauptversammlung (geplant)",
         when=now + timedelta(days=45), start=_time(19, 30), end=None,
-        location="Gasthaus zur Quelle, Saal", status=Meeting.STATUS_PLANNING,
+        location=loc.venue, status=Meeting.STATUS_PLANNING,
         agenda=[
             ("Begrüßung und Feststellung der Beschlussfähigkeit", None, False),
             ("Beschluss über eine Sonderumlage für die Quellsanierung",
              "Außerordentliche Investition.", True),
-            ("Allfälliges", None, False),
+            (names["misc_item"], None, False),
         ])
 
     db.session.flush()
@@ -1747,6 +1900,28 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     counts["meeting_attendances"] = m_attend
     counts["meeting_protocols"] = m_protocols
 
+    # ==================================================================
+    # Deutschland: E-Rechnung (Unternehmer, Behörden mit Leitweg-ID,
+    # Ausgangsrechnungen) — vor der Belegablage, die Lieferanten anlegt.
+    # ==================================================================
+    if is_de:
+        counts.update(demo_de.seed_einvoice(
+            db, loc, customers=customers, ownership_map=ownership_map,
+            exclude_ids={c.id for c in invoice_customers}, admin=admin, now=now,
+            current_year=current_year, p_curr=p_curr,
+            accounts=(acc_wasser, acc_grund, acc_anschluss), giro=giro))
+
+    # ==================================================================
+    # Belegablage (beide Länder): Belege an Buchungen, Eingang, Ablage —
+    # in Deutschland zusätzlich Eingangs-E-Rechnungen.
+    # ==================================================================
+    from app.seed import demo_documents
+    counts.update(demo_documents.seed_documents(
+        db, loc, admin=admin, now=now, plan_bookings=plan_bookings,
+        bridge_bookings=bridge_booking_objs,
+        accounts={"buero": acc_buero, "reparatur": acc_reparatur},
+        projects=projects, giro=giro))
+
     if verbose:
         print("Demo-Daten-Counts:")
         for k, v in counts.items():
@@ -1755,17 +1930,16 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     return counts
 
 
-def _zip_props_to_owners(properties):
-    """Ordnet Properties den Kundenindexen zu (Kunde 0..19 hat 2, Rest 1).
+def _zip_props_to_owners(properties, two_obj=20):
+    """Ordnet Properties den Kundenindexen zu (Kunde 0..two_obj-1 hat 2, Rest 1).
 
     Yields (property, customer_index).
     """
-    idx = 0
     prop_iter = iter(properties)
-    # Kunden 0..19: zwei Objekte
-    for cust_idx in range(20):
+    # Kunden 0..two_obj-1: zwei Objekte
+    for cust_idx in range(two_obj):
         for _ in range(2):
             yield next(prop_iter), cust_idx
-    # Kunden 20..99: ein Objekt
-    for cust_idx in range(20, 100):
+    # restliche Kunden bis 99: ein Objekt
+    for cust_idx in range(two_obj, 100):
         yield next(prop_iter), cust_idx

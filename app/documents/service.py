@@ -322,24 +322,30 @@ def store_upload(filename, data, user_id, *, kind=None, upload_detail=None):
     if text is not None:
         doc.text_status, doc.text_content = text.status, text.text or None
     if parsed is not None:
-        inv = parsed.invoice
-        doc.kind = Document.KIND_CREDIT_NOTE if inv.type_code in incoming.CREDIT_NOTE_CODES else Document.KIND_INVOICE
-        doc.title = (inv.seller.name or "")[:200] or None
-        doc.number = (inv.number or "")[:100] or None
-        doc.document_date = inv.issue_date
-        doc.amount = abs(inv.grand_total) if inv.grand_total is not None else None
-        doc.einvoice = IncomingInvoice(
-            source_kind=parsed.source_kind, syntax=inv.syntax, guideline=(inv.guideline or "")[:255],
-            number=(inv.number or "")[:100], issue_date=inv.issue_date,
-            currency=(inv.currency or "EUR")[:3], type_code=(inv.type_code or "380")[:3],
-            seller_name=(inv.seller.name or "")[:200], seller_vat_id=inv.seller.vat_id or None,
-            grand_total=inv.grand_total, data=inv.to_json())
+        apply_incoming(doc, parsed)
     # eine E-Rechnung hat ihre Daten schon aus dem Original — vorbelegt wird nur ein „normaler“ Beleg
     prefill = parsed is None and text is not None and text.status == extract.STATUS_OK
     doc = _persist(doc, ext, data, user_id, upload_detail,
                    after_flush=(lambda stored: autofill(stored, user_id)) if prefill else None)
     doc.parse_warning = warning
     return doc
+
+
+def apply_incoming(doc, parsed):
+    """Uebernimmt die aus einer E-Rechnung gelesenen Daten in den Beleg (Art, Titel, Nummer, Datum,
+    Betrag) und haengt die unveraenderlichen Originaldaten als ``IncomingInvoice`` an."""
+    inv = parsed.invoice
+    doc.kind = Document.KIND_CREDIT_NOTE if inv.type_code in incoming.CREDIT_NOTE_CODES else Document.KIND_INVOICE
+    doc.title = (inv.seller.name or "")[:200] or None
+    doc.number = (inv.number or "")[:100] or None
+    doc.document_date = inv.issue_date
+    doc.amount = abs(inv.grand_total) if inv.grand_total is not None else None
+    doc.einvoice = IncomingInvoice(
+        source_kind=parsed.source_kind, syntax=inv.syntax, guideline=(inv.guideline or "")[:255],
+        number=(inv.number or "")[:100], issue_date=inv.issue_date,
+        currency=(inv.currency or "EUR")[:3], type_code=(inv.type_code or "380")[:3],
+        seller_name=(inv.seller.name or "")[:200], seller_vat_id=inv.seller.vat_id or None,
+        grand_total=inv.grand_total, data=inv.to_json())
 
 
 def _raise_if_duplicate(digest, area):
@@ -413,7 +419,8 @@ def attach(doc, *, user_id=None, **target):
 
 
 def store_generated(area, kind, data, ext, *, original_name, title=None, number=None,
-                    document_date=None, amount=None, user_id=None, event_detail=None, **target):
+                    document_date=None, amount=None, user_id=None, event_detail=None,
+                    status=Document.STATUS_FILED, action="archived", **target):
     """Legt ein **von der App erzeugtes** Dokument ab und verknuepft es mit seinem Bezug.
 
     Ohne Kontingentpruefung (der Versand einer Rechnung darf nie am Speicher scheitern), Status
@@ -421,6 +428,10 @@ def store_generated(area, kind, data, ext, *, original_name, title=None, number=
     Pruefsumme), wird nur die Verknuepfung ergaenzt. **Committet nicht** — der Aufrufer steuert die
     Transaktion; wird sie zurueckgerollt, verschwindet die geschriebene Datei wieder
     (``_cleanup_pending``). Wirft ``StorageUnavailable``, wenn die Datei nicht geschrieben werden kann.
+
+    ``status``/``action`` nutzt der Demo-Datensatz (``app/seed``), um Beispielbelege wie einen
+    Upload in den Eingang zu legen (``Neu``, Ereignis ``uploaded``) — ohne den Commit von
+    ``store_upload``, der den laufenden Seed mitten drin festschreiben wuerde.
     """
     if not data:
         raise DocumentError("Leeres Dokument.")
@@ -431,7 +442,7 @@ def store_generated(area, kind, data, ext, *, original_name, title=None, number=
             attach(existing, user_id=user_id, **target)
         return existing
     doc = Document(
-        area=area, kind=kind, status=Document.STATUS_FILED, original_name=_display_name(original_name),
+        area=area, kind=kind, status=status, original_name=_display_name(original_name),
         content_type=CONTENT_TYPES[ext], size_bytes=len(data), sha256=digest,
         title=(title or "")[:200] or None, number=(number or "")[:100] or None,
         document_date=document_date, amount=amount, created_by_id=user_id)
@@ -447,7 +458,7 @@ def store_generated(area, kind, data, ext, *, original_name, title=None, number=
             raise StorageUnavailable(str(exc)) from exc
         db.session.info.setdefault(_PENDING, []).append(key)
     doc.storage_key = key
-    log(doc, "archived", user_id, size=len(data), kind=kind, **(event_detail or {}))
+    log(doc, action, user_id, size=len(data), kind=kind, **(event_detail or {}))
     if target:
         attach(doc, user_id=user_id, **target)
     return doc

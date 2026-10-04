@@ -403,6 +403,41 @@ tr.overdue { background-color: #fff3cd !important; }
 .navbar-vertical { scrollbar-width: none; }            /* Firefox */
 .navbar-vertical::-webkit-scrollbar { display: none; } /* Chrome/Edge/Safari */
 
+/* Sidebar-Kopf: Name des Mandanten (wg.name, base.html). Tabler setzt die Brand
+   einzeilig (nowrap) und zentriert sie — ein Name breiter als die 15rem-Leiste
+   lief links UND rechts ueber den Rand und wurde abgeschnitten. Deshalb darf der
+   Name schrumpfen (min-width:0), auf zwei Zeilen umbrechen (Silbentrennung ueber
+   <html lang="de">) und endet danach mit „…". Namen > 16 Zeichen bekommen
+   is-long (kleinere Schrift); der volle Name steht im title-Attribut. */
+.wk-sidebar-brand { min-width: 0; max-width: 100%; }
+.wk-sidebar-brand-name {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: break-word;
+  hyphens: auto;
+  line-height: 1.2;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+.wk-sidebar-brand-name.is-long { font-size: 1rem; }
+@media (min-width: 992px) {
+  /* Tabler nimmt dem Container hier jedes Padding — ohne eigenes stuende der
+     Name bündig am Leistenrand. */
+  .navbar-vertical.navbar-expand-lg .wk-sidebar-brand {
+    padding-left: 1rem;
+    padding-right: 1rem;
+    text-align: center;
+  }
+}
+@media (max-width: 991.98px) {
+  /* Kopfzeile mobil: Brand teilt sich die Zeile mit dem Menue-Knopf. Basis 0,
+     sonst bricht ein langer Name die Flex-Zeile um und landet unter dem Knopf. */
+  .navbar-vertical .wk-sidebar-brand { flex: 1 1 0; justify-content: flex-end; text-align: right; }
+}
+
 /* Sidebar-Orientierung: aktive Hauptgruppe + aktive Unterseite deutlich
    hervorheben. Tabler hebt aktive Links per Default nur ueber die Textfarbe
    hervor — auf der dunklen Leiste zu subtil, man verliert schnell, welche Seite
