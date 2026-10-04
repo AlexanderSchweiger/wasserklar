@@ -43,7 +43,13 @@ def login():
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
+        # Das Feld heisst aus Kompatibilitaet "username", nimmt aber Benutzername
+        # ODER E-Mail (beide sind unique). Benutzername hat Vorrang.
         user = User.query.filter_by(username=username).first()
+        if user is None and "@" in username:
+            user = User.query.filter(
+                db.func.lower(User.email) == username.lower()
+            ).first()
         if user and user.active and user.check_password(password):
             raw_next = request.args.get("next")
             safe_next = raw_next if (raw_next and _is_safe_next(raw_next)) else None
@@ -55,7 +61,7 @@ def login():
                 return redirect(url_for("auth.verify_2fa"))
             login_user(user)
             return redirect(safe_next or url_for("main.dashboard"))
-        flash("Benutzername oder Passwort falsch.", "danger")
+        flash("E-Mail/Benutzername oder Passwort falsch.", "danger")
     return render_template("auth/login.html")
 
 

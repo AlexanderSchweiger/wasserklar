@@ -29,10 +29,10 @@
         <form method="post" autocomplete="off">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <div class="mb-3">
-            <label class="form-label">E-Mail</label>
+            <label class="form-label">E-Mail oder Benutzername</label>
             <div class="input-group input-group-flat">
-              <input type="text" name="username" class="form-control" placeholder="E-Mail"
-                     required autofocus autocomplete="email">
+              <input type="text" name="username" class="form-control" placeholder="E-Mail oder Benutzername"
+                     required autofocus autocomplete="username">
               <span class="input-group-text"><i class="fas fa-envelope text-muted"></i></span>
             </div>
           </div>

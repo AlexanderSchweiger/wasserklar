@@ -60,17 +60,31 @@ class TestLoginPage:
     def test_wrong_password_stays_on_login(self, client, admin_user):
         r = client.post("/auth/login", data={"username": "admin", "password": "falsch"})
         assert r.status_code == 200
-        assert "Benutzername oder Passwort falsch" in r.data.decode("utf-8")
+        assert "E-Mail/Benutzername oder Passwort falsch" in r.data.decode("utf-8")
 
     def test_wrong_username_stays_on_login(self, client):
         r = client.post("/auth/login", data={"username": "nobody", "password": "x"})
         assert r.status_code == 200
-        assert "Benutzername oder Passwort falsch" in r.data.decode("utf-8")
+        assert "E-Mail/Benutzername oder Passwort falsch" in r.data.decode("utf-8")
 
     def test_successful_login_redirects(self, client, admin_user):
         r = _login(client, "admin", "secret")
         assert r.status_code == 302
         assert "/auth/login" not in r.headers["Location"]
+
+    def test_login_with_email(self, client, admin_user):
+        r = _login(client, "admin@test.com", "secret")
+        assert r.status_code == 302
+        assert "/auth/login" not in r.headers["Location"]
+
+    def test_login_with_email_case_insensitive(self, client, admin_user):
+        r = _login(client, "  Admin@Test.COM ", "secret")
+        assert r.status_code == 302
+        assert "/auth/login" not in r.headers["Location"]
+
+    def test_login_with_email_wrong_password(self, client, admin_user):
+        r = _login(client, "admin@test.com", "falsch")
+        assert r.status_code == 200
 
     def test_authenticated_can_access_dashboard(self, client, admin_user):
         _login(client, "admin", "secret")
