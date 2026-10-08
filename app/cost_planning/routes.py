@@ -25,7 +25,7 @@ from app.cost_planning import bp, services
 from app.extensions import db
 from app.models import AppSetting, ConsumptionYear, FundingGoal, WaterTariff
 
-SAMPLE_HOUSEHOLD_KEY = "cost_planning.sample_household_m3"
+SAMPLE_HOUSEHOLD_KEY = services.SAMPLE_HOUSEHOLD_KEY
 AVG_YEARS_KEY = "cost_planning.avg_years"
 
 
@@ -50,12 +50,7 @@ def _decimal_or_none(raw):
 
 
 def _sample_household_m3():
-    raw = AppSetting.get(SAMPLE_HOUSEHOLD_KEY)
-    try:
-        value = Decimal(raw) if raw else services.DEFAULT_SAMPLE_HOUSEHOLD_M3
-    except (InvalidOperation, ValueError):
-        value = services.DEFAULT_SAMPLE_HOUSEHOLD_M3
-    return value if value > 0 else services.DEFAULT_SAMPLE_HOUSEHOLD_M3
+    return services.sample_household_m3()
 
 
 def _avg_years():
@@ -474,8 +469,10 @@ def goal_apply_tariff(goal_id):
         return redirect(url_for("cost_planning.goal_detail", goal_id=goal.id))
 
     # Der neue Tarif uebernimmt ALLE Positionen des aktuellen (Texte, USt,
-    # Konten, Wassercent …) — nur Wasserpreis und Grundgebuehr kommen aus dem
-    # Paket. Ohne aktuellen Tarif entstehen die Positionen aus dem Katalog.
+    # Konten, Wassercent, Staffeln, Bedingungen …) — nur Wasserpreis und
+    # Grundgebuehr kommen aus dem Paket; eine Wasser-Staffel verschiebt
+    # ``tariff_form_params`` dabei um denselben Aufschlag. Ohne aktuellen
+    # Tarif entstehen die Positionen aus dem Katalog.
     from app.invoices.charges import ensure_system_charge_types, tariff_form_params
     from app.models import ChargeType
     ensure_system_charge_types()

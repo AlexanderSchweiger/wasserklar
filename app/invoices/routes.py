@@ -527,8 +527,11 @@ def generate():
         # belasten/gutschreiben (ein Kunde kann mehrere Objekte haben).
         customers_corrected = set()
         # Individuelle Gebuehren fuer Gebuehrenarten, die der gewaehlte Tarif
-        # gar nicht kennt, greifen nicht — Sammel-Hinweis nach dem Lauf.
+        # gar nicht kennt (oder deren Bedingung nicht erfuellt ist), greifen
+        # nicht — Sammel-Hinweis nach dem Lauf.
         ignored_overrides = {}
+        # Kontaktstatus-Bedingungen gelten nur im WG-Modus — einmal je Lauf.
+        wg_mode = engine.wg_mode_active()
         for property_id, prop_readings in sorted_items:
             prop = prop_readings[0].meter.property
             ownership = prop.current_owner()
@@ -556,10 +559,12 @@ def generate():
             customer = db.session.get(Customer, ownership.customer_id)
 
             # Positionen mit effektivem Betrag — Priorität je Gebührenart:
-            # Objekt > Kunde > Tarif (siehe app/invoices/tariff_engine.py).
-            charges = engine.resolve_charges(tariff, prop=prop, customer=customer)
-            water = engine.water_charge(charges)
-            for label in engine.ignored_override_types(tariff, prop=prop, customer=customer):
+            # Objekt > Kunde > Tarif; Bedingungen nach dem Status des
+            # Rechnungsempfaengers (siehe app/invoices/tariff_engine.py).
+            charges = engine.resolve_charges(tariff, prop=prop, customer=customer,
+                                             wg_mode=wg_mode)
+            for label in engine.ignored_override_types(tariff, prop=prop, customer=customer,
+                                                       wg_mode=wg_mode):
                 ignored_overrides.setdefault(label, []).append(prop.label())
 
             inv = Invoice(
@@ -594,12 +599,14 @@ def generate():
             ded_by_meter = ded["by_meter"] if ded else {}
             ded_total = ded["total"] if ded else Decimal("0")
             ded_numbers = ded["invoice_numbers"] if ded else []
-            # Tatsaechlich abgerechnete Wassermenge — Basis fuer weitere
-            # m³-Positionen (Wassercent) derselben Rechnung.
-            billed_m3 = Decimal("0")
 
+            # Abzurechnende Menge: Zaehlertausch auf Wunsch je Zaehler
+            # ausgewiesen, sonst eine Gesamtmenge — jeweils abzueglich der
+            # per Schlussrechnung schon verrechneten Mengen (nie negativ).
+            meter_parts = []
+            water_detail = ""
+            net_consumption = total_consumption
             if is_replacement and print_meter_swap:
-                # Separate Zeile je Zähler
                 for reading in prop_readings:
                     consumption = reading.consumption or Decimal("0")
                     deducted = ded_by_meter.get(reading.meter_id, Decimal("0"))
@@ -608,7 +615,6 @@ def generate():
                         if consumption < 0:
                             clamp_warnings.append(prop.label())
                             consumption = Decimal("0")
-                    billed_m3 += consumption
                     meter = reading.meter
                     if meter.installed_to:
                         date_hint = f"ausgebaut {meter.installed_to.strftime('%d.%m.%Y')}"
@@ -620,58 +626,19 @@ def generate():
                     ded_suffix = (
                         f", abzügl. {deducted.quantize(Decimal('1'))} m³ lt. Schlussrechnung"
                         if deducted > 0 else "")
-                    desc = (
-                        f"{water.label} {period.name} – Zähler {meter.meter_number}"
-                        f" ({date_hint}, {consumption} m³{ded_suffix})"
-                    )
-                    amount = (consumption * water.unit_price).quantize(Decimal("0.01"))
-                    db.session.add(InvoiceItem(
-                        invoice_id=inv.id,
-                        description=desc,
-                        quantity=consumption,
-                        unit="m³",
-                        unit_price=water.unit_price,
-                        amount=amount,
-                        tax_rate=water.tax(vat_liable),
-                        account_id=water.account_id,
-                        project_id=run_project_id,
-                        charge_key=water.key,
-                        is_estimated=bool(getattr(reading, "is_estimated", False)),
-                    ))
-            else:
-                # Eine Zeile mit Gesamtverbrauch (Standard)
-                net_consumption = total_consumption
-                if ded_total > 0:
-                    net_consumption = total_consumption - ded_total
-                    if net_consumption < 0:
-                        clamp_warnings.append(prop.label())
-                        net_consumption = Decimal("0")
-                price_str = engine.fmt_price(water.unit_price)
-                desc = (
-                    f"{water.label} {period.name}"
-                    f" ({net_consumption.quantize(Decimal('1'))} m³"
-                    f" × {price_str} €/m³)"
-                )
-                if ded_total > 0:
-                    nums = ", ".join(ded_numbers)
-                    ref = f" (Schlussrechnung {nums})" if nums else ""
-                    desc += (f" – abzüglich {ded_total.quantize(Decimal('1'))} m³"
-                             f" bereits verrechnet{ref}")
-                billed_m3 = net_consumption
-                amount = (net_consumption * water.unit_price).quantize(Decimal("0.01"))
-                db.session.add(InvoiceItem(
-                    invoice_id=inv.id,
-                    description=desc,
-                    quantity=net_consumption,
-                    unit="m³",
-                    unit_price=water.unit_price,
-                    amount=amount,
-                    tax_rate=water.tax(vat_liable),
-                    account_id=water.account_id,
-                    project_id=run_project_id,
-                    charge_key=water.key,
-                    is_estimated=is_any_estimated,
-                ))
+                    meter_parts.append(engine.MeterPart(
+                        label=f"Zähler {meter.meter_number}", qty=consumption,
+                        note=date_hint, suffix=ded_suffix,
+                        is_estimated=bool(getattr(reading, "is_estimated", False))))
+            elif ded_total > 0:
+                net_consumption = total_consumption - ded_total
+                if net_consumption < 0:
+                    clamp_warnings.append(prop.label())
+                    net_consumption = Decimal("0")
+                nums = ", ".join(ded_numbers)
+                ref = f" (Schlussrechnung {nums})" if nums else ""
+                water_detail = (f" – abzüglich {ded_total.quantize(Decimal('1'))} m³"
+                                f" bereits verrechnet{ref}")
 
             # Abgerechneter Zeitraum dieses Objekts: nach einem Eigentuemer-
             # wechsel beginnt der Verbrauch des Nachbesitzers am Stichtag; bei
@@ -684,33 +651,20 @@ def generate():
             if ded and ded.get("change_date") and ded_total > 0:
                 usage_start = max(ded["change_date"], period.start_date)
 
-            # Weitere Positionen in Tarif-Reihenfolge: m³-Positionen (z.B.
-            # Wassercent) auf den Nettoverbrauch, Pauschalen ggf. anteilig.
-            for charge in charges:
-                if charge.is_water:
-                    continue
-                if charge.is_per_m3:
-                    line = engine.per_m3_line(
-                        charge, billed_m3, start=usage_start, end=period.end_date,
-                        period_name=period.name)
-                else:
-                    line = engine.flat_line(charge, start=fee_start, end=period.end_date,
-                                            period_days=period_days)
-                if line is None:
-                    continue
-                db.session.add(InvoiceItem(
-                    invoice_id=inv.id,
-                    description=line["description"],
-                    quantity=line["quantity"],
-                    unit=line["unit"],
-                    unit_price=line["unit_price"],
-                    amount=line["amount"],
-                    tax_rate=charge.tax(vat_liable),
-                    account_id=charge.account_id,
-                    project_id=run_project_id,
-                    charge_key=charge.key,
-                    is_estimated=(is_any_estimated if charge.is_per_m3 else False),
-                ))
+            # Alle Positionen aus der Tarif-Engine: Wasser (ggf. je Zaehler
+            # bzw. gestaffelt) zuerst, dann m³-Positionen (z.B. Wassercent) auf
+            # den Nettoverbrauch und Pauschalen ggf. anteilig.
+            case = engine.BillingCase(
+                consumption=net_consumption, vat_liable=vat_liable,
+                period_name=period.name,
+                usage_start=usage_start, usage_end=period.end_date,
+                fee_start=fee_start, fee_end=period.end_date, period_days=period_days,
+                meter_parts=meter_parts, water_detail=water_detail,
+                is_estimated=is_any_estimated,
+            )
+            for line in engine.build_lines(charges, case):
+                db.session.add(InvoiceItem(invoice_id=inv.id, project_id=run_project_id,
+                                           **line))
 
             # Damit USt (sofern vorhanden) im Gesamtbetrag berücksichtigt wird:
             db.session.flush()
@@ -764,7 +718,8 @@ def generate():
                 for label, objs in sorted(ignored_overrides.items()))
             flash(
                 "Individuelle Gebühren für Gebührenarten, die der Tarif "
-                f"„{tariff.name}“ nicht enthält, wurden nicht berechnet — {parts}.",
+                f"„{tariff.name}“ nicht enthält (bzw. deren Bedingung nicht "
+                f"erfüllt ist), wurden nicht berechnet — {parts}.",
                 "warning")
         if clamp_warnings:
             objs = ", ".join(dict.fromkeys(clamp_warnings))
@@ -943,29 +898,19 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
             if not tariff:
                 continue
             consumption = _dec(row_consumptions, i)
-            # Tarifzeile ohne Kunden-/Objekt-Bezug: die Tarifbetraege gelten
-            # unveraendert (keine individuellen Gebuehren, keine Zeitabgrenzung).
-            for charge in engine.resolve_charges(tariff):
-                if charge.is_per_m3:
-                    line = engine.per_m3_line(charge, consumption)
-                    if charge.is_water:
-                        line["description"] = (
-                            f"{charge.label} ({consumption.quantize(Decimal('1'))} m³ × "
-                            f"{engine.fmt_price(charge.unit_price)} €/m³)")
-                else:
-                    line = engine.flat_line(charge)
-                db.session.add(InvoiceItem(
-                    invoice_id=inv.id,
-                    description=line["description"],
-                    quantity=line["quantity"],
-                    unit=line["unit"],
-                    unit_price=line["unit_price"],
-                    amount=line["amount"],
-                    tax_rate=charge.tax(is_vat_liable_year),
-                    account_id=row_account_id or charge.account_id,
-                    project_id=row_project_id,
-                    charge_key=charge.key,
-                ))
+            # Tarifzeile ohne Objekt-Bezug: die Tarifbetraege gelten unveraendert
+            # (keine individuellen Gebuehren, keine Zeitabgrenzung); Bedingungen
+            # richten sich nach dem Status des Rechnungskunden.
+            customer = db.session.get(Customer, inv.customer_id) if inv.customer_id else None
+            charges = engine.resolve_charges(
+                tariff, contact_status=customer.wg_status if customer else None)
+            case = engine.BillingCase(consumption=consumption,
+                                      vat_liable=is_vat_liable_year)
+            for line in engine.build_lines(charges, case):
+                if row_account_id:
+                    line["account_id"] = row_account_id
+                db.session.add(InvoiceItem(invoice_id=inv.id, project_id=row_project_id,
+                                           **line))
         elif rtype == "water":
             consumption = _dec(row_consumptions, i)
             unit_price = _dec(row_unit_prices, i)
@@ -2808,12 +2753,19 @@ def billing_run_export_excel(run_id):
     r += 1
     kv(r, "Name", run.tariff_name); r += 1
     kv(r, "Gültig", f"{run.tariff_valid_from or '—'} – {run.tariff_valid_to or 'aktuell'}"); r += 1
+    from app.invoices.tariff_spec import condition_text, levels_text
     for comp in run.tariff_components_snapshot:
         if comp.get("amount") is None:
             continue
         per_m3 = comp.get("calc_type") == ChargeType.CALC_PER_M3
         label = comp["label"] + (" (je m³)" if per_m3 else "")
-        kv(r, label, float(comp["amount"]), EUR4 if per_m3 else EUR); r += 1
+        kv(r, label, float(comp["amount"]), EUR4 if per_m3 else EUR)
+        extra = "; ".join(t for t in (
+            levels_text(comp["amount"], comp.get("tiers"), comp.get("tier_mode")),
+            condition_text(comp.get("conditions"))) if t)
+        if extra:
+            ws.cell(row=r, column=3, value=extra)
+        r += 1
     r += 1
 
     # --- Deckblatt: Summen ---
@@ -2946,6 +2898,7 @@ def _tariff_form_rows(tariff, form=None):
     """
     from app import tax_service
     from app.invoices.charges import ensure_system_charge_types
+    from app.invoices.tariff_spec import TIER_GRADUATED, TIER_MODES
     ensure_system_charge_types()
     comps = {c.charge_type_id: c for c in tariff.components} if tariff else {}
     default_tax = _tax_value(tax_service.water_tax_rate())
@@ -2957,6 +2910,7 @@ def _tariff_form_rows(tariff, form=None):
         if not (ct.active or comp is not None or in_form):
             continue
         is_water = ct.key == ChargeType.KEY_WATER
+        tier_mode, tiers, statuses = TIER_GRADUATED, [], []
         if form is not None:
             on = is_water or bool(form.get(f"comp_on_{ct.id}"))
             label = form.get(f"comp_label_{ct.id}", "") or ""
@@ -2964,6 +2918,12 @@ def _tariff_form_rows(tariff, form=None):
             tax = _tax_value(form.get(f"comp_tax_{ct.id}", default_tax))
             account_id = _int_or_none(form.get(f"comp_account_{ct.id}"))
             valid_from = form.get(f"comp_valid_from_{ct.id}", "") or ""
+            mode = form.get(f"comp_tier_mode_{ct.id}")
+            tier_mode = mode if mode in TIER_MODES else TIER_GRADUATED
+            tiers = [{"above": a or "", "price": p or ""} for a, p in zip(
+                form.getlist(f"comp_tier_above_{ct.id}"),
+                form.getlist(f"comp_tier_price_{ct.id}")) if (a or p)]
+            statuses = [s for s in form.getlist(f"comp_cond_status_{ct.id}") if s]
         elif comp is not None:
             on = True
             label = comp.label
@@ -2971,6 +2931,10 @@ def _tariff_form_rows(tariff, form=None):
             tax = _tax_value(comp.tax_rate)
             account_id = comp.account_id
             valid_from = comp.valid_from.isoformat() if comp.valid_from else ""
+            tier_mode = comp.tier_mode or TIER_GRADUATED
+            tiers = [{"above": _qty_str(s.above), "price": _amount_str(s.price, True)}
+                     for s in comp.tier_steps]
+            statuses = sorted(comp.contact_statuses or ())
         else:
             # Neuer Tarif: Wasser, Grund-/Zusatzgebuehr (wie im frueheren
             # Formular) und eine aktive Landesabgabe sind vorausgewaehlt.
@@ -2982,29 +2946,77 @@ def _tariff_form_rows(tariff, form=None):
             "ct": ct, "on": on, "is_water": is_water, "label": label,
             "amount": amount, "tax": tax, "account_id": account_id,
             "valid_from": valid_from,
+            "tier_mode": tier_mode, "tiers": tiers,
+            "statuses": statuses if not is_water else [],
+            # Zweite Zeile („Staffel / Bedingung") offen, sobald etwas gesetzt ist.
+            "advanced_open": bool(tiers or (statuses and not is_water)),
         })
     return rows
 
 
-def _parse_tariff_form():
+def _qty_str(value):
+    """Menge/Grenze fuer ein Formularfeld (deutsches Komma, ohne Nullen)."""
+    if value is None:
+        return ""
+    return format(Decimal(str(value)).normalize(), "f").replace(".", ",")
+
+
+def _parse_tier_rows(form, ct, label):
+    """Weitere Stufen einer m³-Position aus dem Formular → ``(steps, error)``.
+    Leere Zeilen zaehlen nicht; Grenze ohne Preis (oder umgekehrt) ist ein
+    Fehler."""
+    from app.invoices.charges import parse_amount
+    from app.invoices.tariff_spec import TierStep, check_tiers
+    aboves = form.getlist(f"comp_tier_above_{ct.id}")
+    prices = form.getlist(f"comp_tier_price_{ct.id}")
+    steps = []
+    for n, (raw_above, raw_price) in enumerate(zip(aboves, prices), start=2):
+        raw_above, raw_price = (raw_above or "").strip(), (raw_price or "").strip()
+        if not raw_above and not raw_price:
+            continue
+        # "1.000" ohne Komma ist bei einer Mengengrenze ein Tausenderpunkt.
+        if re.fullmatch(r"\d{1,3}(\.\d{3})+", raw_above):
+            raw_above = raw_above.replace(".", "")
+        above, price = parse_amount(raw_above), parse_amount(raw_price)
+        if (above is None or price is None
+                or not above.is_finite() or not price.is_finite()):
+            return None, (f"Staffel bei „{label}“, Stufe {n}: bitte Grenze (m³) "
+                          f"und Preis als Zahl angeben.")
+        steps.append(TierStep(above, price))
+    try:
+        check_tiers(steps)
+    except ValueError as exc:
+        return None, f"Staffel bei „{label}“: {exc}"
+    return tuple(steps), None
+
+
+def _parse_tariff_form(form=None, *, require_meta=True):
     """Liest und validiert das Tarifformular.
 
     Gibt ``(data, components, error)`` zurueck — ``data`` die Stammfelder,
     ``components`` eine Liste von Dicts je gewaehlter Tarifposition, ``error``
     eine deutsche Fehlermeldung oder ``None``.
+
+    ``form`` (Default ``request.form``) darf jedes ``MultiDict`` sein — der
+    Tarifrechner reicht ``request.args`` mit ``require_meta=False`` durch (Name
+    und Gueltigkeit spielen fuers Rechnen keine Rolle).
     """
     from app.invoices.charges import parse_amount
-    form = request.form
+    from app.invoices.tariff_spec import (COND_CONTACT_STATUS, TIER_GRADUATED,
+                                          TIER_MODES, parse_conditions)
+    form = request.form if form is None else form
     name = form.get("name", "").strip()
-    if not name:
-        return None, None, "Bitte einen Namen für den Tarif angeben."
-    try:
-        valid_from = int(form["valid_from"])
-        valid_to = int(form["valid_to"]) if form.get("valid_to", "").strip() else None
-    except (KeyError, ValueError):
-        return None, None, "Gültig von/bis müssen Jahreszahlen sein."
-    if valid_to is not None and valid_to < valid_from:
-        return None, None, "„Gültig bis“ darf nicht vor „Gültig von“ liegen."
+    valid_from = valid_to = None
+    if require_meta:
+        if not name:
+            return None, None, "Bitte einen Namen für den Tarif angeben."
+        try:
+            valid_from = int(form["valid_from"])
+            valid_to = int(form["valid_to"]) if form.get("valid_to", "").strip() else None
+        except (KeyError, ValueError):
+            return None, None, "Gültig von/bis müssen Jahreszahlen sein."
+        if valid_to is not None and valid_to < valid_from:
+            return None, None, "„Gültig bis“ darf nicht vor „Gültig von“ liegen."
 
     components = []
     for ct in ChargeType.query.order_by(ChargeType.sort_order, ChargeType.label).all():
@@ -3014,6 +3026,8 @@ def _parse_tariff_form():
         label = (form.get(f"comp_label_{ct.id}") or "").strip() or ct.label
         raw = (form.get(f"comp_amount_{ct.id}") or "").strip()
         amount = parse_amount(raw)
+        if amount is not None and not amount.is_finite():
+            amount = None
         if raw and amount is None:
             return None, None, f"Ungültiger Betrag bei „{label}“ — bitte eine Zahl eingeben."
         if amount is not None and amount < 0:
@@ -3022,6 +3036,29 @@ def _parse_tariff_form():
             return None, None, f"Höchstens vier Nachkommastellen bei „{label}“."
         if is_water and amount is None:
             return None, None, "Bitte einen Preis pro m³ angeben."
+
+        # Staffel (nur m³-Positionen): Betrag = Preis der 1. Stufe.
+        tiers = ()
+        tier_mode = form.get(f"comp_tier_mode_{ct.id}") or TIER_GRADUATED
+        if tier_mode not in TIER_MODES:
+            return None, None, f"Ungültiger Staffel-Modus bei „{label}“."
+        if ct.is_per_m3:
+            tiers, err = _parse_tier_rows(form, ct, label)
+            if err:
+                return None, None, err
+            if tiers and amount is None:
+                return None, None, (f"Die Staffel bei „{label}“ braucht im Feld "
+                                    f"„Betrag“ den Preis der 1. Stufe.")
+
+        # Bedingung (Kontaktstatus); nie an der Wasser-Position.
+        conditions = {}
+        statuses = [s for s in form.getlist(f"comp_cond_status_{ct.id}") if s]
+        if statuses and not is_water:
+            try:
+                conditions = parse_conditions({COND_CONTACT_STATUS: statuses})
+            except ValueError as exc:
+                return None, None, f"Bedingung bei „{label}“: {exc}"
+
         if amount is None and not ct.overridable:
             # Ohne Betrag und ohne individuelle Gebuehr kaeme nie eine
             # Position zustande — dann gehoert die Art nicht in den Tarif.
@@ -3041,6 +3078,7 @@ def _parse_tariff_form():
             "ct": ct, "label": label[:100], "amount": amount, "tax_rate": tax_rate,
             "account_id": _int_or_none(form.get(f"comp_account_{ct.id}")),
             "valid_from": valid_from_date,
+            "tiers": tiers, "tier_mode": tier_mode, "conditions": conditions,
         })
 
     data = dict(name=name, valid_from=valid_from, valid_to=valid_to,
@@ -3064,6 +3102,9 @@ def _apply_tariff_components(tariff, components):
         comp.account_id = spec["account_id"]
         comp.valid_from = spec["valid_from"]
         comp.sort_order = ct.sort_order
+        comp.tier_mode = spec["tier_mode"]
+        comp.tier_steps = spec["tiers"]
+        comp.condition_data = spec["conditions"]
         keep.add(ct.id)
     for ct_id, comp in existing.items():
         if ct_id not in keep:
@@ -3091,7 +3132,25 @@ def _tariff_form_context(tariff, form):
     if missing:
         accounts += Account.query.filter(Account.id.in_(missing)).all()
     return dict(tariff=tariff, form=form, accounts=accounts,
-                component_rows=rows, tax_options=tax_options)
+                component_rows=rows, tax_options=tax_options,
+                **_tariff_calc_defaults(form))
+
+
+def _tariff_calc_defaults(form):
+    """Vorbelegung des Tarifrechners: Musterhaushalt der Plankostenrechnung,
+    Status „Mitglied“, USt wie im laufenden Jahr."""
+    from app.accounting.services import is_year_vat_liable
+    from app.cost_planning.services import sample_household_m3
+    from app.invoices.tariff_spec import TIER_MODE_LABELS
+    from app.wg import STATUS_MEMBER
+    form = form or {}
+    vat_default = is_year_vat_liable(date.today().year)
+    return dict(
+        calc_m3=form.get("calc_m3") or _qty_str(sample_household_m3()),
+        calc_status=form.get("calc_status") or STATUS_MEMBER,
+        calc_vat=(bool(form.get("calc_vat")) if "calc_vat_shown" in form else vat_default),
+        tier_mode_labels=TIER_MODE_LABELS,
+    )
 
 
 def _tariff_body(tariff, form):
@@ -3177,6 +3236,111 @@ def tariff_edit(tariff_id):
     if is_modal:
         return _tariff_body(t, None)
     return _tariff_page(t, None)
+
+
+def _calc_m3(raw):
+    """Verbrauch fuer den Tarifrechner (≥ 0, endlich) oder ``None``."""
+    from app.invoices.charges import parse_amount
+    value = parse_amount(raw)
+    if value is None or not value.is_finite() or value < 0 or value > Decimal("100000000"):
+        return None
+    return value.quantize(engine.QTY_STEP)
+
+
+def _calc_notes(charges, selected, *, status, wg_mode, specs=None):
+    """Hinweise unter dem Rechenergebnis: was der Rechner bewusst anders
+    rechnet als der Rechnungslauf bzw. warum eine Position fehlt."""
+    from app.invoices.tariff_spec import status_condition_label
+    from app.wg import status_label
+    notes = []
+    chosen = {c.key for c in selected}
+    for c in charges:
+        if c.statuses and c.key not in chosen and wg_mode:
+            notes.append(f"„{c.label}“ entfällt für den Status {status_label(status)} "
+                         f"(nur {status_condition_label(c.statuses)}).")
+        if c.valid_from is not None and c.key in chosen:
+            notes.append(f"„{c.label}“ gilt ab {c.valid_from.strftime('%d.%m.%Y')} — im "
+                         f"Rechnungslauf zeitanteilig, hier für den ganzen Zeitraum gerechnet.")
+    for spec in specs or ():
+        if spec.get("amount") is None:
+            notes.append(f"„{spec['label']}“ hat keinen Betrag — entsteht nur mit "
+                         f"individuellem Betrag am Kunden oder Objekt.")
+    if not wg_mode and any(c.statuses for c in charges):
+        notes.append("Bedingungen nach dem Kontaktstatus wirken nur im Mandant-Typ "
+                     "Wassergenossenschaft — hier gelten die Positionen für alle.")
+    return notes
+
+
+def _calc_levels(selected, m3):
+    """Stufentabellen der gestaffelten Positionen (fuer die Anzeige)."""
+    out = []
+    for c in selected:
+        if not c.is_tiered:
+            continue
+        reached = engine.tier_bands(c, m3)
+        top = reached[-1].index if reached else 1
+        out.append({
+            "label": c.label,
+            "mode": c.tier_mode,
+            "rows": [{"range": engine.band_range(lo, up), "price": price,
+                      "reached": (idx == top if c.tier_mode == "whole" else idx <= top)}
+                     for idx, lo, up, price in engine.price_levels(c)],
+        })
+    return out
+
+
+@bp.route("/tariffs/calc")
+@login_required
+def tariff_calc():
+    """Tarifrechner — rechnet einen Verbrauch durch die Tarif-Engine, exakt wie
+    der Rechnungslauf (gleiche Zeilen, gleiche Rundung). Nur lesend.
+
+    * Fragment (Tarifformular, live): rechnet die **ungespeicherten**
+      Formularwerte (``hx-include`` des Formulars, ``calc_*``-Felder).
+    * JSON (``tariff_id``, Positions-Editor): ein gespeicherter Tarif fuer den
+      Status des Rechnungskunden (``customer_id``) und das Rechnungsjahr.
+    """
+    from app.accounting.services import is_year_vat_liable
+    args = request.args
+    wg_mode = engine.wg_mode_active()
+
+    tariff_id = args.get("tariff_id", type=int)
+    if tariff_id:
+        tariff = db.get_or_404(WaterTariff, tariff_id)
+        m3 = _calc_m3(args.get("m3")) or Decimal("0")
+        customer_id = args.get("customer_id", type=int)
+        customer = db.session.get(Customer, customer_id) if customer_id else None
+        year = args.get("year", type=int) or date.today().year
+        charges = engine.resolve_charges(
+            tariff, contact_status=customer.wg_status if customer else None, wg_mode=wg_mode)
+        lines, sums = engine.calculate(charges, consumption=m3,
+                                       vat_liable=is_year_vat_liable(year))
+        return {
+            "ok": True,
+            "net": str(sums["net"]),
+            "gross": str(sums["gross"]),
+            "tiered": any(c.is_tiered for c in charges),
+            "lines": [{"description": l["description"], "amount": str(l["amount"])}
+                      for l in lines],
+        }
+
+    _data, specs, error = _parse_tariff_form(args, require_meta=False)
+    m3 = _calc_m3(args.get("calc_m3"))
+    if error is None and m3 is None:
+        error = "Bitte einen Verbrauch in m³ eingeben (0 oder mehr)."
+    if error:
+        return render_template("invoices/_tariff_calc_result.html", error=error)
+    status = args.get("calc_status") or None
+    charges = engine.charges_from_specs(specs)
+    selected = engine.select_charges(charges, contact_status=status, wg_mode=wg_mode)
+    lines, sums = engine.calculate(selected, consumption=m3,
+                                   vat_liable=bool(args.get("calc_vat")))
+    return render_template(
+        "invoices/_tariff_calc_result.html",
+        error=None, lines=lines, sums=sums, m3=m3,
+        levels=_calc_levels(selected, m3),
+        notes=_calc_notes(charges, selected, status=status, wg_mode=wg_mode, specs=specs),
+    )
 
 
 # ---------------------------------------------------------------------------

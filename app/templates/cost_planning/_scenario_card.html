@@ -37,11 +37,11 @@
         </div>
       </div>
       <div class="datagrid-item">
-        <div class="datagrid-title">Preis pro m³</div>
+        <div class="datagrid-title">Preis pro m³{% if baseline and baseline.water_tiered %} (1. Stufe){% endif %}</div>
         <div class="datagrid-content">
           <strong>{{ sc.price_per_m3|de_number(4) }} €</strong>
           {% if sc.delta_price_per_m3 > 0 %}
-          <span class="text-green">(+{{ sc.delta_price_per_m3|de_number(4) }} €)</span>
+          <span class="text-green">(+{{ sc.delta_price_per_m3|de_number(4) }} €{% if baseline and baseline.water_tiered %} auf jede Stufe{% endif %})</span>
           {% else %}
           <span class="text-secondary">(unverändert)</span>
           {% endif %}

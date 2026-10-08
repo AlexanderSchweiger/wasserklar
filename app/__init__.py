@@ -200,6 +200,11 @@ def create_app(config_name=None):
     app.jinja_env.globals["wg_function_label"] = _wg_function_label
     app.jinja_env.globals["wg_function_keys_ordered"] = _wg_function_keys_ordered
 
+    # Tarif-Staffel und -Bedingung als Text (Tarifliste, Laufdetail).
+    from app.invoices.tariff_spec import condition_text, levels_text
+    app.jinja_env.globals["tariff_levels_text"] = levels_text
+    app.jinja_env.globals["tariff_condition_text"] = condition_text
+
     # Nummernkreise am Kontakt (Kunden-/Mitgliedsnummer, Lieferantennummer):
     # Beschriftung je WG-Status + Formular-Kontext (Vorschlag, Schutz).
     from app.customers.numbers import (number_label as _contact_number_label,

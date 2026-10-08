@@ -170,12 +170,12 @@
         <select name="{{ _prefix }}row_tariff_id[]" class="form-control form-control-sm tariff-select" required onchange="itemsEditorUpdateTariffPrice(this)">
           <option value="">— Tarif wählen —</option>
           {% for t in tariffs %}
-          {# data-price = Summe aller m³-Positionen (Wasser + z.B. Wassercent),
-             data-base = Summe aller Pauschalen — nur fuer die Vorschau; die
-             Positionen selbst baut der Server aus dem Tarif. #}
+          {# Nur die Anzeige des Wasserpreises — den Betrag rechnet der Server
+             mit der Tarif-Engine (Staffel, Bedingungen), siehe itemsEditorCalcTariff. #}
+          {% set _w = t.water_component %}
           <option value="{{ t.id }}"
-                  data-price="{{ t.per_m3_total }}"
-                  data-base="{{ t.flat_total }}">
+                  data-water="{{ _w.amount if _w and _w.amount is not none else '' }}"
+                  data-tiered="{{ '1' if _w and _w.is_tiered else '' }}">
             {{ t.name }} ({{ t.valid_from }}{% if t.valid_to %}–{{ t.valid_to }}{% else %} aktuell{% endif %})
             – {{ t.summary }}
           </option>
@@ -189,7 +189,8 @@
       </div>
       <div class="col-md-2">
         <label class="small">Preis/m³ €</label>
-        <input type="text" name="{{ _prefix }}row_unit_price[]" class="form-control form-control-sm price-display"
+        <input type="hidden" name="{{ _prefix }}row_unit_price[]" value="">
+        <input type="text" class="form-control form-control-sm price-display"
                readonly placeholder="—">
       </div>
       <div class="col-md-2">
@@ -324,20 +325,45 @@
   window.itemsEditorUpdateTariffPrice = function (select) {
     const row = select.closest('.row-item');
     const opt = select.options[select.selectedIndex];
-    const price = opt.dataset.price || '';
-    row.querySelector('.price-display').value = price ? parseFloat(price).toFixed(4) : '';
+    const water = opt ? (opt.dataset.water || '') : '';
+    row.querySelector('.price-display').value = !water ? ''
+      : (opt.dataset.tiered ? 'gestaffelt'
+         : parseFloat(water).toFixed(4).replace('.', ','));
     window.itemsEditorCalcTariff(row.querySelector('.consumption-input'));
   };
+  // Betrag der Tarifzeile rechnet der Server mit der Tarif-Engine (Staffel,
+  // Bedingungen nach dem Status des gewaehlten Kunden) — nie im Browser,
+  // sonst liefe die Vorschau von der Rechnung weg.
+  const tariffCalcUrl = "{{ url_for('invoices.tariff_calc') }}";
+  function euro(value) {
+    return Number(value).toLocaleString('de-DE', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  }
   window.itemsEditorCalcTariff = function (input) {
     const row = input.closest('.row-item');
-    const consumption = parseFloat(row.querySelector('.consumption-input').value) || 0;
-    const priceStr = row.querySelector('.price-display').value;
-    const price = parseFloat(priceStr) || 0;
+    const out = row.querySelector('.amount-display');
     const select = row.querySelector('.tariff-select');
-    const opt = select ? select.options[select.selectedIndex] : null;
-    const baseFee = opt ? (parseFloat(opt.dataset.base) || 0) : 0;
-    const total = (consumption * price + baseFee).toFixed(2);
-    row.querySelector('.amount-display').value = price > 0 ? total + ' €' : '';
+    if (!select || !select.value) { out.value = ''; out.title = ''; return; }
+    const form = row.closest('form');
+    const params = new URLSearchParams({
+      tariff_id: select.value,
+      m3: row.querySelector('.consumption-input').value || '0',
+    });
+    const cust = form && form.querySelector('[name="customer_id"]');
+    if (cust && cust.value) params.set('customer_id', cust.value);
+    const day = form && form.querySelector('[name="date"]');
+    if (day && day.value) params.set('year', day.value.slice(0, 4));
+    const seq = row._calcSeq = (row._calcSeq || 0) + 1;
+    fetch(tariffCalcUrl + '?' + params.toString(),
+          {headers: {'Accept': 'application/json'}, spinner: false})
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        if (seq !== row._calcSeq) return;
+        out.value = data && data.ok ? euro(data.net) + ' € netto' : '';
+        out.title = data && data.ok
+          ? data.lines.map(function (l) { return l.description + ': ' + euro(l.amount) + ' €'; }).join('\n')
+          : '';
+      })
+      .catch(function () { if (seq === row._calcSeq) out.value = ''; });
   };
   window.itemsEditorCalcWater = function (input) {
     const row = input.closest('.row-item');

@@ -54,7 +54,12 @@
       {{ tariff.name }} —
       {% set _base = tariff.component('base_fee') %}
       {% if _base and _base.amount is not none %}{{ _base.amount|de_number }} € Grundgebühr, {% endif %}
+      {% if baseline.water_tiered %}
+      {{ (tariff.water_price or 0)|de_number(4) }} € je m³ in der 1. Stufe
+      (gestaffelt, im Mittel {{ baseline.effective_price|de_number(4) }} € je m³)
+      {% else %}
       {{ (tariff.water_price or 0)|de_number(4) }} € je m³
+      {% endif %}
     </td>
   </tr>
   {% endif %}
@@ -76,8 +81,8 @@
         {% if sc.delta_base_fee > 0 %}<br><span class="muted">(+{{ sc.delta_base_fee|de_number }} €)</span>{% endif %}
       </p>
       <p>
-        Preis je m³: <strong>{{ sc.price_per_m3|de_number(4) }} €</strong>
-        {% if sc.delta_price_per_m3 > 0 %}<br><span class="muted">(+{{ sc.delta_price_per_m3|de_number(4) }} €)</span>{% endif %}
+        Preis je m³{% if baseline.water_tiered %} (1. Stufe){% endif %}: <strong>{{ sc.price_per_m3|de_number(4) }} €</strong>
+        {% if sc.delta_price_per_m3 > 0 %}<br><span class="muted">(+{{ sc.delta_price_per_m3|de_number(4) }} €{% if baseline.water_tiered %} auf jede Stufe{% endif %})</span>{% endif %}
       </p>
       <p>
         Musterhaushalt ({{ sample_household_m3|de_number(0) }} m³):<br>

@@ -234,76 +234,34 @@ def _settlement_lines(prop, period, stichtag, tariff, fee_mode, recipient,
     (z.B. Wassercent) auf die Summe, (nur pro_rata) anteilige Pauschalen.
 
     Betraege, Texte, USt und Konten kommen aus der Tarif-Engine — inkl. der
-    individuellen Gebuehren des Altbesitzers (Objekt > Kunde > Tarif).
+    individuellen Gebuehren des Altbesitzers (Objekt > Kunde > Tarif) und der
+    Bedingungen nach seinem Status (der Assistent stellt ihn erst danach um).
+    Eine Staffel gilt mit vollen Grenzen fuer die Menge dieser Rechnung.
     """
-    lines = []
     charges = engine.resolve_charges(tariff, prop=prop, customer=recipient)
-    water = engine.water_charge(charges)
     last_day = stichtag - timedelta(days=1)
-    billed_m3 = Decimal("0")
-    if water is not None:
-        for snap in snapshots:
-            cons = snap["consumption_billed"]
-            if cons is None:
-                continue
-            meter = snap["meter"]
-            billed_m3 += cons
-            amount = (cons * water.unit_price).quantize(Decimal("0.01"))
-            lines.append({
-                "description": (
-                    f"{water.label} {period.name} bis "
-                    f"{stichtag.strftime('%d.%m.%Y')} – Zähler {meter.meter_number}"
-                    f" ({cons.quantize(Decimal('1'))} m³)"),
-                "quantity": cons,
-                "unit": "m³",
-                "unit_price": water.unit_price,
-                "amount": amount,
-                "tax_rate": water.tax(vat_liable),
-                "account_id": water.account_id,
-                "charge_key": water.key,
-                "is_estimated": snap["is_estimated"],
-            })
-
-    is_any_estimated = any(snap["is_estimated"] for snap in snapshots
-                           if snap["consumption_billed"] is not None)
-    for charge in charges:
-        if charge.is_water or not charge.is_per_m3 or water is None:
-            continue
-        line = engine.per_m3_line(
-            charge, billed_m3, start=period.start_date, end=last_day,
-            period_name=f"{period.name} bis {stichtag.strftime('%d.%m.%Y')}")
-        if line is None:
-            continue
-        line.update({"tax_rate": charge.tax(vat_liable), "account_id": charge.account_id,
-                     "is_estimated": is_any_estimated})
-        lines.append(line)
-
-    if fee_mode == FEE_MODE_PRO_RATA:
-        old_days, _new_days, period_days = fee_day_split(period, stichtag)
-        if old_days > 0 and period_days > 0:
-            span = (f"{period.start_date.strftime('%d.%m.%Y')} – "
-                    f"{last_day.strftime('%d.%m.%Y')}")
-            for charge in charges:
-                if charge.is_per_m3:
-                    continue
-                days = engine.active_days(charge, period.start_date, last_day)
-                if days <= 0:
-                    continue
-                amount = (charge.unit_price * Decimal(days)
-                          / Decimal(period_days)).quantize(Decimal("0.01"))
-                lines.append({
-                    "description": (f"{charge.label} anteilig {days}/{period_days} "
-                                    f"Tage ({span})"),
-                    "quantity": Decimal("1"),
-                    "unit": "Pauschal",
-                    "unit_price": amount,
-                    "amount": amount,
-                    "tax_rate": charge.tax(vat_liable),
-                    "account_id": charge.account_id,
-                    "charge_key": charge.key,
-                    "is_estimated": False,
-                })
-    return lines
+    parts = [
+        engine.MeterPart(label=f"Zähler {snap['meter'].meter_number}",
+                         qty=snap["consumption_billed"],
+                         is_estimated=snap["is_estimated"])
+        for snap in snapshots if snap["consumption_billed"] is not None
+    ]
+    if not parts:
+        # Kein abrechenbarer Verbrauch: keine m³-Positionen (auch keine Nullzeilen).
+        charges = [c for c in charges if not c.is_per_m3]
+    old_days, _new_days, period_days = fee_day_split(period, stichtag)
+    case = engine.BillingCase(
+        vat_liable=vat_liable,
+        period_name=f"{period.name} bis {stichtag.strftime('%d.%m.%Y')}",
+        usage_start=period.start_date, usage_end=last_day,
+        fee_start=period.start_date, fee_end=last_day, period_days=period_days,
+        include_flat=(fee_mode == FEE_MODE_PRO_RATA and old_days > 0 and period_days > 0),
+        flat_span_text=(f"{period.start_date.strftime('%d.%m.%Y')} – "
+                        f"{last_day.strftime('%d.%m.%Y')}"),
+        meter_parts=parts,
+        is_estimated=any(p.is_estimated for p in parts),
+    )
+    return engine.build_lines(charges, case)
 
 
 def build_settlement_preview(*, prop, period, stichtag, tariff, fee_mode,
@@ -314,18 +272,12 @@ def build_settlement_preview(*, prop, period, stichtag, tariff, fee_mode,
     snapshots, warnings = collect_meter_snapshots(prop, period, stichtag, meter_inputs)
     lines = _settlement_lines(prop, period, stichtag, tariff, fee_mode,
                               recipient, snapshots, vat_liable)
-    net = sum((Decimal(str(l["amount"])) for l in lines), Decimal("0"))
-    gross = Decimal("0")
-    for l in lines:
-        n = Decimal(str(l["amount"]))
-        gross += n
-        if l["tax_rate"]:
-            gross += (n * Decimal(str(l["tax_rate"])) / Decimal("100")).quantize(Decimal("0.01"))
+    sums = engine.totals(lines)
     old_days, new_days, period_days = fee_day_split(period, stichtag)
     return {
         "lines": lines,
-        "net_total": net,
-        "gross_total": gross,
+        "net_total": sums["net"],
+        "gross_total": sums["gross"],
         "water_tax": water_tax,
         "fee_mode": fee_mode,
         "old_days": old_days,
@@ -424,19 +376,8 @@ def _build_settlement_invoice(*, prop, period, stichtag, tariff, fee_mode,
     db.session.flush()
 
     billed_meter_ids = []
-    for l in lines:
-        db.session.add(InvoiceItem(
-            invoice_id=inv.id,
-            description=l["description"],
-            quantity=l["quantity"],
-            unit=l["unit"],
-            unit_price=l["unit_price"],
-            amount=l["amount"],
-            tax_rate=l["tax_rate"],
-            account_id=l.get("account_id"),
-            charge_key=l.get("charge_key"),
-            is_estimated=l.get("is_estimated", False),
-        ))
+    for line in lines:
+        db.session.add(InvoiceItem(invoice_id=inv.id, **line))
     for snap in snapshots:
         if snap["consumption_billed"] is not None:
             billed_meter_ids.append(snap["meter"].id)

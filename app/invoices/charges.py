@@ -217,12 +217,20 @@ def tariff_form_params(tariff, *, name=None, valid_from=None, amounts=None):
 
     ``amounts`` (``{charge_key: Decimal}``) ersetzt Betraege bzw. nimmt eine
     Gebührenart neu auf, die der Quelltarif nicht hat (z.B. eine neue
-    Grundgebuehr aus einem Tarifpaket).
+    Grundgebuehr aus einem Tarifpaket). Ersetzt ``amounts`` den Preis einer
+    **gestaffelten** Position, verschieben sich alle weiteren Stufen um
+    dieselbe Differenz (Plankostenrechnung: Aufschlag je m³ auf jede Stufe).
+    Staffel und Bedingungen werden mitkopiert (Mehrfachwerte als Listen —
+    ``MultiDict`` bzw. ``url_for`` machen daraus wiederholte Felder).
     """
     def _fmt(value, per_m3):
         if value is None:
             return ""
         return f"{Decimal(str(value)):.{4 if per_m3 else 2}f}".replace(".", ",")
+
+    def _qty(value):
+        text = format(Decimal(str(value)).normalize(), "f")
+        return text.replace(".", ",")
 
     def _tax(rate):
         if rate is None:
@@ -248,6 +256,19 @@ def tariff_form_params(tariff, *, name=None, valid_from=None, amounts=None):
         params[f"comp_account_{ct.id}"] = comp.account_id or ""
         params[f"comp_valid_from_{ct.id}"] = (
             comp.valid_from.isoformat() if comp.valid_from else "")
+        steps = comp.tier_steps if ct.is_per_m3 else ()
+        if steps:
+            shift = Decimal("0")
+            if amount is not None and comp.amount is not None:
+                shift = Decimal(str(amount)) - Decimal(str(comp.amount))
+            params[f"comp_tier_mode_{ct.id}"] = comp.tier_mode
+            params[f"comp_tier_above_{ct.id}"] = [_qty(s.above) for s in steps]
+            params[f"comp_tier_price_{ct.id}"] = [
+                _fmt(max(s.price + shift, Decimal("0")), True) for s in steps]
+        statuses = comp.contact_statuses
+        if statuses and ct.key != ChargeType.KEY_WATER:
+            from app.wg import STATUS_LABELS
+            params[f"comp_cond_status_{ct.id}"] = [k for k in STATUS_LABELS if k in statuses]
         seen.add(ct.key)
     for key, amount in amounts.items():
         if key in seen or amount is None:
@@ -266,7 +287,8 @@ _WATER_RATE = object()   # Sentinel: USt = Wasser-Satz des Mandanten
 
 def build_tariff(*, name, valid_from, water_price, valid_to=None, base_fee=None,
                  additional_fee=None, water_levy=None, tax_rate=_WATER_RATE,
-                 labels=None, accounts=None, notes=None, include_empty_fees=True):
+                 labels=None, accounts=None, notes=None, include_empty_fees=True,
+                 tiers=None, tier_modes=None, conditions=None):
     """Legt einen Tarif mit Standardpositionen an (Seeds, Tests, Demo) —
     ``flush``, kein Commit.
 
@@ -275,13 +297,22 @@ def build_tariff(*, name, valid_from, water_price, valid_to=None, base_fee=None,
     ``{charge_key: Wert}``. Grund- und Zusatzgebuehr werden — wie in der
     Datenmigration — auch ohne Betrag angelegt (``include_empty_fees``), damit
     individuelle Gebuehren wirken koennen.
+
+    ``tiers`` (``{charge_key: [(ab_m3, preis), …]}``), ``tier_modes``
+    (``{charge_key: "graduated"|"whole"}``) und ``conditions``
+    (``{charge_key: ["member", …]}`` = Kontaktstatus) setzen Staffel und
+    Bedingung der jeweiligen Position.
     """
+    from app.invoices.tariff_spec import COND_CONTACT_STATUS, TierStep
     from app import tax_service
     ensure_system_charge_types()
     if tax_rate is _WATER_RATE:
         tax_rate = tax_service.water_tax_rate()
     labels = labels or {}
     accounts = accounts or {}
+    tiers = tiers or {}
+    tier_modes = tier_modes or {}
+    conditions = conditions or {}
     tariff = WaterTariff(name=name, valid_from=valid_from, valid_to=valid_to, notes=notes)
     specs = [
         (ChargeType.KEY_WATER, water_price, True),
@@ -293,14 +324,21 @@ def build_tariff(*, name, valid_from, water_price, valid_to=None, base_fee=None,
         if amount is None and not keep_empty:
             continue
         ct = charge_type(key)
-        tariff.components.append(TariffComponent(
+        comp = TariffComponent(
             charge_type=ct,
             label=labels.get(key, ct.label),
             amount=(Decimal(str(amount)) if amount is not None else None),
             tax_rate=(Decimal(str(tax_rate)) if tax_rate is not None else None),
             account_id=accounts.get(key),
             sort_order=ct.sort_order,
-        ))
+            tier_mode=tier_modes.get(key, "graduated"),
+        )
+        if tiers.get(key):
+            comp.tier_steps = [TierStep(Decimal(str(a)), Decimal(str(p)))
+                               for a, p in tiers[key]]
+        if conditions.get(key):
+            comp.condition_data = {COND_CONTACT_STATUS: list(conditions[key])}
+        tariff.components.append(comp)
     db.session.add(tariff)
     db.session.flush()
     return tariff

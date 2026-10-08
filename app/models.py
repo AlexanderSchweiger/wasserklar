@@ -1480,32 +1480,36 @@ class WaterTariff(db.Model):
         return comp.amount if comp is not None else None
 
     @property
-    def per_m3_total(self):
-        """Summe aller m³-Positionen mit Betrag (Wasser + z.B. Wassercent)."""
-        return sum((Decimal(str(c.amount)) for c in self.components
-                    if c.amount is not None and c.charge_type.is_per_m3), Decimal("0"))
-
-    @property
-    def flat_total(self):
-        """Summe aller Pauschal-Positionen mit Betrag (ohne Overrides)."""
-        return sum((Decimal(str(c.amount)) for c in self.components
-                    if c.amount is not None and not c.charge_type.is_per_m3), Decimal("0"))
-
-    @property
     def summary(self):
-        """Kurzfassung fuer Auswahllisten: ``1,4000 €/m³ · Grundgebühr 32,00 €``."""
+        """Kurzfassung fuer Auswahllisten: ``1,4000 €/m³ · Grundgebühr 32,00 €``.
+
+        Staffel: ``1,2000–2,0000 €/m³ gestaffelt``; Bedingung:
+        ``Grundgebühr 32,00 € (nur Mitglied)``.
+        """
+        from app.invoices.tariff_spec import status_condition_label
+
+        def _m3(value):
+            return f"{Decimal(str(value)):.4f}".replace(".", ",")
+
         parts = []
         for comp in self.components:
             if comp.amount is None:
                 continue
             if comp.charge_type.is_per_m3:
-                value = f"{Decimal(str(comp.amount)):.4f}".replace(".", ",")
-                text = f"{value} €/m³"
+                steps = comp.tier_steps
+                if steps:
+                    prices = [Decimal(str(comp.amount))] + [s.price for s in steps]
+                    text = f"{_m3(min(prices))}–{_m3(max(prices))} €/m³ gestaffelt"
+                else:
+                    text = f"{_m3(comp.amount)} €/m³"
             else:
                 value = f"{Decimal(str(comp.amount)):.2f}".replace(".", ",")
                 text = f"{value} €"
             if comp.charge_type.key != ChargeType.KEY_WATER:
                 text = f"{comp.label} {text}"
+            statuses = comp.contact_statuses
+            if statuses:
+                text += f" (nur {status_condition_label(statuses)})"
             parts.append(text)
         return " · ".join(parts)
 
@@ -1524,6 +1528,14 @@ class TariffComponent(db.Model):
     eine Position erst ab einem Stichtag innerhalb des Abrechnungszeitraums
     gelten — Menge/Betrag werden dann zeitanteilig abgegrenzt (z.B. bayerischer
     Wassercent ab 1.7.2026).
+
+    **Staffel** (nur m³-Positionen, OSS v1.47.0): ``amount`` ist dann der Preis
+    der 1. Stufe, ``tiers`` (JSON) die weiteren Stufen „über X m³ → Preis“,
+    ``tier_mode`` ``graduated`` (anteilig) oder ``whole`` (Gesamtmenge zum
+    Stufenpreis). **Bedingung** (``conditions``, JSON): die Position entsteht
+    nur für Rechnungsempfänger mit einem der genannten Kontaktstatus (WG-Modus).
+    Regeln + Prüfung: ``app/invoices/tariff_spec.py``; gelesen/geschrieben nur
+    über ``tier_steps`` / ``condition_data`` / ``contact_statuses``.
     """
     __tablename__ = "tariff_components"
 
@@ -1540,6 +1552,10 @@ class TariffComponent(db.Model):
     valid_from = db.Column(db.Date, nullable=True)
     sort_order = db.Column(db.Integer, nullable=False, default=100,
                            server_default=db.text("100"))
+    tier_mode = db.Column(db.String(10), nullable=False, default="graduated",
+                          server_default=db.text("'graduated'"))
+    tiers = db.Column(db.Text, nullable=True)
+    conditions = db.Column(db.Text, nullable=True)
 
     __table_args__ = (
         db.UniqueConstraint("tariff_id", "charge_type_id",
@@ -1549,6 +1565,38 @@ class TariffComponent(db.Model):
     tariff = db.relationship("WaterTariff", back_populates="components")
     charge_type = db.relationship("ChargeType")
     account = db.relationship("Account", foreign_keys=[account_id])
+
+    @property
+    def tier_steps(self):
+        """Weitere Stufen als Tupel von ``TierStep`` (leer = keine Staffel)."""
+        from app.invoices.tariff_spec import parse_tiers
+        return parse_tiers(self.tiers)
+
+    @tier_steps.setter
+    def tier_steps(self, steps):
+        from app.invoices.tariff_spec import dump_tiers
+        self.tiers = dump_tiers(steps)
+
+    @property
+    def is_tiered(self):
+        return bool(self.tier_steps)
+
+    @property
+    def condition_data(self):
+        """Bedingungen als normiertes Dict (leer = gilt immer)."""
+        from app.invoices.tariff_spec import parse_conditions
+        return parse_conditions(self.conditions)
+
+    @condition_data.setter
+    def condition_data(self, data):
+        from app.invoices.tariff_spec import dump_conditions
+        self.conditions = dump_conditions(data)
+
+    @property
+    def contact_statuses(self):
+        """Status-Menge der Bedingung (``frozenset``) oder ``None`` = alle."""
+        from app.invoices.tariff_spec import contact_statuses
+        return contact_statuses(self.conditions)
 
     def __repr__(self):
         return f"<TariffComponent {self.tariff_id}:{self.charge_type_id} {self.amount}>"
@@ -2029,15 +2077,12 @@ class Invoice(EmailTrackableMixin, db.Model):
         ``total_amount`` enthält ausschließlich die Hauptforderung.
         """
         from decimal import Decimal
+        from app.invoices.amounts import line_gross
         gross = Decimal("0")
         for item in self.items:
             if getattr(item, "is_dunning_fee", 0):
                 continue
-            net = Decimal(str(item.amount or 0))
-            gross += net
-            if item.tax_rate and item.tax_rate > 0:
-                rate = Decimal(str(item.tax_rate))
-                gross += (net * rate / Decimal("100")).quantize(Decimal("0.01"))
+            gross += line_gross(item.amount, item.tax_rate)
         self.total_amount = gross
 
     @property
@@ -2081,6 +2126,7 @@ class Invoice(EmailTrackableMixin, db.Model):
         """Aufschlüsselung der USt pro Satz als OrderedDict ``{rate: {"net", "tax"}}``."""
         from collections import OrderedDict
         from decimal import Decimal
+        from app.invoices.amounts import line_tax
         summary = OrderedDict()
         for item in self.items:
             if getattr(item, "is_dunning_fee", 0):
@@ -2090,7 +2136,7 @@ class Invoice(EmailTrackableMixin, db.Model):
                 continue
             rate_key = Decimal(str(rate))
             net = Decimal(str(item.amount or 0))
-            tax = (net * rate_key / Decimal("100")).quantize(Decimal("0.01"))
+            tax = line_tax(net, rate_key)
             if rate_key not in summary:
                 summary[rate_key] = {"net": Decimal("0"), "tax": Decimal("0")}
             summary[rate_key]["net"] += net

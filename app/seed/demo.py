@@ -207,10 +207,11 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         NetworkPlan, NetworkFeature, MaintenanceLog, SpringYield, Incident,
         WaterSample, LabResult,
         Meeting, MeetingAgendaItem, MeetingResolution, MeetingAttendance,
-        MeetingProtocol,
+        MeetingProtocol, ChargeType,
     )
 
     from app import country as country_mod
+    from app.invoices import tariff_engine as engine
     from app.seed.demo_locale import locale_for
 
     if now is None:
@@ -748,8 +749,6 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
             due = inv_date + timedelta(days=30)
 
         verbrauch = Decimal(rng.randint(70, 240))
-        base = t_prev.component("base_fee").amount
-        wasser = (t_prev.water_price * verbrauch).quantize(Decimal("0.01"))
         # Reparatur-Position (Normalsatz) auf manche Rechnungen
         with_repair = rng.random() < 0.35
         repair_net = Decimal(str(rng.randint(40, 150))) if with_repair else Decimal("0.00")
@@ -768,26 +767,16 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         db.session.add(inv)
         db.session.flush()
 
-        # Positionen: Grundgebuehr + Wasser (Wasser-USt: AT 10 %, DE 7 %),
-        # evtl. Reparatur (Normalsatz: AT 20 %, DE 19 %)
-        db.session.add(InvoiceItem(
-            invoice_id=inv.id,
-            description="Grundgebühr Wasserversorgung",
-            quantity=Decimal("1"), unit="Stk",
-            unit_price=base, amount=base,
-            tax_rate=loc.water_rate,
-            account_id=acc_grund.id,
-            charge_key="base_fee",
-        ))
-        db.session.add(InvoiceItem(
-            invoice_id=inv.id,
-            description=f"Wasserverbrauch {prev_year} ({verbrauch} m³)",
-            quantity=verbrauch, unit="m³",
-            unit_price=t_prev.water_price, amount=wasser,
-            tax_rate=loc.water_rate,
-            account_id=acc_wasser.id,
-            charge_key="water",
-        ))
+        # Positionen aus der Tarif-Engine (wie im Rechnungslauf): Wasser +
+        # Grundgebuehr mit USt und Konto der Tarifposition (Wasser-USt: AT 10 %,
+        # DE 7 % — der Datensatz zeigt die USt auch im AT-Demo), evtl.
+        # Reparatur (Normalsatz: AT 20 %, DE 19 %). Die Zusatzgebuehr bleibt
+        # bewusst weg, damit die Demo-Betraege stabil bleiben.
+        charges = [c for c in engine.resolve_charges(t_prev, customer=cust)
+                   if c.key in (ChargeType.KEY_WATER, ChargeType.KEY_BASE_FEE)]
+        for line in engine.build_lines(charges, engine.BillingCase(
+                consumption=verbrauch, vat_liable=True, period_name=str(prev_year))):
+            db.session.add(InvoiceItem(invoice_id=inv.id, **line))
         if with_repair:
             db.session.add(InvoiceItem(
                 invoice_id=inv.id,

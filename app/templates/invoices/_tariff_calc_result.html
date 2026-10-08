@@ -1,0 +1,74 @@
+{# Ergebnis des Tarifrechners (Fragment fuer #tariffCalcResult) — Zeilen genau
+   so, wie der Rechnungslauf sie erzeugt (tariff_engine.build_lines). #}
+{% if error %}
+<div class="alert alert-warning py-2 mb-0 small">
+  <i class="fas fa-exclamation-triangle me-1"></i> {{ error }}
+</div>
+{% else %}
+<div class="table-responsive">
+  <table class="table table-sm table-vcenter mb-1 small">
+    <thead>
+      <tr>
+        <th>Rechnungszeile</th>
+        <th class="text-end text-nowrap">Menge</th>
+        <th class="text-end text-nowrap">Preis</th>
+        <th class="text-end text-nowrap">Netto</th>
+        <th class="text-end text-nowrap">USt</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for line in lines %}
+      <tr>
+        <td>{{ line.description }}</td>
+        <td class="text-end text-nowrap">
+          {% if line.unit == 'm³' %}{{ line.quantity|de_number(3)|replace(',000', '') }} m³{% else %}{{ line.unit }}{% endif %}
+        </td>
+        <td class="text-end text-nowrap">
+          {% if line.unit == 'm³' %}{{ line.unit_price|de_number(4) }} €{% else %}{{ line.unit_price|de_number }} €{% endif %}
+        </td>
+        <td class="text-end text-nowrap">{{ line.amount|de_number }} €</td>
+        <td class="text-end text-nowrap text-muted">
+          {% if line.tax_rate %}{{ line.tax_rate|de_number(0) if line.tax_rate == line.tax_rate|int else line.tax_rate|de_number(1) }} %{% else %}—{% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="text-muted">Keine Positionen.</td></tr>
+      {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr>
+        <td colspan="3" class="text-end">Netto</td>
+        <td class="text-end text-nowrap">{{ sums.net|de_number }} €</td>
+        <td></td>
+      </tr>
+      {% for rate, part in sums.taxes.items() %}
+      <tr>
+        <td colspan="3" class="text-end text-muted">
+          USt {{ rate|de_number(0) if rate == rate|int else rate|de_number(1) }} % auf {{ part.net|de_number }} €
+        </td>
+        <td class="text-end text-nowrap text-muted">{{ part.tax|de_number }} €</td>
+        <td></td>
+      </tr>
+      {% endfor %}
+      <tr class="fw-bold">
+        <td colspan="3" class="text-end">Rechnungsbetrag{% if m3 %} für {{ m3|de_number(3)|replace(',000', '') }} m³{% endif %}</td>
+        <td class="text-end text-nowrap">{{ sums.gross|de_number }} €</td>
+        <td></td>
+      </tr>
+    </tfoot>
+  </table>
+</div>
+{% for lv in levels %}
+<div class="small text-muted mt-1">
+  <i class="fas fa-layer-group me-1"></i>
+  <strong>{{ lv.label }}</strong>
+  ({{ 'Gesamtmenge zum Stufenpreis' if lv.mode == 'whole' else 'anteilig' }}):
+  {% for r in lv.rows %}
+  <span class="{{ 'text-body fw-bold' if r.reached }}">{{ r.range }}: {{ r.price|de_number(4) }} €/m³</span>{{ ' · ' if not loop.last }}
+  {% endfor %}
+</div>
+{% endfor %}
+{% for note in notes %}
+<div class="small text-muted mt-1"><i class="fas fa-info-circle me-1"></i>{{ note }}</div>
+{% endfor %}
+{% endif %}

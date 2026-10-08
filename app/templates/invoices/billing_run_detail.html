@@ -95,6 +95,12 @@
             {% else %}
             {{ comp.amount | de_number }} €
             {% endif %}
+            {% if comp.tiers %}
+            <div class="small text-muted">{{ tariff_levels_text(comp.amount, comp.tiers, comp.tier_mode) }}</div>
+            {% endif %}
+            {% if comp.conditions %}
+            <span class="badge bg-purple-lt">{{ tariff_condition_text(comp.conditions) }}</span>
+            {% endif %}
           </dd>
           {% endfor %}
 

@@ -131,10 +131,12 @@ def _issued_invoice_for(property_id, period_id):
 
 def _consumption_price(invoice):
     """Preis (€/m³) + USt-Satz, mit dem der Verbrauch auf ``invoice`` abgerechnet
-    wurde. Bevorzugt die Wasser-Position, faellt auf den Tarif-Snapshot des
-    Rechnungslaufs zurueck. ``(None, None)`` wenn nicht ermittelbar."""
+    wurde. Bevorzugt die Wasser-Position — bei mehreren (Stufenzeilen) die
+    letzte, also den Preis der hoechsten berechneten Stufe (Grenzpreis) —,
+    faellt auf den Tarif-Snapshot des Rechnungslaufs zurueck. ``(None, None)``
+    wenn nicht ermittelbar."""
     item = next(
-        (it for it in invoice.items
+        (it for it in reversed(list(invoice.items))
          if it.is_water_consumption
          and it.unit_price is not None and Decimal(str(it.unit_price)) > 0),
         None,
@@ -183,6 +185,43 @@ def _extra_volume_prices(invoice):
     return out
 
 
+def _run_charges(invoice):
+    """``{charge_key: Charge}`` aus dem Tarif-Snapshot des Rechnungslaufs, mit
+    dem ``invoice`` entstand — leer ohne Lauf (Einzel-/Schlussrechnung)."""
+    if not invoice.billing_run_id:
+        return {}
+    run = db.session.get(BillingRun, invoice.billing_run_id)
+    if run is None:
+        return {}
+    from app.invoices import tariff_engine as engine
+    try:
+        return {c.key: c for c in engine.charges_from_snapshot(run.tariff_components_snapshot)}
+    except ValueError:
+        return {}
+
+
+def _tiered_delta(invoice, charge, base_qty, delta, *, water):
+    """Korrekturbetrag einer **gestaffelten** m³-Position: ``A(Q + Δ) − A(Q)``
+    mit der Staffel des Rechnungslaufs (Tarif-Engine) — exakt auch dann, wenn
+    die Mehrmenge in eine andere Stufe faellt. ``None``, wenn die Position
+    nicht gestaffelt ist oder die Rechnung nicht nachweislich mit dieser
+    Staffel entstand (z.B. individueller Preis, abweichende Abgrenzung): dann
+    gilt der lineare Weg."""
+    if charge is None or not charge.is_tiered:
+        return None
+    from app.invoices import tariff_engine as engine
+    items = [it for it in invoice.items
+             if (it.is_water_consumption if water
+                 else (it.charge_key == charge.key and it.unit == "m³"))]
+    billed = sum((Decimal(str(it.amount or 0)) for it in items), Decimal("0"))
+    start = end = None
+    if not water and invoice.billing_period is not None:
+        start, end = invoice.billing_period.start_date, invoice.billing_period.end_date
+    if engine.volume_amount(charge, base_qty, start=start, end=end) != billed:
+        return None
+    return engine.volume_amount(charge, base_qty + delta, start=start, end=end) - billed
+
+
 def build_correction(reading, estimated_consumption, *, created_by_id=None):
     """Legt — falls noetig — einen ``ReadingCorrection`` an, wenn ein echter
     Stand eine *abgerechnete* Schaetzung ersetzt.
@@ -208,6 +247,11 @@ def build_correction(reading, estimated_consumption, *, created_by_id=None):
     unit_price, tax_rate = _consumption_price(invoice)
     if unit_price is None:
         return None  # Preis nicht ermittelbar -> kein automatischer Posten
+    # Staffelpreise: die Korrektur rechnet die Staffel des Laufs auf die
+    # abgerechnete Objektmenge nach (Basis = Wassermenge der Rechnung).
+    run_charges = _run_charges(invoice)
+    water_qty = sum((Decimal(str(it.quantity or 0)) for it in invoice.items
+                     if it.is_water_consumption), Decimal("0"))
 
     def _corr(amount, price, tax, charge_key=None, label=None):
         c = ReadingCorrection(
@@ -232,13 +276,21 @@ def build_correction(reading, estimated_consumption, *, created_by_id=None):
         return c
 
     corr = None
-    amount = (delta * unit_price).quantize(Decimal("0.01"))
+    amount = _tiered_delta(invoice, run_charges.get("water"), water_qty, delta, water=True)
+    if amount is not None:
+        unit_price = (amount / delta).quantize(Decimal("0.0001"))   # effektiver Preis
+    else:
+        amount = (delta * unit_price).quantize(Decimal("0.01"))
     if amount != 0:
         corr = _corr(amount, unit_price, tax_rate, charge_key="water")
     # Weitere m³-Positionen (Wassercent …) bekommen einen eigenen Posten, damit
     # die Korrektur wie auf der Originalrechnung getrennt ausgewiesen wird.
     for key, label, price, tax in _extra_volume_prices(invoice):
-        extra = (delta * price).quantize(Decimal("0.01"))
+        extra = _tiered_delta(invoice, run_charges.get(key), water_qty, delta, water=False)
+        if extra is not None:
+            price = (extra / delta).quantize(Decimal("0.0001"))
+        else:
+            extra = (delta * price).quantize(Decimal("0.01"))
         if extra != 0:
             c = _corr(extra, price, tax, charge_key=key, label=label)
             corr = corr or c
@@ -269,10 +321,8 @@ def _item_gross(net, rate):
     """Brutto einer Position GENAU so, wie ``Invoice.recalculate_total`` rechnet
     (USt pro Position auf 0,01 gerundet) — damit der Spielraum-Abgleich exakt
     mit dem spaeteren Rechnungsbetrag uebereinstimmt."""
-    g = Decimal(str(net))
-    if rate and rate > 0:
-        g += (Decimal(str(net)) * Decimal(str(rate)) / Decimal("100")).quantize(Decimal("0.01"))
-    return g
+    from app.invoices.amounts import line_gross
+    return line_gross(net, rate)
 
 
 def _safe_partial_credit_net(headroom, rate):

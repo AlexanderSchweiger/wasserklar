@@ -103,26 +103,28 @@ class TestLines:
                              calc_type=ChargeType.CALC_PER_M3,
                              unit_price=Decimal("0.10"), valid_from=valid_from)
 
-    def test_per_m3_line_full_period(self):
-        line = engine.per_m3_line(self._levy(), Decimal("120"),
-                                  start=date(2026, 1, 1), end=date(2026, 12, 31),
-                                  period_name="2026")
+    def test_volume_line_full_period(self):
+        [line] = engine.volume_lines(self._levy(), Decimal("120"),
+                                     head="Wasserentnahmeentgelt 2026",
+                                     start=date(2026, 1, 1), end=date(2026, 12, 31))
         assert line["quantity"] == Decimal("120")
         assert line["amount"] == Decimal("12.00")
         assert line["charge_key"] == "water_levy"
         assert line["description"] == ("Wasserentnahmeentgelt 2026 (120 m³ × 0,1000 €/m³)")
 
-    def test_per_m3_line_apportioned_from_valid_from(self):
+    def test_volume_line_apportioned_from_valid_from(self):
         """Bayern-Wassercent ab 1.7.2026: 184 von 365 Tagen."""
-        line = engine.per_m3_line(self._levy(date(2026, 7, 1)), Decimal("365"),
-                                  start=date(2026, 1, 1), end=date(2026, 12, 31))
+        [line] = engine.volume_lines(self._levy(date(2026, 7, 1)), Decimal("365"),
+                                     head="Wassercent",
+                                     start=date(2026, 1, 1), end=date(2026, 12, 31))
         assert line["quantity"] == Decimal("184.000")
         assert line["amount"] == Decimal("18.40")
         assert "zeitanteilig ab 01.07.2026: 184/365 Tage" in line["description"]
 
-    def test_per_m3_line_not_yet_valid(self):
-        assert engine.per_m3_line(self._levy(date(2027, 1, 1)), Decimal("100"),
-                                  start=date(2026, 1, 1), end=date(2026, 12, 31)) is None
+    def test_volume_line_not_yet_valid(self):
+        assert engine.volume_lines(self._levy(date(2027, 1, 1)), Decimal("100"),
+                                   head="Wassercent",
+                                   start=date(2026, 1, 1), end=date(2026, 12, 31)) == []
 
     def test_flat_line_pro_rata(self):
         fee = engine.Charge(key="base_fee", label="Grundgebühr",
@@ -133,6 +135,124 @@ class TestLines:
         assert line["description"] == "Grundgebühr (anteilig 183/365 Tage)"
         full = engine.flat_line(fee)
         assert full["amount"] == Decimal("73.00") and full["description"] == "Grundgebühr"
+
+
+@pytest.fixture
+def staged(app):
+    """Tarif: Wasser 1,20 gestaffelt (über 200: 1,50, über 500: 2,00),
+    Grundgebühr 50 nur für Mitglieder, Zusatzgebühr 20 für alle."""
+    ensure_system_charge_types()
+    tariff = build_tariff(
+        name="Staffel", valid_from=2026, water_price=Decimal("1.20"),
+        base_fee=Decimal("50"), additional_fee=Decimal("20"), tax_rate=Decimal("10"),
+        tiers={"water": [("200", "1.50"), ("500", "2.00")]},
+        conditions={"base_fee": ["member"]})
+    member = Customer(name="Mitglied")
+    external = Customer(name="Extern")
+    db.session.add_all([member, external])
+    db.session.flush()
+    external.ensure_wg_profile().status = "external"
+    db.session.commit()
+    return {"tariff": tariff, "member": member, "external": external}
+
+
+class TestConditions:
+    def test_member_without_profile_gets_base_fee(self, staged):
+        keys = _by_key(engine.resolve_charges(staged["tariff"], customer=staged["member"]))
+        assert {"water", "base_fee", "additional_fee"} <= set(keys)
+        assert keys["base_fee"].statuses == frozenset({"member"})
+
+    def test_external_has_no_base_fee(self, staged):
+        keys = _by_key(engine.resolve_charges(staged["tariff"], customer=staged["external"]))
+        assert "base_fee" not in keys and "additional_fee" in keys
+
+    def test_contact_status_beats_customer(self, staged):
+        keys = _by_key(engine.resolve_charges(staged["tariff"], customer=staged["member"],
+                                              contact_status="external"))
+        assert "base_fee" not in keys
+
+    def test_utility_mode_ignores_conditions(self, staged):
+        from app.models import AppSetting
+        AppSetting.set("org.type", "utility")
+        db.session.commit()
+        keys = _by_key(engine.resolve_charges(staged["tariff"], customer=staged["external"]))
+        assert "base_fee" in keys
+
+    def test_override_does_not_bypass_condition(self, staged):
+        _override(staged["external"], "base_fee", Decimal("40"))
+        keys = _by_key(engine.resolve_charges(staged["tariff"], customer=staged["external"]))
+        assert "base_fee" not in keys
+        assert engine.ignored_override_types(staged["tariff"], customer=staged["external"]) == [
+            "Grundgebühr (Bedingung nicht erfüllt)"]
+        # Mitglied mit Override: greift
+        _override(staged["member"], "base_fee", Decimal("40"))
+        keys = _by_key(engine.resolve_charges(staged["tariff"], customer=staged["member"]))
+        assert keys["base_fee"].unit_price == Decimal("40")
+
+    def test_charge_sources_skip_unmet_condition(self, staged):
+        assert "base_fee" not in engine.charge_sources(staged["tariff"],
+                                                       customer=staged["external"])
+        assert engine.charge_sources(staged["tariff"], customer=staged["member"])[
+            "base_fee"] == (True, Decimal("50.0000"))
+
+
+class TestTieredTariff:
+    def test_resolved_water_keeps_tiers(self, staged):
+        water = engine.water_charge(engine.resolve_charges(staged["tariff"]))
+        assert water.is_tiered and water.tier_mode == "graduated"
+        assert [s.above for s in water.tiers] == [Decimal("200"), Decimal("500")]
+
+    def test_override_on_tiered_custom_type_is_fixed_price(self, staged):
+        from app.invoices.tariff_spec import TierStep
+        ct = ChargeType(key="custom_1", label="Abwasser", calc_type=ChargeType.CALC_PER_M3,
+                        overridable=True)
+        db.session.add(ct)
+        db.session.flush()
+        comp = TariffComponent(charge_type=ct, label="Abwasser", amount=Decimal("2"),
+                               sort_order=40)
+        comp.tier_steps = [TierStep(Decimal("100"), Decimal("3"))]
+        staged["tariff"].components.append(comp)
+        db.session.commit()
+        assert _by_key(engine.resolve_charges(staged["tariff"]))["custom_1"].is_tiered
+        _override(staged["member"], "custom_1", Decimal("2.5"))
+        sewage = _by_key(engine.resolve_charges(staged["tariff"],
+                                                customer=staged["member"]))["custom_1"]
+        assert (sewage.unit_price, sewage.tiers) == (Decimal("2.5"), ())
+
+    def test_snapshot_roundtrip(self, staged):
+        import json
+        rows = json.loads(json.dumps(engine.snapshot(staged["tariff"])))
+        snap = {c.key: c for c in engine.charges_from_snapshot(rows)}
+        assert snap["water"].tiers == engine.water_charge(
+            engine.resolve_charges(staged["tariff"])).tiers
+        assert snap["base_fee"].statuses == frozenset({"member"})
+
+    def test_totals_match_invoice_recalculate_total(self, staged):
+        from app.models import Invoice, InvoiceItem
+        charges = engine.resolve_charges(staged["tariff"], customer=staged["member"])
+        lines, sums = engine.calculate(charges, consumption=Decimal("537.5"), vat_liable=True)
+        inv = Invoice(invoice_number="T-1", customer_id=staged["member"].id,
+                      date=date(2026, 3, 1), status=Invoice.STATUS_DRAFT)
+        db.session.add(inv)
+        db.session.flush()
+        for line in lines:
+            inv.items.append(InvoiceItem(**line))
+        db.session.flush()
+        inv.recalculate_total()
+        assert inv.total_amount == sums["gross"]
+        assert inv.consumption == Decimal("537.5")
+        # 200 × 1,20 + 300 × 1,50 + 37,5 × 2,00 + 50 + 20 = 835 netto
+        assert sums["net"] == Decimal("835.00")
+
+    def test_form_params_copy_and_shift(self, staged):
+        params = tariff_form_params(staged["tariff"], amounts={"water": Decimal("1.30")})
+        water = charge_type("water").id
+        base = charge_type("base_fee").id
+        assert params[f"comp_tier_above_{water}"] == ["200", "500"]
+        # Aufschlag 0,10 €/m³ auf jede Stufe (Plankostenrechnung)
+        assert params[f"comp_tier_price_{water}"] == ["1,6000", "2,1000"]
+        assert params[f"comp_tier_mode_{water}"] == "graduated"
+        assert params[f"comp_cond_status_{base}"] == ["member"]
 
 
 class TestOverrideForm:

@@ -56,6 +56,20 @@ ROUNDING_CHOICES = [
 ]
 
 DEFAULT_SAMPLE_HOUSEHOLD_M3 = Decimal("120")
+SAMPLE_HOUSEHOLD_KEY = "cost_planning.sample_household_m3"
+
+
+def sample_household_m3():
+    """Musterhaushalt in m³ (Einstellung der Plankostenrechnung) — auch die
+    Vorbelegung des Tarifrechners."""
+    from decimal import InvalidOperation
+    from app.models import AppSetting
+    raw = AppSetting.get(SAMPLE_HOUSEHOLD_KEY)
+    try:
+        value = Decimal(raw) if raw else DEFAULT_SAMPLE_HOUSEHOLD_M3
+    except (InvalidOperation, ValueError):
+        value = DEFAULT_SAMPLE_HOUSEHOLD_M3
+    return value if value > 0 else DEFAULT_SAMPLE_HOUSEHOLD_M3
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +183,11 @@ def baseline(tariff, avg_years=3):
     Abgaben (``is_levy``, z.B. Wassercent) zaehlen bewusst nicht als Ertrag:
     sie werden an das Land weitergereicht und finanzieren kein Ziel.
 
+    Positionen mit Kontaktstatus-Bedingung zaehlen nur bei Objekten, deren
+    Eigentuemer die Bedingung erfuellt (``charge_sources``). Bei einem
+    gestaffelten Wasserpreis rechnet der Mengenertrag mit dem mittleren Preis
+    je m³ (``effective_water_price``).
+
     ``abrechenbar`` = aktives Objekt mit mindestens einem aktiven Zaehler und
     einem aktuellen Eigentuemer. Mehrere parallele aktive ``PropertyOwnership``
     (Ehepaare, Erbengemeinschaften) zaehlen als EIN Objekt — abgerechnet wird
@@ -227,8 +246,8 @@ def baseline(tariff, avg_years=3):
         if add_value is not None:
             current_additional_revenue += Decimal(add_value)
 
-    water_price = tariff.water_price if tariff is not None else None
-    price = Decimal(water_price) if water_price is not None else ZERO
+    water_info = effective_water_price(tariff)
+    price = water_info["price"] if water_info["price"] is not None else ZERO
     volume_revenue = avg_m3 * price
 
     return {
@@ -240,6 +259,11 @@ def baseline(tariff, avg_years=3):
         "base_fee_units": base_units,
         "additional_fee_units": additional_units,
         "override_units": override_units,
+        # Staffelpreis: mittlerer Preis je m³ (Tarif-Engine ueber die
+        # Objektverbraeuche der letzten Periode) statt des Preises der 1. Stufe.
+        "water_tiered": water_info["tiered"],
+        "effective_price": water_info["price"],
+        "effective_price_period": water_info["period"],
         "current_base_revenue": _q(current_base_revenue),
         "current_additional_revenue": _q(current_additional_revenue),
         "current_volume_revenue": _q(volume_revenue),
@@ -247,6 +271,63 @@ def baseline(tariff, avg_years=3):
             current_base_revenue + current_additional_revenue + volume_revenue
         ),
     }
+
+
+def _property_consumptions():
+    """Verbrauch je Objekt (Liste positiver ``Decimal``) der juengsten
+    abgeschlossenen Abrechnungsperiode mit Ablesungen — sonst der juengsten
+    Periode ueberhaupt. ``(werte, periode)``; ``([], None)`` ohne Daten."""
+    from collections import defaultdict
+    from datetime import date as _date
+    from app.models import BillingPeriod, MeterReading
+
+    periods = BillingPeriod.query.order_by(BillingPeriod.end_date.desc()).all()
+    today = _date.today()
+    ordered = ([p for p in periods if p.end_date < today]
+               + [p for p in periods if p.end_date >= today])
+    for period in ordered:
+        rows = (
+            db.session.query(WaterMeter.property_id, MeterReading.consumption)
+            .join(MeterReading, MeterReading.meter_id == WaterMeter.id)
+            .filter(MeterReading.billing_period_id == period.id)
+            .all()
+        )
+        per_prop = defaultdict(lambda: ZERO)
+        for prop_id, cons in rows:
+            if cons is not None:
+                per_prop[prop_id] += Decimal(str(cons))
+        values = [v for v in per_prop.values() if v > 0]
+        if values:
+            return values, period
+    return [], None
+
+
+def effective_water_price(tariff):
+    """Preis je m³, den die Wasserposition im Mittel bringt.
+
+    Ohne Staffel schlicht der Tarifpreis. Mit Staffel rechnet die Tarif-Engine
+    die Objektverbraeuche der letzten Periode durch (Summe der Betraege durch
+    Summe der m³) — so bleibt der heutige Mengenertrag ehrlich, auch wenn
+    Grossverbraucher in einer teureren Stufe liegen. Ein Paket-Aufschlag
+    verschiebt alle Stufen um dasselbe Delta; der Mehrertrag bleibt damit
+    exakt ``Delta × m³``.
+
+    ``{"price", "tiered", "period"}`` (``price`` None ohne Wasserpreis).
+    """
+    comp = tariff.water_component if tariff is not None else None
+    if comp is None or comp.amount is None:
+        return {"price": None, "tiered": False, "period": None}
+    price = Decimal(comp.amount)
+    if not comp.is_tiered:
+        return {"price": price, "tiered": False, "period": None}
+    water = engine.water_charge(engine.resolve_charges(tariff))
+    values, period = _property_consumptions()
+    total = sum(values, ZERO)
+    if water is None or total <= 0:
+        return {"price": price, "tiered": True, "period": None}
+    revenue = sum((engine.volume_amount(water, q) for q in values), ZERO)
+    return {"price": (revenue / total).quantize(M3_PRICE_STEP, rounding=ROUND_HALF_UP),
+            "tiered": True, "period": period}
 
 
 # ---------------------------------------------------------------------------
