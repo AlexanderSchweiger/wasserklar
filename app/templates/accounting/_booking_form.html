@@ -6,6 +6,8 @@
      booking            — Booking oder None (Neuanlage)
      is_modal           — bool: hx-Modal-Kontext (hx-post) vs. nativer POST
      is_verbucht        — bool: gesperrte Felder (Datum/Betrag/Steuer/Beleg)
+     handover           — aktive Übergabe an die Steuerberatung (oder None): sperrt
+                          Konto, Bank/Kasse und Projekt (handover_lock_message = Text)
      form_action_url    — Ziel-URL fuer POST
      form_data          — request.form bei Fehler-Redisplay (sonst None)
      errors             — dict {feld → meldung} (oder leer)
@@ -18,6 +20,7 @@
    aufgeloest, sodass bei einem Validierungsfehler KEINE Eingabe verloren geht.
 =========================================================================== #}
 {% set locked = is_verbucht %}
+{% set ledger_locked = handover is defined and handover %}
 {% set fd = form_data if (form_data is defined and form_data) else None %}
 
 {# --- Vorausgewaehlte Werte robust aufloesen ------------------------------ #}
@@ -58,6 +61,12 @@
   <div class="alert alert-warning py-2" role="alert">
     <i class="fas fa-lock me-1"></i> Verbuchte Buchung — Datum, Betrag, Belegnummer und
     Steuersatz können nicht mehr geändert werden.
+  </div>
+  {% endif %}
+
+  {% if ledger_locked %}
+  <div class="alert alert-info py-2" role="alert">
+    <i class="fas fa-file-export me-1"></i> {{ handover_lock_message }}
   </div>
   {% endif %}
 
@@ -121,7 +130,8 @@
     <div class="col-12 col-sm-6">
       <label class="form-label">Konto <span class="text-danger">*</span></label>
       <select name="account_id" id="booking-account-select"
-        class="form-select tom-select{{ ' is-invalid' if errors.get('account_id') }}" required>
+        class="form-select tom-select{{ ' is-invalid' if errors.get('account_id') }}" required
+        {{ 'disabled' if ledger_locked }}>
         <option value=""></option>
         {% for a in accounts %}
         <option value="{{ a.id }}" {{ 'selected' if sel_account == a.id|string }}>
@@ -129,11 +139,13 @@
         </option>
         {% endfor %}
       </select>
+      {% if ledger_locked %}<input type="hidden" name="account_id" value="{{ booking.account_id }}">{% endif %}
     </div>
     <div class="col-12 col-sm-6">
       <label class="form-label">Projekt</label>
       {# data-color treibt die Farb-Swatch-Darstellung im TomSelect (siehe app.js). #}
-      <select name="project_id" id="booking-project-select" class="form-select tom-select">
+      <select name="project_id" id="booking-project-select" class="form-select tom-select"
+        {{ 'disabled' if ledger_locked }}>
         <option value="">– kein Projekt –</option>
         {% for p in projects %}
         <option value="{{ p.id }}" data-color="{{ p.color or '#3498db' }}"
@@ -142,6 +154,7 @@
         </option>
         {% endfor %}
       </select>
+      {% if ledger_locked %}<input type="hidden" name="project_id" value="{{ booking.project_id or '' }}">{% endif %}
     </div>
   </div>
 
@@ -177,7 +190,8 @@
     </div>
     <div class="col-12 col-sm-6">
       <label class="form-label">Bank/{{ term('cash') }}</label>
-      <select name="real_account_id" id="booking-real-account-select" class="form-select tom-select">
+      <select name="real_account_id" id="booking-real-account-select" class="form-select tom-select"
+        {{ 'disabled' if ledger_locked }}>
         <option value="">– kein Konto –</option>
         {% for ra in real_accounts %}
         <option value="{{ ra.id }}" {{ 'selected' if sel_real == ra.id|string }}>
@@ -185,6 +199,7 @@
         </option>
         {% endfor %}
       </select>
+      {% if ledger_locked %}<input type="hidden" name="real_account_id" value="{{ booking.real_account_id or '' }}">{% endif %}
     </div>
   </div>
 

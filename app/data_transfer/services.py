@@ -42,6 +42,7 @@ from app.models import (
     Booking, BookingGroup, Customer, CustomerCounter, SupplierCounter,
     DunningNotice, Document, DocumentEvent, DocumentLink, FiscalYear, IncomingInvoice, Invoice,
     InvoiceCounter, InvoiceItem, RolePermission, SchriftverkehrDocument,
+    AccountingHandover, AccountingHandoverItem,
 )
 from app.data_transfer.registry import (
     CATEGORIES, INSERT_ORDER, YEAR_FILTERS, NATURAL_KEYS, FOREIGN_KEYS,
@@ -245,6 +246,10 @@ def _build_query_filtered(model, years: list[int], invoice_ids: set | None,
         q = q.filter(BookingGroup.id.in_(booking_group_ids or [-1]))
     elif model is BankStatementLineAllocation and bank_line_ids is not None:
         q = q.filter(BankStatementLineAllocation.line_id.in_(bank_line_ids or [-1]))
+    elif model is AccountingHandoverItem and years:
+        # Items folgen ihrer Übergabe (eine Übergabe liegt immer in genau einem Buchungsjahr).
+        q = q.filter(AccountingHandoverItem.handover_id.in_(
+            db.session.query(AccountingHandover.id).filter(AccountingHandover.fiscal_year.in_(years))))
     elif model is Document and document_ids is not None:
         q = q.filter(Document.id.in_(document_ids or [-1]))
     elif model in (IncomingInvoice, DocumentEvent) and document_ids is not None:
@@ -417,7 +422,8 @@ def export_to_zip(selection: dict, fileobj, *, exported_by: str = "system") -> d
                 "filtered": bool(years) and (
                     model in YEAR_FILTERS or model in (
                         InvoiceItem, DunningNotice, BookingGroup,
-                        Document, IncomingInvoice, DocumentLink, DocumentEvent)
+                        Document, IncomingInvoice, DocumentLink, DocumentEvent,
+                        AccountingHandoverItem)
                 ),
             })
 

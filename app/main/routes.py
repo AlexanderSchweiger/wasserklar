@@ -215,7 +215,7 @@ def dashboard():
         if not cleared:
             active_advisories.append(c)
 
-    # Saldo laufendes Jahr (Stornopaare werden über den Service ausgeschlossen)
+    # Saldo laufendes Jahr (Stornopaare zählen je an ihrem Datum, siehe acc_svc.ledger_filter)
     _, _, year_income, year_expense, year_balance = acc_svc.year_income_expense(current_year)
 
     # Letzte Buchungen des aktuellen Wirtschaftsjahres

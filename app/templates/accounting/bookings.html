@@ -189,6 +189,8 @@
              href="{{ url_for('accounting.export_csv', year=year) }}">
             <i class="fas fa-calendar me-1"></i> Ganzes Jahr
           </a>
+          {# Einhängepunkt für Erweiterungen (z. B. Übergabe an die Steuerberatung in der SaaS) #}
+          {% block bookings_export_extra %}{% endblock %}
         </div>
       </div>
     </div>
@@ -417,6 +419,30 @@ if (!window.__bookingFocusBound) {
 
 {% block modals %}
 {{ super() }}
+
+{# Offene Buchungen sofort verbuchen (Hinweisleiste in _bookings_table.html). #}
+<div class="modal fade" id="postOpenModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <form class="modal-content" method="post" action="{{ url_for('accounting.bookings_post_open') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="modal-header">
+        <h5 class="modal-title">Offene Buchungen jetzt verbuchen?</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <div class="modal-body">
+        <p>Alle offenen Buchungen bis heute werden sofort <strong>verbucht</strong> — sonst passiert das
+          automatisch in der Nacht.</p>
+        <p class="mb-0 small text-secondary">Danach lassen sich Datum, Betrag, Belegnummer und Steuersatz nicht
+          mehr ändern und die Buchungen nicht mehr löschen; Korrekturen gehen nur noch per Storno. Konto,
+          Projekt und Beschreibung bleiben änderbar.</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+        <button type="submit" class="btn btn-primary"><i class="fas fa-check-double me-1"></i> Jetzt verbuchen</button>
+      </div>
+    </form>
+  </div>
+</div>
 
 {# Buchung anlegen / bearbeiten. Inhalt wird pro Oeffnen frisch per hx-get in
    #booking-form-host geladen; beim Schliessen werden die TomSelects zerstoert

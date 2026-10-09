@@ -18,7 +18,8 @@
         <div class="table-responsive">
         <table class="table table-hover mb-0">
           <thead>
-            <tr><th>Kürzel</th><th>Name</th><th>Beschreibung</th><th>Aktiv</th><th></th></tr>
+            {% set _ledger = handover_active() %}
+            <tr><th>Kürzel</th><th>Name</th>{% if _ledger %}<th>Sachkonto</th>{% endif %}<th>Beschreibung</th><th>Aktiv</th><th></th></tr>
           </thead>
           <tbody>
             {% for a in accounts %}
@@ -31,6 +32,12 @@
                 {% endif %}
               </td>
               <td><strong>{{ a.name }}</strong></td>
+              {% if _ledger %}
+              <td>
+                {% if a.ledger_account %}<code>{{ a.ledger_account }}</code>{% if a.ledger_auto_tax %} <span class="badge bg-azure-lt" title="Steuer im Konto hinterlegt">Automatik</span>{% endif %}
+                {% else %}<span class="text-muted">—</span>{% endif %}
+              </td>
+              {% endif %}
               <td>{{ a.description or '—' }}</td>
               <td>
                 {% if a.active %}
@@ -46,7 +53,7 @@
               </td>
             </tr>
             {% else %}
-            <tr><td colspan="5" class="text-muted py-2">Keine Konten vorhanden.</td></tr>
+            <tr><td colspan="{{ 6 if _ledger else 5 }}" class="text-muted py-2">Keine Konten vorhanden.</td></tr>
             {% endfor %}
           </tbody>
         </table>

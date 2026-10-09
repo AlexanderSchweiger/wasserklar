@@ -155,6 +155,8 @@
             {% set _nav_import         = request.blueprint == 'import_csv' %}
 
             {% set _nav_bankimport     = request.blueprint == 'bank_import' %}
+            {# Übergabe an die Steuerberatung (Erweiterung, z. B. DATEV in der gehosteten Version) #}
+            {% set _nav_handover       = is_saas is defined and is_saas and request.blueprint == 'datev' %}
 
             {# Verwaltung #}
             {% set _nav_benutzer       = request.blueprint == 'auth' and request.endpoint != 'auth.login' %}
@@ -168,7 +170,7 @@
             {% set _nav_api_keys       = is_saas is defined and is_saas and request.blueprint == 'api_admin' %}
 
             {# Eltern-Aktiv aus Kinder-OR ableiten #}
-            {% set accounting_active   = _nav_buchungen or _nav_eingang or _nav_umbuchungen or _nav_bankkonten or _nav_kontenplan or _nav_projekte or _nav_bankimport %}
+            {% set accounting_active   = _nav_buchungen or _nav_eingang or _nav_umbuchungen or _nav_bankkonten or _nav_kontenplan or _nav_projekte or _nav_bankimport or _nav_handover %}
             {% set invoices_active     = _nav_neue_rechnung or _nav_alle_rechnungen or _nav_offene_posten or _nav_rechnungslauf or _nav_rechnungslaeufe or _nav_jahresuebersicht or _nav_korrekturen or _nav_email_settings or _nav_tarife %}
             {% set auswertungen_active = _nav_jahresbericht or _nav_ust or _nav_kundenauswertung or _nav_verbrauch or _nav_plankosten %}
             {% set zaehler_active      = _nav_zaehler or _nav_ablesungen or _nav_ablesungen_import or _nav_zaehlertausch or _nav_zaehlertausch_hist or _nav_meter_tours or _nav_selbsterfassung %}

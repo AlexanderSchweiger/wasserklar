@@ -158,6 +158,8 @@ ENDPOINT_TO_DOC = {
     "backups.index":               "abonnement#export",
     "api_admin.index":             "api-rest",
     "getting_started.index":       "erste-schritte",
+    "datev.index":                 "datev-export",
+    "datev.setup":                 "datev-export#einrichten",
     "bank_import.index":           "buchhaltung",
 }
 

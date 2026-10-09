@@ -92,8 +92,9 @@
   <div class="alert alert-warning">
     <i class="fas fa-info-circle me-1"></i>
     Für jede aktive Zeile wird eine Gegenbuchung mit umgekehrtem Vorzeichen
-    angelegt. Die Sammelbuchung wird gruppen-atomar storniert — Einzel-Storno
-    für einzelne Zeilen ist nicht möglich.
+    und dem heutigen Datum angelegt; die Sammelbuchung bleibt unverändert am
+    {{ group.date.strftime('%d.%m.%Y') }} stehen. Die Sammelbuchung wird gruppen-atomar
+    storniert — Einzel-Storno für einzelne Zeilen ist nicht möglich.
   </div>
 
   {% if group.invoice_id %}

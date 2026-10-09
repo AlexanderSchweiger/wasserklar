@@ -18,6 +18,7 @@ from sqlalchemy import extract, func
 from app.accounting import bp
 from app.documents import service as documents_svc
 from app.accounting import services as acc_svc
+from app.accounting import handover as handover_svc
 from app import tax_service
 from app.extensions import db
 from app.models import Account, Booking, BookingGroup, Document, Invoice, OpenItem, WaterTariff, Customer, Project, RealAccount, RealAccountYearBalance, FiscalYear, FiscalYearReopenLog, Transfer, BillingPeriod, Property, PropertyOwnership, WaterMeter
@@ -85,6 +86,11 @@ def account_new():
             name=request.form["name"].strip(),
             description=request.form.get("description", ""),
         )
+        err = handover_svc.apply_account_fields(a, request.form)
+        if err:
+            flash(err, "danger")
+            return render_template("accounting/_account_form_body.html", account=None, form=request.form) \
+                if is_modal else render_template("accounting/account_form.html", account=None)
         db.session.add(a)
         db.session.commit()
         flash("Konto angelegt.", "success")
@@ -103,6 +109,11 @@ def account_edit(account_id):
     is_modal = bool(request.headers.get("X-From-Modal"))
     if request.method == "POST":
         code, err = _validate_code(request.form.get("code", ""), Account, exclude_id=a.id)
+        if err:
+            flash(err, "danger")
+            return render_template("accounting/_account_form_body.html", account=a, form=request.form) \
+                if is_modal else render_template("accounting/account_form.html", account=a)
+        err = handover_svc.apply_account_fields(a, request.form)
         if err:
             flash(err, "danger")
             return render_template("accounting/_account_form_body.html", account=a, form=request.form) \
@@ -156,7 +167,7 @@ _BOOKINGS_REFRESH_INCLUDE = ", ".join(
 )
 
 
-def _bookings_table_ctx(params, bulk_done_count=None):
+def _bookings_table_ctx(params, bulk_done_count=None, bulk_handed_over_skipped=0):
     """Baut den Render-Kontext der Buchungstabelle aus den Filter-Parametern.
 
     ``params`` ist eine MultiDict — ``request.args`` beim Filter-GET,
@@ -213,10 +224,12 @@ def _bookings_table_ctx(params, bulk_done_count=None):
         query = query.filter(
             extract("month", Booking.date).between(quarter * 3 - 2, quarter * 3)
         )
+    # Gegenbuchungen stehen auf der Seite ihres Originals (eine stornierte
+    # Einnahme ist keine Ausgabe).
     if kind == "income":
-        query = query.filter(Booking.amount > 0)
+        query = query.filter(acc_svc.income_side_clause())
     elif kind == "expense":
-        query = query.filter(Booking.amount < 0)
+        query = query.filter(acc_svc.expense_side_clause())
     # 0 % wird als tax_rate NULL gespeichert (siehe booking_new/_edit).
     if tax == "any":
         query = query.filter(Booking.tax_rate.isnot(None), Booking.tax_rate > 0)
@@ -261,8 +274,24 @@ def _bookings_table_ctx(params, bulk_done_count=None):
 
     rows = []
     seen_groups = OrderedDict()  # group_id → row-dict (für In-Place-Update)
+    storno_groups = OrderedDict()  # (group_id, Datum) → Storno-Zeile der Sammelbuchung
     for b in bkgs:
-        if group_mode and b.group_id:
+        if group_mode and b.group_id and b.storno_of_id:
+            # Gegenbuchungen einer Sammelbuchung: eigene Zeile am Storno-Datum,
+            # nicht unter dem Original (das kann in einem anderen Monat/Jahr liegen).
+            key = (b.group_id, b.date)
+            entry = storno_groups.get(key)
+            if entry is None:
+                entry = {
+                    "type": "booking_group_storno",
+                    "group": b.group,
+                    "children": [],
+                    "date": b.date,
+                }
+                storno_groups[key] = entry
+                rows.append(entry)
+            entry["children"].append(b)
+        elif group_mode and b.group_id:
             entry = seen_groups.get(b.group_id)
             if entry is None:
                 group = b.group
@@ -304,20 +333,19 @@ def _bookings_table_ctx(params, bulk_done_count=None):
                 locked_booking_ids.add(b.id)
                 break
 
-    # Stornopaare (Original + Gegenbuchung) müssen gemeinsam ausgeschlossen werden,
-    # sonst zählt der frühere "status != STORNIERT"-Filter nur die Gegenbuchung mit
-    # und verfälscht die Summe.
-    effective_bkgs = [b for b in bkgs if acc_svc.is_effective_booking(b)]
-    total_bookings = sum((b.amount for b in effective_bkgs), Decimal("0"))
+    # Generalumkehr: Original und Gegenbuchung zählen beide (jede an ihrem
+    # Datum) — wie in allen Auswertungen (acc_svc.ledger_filter).
+    ledger_bkgs = [b for b in bkgs if acc_svc.counts_in_ledger(b)]
+    total_bookings = sum((b.amount for b in ledger_bkgs), Decimal("0"))
     total_transfers = sum((r["amount"] for r in rows if r["type"] == "transfer"), Decimal("0"))
     total_amount = total_bookings + total_transfers
 
     total_vorsteuer = sum(
-        (acc_svc.booking_tax(b) for b in effective_bkgs if b.amount < 0),
+        (acc_svc.signed_booking_tax(b) for b in ledger_bkgs if not acc_svc.is_income_side(b)),
         Decimal("0"),
     )
     total_ust = sum(
-        (acc_svc.booking_tax(b) for b in effective_bkgs if b.amount > 0),
+        (acc_svc.signed_booking_tax(b) for b in ledger_bkgs if acc_svc.is_income_side(b)),
         Decimal("0"),
     )
 
@@ -326,12 +354,18 @@ def _bookings_table_ctx(params, bulk_done_count=None):
     table_ctx = dict(
         rows=pagination.items, year=year,
         now_year=date.today().year,
+        # Storno (Generalumkehr) geht, solange das heutige Buchungsjahr offen ist —
+        # auch für Buchungen aus abgeschlossenen Jahren.
+        now_year_open=acc_svc.storno_blocker() is None,
         total_amount=total_amount,
         total_vorsteuer=total_vorsteuer,
         total_ust=total_ust,
         locked_booking_ids=locked_booking_ids,
         pagination=pagination,
         bulk_done_count=bulk_done_count,
+        bulk_handed_over_skipped=bulk_handed_over_skipped,
+        # Hinweis „N offen — jetzt verbuchen“ (gilt für alle Buchungen, nicht nur den Filter).
+        open_count=acc_svc.open_bookings_query().count(),
     )
     filters = dict(
         account_id=account_id, project_id=project_id,
@@ -408,7 +442,11 @@ def bookings_bulk_edit():
     new_customer_id, set_customer = _resolve("bulk_customer_id", Customer)
 
     updated = 0
+    handed_over_skipped = 0
     if ids and (set_account or set_project or set_customer):
+        # An die Steuerberatung übergebene Buchungen behalten Konto und Projekt
+        # (der Kontakt bleibt änderbar).
+        handed_over = handover_svc.handed_over_booking_ids(ids) if (set_account or set_project) else set()
         for b in Booking.query.filter(Booking.id.in_(ids)).all():
             if b.group_id is not None:
                 continue
@@ -416,17 +454,45 @@ def bookings_bulk_edit():
                 continue
             if _locked_fiscal_year(b.date):
                 continue
-            if set_account:
+            locked = b.id in handed_over
+            changed = False
+            if set_account and not locked:
                 b.account_id = new_account_id
-            if set_project:
+                changed = True
+            if set_project and not locked:
                 b.project_id = new_project_id
+                changed = True
             if set_customer:
                 b.customer_id = new_customer_id
-            updated += 1
+                changed = True
+            if locked and (set_account or set_project):
+                handed_over_skipped += 1
+            if changed:
+                updated += 1
         db.session.commit()
 
-    table_ctx, _ = _bookings_table_ctx(request.form, bulk_done_count=updated)
+    table_ctx, _ = _bookings_table_ctx(request.form, bulk_done_count=updated,
+                                       bulk_handed_over_skipped=handed_over_skipped)
     return render_template("accounting/_bookings_table.html", **table_ctx)
+
+
+@bp.route("/bookings/post-open", methods=["POST"])
+@login_required
+def bookings_post_open():
+    """Alle offenen Buchungen bis heute sofort verbuchen (statt auf den nächtlichen Lauf zu warten).
+
+    ``next`` (nur Pfade dieser Seite) führt zurück, z. B. zur Prüfung des DATEV-Exports.
+    """
+    count = acc_svc.post_open_bookings()
+    if count:
+        flash(f"{count} Buchung(en) verbucht — Datum, Betrag, Belegnummer und Steuersatz sind jetzt "
+              "gesperrt; Korrekturen nur noch per Storno.", "success")
+    else:
+        flash("Es gab keine offenen Buchungen.", "info")
+    target = (request.form.get("next") or "").strip()
+    if not (target.startswith("/") and not target.startswith("//") and "\\" not in target):
+        target = url_for("accounting.bookings")
+    return redirect(target)
 
 
 # ---------------------------------------------------------------------------
@@ -602,11 +668,14 @@ def _render_booking_form(*, booking, ctx, hx, keep_date="", form_data=None,
         else url_for("accounting.booking_new")
     )
     template = "accounting/_booking_form.html" if hx else "accounting/booking_form.html"
+    handover = handover_svc.active_handover_for(booking) if booking is not None else None
     return render_template(
         template,
         booking=booking,
         is_modal=hx,
         is_verbucht=is_verbucht,
+        handover=handover,
+        handover_lock_message=handover_svc.lock_message(handover) if handover else None,
         form_action_url=form_action_url,
         form_data=form_data,
         errors=errors or {},
@@ -767,6 +836,16 @@ def booking_edit(booking_id):
 
     if request.method == "POST":
         data, errors = _parse_booking_form(request.form, today, booking=b)
+        # An die Steuerberatung übergeben: Konto, Bank/Kasse und Projekt sind gesperrt.
+        handover = handover_svc.active_handover_for(b)
+        if handover is not None and not errors:
+            requested = {
+                "account_id": data["account"].id,
+                "real_account_id": data["real_account_id"],
+                "project_id": data["project_id"],
+            }
+            if handover_svc.locked_changes(b, requested):
+                errors["handover"] = handover_svc.lock_message(handover)
         if errors:
             return _booking_form_error(errors, request.form, booking=b, hx=hx)
         b.account_id = data["account"].id
@@ -845,41 +924,22 @@ def booking_stornieren(booking_id):
     if b.storno_of_id is not None:
         flash("Eine Storno-Buchung kann nicht erneut storniert werden.", "warning")
         return redirect(url_for("accounting.bookings"))
-    fy_locked = _locked_fiscal_year(b.date)
-    if fy_locked:
-        flash(f"Das Buchungsjahr {fy_locked.year} ist abgeschlossen. Diese Buchung kann nicht storniert werden.", "danger")
-        return redirect(url_for("accounting.bookings"))
-    if b.date.year != date.today().year:
-        flash("Buchungen aus Vorjahren können nicht storniert werden.", "warning")
+    # Generalumkehr: die Gegenbuchung trägt das heutige Datum — entscheidend ist
+    # das heutige Buchungsjahr. Das Original darf in einem abgeschlossenen Jahr
+    # liegen; es bleibt dort unverändert stehen.
+    blocker = acc_svc.storno_blocker()
+    if blocker:
+        flash(blocker, "danger")
         return redirect(url_for("accounting.bookings"))
 
     if request.method == "POST":
         reason = request.form.get("storno_reason", "").strip()
         if not reason:
             flash("Bitte einen Storno-Grund angeben.", "danger")
-            return render_template("accounting/storno_form.html", booking=b)
+            return render_template("accounting/storno_form.html", booking=b, today_date=date.today())
 
         try:
-            # Storno-Buchung anlegen (gleiches Datum wie Ursprungsbuchung)
-            storno = Booking(
-                date=b.date,
-                account_id=b.account_id,
-                amount=b.amount * -1,
-                description=f"Storno: {b.description}",
-                invoice_id=b.invoice_id,
-                open_item_id=b.open_item_id,
-                project_id=b.project_id,
-                tax_rate=b.tax_rate,
-                storno_of_id=b.id,
-                storno_reason=reason,
-                storno_date=date.today(),
-                status=Booking.STATUS_VERBUCHT,
-                created_by_id=current_user.id,
-            )
-            db.session.add(storno)
-
-            # Ursprungsbuchung als storniert markieren
-            b.status = Booking.STATUS_STORNIERT           # Belege: die Verknüpfung bleibt als Nachweis
+            acc_svc.storno_booking(b, reason, current_user.id)
 
             # Verknüpfte Rechnung stornieren
             cancelled_invoice_number = None
@@ -910,7 +970,7 @@ def booking_stornieren(booking_id):
         flash("Buchung erfolgreich storniert.", "success")
         return redirect(url_for("accounting.bookings"))
 
-    return render_template("accounting/storno_form.html", booking=b)
+    return render_template("accounting/storno_form.html", booking=b, today_date=date.today())
 
 
 # ---------------------------------------------------------------------------
@@ -1156,6 +1216,7 @@ def booking_group_edit(group_id):
             readonly=not ok,
             readonly_reason=msg,
             fy_locked=fy_locked,
+            storno_allowed=acc_svc.storno_blocker() is None,
             **_document_picker_ctx(extra.get("form_data"), entity_type="booking_group", entity=group),
             **extra,
         )
@@ -1346,16 +1407,11 @@ def booking_group_stornieren(group_id):
         flash("Diese Sammelbuchung ist bereits storniert.", "warning")
         return redirect(url_for("accounting.booking_group_edit", group_id=group.id))
 
-    fy_locked = _locked_fiscal_year(group.date)
-    if fy_locked:
-        flash(
-            f"Das Buchungsjahr {fy_locked.year} ist abgeschlossen. "
-            f"Diese Sammelbuchung kann nicht storniert werden.",
-            "danger",
-        )
-        return redirect(url_for("accounting.booking_group_edit", group_id=group.id))
-    if group.date.year != date.today().year:
-        flash("Sammelbuchungen aus Vorjahren können nicht storniert werden.", "warning")
+    # Generalumkehr: die Gegenbuchungen tragen das heutige Datum — entscheidend
+    # ist deshalb das heutige Buchungsjahr, nicht das der Sammelbuchung.
+    blocker = acc_svc.storno_blocker()
+    if blocker:
+        flash(blocker, "danger")
         return redirect(url_for("accounting.booking_group_edit", group_id=group.id))
 
     if request.method == "POST":
@@ -2108,7 +2164,8 @@ def report_export_excel():
         ws3.cell(row=r3, column=1, value=b.date).number_format = DATE_FMT
         ws3.cell(row=r3, column=2, value=b.real_account.name if b.real_account else "")
         ws3.cell(row=r3, column=3, value=b.account.name)
-        ws3.cell(row=r3, column=4, value="Einnahme" if b.amount >= 0 else "Ausgabe")
+        ws3.cell(row=r3, column=4, value=("Einnahme" if acc_svc.is_income_side(b) else "Ausgabe")
+                 + (" (Storno)" if b.storno_of_id else ""))
         ws3.cell(row=r3, column=5, value=b.description)
         ws3.cell(row=r3, column=6, value=b.reference or "")
         ws3.cell(row=r3, column=7, value=b.project.name if b.project else "")
@@ -2119,7 +2176,7 @@ def report_export_excel():
         if fy_vat_liable:
             tax_amt = ""
             if b.tax_rate and b.tax_rate > 0:
-                tax_amt = float((abs(b.amount) * Decimal(str(b.tax_rate)) / (100 + Decimal(str(b.tax_rate)))).quantize(Decimal("0.01")))
+                tax_amt = float(acc_svc.signed_booking_tax(b))
             ws3.cell(row=r3, column=9, value=int(b.tax_rate) if b.tax_rate else "")
             if tax_amt != "":
                 _eur(ws3, r3, 10, tax_amt)
@@ -2691,9 +2748,9 @@ def export_csv():
             extract("month", Booking.date).between(quarter * 3 - 2, quarter * 3)
         )
     if kind == "income":
-        query = query.filter(Booking.amount > 0)
+        query = query.filter(acc_svc.income_side_clause())
     elif kind == "expense":
-        query = query.filter(Booking.amount < 0)
+        query = query.filter(acc_svc.expense_side_clause())
     if tax == "any":
         query = query.filter(Booking.tax_rate.isnot(None), Booking.tax_rate > 0)
     elif tax == "0":
@@ -2713,13 +2770,14 @@ def export_csv():
         ])
         for b in bookings:
             tax_amount = ""
-            if b.tax_rate and b.tax_rate > 0 and b.status != "Storniert":
-                tax_amount = str(round(abs(b.amount) * b.tax_rate / (100 + b.tax_rate), 2)).replace(".", ",")
+            if b.tax_rate and b.tax_rate > 0:
+                tax_amount = str(acc_svc.signed_booking_tax(b)).replace(".", ",")
             writer.writerow([
                 b.date.strftime("%d.%m.%Y"),
                 b.real_account.name if b.real_account else "",
                 b.account.name,
-                "Einnahme" if b.amount >= 0 else "Ausgabe",
+                ("Einnahme" if acc_svc.is_income_side(b) else "Ausgabe")
+                + (" (Storno)" if b.storno_of_id else ""),
                 b.description,
                 b.reference or "",
                 b.project.name if b.project else "",
@@ -3288,6 +3346,13 @@ def real_account_new():
             is_default=set_default,
             account_type=account_type,
         )
+        err = handover_svc.apply_real_account_fields(ra, request.form)
+        if err:
+            db.session.rollback()
+            flash(err, "danger")
+            return render_template("accounting/_real_account_form_body.html", real_account=None,
+                                   form=request.form) \
+                if is_modal else render_template("accounting/real_account_form.html", real_account=None)
         db.session.add(ra)
         db.session.commit()
         flash(f"{ra.type_label} angelegt.", "success")
@@ -3307,6 +3372,13 @@ def real_account_edit(ra_id):
     if request.method == "POST":
         opening_raw = request.form.get("opening_balance", "0").replace(",", ".")
         set_default = "is_default" in request.form
+        err = handover_svc.apply_real_account_fields(ra, request.form)
+        if err:
+            db.session.rollback()
+            flash(err, "danger")
+            return render_template("accounting/_real_account_form_body.html", real_account=ra,
+                                   form=request.form) \
+                if is_modal else render_template("accounting/real_account_form.html", real_account=ra)
         if set_default:
             RealAccount.query.filter(RealAccount.id != ra.id, RealAccount.is_default == True).update({"is_default": False})
         ra.account_type = _account_type_from_form(request.form)
@@ -3431,6 +3503,10 @@ def transfer_delete(transfer_id):
     locked = _locked_fiscal_year(t.date)
     if locked:
         flash(f"Das Buchungsjahr {locked.year} ist abgeschlossen. Löschen nicht möglich.", "danger")
+        return redirect(url_for("accounting.transfers"))
+    handover = handover_svc.active_handover_for(t)
+    if handover is not None:
+        flash(handover_svc.transfer_lock_message(handover), "danger")
         return redirect(url_for("accounting.transfers"))
     db.session.delete(t)
     db.session.commit()

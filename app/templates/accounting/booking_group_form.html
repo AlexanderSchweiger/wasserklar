@@ -267,7 +267,8 @@
          class="btn btn-secondary">
         <i class="fas fa-arrow-left me-1"></i> Zurück zur Übersicht
       </a>
-      {% if group.status != 'Storniert' and not fy_locked and group.date.year == today.year %}
+      {# Generalumkehr: maßgeblich ist das heutige Buchungsjahr, nicht das der Sammelbuchung. #}
+      {% if group.status != 'Storniert' and storno_allowed %}
       <a href="{{ url_for('accounting.booking_group_stornieren', group_id=group.id) }}"
          class="btn btn-outline-danger ms-2">
         <i class="fas fa-ban me-1"></i> Stornieren

@@ -34,6 +34,7 @@ from app.models import (
     ConsumptionYear, FundingGoal,
     ChargeType, TariffComponent, ChargeOverride,
     IncomingInvoice, Document, DocumentLink, DocumentEvent,
+    AccountingHandover, AccountingHandoverItem,
 )
 
 # Spalten die auf users.id verweisen — werden beim Import auf NULL gesetzt,
@@ -48,6 +49,7 @@ NULL_ON_IMPORT_COLS = {
     BillingRun: ["created_by_id"],
     Invoice: ["created_by_id"],
     Transfer: ["created_by_id"],
+    AccountingHandover: ["created_by_id", "withdrawn_by_id"],
     Booking: ["created_by_id"],
     BookingGroup: ["created_by_id"],
     Document: ["created_by_id"],
@@ -140,6 +142,9 @@ CATEGORIES = {
         OwnerChange, OwnerChangeMeterValue,
         ReadingCorrection,
         BookingGroup, Booking, Transfer, RealAccountYearBalance,
+        # Übergaben an die Steuerberatung: reisen mit, damit nach einer Wiederherstellung
+        # nichts doppelt übergeben wird und die Sperre erhalten bleibt.
+        AccountingHandover, AccountingHandoverItem,
         # Dokumentenregister (+ gelesene E-Rechnungsdaten): alle Bereiche reisen mit den Buchungen
         # (Belege, Ausgangsrechnungen, Mahnungen, Schriftfuehrung); die Dateien als files/<key>.
         # Verknuepfungen zu Mahnungen/Sitzungen nur, wenn deren Kategorie mitkommt (services.py).
@@ -186,6 +191,8 @@ INSERT_ORDER = [
     # Touren NACH MeterReplacement + Invoice (Stop-FKs zeigen auf beide).
     MeterTour, MeterTourStop,
     BookingGroup, Booking, Transfer, RealAccountYearBalance,
+    # Übergabe-Protokoll NACH Booking/Transfer (Items verweisen auf beide), Kopf VOR Items.
+    AccountingHandover, AccountingHandoverItem,
     # Dokumente NACH Customer (Lieferant); IncomingInvoice/DocumentEvent NACH Document.
     # DocumentLink steht weiter unten: es verweist auch auf DunningNotice und Meeting.
     Document, IncomingInvoice, DocumentEvent,
@@ -234,6 +241,9 @@ YEAR_FILTERS = {
     # Document/IncomingInvoice/DocumentLink/DocumentEvent: services._filtered_document_ids
     Transfer: ("date_year", "date"),
     RealAccountYearBalance: "year",
+    # Eine Übergabe liegt immer in genau einem Buchungsjahr; die Items folgen ihrem Kopf
+    # (services._build_query_filtered).
+    AccountingHandover: "fiscal_year",
     InvoiceCounter: "year",
     Incident: ("date_year", "detected_at"),
     WaterSample: ("date_year", "sample_date"),
@@ -296,6 +306,8 @@ NATURAL_KEYS = {
     DocumentEvent: None,                # Protokoll — immer Insert
     Transfer: None,
     RealAccountYearBalance: ("real_account_id", "year"),
+    AccountingHandover: None,           # Protokoll — immer Insert
+    AccountingHandoverItem: None,       # Kind einer Übergabe — immer Insert
     DunningPolicy: ("name",),
     DunningStage: ("policy_id", "level"),
     DunningNotice: None,
@@ -395,6 +407,8 @@ FOREIGN_KEYS = {
     DocumentEvent: {"document_id": Document},
     Transfer: {"from_real_account_id": RealAccount, "to_real_account_id": RealAccount},
     RealAccountYearBalance: {"real_account_id": RealAccount},
+    AccountingHandoverItem: {"handover_id": AccountingHandover, "booking_id": Booking,
+                             "transfer_id": Transfer},
     DunningStage: {"policy_id": DunningPolicy},
     DunningNotice: {"invoice_id": Invoice, "stage_id": DunningStage,
                     "fee_invoice_item_id": InvoiceItem},

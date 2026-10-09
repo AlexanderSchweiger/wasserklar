@@ -28,9 +28,11 @@
       <div class="table-responsive">
         <table class="table table-sm table-vcenter mb-0">
           <thead>
+            {% set _ledger = handover_active() %}
             <tr>
               <th style="width:7rem">Satz</th>
               <th>Bezeichnung</th>
+              {% if _ledger %}<th title="Steuerschlüssel für die Steuerberatung (Umsatzsteuer / Vorsteuer)">Steuerschlüssel</th>{% endif %}
               <th>Status</th>
               <th></th>
             </tr>
@@ -45,6 +47,18 @@
                 <span class="badge bg-azure-lt ms-1" title="Standard-USt für Wasserpositionen">Standard Wasser</span>
                 {% endif %}
               </td>
+              {% if _ledger %}
+              {% set _dk = handover_default_tax_keys(r.rate) %}
+              <td class="text-nowrap small">
+                {% set _ko = r.ledger_tax_key_output or _dk[0] %}
+                {% set _ki = r.ledger_tax_key_input or _dk[1] %}
+                {% if _ko or _ki %}
+                <span title="Einnahmen (Umsatzsteuer)">{{ _ko or '–' }}</span> /
+                <span title="Ausgaben (Vorsteuer)">{{ _ki or '–' }}</span>
+                {% if not (r.ledger_tax_key_output or r.ledger_tax_key_input) %}<span class="text-muted">(Standard)</span>{% endif %}
+                {% else %}<span class="text-muted">—</span>{% endif %}
+              </td>
+              {% endif %}
               <td>
                 {% if r.active %}
                 <span class="badge bg-success-lt">aktiv</span>
@@ -63,7 +77,7 @@
             </tr>
             {% else %}
             <tr>
-              <td colspan="4" class="text-muted">
+              <td colspan="{{ 5 if _ledger else 4 }}" class="text-muted">
                 Noch keine Steuersätze gepflegt — es gelten die Standardsätze für
                 {{ country_profile.name }}. „Länder-Defaults übernehmen" legt sie an.
               </td>

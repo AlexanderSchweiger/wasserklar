@@ -52,8 +52,10 @@
       <i class="fas fa-info-circle me-1"></i>
       Es wird eine Gegenbuchung über
       <strong>{{ (booking.amount * -1)|de_number }} €</strong>
-      auf dem Konto <strong>{{ booking.account.name }}</strong> erstellt.
-      Die Buchungsnummer und alle Verknüpfungen bleiben erhalten.
+      auf dem Konto <strong>{{ booking.account.name }}</strong> mit dem heutigen Datum
+      (<strong>{{ today_date.strftime('%d.%m.%Y') }}</strong>) erstellt.
+      Die Originalbuchung bleibt unverändert am {{ booking.date.strftime('%d.%m.%Y') }} stehen;
+      Auswertungen und USt-Voranmeldung zeigen beide Buchungen in ihrem jeweiligen Zeitraum.
     </div>
 
     {# Warnung: Rechnung wird storniert #}

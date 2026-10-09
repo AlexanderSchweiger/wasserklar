@@ -205,6 +205,10 @@ def create_app(config_name=None):
     app.jinja_env.globals["tariff_levels_text"] = levels_text
     app.jinja_env.globals["tariff_condition_text"] = condition_text
 
+    # USt-Anteil einer Buchung mit Vorzeichen (Storno-Gegenbuchung negativ).
+    from app.accounting.services import signed_booking_tax
+    app.jinja_env.globals["signed_booking_tax"] = signed_booking_tax
+
     # Nummernkreise am Kontakt (Kunden-/Mitgliedsnummer, Lieferantennummer):
     # Beschriftung je WG-Status + Formular-Kontext (Vorschlag, Schutz).
     from app.customers.numbers import (number_label as _contact_number_label,
@@ -251,6 +255,15 @@ def create_app(config_name=None):
     from app.documents import service as _documents_svc
     app.jinja_env.globals["document_counts_for"] = _documents_svc.counts_by_entity
     app.jinja_env.filters["filesize"] = _documents_svc.format_size
+
+    # Übergabe an die Steuerberatung: Zuordnungsfelder (Sachkonto, Steuerschlüssel) und
+    # Menüpunkte erscheinen nur, wenn eine Erweiterung ein Format angemeldet hat und der
+    # Mandant es eingeschaltet hat (siehe app/accounting/handover.py).
+    from app.accounting import handover as _handover
+    app.jinja_env.globals["handover_active"] = _handover.is_active
+    app.jinja_env.globals["handover_format_info"] = _handover.active_format_info
+    app.jinja_env.globals["handover_formats"] = _handover.available_formats
+    app.jinja_env.globals["handover_default_tax_keys"] = _handover.default_tax_keys
 
     # Zu grosser Upload (Request ueber der Grenze, siehe _limit_document_uploads): deutsche
     # Meldung, fuer fetch (Beleg-Upload) als JSON, sonst als Hinweis auf der Belegseite.

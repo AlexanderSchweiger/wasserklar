@@ -34,10 +34,14 @@
         </div>
       </div>
 
-      {% if ra.iban or ra.description %}
+      {% set _ledger_ra = handover_active() and ra.ledger_account %}
+      {% if ra.iban or ra.description or _ledger_ra %}
       <div class="card-body py-2 border-bottom">
         {% if ra.iban %}
         <div class="text-muted small"><i class="fas fa-hashtag me-1"></i><code>{{ ra.iban }}</code></div>
+        {% endif %}
+        {% if _ledger_ra %}
+        <div class="text-muted small"><i class="fas fa-file-export me-1"></i>Sachkonto <code>{{ ra.ledger_account }}</code></div>
         {% endif %}
         {% if ra.description %}
         <div class="text-muted small">{{ ra.description }}</div>

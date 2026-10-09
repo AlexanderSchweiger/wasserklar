@@ -25,6 +25,13 @@
    gesetzt (bulk_done_count), beim normalen Filter-/Voll-Render = None. #}
 {% if bulk_done_count is not none %}
 <div id="bookings-bulk-flash" hx-swap-oob="true">
+  {% if bulk_handed_over_skipped %}
+  <div class="alert alert-warning alert-dismissible" role="alert">
+    Bei {{ bulk_handed_over_skipped }} Buchung(en) wurden Konto und Projekt nicht geändert —
+    sie sind bereits an die Steuerberatung übergeben.
+    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Schließen"></button>
+  </div>
+  {% endif %}
   {% if bulk_done_count > 0 %}
   <div class="alert alert-success alert-dismissible" role="alert">
     {{ bulk_done_count }} Buchung(en) aktualisiert.
@@ -50,6 +57,18 @@
       Auswahl aufheben
     </button>
   </div>
+  {# Offene Buchungen (heute erfasst) werden nachts automatisch verbucht — hier sofort. Zählt alle
+     offenen Buchungen, nicht nur die gefilterten; Bestätigung im Modal #postOpenModal (bookings.html). #}
+  {% if open_count %}
+  <div class="d-flex align-items-center gap-2 small" id="bookings-open-hint">
+    <span class="badge bg-azure-lt">{{ open_count }} offen</span>
+    <span class="text-secondary d-none d-md-inline">wird über Nacht verbucht</span>
+    <button type="button" class="btn btn-sm btn-outline-primary"
+            data-bs-toggle="modal" data-bs-target="#postOpenModal">
+      <i class="fas fa-check-double me-1"></i> Jetzt verbuchen
+    </button>
+  </div>
+  {% endif %}
   <div class="text-end ms-auto">
     <div class="fw-bold">Summe:
       <span class="{{ 'text-success' if total_amount >= 0 else 'text-danger' }}">{{ total_amount|de_number }}&nbsp;€</span>
@@ -90,7 +109,9 @@
     {% set g = row.group %}
     {% set is_stornogruppe = g.status == 'Storniert' %}
     {% set effective_children = row.children | rejectattr('storno_of_id') | list %}
-    {% set total_bkgs = row.children | selectattr('storno_of_id', 'none') | rejectattr('status', 'equalto', 'Storniert') | list %}
+    {# Generalumkehr: auch eine stornierte Sammelbuchung zeigt ihren Betrag — die
+       Gegenbuchungen stehen als eigene Zeile am Storno-Datum (booking_group_storno). #}
+    {% set total_bkgs = row.children | selectattr('storno_of_id', 'none') | list %}
     {% set ns = namespace(total=0, tax=0) %}
     {% for c in total_bkgs %}
       {% set ns.total = ns.total + c.amount %}
@@ -119,7 +140,7 @@
         {% if g.reference %}
         <span class="badge bg-secondary text-white me-1">{{ g.reference }}</span>
         {% endif %}
-        <span class="fw-bold{% if is_stornogruppe %} text-decoration-line-through{% endif %}">{{ g.description }}</span>
+        <span class="fw-bold">{{ g.description }}</span>
         {% if g.invoice_id %}
         <a href="{{ url_for('invoices.detail', invoice_id=g.invoice_id) }}"
            class="badge bg-light text-dark ms-1">
@@ -128,7 +149,8 @@
         {% endif %}
         <small class="text-muted ms-1">({{ effective_children|length }} Zeilen)</small>
         {% if is_stornogruppe %}
-        <span class="badge bg-danger ms-1"><i class="fas fa-ban me-1"></i>STORNIERT</span>
+        <span class="badge bg-danger text-white ms-1"
+              {% if g.storno_reason %}title="{{ g.storno_reason }}"{% endif %}><i class="fas fa-ban me-1"></i>STORNIERT{% if g.storno_date %} am {{ g.storno_date.strftime('%d.%m.%Y') }}{% endif %}</span>
         {% endif %}
       </td>
       <td style="max-width:140px; white-space:nowrap; overflow:hidden">
@@ -213,9 +235,7 @@
         </div>
       </td>
       <td>
-        <span class="small {% if b.status == 'Storniert' %}text-decoration-line-through{% endif %}">
-          {{ b.description }}
-        </span>
+        <span class="small">{{ b.description }}</span>
       </td>
       <td style="max-width:100px; overflow:hidden">
         {% if b.project %}
@@ -241,15 +261,15 @@
       </td>
       <td class="text-muted small">—</td>
       <td class="text-center px-1">
-        {% if b.tax_rate and b.tax_rate > 0 and b.status != 'Storniert' %}
+        {% if b.tax_rate and b.tax_rate > 0 %}
           <span class="text-muted small">{{ b.tax_rate | int }}</span>
         {% else %}
           <span class="text-muted">—</span>
         {% endif %}
       </td>
       <td class="text-end text-nowrap text-muted small">
-        {% if b.tax_rate and b.tax_rate > 0 and b.status != 'Storniert' %}
-          {{ (b.amount|abs * b.tax_rate / (100 + b.tax_rate))|de_number }}&nbsp;€
+        {% if b.tax_rate and b.tax_rate > 0 %}
+          {{ signed_booking_tax(b)|de_number }}&nbsp;€
         {% else %}
           <span class="text-muted">—</span>
         {% endif %}
@@ -260,6 +280,83 @@
       <td class="col-actions"></td>
     </tr>
     {% endif %}
+    {% endfor %}
+
+    {# ── STORNO EINER SAMMELBUCHUNG (Gegenbuchungen am Storno-Datum) ── #}
+    {% elif row.type == 'booking_group_storno' %}
+    {% set g = row.group %}
+    {% set ns = namespace(total=0, tax=0) %}
+    {% for c in row.children %}
+      {% set ns.total = ns.total + c.amount %}
+      {% if c.tax_rate and c.tax_rate > 0 %}{% set ns.tax = ns.tax + signed_booking_tax(c) %}{% endif %}
+    {% endfor %}
+    <tr class="booking-group-header booking-storno">
+      <td></td>
+      <td style="white-space:nowrap">{{ row.date.strftime('%d.%m.%Y') }}</td>
+      <td class="text-center">
+        <i class="fas fa-undo-alt text-danger" title="Storno-Gegenbuchung"></i>
+      </td>
+      <td colspan="3">
+        <span class="badge bg-danger text-white me-1"><i class="fas fa-undo-alt me-1"></i>STORNO</span>
+        <span class="fw-bold">Storno: {{ g.description }}</span>
+        <small class="text-muted ms-1">zur Sammelbuchung vom {{ g.date.strftime('%d.%m.%Y') }}
+          ({{ row.children|length }} Zeilen){% if g.storno_reason %} — {{ g.storno_reason }}{% endif %}</small>
+      </td>
+      <td style="max-width:140px; white-space:nowrap; overflow:hidden">
+        {% if g.customer %}
+        <span class="text-truncate d-inline-block small" style="max-width:100%" title="{{ g.customer.name }}">
+          <i class="fas fa-user me-1 text-muted"></i>{{ g.customer.name }}
+        </span>
+        {% else %}<span class="text-muted">—</span>{% endif %}
+      </td>
+      <td class="text-center px-1"><span class="text-muted">—</span></td>
+      <td class="text-end text-nowrap text-muted small">
+        {% if ns.tax %}{{ ns.tax|de_number }}&nbsp;€{% else %}<span class="text-muted">—</span>{% endif %}
+      </td>
+      <td class="text-end fw-bold text-nowrap {{ 'text-success' if ns.total >= 0 else 'text-danger' }}">
+        {{ ns.total|de_number }}&nbsp;€
+      </td>
+      <td class="text-end col-actions" style="white-space:nowrap">
+        <a href="{{ url_for('accounting.booking_group_detail', group_id=g.id) }}"
+           class="btn btn-sm btn-outline-secondary" title="Sammelbuchung ansehen">
+          <i class="fas fa-eye"></i>
+        </a>
+      </td>
+    </tr>
+    {% for b in row.children %}
+    <tr class="booking-group-child booking-storno">
+      <td></td>
+      <td></td>
+      <td class="text-center">
+        {% if b.real_account %}
+        <i class="fas {{ b.real_account.icon or 'fa-university' }} text-muted" title="{{ b.real_account.name }}"></i>
+        {% else %}<span class="text-muted">—</span>{% endif %}
+      </td>
+      <td style="max-width:140px; white-space:nowrap; overflow:hidden">
+        <div class="d-flex align-items-center gap-1" style="min-width:0">
+          <span class="text-muted flex-shrink-0">↳</span>
+          {% if b.account.code %}
+          <span class="badge bg-secondary text-white flex-shrink-0" title="{{ b.account.name }}">{{ b.account.code }}</span>
+          {% endif %}
+          <span class="text-truncate small" title="{{ b.account.name }}">{{ b.account.name }}</span>
+        </div>
+      </td>
+      <td><span class="small">{{ b.description }}</span></td>
+      <td style="max-width:100px; overflow:hidden">
+        {% if b.project %}<span class="small text-truncate d-block">{{ b.project.name }}</span>{% else %}<span class="text-muted">—</span>{% endif %}
+      </td>
+      <td class="text-muted small">—</td>
+      <td class="text-center px-1">
+        {% if b.tax_rate and b.tax_rate > 0 %}<span class="text-muted small">{{ b.tax_rate | int }}</span>{% else %}<span class="text-muted">—</span>{% endif %}
+      </td>
+      <td class="text-end text-nowrap text-muted small">
+        {% if b.tax_rate and b.tax_rate > 0 %}{{ signed_booking_tax(b)|de_number }}&nbsp;€{% else %}<span class="text-muted">—</span>{% endif %}
+      </td>
+      <td class="text-end text-nowrap small {{ 'text-success' if b.amount > 0 else 'text-danger' }}">
+        {{ b.amount|de_number }}&nbsp;€
+      </td>
+      <td class="col-actions"></td>
+    </tr>
     {% endfor %}
 
     {# ── UMBUCHUNG ────────────────────────────────────────────────── #}
@@ -307,14 +404,16 @@
     {# ── BUCHUNG ──────────────────────────────────────────────────── #}
     {% else %}
     {% set b = row.obj %}
-    {% if not b.storno_of_id %}
+    {# Generalumkehr: Original (ausgegraut) und Gegenbuchung (am Storno-Datum)
+       stehen beide in der Liste und zählen beide in der Summe. #}
     <tr class="
       {%- if b.status == 'Storniert' %} text-muted
+      {%- elif b.storno_of_id %} booking-storno
       {%- elif b.status == 'Offen' %} table-info
       {%- endif %}"
-      {%- if b.status == 'Storniert' %} style="opacity:0.5"{% endif %}>
+      {%- if b.status == 'Storniert' %} style="opacity:0.6"{% endif %}>
       <td class="text-center" style="width:1%">
-        {% if b.status != 'Storniert' and not b.group_id and b.id not in locked_booking_ids %}
+        {% if b.status != 'Storniert' and not b.storno_of_id and not b.group_id and b.id not in locked_booking_ids %}
         <input type="checkbox" class="form-check-input booking-select"
                name="booking_ids" value="{{ b.id }}" aria-label="Buchung auswählen">
         {% endif %}
@@ -341,14 +440,19 @@
         {% if b.reference %}
         <span class="badge bg-secondary text-white me-1">{{ b.reference }}</span>
         {% endif %}
-        <span class="{% if b.status == 'Storniert' %}text-decoration-line-through{% endif %}">
-          {{ b.description }}
-        </span>
-        {% if b.status == 'Storniert' and b.storno_buchung %}
+        {% if b.storno_of_id %}
+        <span class="badge bg-danger text-white me-1"><i class="fas fa-undo-alt me-1"></i>STORNO</span>
+        {% endif %}
+        <span>{{ b.description }}</span>
+        {% if b.storno_of_id and b.storno_of %}
+        <small class="text-muted ms-1">zur Buchung vom {{ b.storno_of.date.strftime('%d.%m.%Y') }}{% if b.storno_reason %} — {{ b.storno_reason }}{% endif %}</small>
+        {% endif %}
+        {% if b.status == 'Storniert' %}
         {% set sb = b.storno_buchung %}
-        {% set tip %}Storniert am {{ sb.date.strftime('%d.%m.%Y') }}{% if sb.created_by %} von {{ sb.created_by.username }}{% endif %}{% if sb.storno_reason %} — {{ sb.storno_reason }}{% endif %}{% endset %}
-        <span class="ms-1 text-danger" title="{{ tip }}" style="cursor:help">
-          <i class="fas fa-ban fa-xs"></i>
+        {% set _sdate = b.storno_date or (sb.storno_date if sb else none) %}
+        {% set tip %}{% if _sdate %}Storniert am {{ _sdate.strftime('%d.%m.%Y') }}{% else %}Storniert{% endif %}{% if sb and sb.created_by %} von {{ sb.created_by.username }}{% endif %}{% if sb and sb.storno_reason %} — {{ sb.storno_reason }}{% endif %}{% endset %}
+        <span class="badge bg-danger-lt ms-1" title="{{ tip }}" style="cursor:help">
+          <i class="fas fa-ban me-1"></i>storniert{% if _sdate %} am {{ _sdate.strftime('%d.%m.%Y') }}{% endif %}
         </span>
         {% endif %}
         {% if b.invoice_id %}
@@ -403,15 +507,15 @@
         {% endif %}
       </td>
       <td class="text-center px-1">
-        {% if b.tax_rate and b.tax_rate > 0 and b.status != 'Storniert' %}
+        {% if b.tax_rate and b.tax_rate > 0 %}
           <span class="text-muted small">{{ b.tax_rate | int }}</span>
         {% else %}
           <span class="text-muted">—</span>
         {% endif %}
       </td>
       <td class="text-end text-nowrap text-muted small">
-        {% if b.tax_rate and b.tax_rate > 0 and b.status != 'Storniert' %}
-          {{ (b.amount|abs * b.tax_rate / (100 + b.tax_rate))|de_number }}&nbsp;€
+        {% if b.tax_rate and b.tax_rate > 0 %}
+          {{ signed_booking_tax(b)|de_number }}&nbsp;€
         {% else %}
           <span class="text-muted">—</span>
         {% endif %}
@@ -420,11 +524,22 @@
         {{ b.amount|de_number }}&nbsp;€
       </td>
       <td class="text-end col-actions" style="white-space:nowrap">
+        {% set fy_locked = b.id in locked_booking_ids %}
+        {% if b.storno_of_id %}
+        {# Gegenbuchung: Notizen/Belege hängen am Original, keine Aktionen. #}
+        {% if fy_locked %}<span class="text-muted" title="Buchungsjahr abgeschlossen"><i class="fas fa-lock"></i></span>{% endif %}
+        {% else %}
         {{ note_pin('booking', b.id, notes_by_entity.get(b.id, []) if notes_by_entity is defined else none) }}
         {% if b.group_id %}{{ doc_pin('booking_group', b.group_id, doc_counts_g.get(b.group_id, 0)) }}{% else %}{{ doc_pin('booking', b.id, doc_counts_b.get(b.id, 0)) }}{% endif %}
-        {% set fy_locked = b.id in locked_booking_ids %}
         {% if fy_locked %}
         <span class="text-muted" title="Buchungsjahr abgeschlossen"><i class="fas fa-lock"></i></span>
+        {% if b.status == 'Verbucht' and not b.group_id and now_year_open %}
+        {# Generalumkehr: das Original bleibt im abgeschlossenen Jahr, die Umkehr landet heute. #}
+        <a href="{{ url_for('accounting.booking_stornieren', booking_id=b.id) }}"
+           class="btn btn-sm btn-outline-danger" title="Im laufenden Jahr stornieren">
+          <i class="fas fa-ban"></i>
+        </a>
+        {% endif %}
         {% elif b.status == 'Offen' %}
         <button type="button" class="btn btn-sm btn-outline-secondary" title="Bearbeiten"
            data-bs-toggle="modal" data-bs-target="#bookingFormModal"
@@ -450,7 +565,6 @@
            hx-target="#booking-form-host" hx-swap="innerHTML">
           <i class="fas fa-edit"></i>
         </button>
-        {% if not b.storno_of_id %}
         <a href="{{ url_for('accounting.booking_stornieren', booking_id=b.id) }}"
            class="btn btn-sm btn-outline-danger" title="Stornieren">
           <i class="fas fa-ban"></i>
@@ -459,7 +573,6 @@
         {% endif %}
       </td>
     </tr>
-    {% endif %}
     {% endif %}
 
     {% else %}

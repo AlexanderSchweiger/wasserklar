@@ -33,6 +33,39 @@
     <input type="text" name="label" class="form-control" maxlength="100"
            value="{{ val_label }}" placeholder="z. B. 7 % – ermäßigt">
   </div>
+  {% if handover_active() %}
+  {# Übergabe an die Steuerberatung (nur wenn eingeschaltet, siehe app/accounting/handover.py) #}
+  {% set _hf = handover_format_info() %}
+  {% set _defaults = handover_default_tax_keys(rate_obj.rate) if rate_obj else (none, none) %}
+  {% set val_key_out = form.get('ledger_tax_key_output', '') if form else ((rate_obj.ledger_tax_key_output or '') if rate_obj else '') %}
+  {% set val_key_in = form.get('ledger_tax_key_input', '') if form else ((rate_obj.ledger_tax_key_input or '') if rate_obj else '') %}
+  <input type="hidden" name="ledger_fields" value="1">
+  <div class="col-12">
+    <div class="border rounded p-3 bg-light">
+      <div class="fw-bold small text-muted mb-2">
+        <i class="fas fa-file-export me-1"></i> Steuerschlüssel für die Steuerberatung ({{ _hf.label }})
+      </div>
+      <div class="row g-2">
+        <div class="col-sm-6">
+          <label class="form-label">Einnahmen (Umsatzsteuer)</label>
+          <input type="text" name="ledger_tax_key_output" class="form-control" inputmode="numeric"
+                 maxlength="4" pattern="[0-9]*" value="{{ val_key_out }}"
+                 placeholder="{{ _defaults[0] or '' }}">
+        </div>
+        <div class="col-sm-6">
+          <label class="form-label">Ausgaben (Vorsteuer)</label>
+          <input type="text" name="ledger_tax_key_input" class="form-control" inputmode="numeric"
+                 maxlength="4" pattern="[0-9]*" value="{{ val_key_in }}"
+                 placeholder="{{ _defaults[1] or '' }}">
+        </div>
+      </div>
+      <div class="form-text">
+        Leer lassen übernimmt den Standard{% if _defaults[0] or _defaults[1] %} (grau vorgeschlagen){% endif %}.
+        Die Schlüssel bitte mit der Steuerberatung abstimmen.
+      </div>
+    </div>
+  </div>
+  {% endif %}
   <div class="col-12">
     <label class="form-check form-switch mb-1">
       <input type="checkbox" class="form-check-input" name="active" value="1"

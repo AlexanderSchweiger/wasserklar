@@ -2448,6 +2448,11 @@ class TaxRate(db.Model):
     # server_default, weil der SaaS-Provisioner Seeds per Roh-INSERT schreibt.
     active = db.Column(db.Boolean, nullable=False, default=True,
                        server_default=sa.true())
+    # Übergabe an die Steuerberatung (app.accounting.handover): Steuerschlüssel des
+    # Fremdprogramms fuer Einnahmen (Umsatzsteuer) bzw. Ausgaben (Vorsteuer). Leer =
+    # Länder-Default des angemeldeten Formats. Nur sichtbar, wenn ein Format aktiv ist.
+    ledger_tax_key_output = db.Column(db.String(4), nullable=True)
+    ledger_tax_key_input = db.Column(db.String(4), nullable=True)
 
     def __repr__(self):
         return f"<TaxRate {self.rate}%>"
@@ -2482,6 +2487,8 @@ class RealAccount(db.Model):
     # (Python-Defaults greifen dort nicht).
     account_type = db.Column(db.String(10), nullable=False,
                              default=TYPE_BANK, server_default=TYPE_BANK)
+    # Sachkonto im Programm der Steuerberatung (z. B. 1200 Bank), siehe app.accounting.handover.
+    ledger_account = db.Column(db.String(9), nullable=True)
 
     bookings = db.relationship("Booking", backref="real_account", lazy="dynamic")
 
@@ -2550,6 +2557,11 @@ class Account(db.Model):
     name = db.Column(db.String(200), nullable=False)
     description = db.Column(db.Text)
     active = db.Column(db.Boolean, default=True)
+    # Übergabe an die Steuerberatung (app.accounting.handover): Sachkonto im Fremdprogramm
+    # und ob die Steuer dort schon im Konto steckt (Automatikkonto → kein Steuerschlüssel).
+    ledger_account = db.Column(db.String(9), nullable=True)
+    ledger_auto_tax = db.Column(db.Boolean, nullable=False, default=False,
+                                server_default=sa.false())
 
     bookings = db.relationship("Booking", backref="account", lazy="dynamic")
 
@@ -2996,6 +3008,70 @@ class FiscalYearReopenLog(db.Model):
 
     def __repr__(self):
         return f"<FiscalYearReopenLog {self.fiscal_year_id} by {self.reopened_by_id}>"
+
+
+# ---------------------------------------------------------------------------
+# Übergabe an die Steuerberatung (Gerüst, siehe app/accounting/handover.py)
+# ---------------------------------------------------------------------------
+
+class AccountingHandover(db.Model):
+    """Eine Übergabe der Buchhaltung an die Steuerberatung (z. B. ein DATEV-Buchungsstapel).
+
+    Das OSS kennt nur das Protokoll und die Sperre; das Format selbst (Datei, Einrichtung)
+    liefert eine Erweiterung, die sich per ``handover.register_format`` anmeldet. Eine
+    aktive Übergabe sperrt die Kontierung ihrer Buchungen, eine zurückgezogene nicht mehr.
+    """
+    __tablename__ = "accounting_handovers"
+
+    STATUS_ACTIVE = "active"
+    STATUS_WITHDRAWN = "withdrawn"
+
+    id = db.Column(db.Integer, primary_key=True)
+    format = db.Column(db.String(20), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    fiscal_year = db.Column(db.Integer, nullable=False)
+    date_from = db.Column(db.Date, nullable=False)
+    date_to = db.Column(db.Date, nullable=False)
+    booking_count = db.Column(db.Integer, nullable=False, default=0)
+    transfer_count = db.Column(db.Integer, nullable=False, default=0)
+    document_count = db.Column(db.Integer, nullable=False, default=0)
+    total_amount = db.Column(db.Numeric(12, 2), nullable=False, default=0)
+    options = db.Column(db.Text, nullable=True)  # JSON: Schalter + Snapshot der Einrichtung
+    file_name = db.Column(db.String(200), nullable=True)
+    sha256 = db.Column(db.String(64), nullable=True)
+    status = db.Column(db.String(20), nullable=False, default=STATUS_ACTIVE,
+                       server_default=STATUS_ACTIVE)
+    withdrawn_at = db.Column(db.DateTime, nullable=True)
+    withdrawn_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    withdraw_reason = db.Column(db.String(500), nullable=True)
+
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+    withdrawn_by = db.relationship("User", foreign_keys=[withdrawn_by_id])
+    items = db.relationship("AccountingHandoverItem", backref="handover",
+                            cascade="all, delete-orphan", lazy="dynamic")
+
+    @property
+    def is_active(self):
+        return self.status == self.STATUS_ACTIVE
+
+    def __repr__(self):
+        return f"<AccountingHandover {self.id} {self.format} {self.date_from}–{self.date_to}>"
+
+
+class AccountingHandoverItem(db.Model):
+    """Was in einer Übergabe steckt: genau eine Buchung oder eine Umbuchung je Zeile."""
+    __tablename__ = "accounting_handover_items"
+
+    id = db.Column(db.Integer, primary_key=True)
+    handover_id = db.Column(db.Integer, db.ForeignKey("accounting_handovers.id", ondelete="CASCADE"),
+                            nullable=False, index=True)
+    booking_id = db.Column(db.Integer, db.ForeignKey("bookings.id"), nullable=True, index=True)
+    transfer_id = db.Column(db.Integer, db.ForeignKey("transfers.id"), nullable=True, index=True)
+
+    def __repr__(self):
+        target = f"booking={self.booking_id}" if self.booking_id else f"transfer={self.transfer_id}"
+        return f"<AccountingHandoverItem {self.handover_id} {target}>"
 
 
 class InvoiceCounter(db.Model):

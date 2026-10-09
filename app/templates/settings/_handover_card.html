@@ -1,0 +1,42 @@
+{# Tab „Steuern": Übergabe an die Steuerberatung ein-/ausschalten.
+   Nur sichtbar, wenn eine Erweiterung ein Format angemeldet hat (app/accounting/handover.py,
+   z. B. DATEV in der gehosteten Version) — im reinen OSS erscheint die Karte nie.
+   Gehört zum umschließenden Einstellungsformular („Einstellungen speichern"). #}
+{% set _formats = handover_formats() %}
+{% if _formats %}
+{% set _active = handover_format_info() %}
+<div class="card mt-3">
+  <div class="card-header">
+    <h3 class="card-title"><i class="fas fa-file-export me-1"></i> Übergabe an die Steuerberatung</h3>
+  </div>
+  <div class="card-body">
+    <p class="text-muted small mb-3">
+      Gibt die Buchhaltung als Datei an das Programm Ihrer Steuerberatung weiter. Ist eine
+      Übergabe eingeschaltet, erscheinen in Kontenplan, Bank&nbsp;&amp;&nbsp;{{ term('cash') }}
+      und bei den Steuersätzen zusätzliche Felder (Sachkonto, Steuerschlüssel). Ausschalten
+      löscht nichts — die Zuordnungen und bisherigen Übergaben bleiben gespeichert.
+    </p>
+    <div class="form-selectgroup">
+      <label class="form-selectgroup-item">
+        <input type="radio" name="accounting_handover_format" value="" class="form-selectgroup-input"
+               {{ 'checked' if not _active }}>
+        <span class="form-selectgroup-label">Keine Übergabe</span>
+      </label>
+      {% for key, fmt in _formats.items() %}
+      <label class="form-selectgroup-item">
+        <input type="radio" name="accounting_handover_format" value="{{ key }}" class="form-selectgroup-input"
+               {{ 'checked' if _active and _active.key == key }}>
+        <span class="form-selectgroup-label">{{ fmt.label }}</span>
+      </label>
+      {% endfor %}
+    </div>
+    {% if _active and _active.setup_endpoint %}
+    <div class="mt-3">
+      <a href="{{ url_for(_active.setup_endpoint) }}" class="btn btn-sm btn-outline-primary">
+        <i class="fas fa-sliders-h me-1"></i> {{ _active.label }} einrichten
+      </a>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}

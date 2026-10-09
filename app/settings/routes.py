@@ -7,6 +7,7 @@ from flask_login import login_required, current_user
 
 from app import country as country_mod
 from app import tax_service
+from app.accounting import handover as handover_svc
 from app.settings import bp
 from app.extensions import db
 from app.models import AppSetting, TaxRate
@@ -108,6 +109,10 @@ def index():
         # Lieferantennummer vergeben ist (danach ist das Feld deaktiviert und fehlt).
         if 'supplier_number_start' in request.form:
             _save_supplier_number_start(request.form.get('supplier_number_start'))
+
+        # Übergabe an die Steuerberatung (Format an/aus) — das Feld gibt es nur, wenn eine
+        # Erweiterung ein Format angemeldet hat; unbekannte Werte werden verworfen.
+        handover_svc.save_setting_from_form(request.form)
 
         # Optionaler Luftbild-WMS fuer alle Karten (nur https; ohne Layer
         # wirkungslos, siehe app.country.map_config).
@@ -509,6 +514,10 @@ def tax_rate_new():
             flash(err, 'danger')
             return _tax_rate_body(None, request.form)
         row = TaxRate(rate=data['rate'], label=data['label'], active=data['active'])
+        err = handover_svc.apply_tax_rate_fields(row, request.form)
+        if err:
+            flash(err, 'danger')
+            return _tax_rate_body(None, request.form)
         db.session.add(row)
         db.session.commit()
         flash(f'Steuersatz {tax_service.default_label(row.rate)} angelegt.', 'success')
@@ -522,6 +531,10 @@ def tax_rate_edit(rate_id):
     row = db.get_or_404(TaxRate, rate_id)
     if request.method == 'POST':
         data, err = _parse_tax_rate_form(request.form, row)
+        if err:
+            flash(err, 'danger')
+            return _tax_rate_body(row, request.form)
+        err = handover_svc.apply_tax_rate_fields(row, request.form)
         if err:
             flash(err, 'danger')
             return _tax_rate_body(row, request.form)

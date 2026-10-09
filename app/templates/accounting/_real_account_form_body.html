@@ -73,6 +73,19 @@
   <label class="form-label">Beschreibung</label>
   <input type="text" name="description" class="form-control" value="{{ val_description }}">
 </div>
+{% if handover_active() %}
+{# Übergabe an die Steuerberatung (nur wenn eingeschaltet, siehe app/accounting/handover.py) #}
+{% set _hf = handover_format_info() %}
+{% set val_ledger = form.get('ledger_account', '') if form else ((real_account.ledger_account or '') if real_account else '') %}
+<input type="hidden" name="ledger_fields" value="1">
+<div class="mb-3">
+  <label class="form-label">Sachkonto für die Steuerberatung ({{ _hf.label }})</label>
+  <input type="text" name="ledger_account" class="form-control" inputmode="numeric"
+    maxlength="9" pattern="[0-9 ]*" value="{{ val_ledger }}" style="max-width:12rem"
+    placeholder="z. B. 1200">
+  <small class="form-hint">Kontonummer dieses Bank- bzw. Bargeldkontos im Programm der Steuerberatung.</small>
+</div>
+{% endif %}
 <div class="mb-3">
   <label class="form-label">Anfangssaldo (€)</label>
   <div class="input-group">

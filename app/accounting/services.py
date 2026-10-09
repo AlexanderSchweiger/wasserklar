@@ -6,19 +6,30 @@ Umsatzsteuer-Voranmeldung sind hier gebündelt. Routen sollen ausschließlich
 auf diese Funktionen zugreifen, um Doppelimplementierungen und divergierende
 Storno-Behandlung zu vermeiden.
 
-Storno-Regel
-------------
+Storno-Regel (Generalumkehr)
+----------------------------
 Eine Stornierung erzeugt zwei Buchungen, die zusammen Null ergeben:
 
-* die Originalbuchung mit ``status = "Storniert"``
-* die Stornogegenbuchung mit ``storno_of_id = original.id`` (Betrag negiert,
-  Status "Verbucht")
+* die Originalbuchung mit ``status = "Storniert"`` — Datum und Betrag bleiben
+* die Stornogegenbuchung mit ``storno_of_id = original.id``: Betrag negiert,
+  Status "Verbucht", **Datum = Storno-Datum** (heute), alle übrigen Felder
+  (Konto, Bank/Kasse, Projekt, Kontakt, Steuersatz …) wie das Original
 
-Beide gehören zum selben Storno-Paar. Frühere Implementierungen filterten
-nur ``status != "Storniert"`` und zählten dadurch ausschließlich die
-Gegenbuchung mit – das ergab fälschlicherweise ``-original.amount`` statt
-``0``. Korrekte Behandlung: **beide** Hälften ignorieren oder **beide**
-mitzählen. Dieser Service ignoriert beide.
+**Auswertungen zählen beide Hälften** (:func:`ledger_filter`): jeder Zeitraum
+bleibt so, wie er war — das Original im Zeitraum seines Datums, die Umkehr im
+Zeitraum des Stornos. Über beide Zeiträume zusammen ergibt das Paar Null.
+Damit ändert ein Storno nie eine schon gemeldete USt-Voranmeldung oder ein
+abgeschlossenes Buchungsjahr; eine Buchung aus einem abgeschlossenen Jahr
+lässt sich im offenen Jahr stornieren.
+
+Die **Richtung** (Einnahme/Ausgabe) einer Gegenbuchung ist die ihres
+Originals — eine stornierte Einnahme mindert die Einnahmen, sie ist keine
+Ausgabe (:func:`income_side_clause`, :func:`is_income_side`); ihre Steuer
+zählt negativ (:func:`signed_booking_tax`).
+
+:func:`storno_filter` (beide Hälften weg) bleibt für die Frage „welche
+Buchungen sind noch wirksam?“ — Bezahlt-Status, Belege, Bearbeitbarkeit —,
+nicht für Summen über einen Zeitraum.
 """
 
 from collections import OrderedDict
@@ -53,7 +64,7 @@ def apply_storno_filter(query):
 
 
 def is_effective_booking(booking):
-    """True, wenn die Buchung in Summenberechnungen einfließen soll."""
+    """True, wenn die Buchung noch wirksam ist (weder storniert noch Gegenbuchung)."""
     if booking is None:
         return False
     if booking.status == Booking.STATUS_STORNIERT:
@@ -61,6 +72,62 @@ def is_effective_booking(booking):
     if booking.storno_of_id is not None:
         return False
     return True
+
+
+# ---------------------------------------------------------------------------
+# Hauptbuch-Sicht (Auswertungen über Zeiträume)
+# ---------------------------------------------------------------------------
+
+def ledger_filter():
+    """Filter für Summen über einen Zeitraum: Original **und** Gegenbuchung zählen.
+
+    Ausgeschlossen ist nur ein Original ohne Gegenbuchung (Altbestand, der vor
+    der Generalumkehr ohne Partner auf „Storniert“ gesetzt wurde) — es zählte
+    nie und darf nicht plötzlich wieder auftauchen.
+    """
+    return db.or_(
+        Booking.status != Booking.STATUS_STORNIERT,
+        Booking.storno_buchung.has(),
+    )
+
+
+def apply_ledger_filter(query):
+    return query.filter(ledger_filter())
+
+
+def counts_in_ledger(booking):
+    """Python-Gegenstück zu :func:`ledger_filter`."""
+    if booking is None:
+        return False
+    return booking.status != Booking.STATUS_STORNIERT or booking.storno_buchung is not None
+
+
+def income_side_clause():
+    """Einnahme-Seite: positive Buchungen und Gegenbuchungen stornierter Einnahmen."""
+    return db.or_(
+        db.and_(Booking.storno_of_id.is_(None), Booking.amount > 0),
+        db.and_(Booking.storno_of_id.isnot(None), Booking.amount < 0),
+    )
+
+
+def expense_side_clause():
+    """Ausgabe-Seite: negative Buchungen und Gegenbuchungen stornierter Ausgaben."""
+    return db.or_(
+        db.and_(Booking.storno_of_id.is_(None), Booking.amount < 0),
+        db.and_(Booking.storno_of_id.isnot(None), Booking.amount > 0),
+    )
+
+
+def is_income_side(booking):
+    """True für Einnahmen — bei einer Gegenbuchung nach der Richtung des Originals."""
+    amount = booking.amount or 0
+    return amount < 0 if booking.storno_of_id is not None else amount > 0
+
+
+def signed_booking_tax(booking):
+    """USt-Anteil mit Vorzeichen: positiv, bei einer Gegenbuchung negativ (mindert die Steuer)."""
+    tax = booking_tax(booking)
+    return -tax if booking.storno_of_id is not None else tax
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +142,22 @@ def auto_post_bookings():
         Booking.date < today,
     ).update({"status": Booking.STATUS_VERBUCHT}, synchronize_session=False)
     db.session.commit()
+
+
+def open_bookings_query(until=None):
+    """Offene Buchungen bis einschließlich ``until`` (Standard: heute)."""
+    return Booking.query.filter(Booking.status == Booking.STATUS_OFFEN,
+                                Booking.date <= (until or date.today()))
+
+
+def post_open_bookings(until=None):
+    """Verbucht alle offenen Buchungen bis einschließlich heute **sofort** — dasselbe, was der
+    nächtliche ``mark-posted``-Lauf am Folgetag täte (dann sind Datum, Betrag, Belegnummer und
+    Steuersatz gesperrt, Löschen geht nur noch per Storno). Liefert die Anzahl; committet."""
+    count = open_bookings_query(until).update({"status": Booking.STATUS_VERBUCHT},
+                                              synchronize_session=False)
+    db.session.commit()
+    return count
 
 
 def locked_fiscal_year(booking_date):
@@ -164,7 +247,7 @@ def _sum_bookings(ra_id, *date_filters):
         Booking.real_account_id == ra_id,
         *date_filters,
     )
-    q = apply_storno_filter(q)
+    q = apply_ledger_filter(q)
     return q.scalar() or Decimal("0")
 
 
@@ -263,23 +346,24 @@ def year_movements(ra_id, year):
     * ``expense`` – Summe negativer Buchungen (positiv) + ausgehender Umbuchungen
     * ``year_total`` – Saldo (income - expense bzw. Buchungssumme + Umbuchungssaldo)
 
-    Stornopaare werden ignoriert.
+    Storno-Gegenbuchungen zählen auf der Seite ihres Originals (mindern also die
+    Einnahmen bzw. Ausgaben im Jahr des Stornos).
     """
     income_book = _sum_bookings(
         ra_id,
         extract("year", Booking.date) == year,
-        Booking.amount > 0,
+        income_side_clause(),
     )
     expense_book = _sum_bookings(
         ra_id,
         extract("year", Booking.date) == year,
-        Booking.amount < 0,
+        expense_side_clause(),
     )
     incoming = _sum_transfers_in(ra_id, extract("year", Transfer.date) == year)
     outgoing = _sum_transfers_out(ra_id, extract("year", Transfer.date) == year)
 
     income = Decimal(str(income_book)) + Decimal(str(incoming))
-    expense = abs(Decimal(str(expense_book))) + Decimal(str(outgoing))
+    expense = -Decimal(str(expense_book)) + Decimal(str(outgoing))
     year_total = (
         Decimal(str(income_book)) + Decimal(str(expense_book))
         + Decimal(str(incoming)) - Decimal(str(outgoing))
@@ -310,11 +394,11 @@ def year_account_totals(year, real_account_id=None):
     from app.models import Account
 
     income_expr = func.coalesce(
-        func.sum(case((Booking.amount > 0, Booking.amount), else_=0)),
+        func.sum(case((income_side_clause(), Booking.amount), else_=0)),
         0,
     )
     expense_expr = func.coalesce(
-        func.sum(case((Booking.amount < 0, -Booking.amount), else_=0)),
+        func.sum(case((expense_side_clause(), -Booking.amount), else_=0)),
         0,
     )
 
@@ -328,7 +412,7 @@ def year_account_totals(year, real_account_id=None):
         .join(Booking, Booking.account_id == Account.id)
         .filter(extract("year", Booking.date) == year)
     )
-    q = apply_storno_filter(q)
+    q = apply_ledger_filter(q)
     if real_account_id:
         q = q.filter(Booking.real_account_id == real_account_id)
     return q.group_by(Account.id).order_by(Account.name).all()
@@ -349,9 +433,11 @@ def year_income_expense(year, real_account_id=None):
     for r in rows:
         inc = Decimal(str(r.income or 0))
         exp = Decimal(str(r.expense or 0))
-        if inc > 0:
+        # != 0 statt > 0: liegt nur die Storno-Hälfte eines Paares im Jahr,
+        # ist der Kontowert negativ und muss trotzdem in der Summe stehen.
+        if inc != 0:
             income_rows.append((r.id, r.name, inc))
-        if exp > 0:
+        if exp != 0:
             expense_rows.append((r.id, r.name, exp))
     total_income = sum((r[2] for r in income_rows), Decimal("0"))
     total_expense = sum((r[2] for r in expense_rows), Decimal("0"))
@@ -378,11 +464,11 @@ def year_project_summary(year, real_account_id=None):
     from app.models import Account, Project
 
     income_expr = func.coalesce(
-        func.sum(case((Booking.amount > 0, Booking.amount), else_=0)),
+        func.sum(case((income_side_clause(), Booking.amount), else_=0)),
         0,
     )
     expense_expr = func.coalesce(
-        func.sum(case((Booking.amount < 0, -Booking.amount), else_=0)),
+        func.sum(case((expense_side_clause(), -Booking.amount), else_=0)),
         0,
     )
 
@@ -400,7 +486,7 @@ def year_project_summary(year, real_account_id=None):
         .join(Account, Booking.account_id == Account.id)
         .filter(extract("year", Booking.date) == year)
     )
-    q = apply_storno_filter(q)
+    q = apply_ledger_filter(q)
     if real_account_id:
         q = q.filter(Booking.real_account_id == real_account_id)
     rows = q.group_by(Project.id, Project.name, Account.id, Account.name).order_by(
@@ -430,9 +516,9 @@ def year_project_summary(year, real_account_id=None):
 
 
 def year_bookings(year, real_account_id=None):
-    """Liefert alle effektiven Buchungen eines Jahres (Stornopaare ausgeschlossen)."""
+    """Liefert alle Buchungen eines Jahres, die im Hauptbuch zählen (inkl. Stornopaare)."""
     q = Booking.query.filter(extract("year", Booking.date) == year)
-    q = apply_storno_filter(q)
+    q = apply_ledger_filter(q)
     if real_account_id:
         q = q.filter(Booking.real_account_id == real_account_id)
     return q.order_by(Booking.date, Booking.id).all()
@@ -513,7 +599,9 @@ def ust_compute(year, quartal):
     Liefert ``(ust_rows, vst_rows)`` als sortierte Listen
     ``[(rate, {brutto, netto, steuer}), ...]``.
 
-    Stornopaare werden ignoriert.
+    Eine Storno-Gegenbuchung zählt im Zeitraum des Stornos **negativ** auf der
+    Seite ihres Originals (USt bzw. Vorsteuer); das Original bleibt in seinem
+    Zeitraum stehen.
     """
     date_from, date_to = ust_period(year, quartal)
 
@@ -522,16 +610,17 @@ def ust_compute(year, quartal):
         .filter(Booking.date >= date_from, Booking.date <= date_to)
         .filter(Booking.tax_rate.isnot(None), Booking.tax_rate > 0)
     )
-    q = apply_storno_filter(q)
+    q = apply_ledger_filter(q)
     bookings = q.join(Booking.account).order_by(Booking.date, Booking.id).all()
 
     ust_rows = {}
     vst_rows = {}
     for b in bookings:
-        tax = booking_tax(b)
-        brutto = abs(b.amount)
+        sign = -1 if b.storno_of_id is not None else 1
+        tax = booking_tax(b) * sign
+        brutto = abs(b.amount) * sign
         netto = brutto - tax
-        target = ust_rows if b.amount > 0 else vst_rows
+        target = ust_rows if is_income_side(b) else vst_rows
         rate_key = int(b.tax_rate)
         if rate_key not in target:
             target[rate_key] = {"brutto": Decimal("0"), "steuer": Decimal("0"), "netto": Decimal("0")}
@@ -575,7 +664,7 @@ def fiscal_year_close_summary(year):
 
     Liefert eine Liste mit Eintrag pro Konto: ``ra``, ``jan1``, ``einnahmen``,
     ``ausgaben`` (negativ), ``transfers_netto``, ``dec31``.
-    Stornopaare werden ignoriert.
+    Storno-Gegenbuchungen zählen auf der Seite ihres Originals.
     """
     real_accs = RealAccount.query.order_by(RealAccount.name).all()
     summary = []
@@ -584,12 +673,12 @@ def fiscal_year_close_summary(year):
         einnahmen = _sum_bookings(
             ra.id,
             extract("year", Booking.date) == year,
-            Booking.amount > 0,
+            income_side_clause(),
         )
         ausgaben = _sum_bookings(
             ra.id,
             extract("year", Booking.date) == year,
-            Booking.amount < 0,
+            expense_side_clause(),
         )
         transfers_in = _sum_transfers_in(ra.id, extract("year", Transfer.date) == year)
         transfers_out = _sum_transfers_out(ra.id, extract("year", Transfer.date) == year)
@@ -887,19 +976,81 @@ def booking_group_from_invoice_payment(
     return group, children
 
 
+def storno_blocker(storno_date=None):
+    """Deutsche Fehlermeldung, wenn am ``storno_date`` (Standard: heute) nicht
+    storniert werden darf, sonst ``None``.
+
+    Maßgeblich ist das Buchungsjahr der **Gegenbuchung**, nicht das des
+    Originals: das Original bleibt unverändert in seinem (auch abgeschlossenen)
+    Jahr stehen, die Umkehr landet im offenen Jahr.
+    """
+    storno_date = storno_date or date.today()
+    fy = locked_fiscal_year(storno_date)
+    if fy is not None:
+        return (
+            f"Das Buchungsjahr {fy.year} ist abgeschlossen — am "
+            f"{storno_date.strftime('%d.%m.%Y')} kann nicht storniert werden."
+        )
+    return None
+
+
+def _storno_partner(original, reason, created_by_id, storno_date):
+    """Gegenbuchung zu ``original``: Betrag negiert, Datum = Storno-Datum, sonst alles gleich."""
+    return Booking(
+        date=storno_date,
+        account_id=original.account_id,
+        amount=-Decimal(str(original.amount)),
+        description=f"Storno: {original.description}",
+        reference=original.reference,
+        invoice_id=original.invoice_id,
+        open_item_id=original.open_item_id,
+        project_id=original.project_id,
+        real_account_id=original.real_account_id,
+        customer_id=original.customer_id,
+        tax_rate=original.tax_rate,
+        status=Booking.STATUS_VERBUCHT,
+        storno_of_id=original.id,
+        storno_reason=reason,
+        storno_date=storno_date,
+        group_id=original.group_id,
+        created_by_id=created_by_id,
+    )
+
+
+def _mark_storniert(original, reason, storno_date):
+    original.status = Booking.STATUS_STORNIERT
+    original.storno_reason = reason
+    original.storno_date = storno_date
+
+
+def storno_booking(booking, reason, created_by_id, storno_date=None):
+    """Storniert eine Einzelbuchung per Generalumkehr (siehe Modul-Docstring).
+
+    Legt die Gegenbuchung mit dem Storno-Datum an und setzt das Original auf
+    ``Storniert`` (Belege: die Verknüpfung bleibt als Nachweis). Prüfungen
+    (Sammelbuchungs-Kind, schon storniert, :func:`storno_blocker`) macht der
+    Aufrufer. Committet nicht; liefert die Gegenbuchung.
+    """
+    storno_date = storno_date or date.today()
+    partner = _storno_partner(booking, reason, created_by_id, storno_date)
+    db.session.add(partner)
+    _mark_storniert(booking, reason, storno_date)
+    db.session.flush()
+    return partner
+
+
 def storno_invoice_bookings(invoice, reason, created_by_id, storno_date=None):
     """Storniert alle wirksamen Buchungen einer Rechnung (Einzel- und Sammelbuchungen).
 
     Wird beim Stornieren einer Rechnung aufgerufen, damit eine zuvor automatisch
     erzeugte Zahlungsbuchung nicht als Phantom-Einnahme in den Auswertungen
-    hängen bleibt. Für jede betroffene Buchung wird ein Storno-Partner angelegt
-    (Betrag negiert, ``storno_of_id`` gesetzt) und das Original auf ``Storniert``
-    gesetzt; Sammelbuchungen werden über :func:`storno_booking_group` gruppen-
-    atomar zurückgesetzt.
+    hängen bleibt. Jede betroffene Buchung wird per Generalumkehr storniert
+    (:func:`storno_booking`), Sammelbuchungen gruppen-atomar über
+    :func:`storno_booking_group`.
 
-    Liegt eine betroffene Buchung in einem abgeschlossenen Buchungsjahr, wird
-    **nichts** storniert und eine deutsche Fehlermeldung zurückgegeben; sonst
-    ``None``. Die Funktion committet nicht — der Aufrufer ist dafür zuständig.
+    Ist das Buchungsjahr des Storno-Datums abgeschlossen, wird **nichts**
+    storniert und eine deutsche Fehlermeldung zurückgegeben; sonst ``None``.
+    Die Funktion committet nicht — der Aufrufer ist dafür zuständig.
     """
     storno_date = storno_date or date.today()
     bookings = (
@@ -911,16 +1062,9 @@ def storno_invoice_bookings(invoice, reason, created_by_id, storno_date=None):
     if not bookings:
         return None
 
-    # Erst prüfen, ob alle betroffenen Buchungen storniert werden dürfen –
-    # nichts anfassen, solange auch nur eine in einem geschlossenen Jahr liegt.
-    for b in bookings:
-        fy = locked_fiscal_year(b.date)
-        if fy is not None:
-            return (
-                f"Buchung vom {b.date.strftime('%d.%m.%Y')} liegt im abgeschlossenen "
-                f"Buchungsjahr {fy.year} und kann nicht storniert werden – die "
-                f"Rechnung lässt sich daher nicht stornieren."
-            )
+    blocker = storno_blocker(storno_date)
+    if blocker:
+        return f"{blocker} Die Rechnung lässt sich daher nicht stornieren."
 
     seen_groups = set()
     for b in bookings:
@@ -932,29 +1076,7 @@ def storno_invoice_bookings(invoice, reason, created_by_id, storno_date=None):
             if group is not None:
                 storno_booking_group(group, reason, created_by_id, storno_date)
             continue
-        # Einzelbuchung: Storno-Partner anlegen, Original markieren.
-        partner = Booking(
-            date=b.date,
-            account_id=b.account_id,
-            amount=-Decimal(str(b.amount)),
-            description=f"Storno: {b.description}",
-            reference=b.reference,
-            invoice_id=b.invoice_id,
-            open_item_id=b.open_item_id,
-            project_id=b.project_id,
-            real_account_id=b.real_account_id,
-            customer_id=b.customer_id,
-            tax_rate=b.tax_rate,
-            status=Booking.STATUS_VERBUCHT,
-            storno_of_id=b.id,
-            storno_reason=reason,
-            storno_date=storno_date,
-            created_by_id=created_by_id,
-        )
-        db.session.add(partner)
-        b.status = Booking.STATUS_STORNIERT
-        b.storno_reason = reason
-        b.storno_date = storno_date
+        storno_booking(b, reason, created_by_id, storno_date)
 
     db.session.flush()
     return None
@@ -963,8 +1085,9 @@ def storno_invoice_bookings(invoice, reason, created_by_id, storno_date=None):
 def storno_booking_group(group, reason, created_by_id, storno_date=None):
     """Storniert eine Sammelbuchung gruppen-atomar (ADR-002).
 
-    Für *jedes* aktive Kind wird ein Storno-Partner-Booking angelegt (Betrag
-    negiert, ``storno_of_id`` gesetzt, Status ``Verbucht``), das Kind selbst
+    Für *jedes* aktive Kind wird eine Gegenbuchung angelegt (Betrag negiert,
+    Datum = Storno-Datum, ``storno_of_id`` gesetzt, Status ``Verbucht``, in
+    derselben Gruppe), das Kind selbst
     wird auf ``Storniert`` gesetzt. Header wird ebenfalls als storniert
     markiert. Die Funktion committet nicht — Aufrufer ist für
     ``db.session.commit()`` verantwortlich.
@@ -982,29 +1105,9 @@ def storno_booking_group(group, reason, created_by_id, storno_date=None):
             continue
         if child.storno_of_id is not None:
             continue
-        partner = Booking(
-            date=storno_date,
-            account_id=child.account_id,
-            amount=-Decimal(str(child.amount)),
-            description=f"Storno: {child.description}",
-            reference=child.reference,
-            invoice_id=child.invoice_id,
-            open_item_id=child.open_item_id,
-            project_id=child.project_id,
-            real_account_id=child.real_account_id,
-            customer_id=child.customer_id,
-            tax_rate=child.tax_rate,
-            status=Booking.STATUS_VERBUCHT,
-            storno_of_id=child.id,
-            storno_reason=reason,
-            storno_date=storno_date,
-            group_id=child.group_id,
-            created_by_id=created_by_id,
-        )
+        partner = _storno_partner(child, reason, created_by_id, storno_date)
         db.session.add(partner)
-        child.status = Booking.STATUS_STORNIERT
-        child.storno_reason = reason
-        child.storno_date = storno_date
+        _mark_storniert(child, reason, storno_date)
         new_partners.append(partner)
 
     group.status = BookingGroup.STATUS_STORNIERT
