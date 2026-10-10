@@ -101,6 +101,24 @@
     el.classList.remove('tomselected', 'ts-hidden-accessible');
   }
 
+  // TomSelect 2.3 filtert beim Tippen erst refreshThrottle (300 ms) nach dem
+  // letzten Tastendruck. Wird vorher gewaehlt (Klick, Enter, Tab), laeuft der
+  // Timer trotzdem ab: refreshOptions -> open -> focus() holt den Fokus ins
+  // schon verlassene Feld zurueck und oeffnet dort die Liste — wer flott
+  // „Gir" + Tab tippt, landet wieder im vorigen Feld (Umbuchung: Ausgangskonto
+  // ueberdeckt danach das Zielkonto). Den offenen Timer bei Auswahl und beim
+  // Verlassen verwerfen. refreshTimeout ist TomSelect-intern (2.3.1 gepinnt).
+  function dropPendingRefresh(ts) {
+    var drop = function () {
+      if (ts.refreshTimeout) {
+        clearTimeout(ts.refreshTimeout);
+        ts.refreshTimeout = null;
+      }
+    };
+    ts.on('item_add', drop);
+    ts.on('blur', drop);
+  }
+
   function initTomSelects(root) {
     (root || document).querySelectorAll('select.tom-select').forEach(function (el) {
       if (el.tomselect) return;
@@ -121,7 +139,7 @@
         };
       }
       if (Object.keys(render).length) cfg.render = render;
-      new TomSelect(el, cfg);
+      dropPendingRefresh(new TomSelect(el, cfg));
     });
   }
 
