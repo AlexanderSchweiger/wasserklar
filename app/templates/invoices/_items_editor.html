@@ -14,6 +14,9 @@
        Konto-Dropdown pro Zeile (ADR-002).
      - editor_projects (optional): Liste der Project-Objekte für das
        Projekt-Dropdown pro Zeile (ADR-002).
+     - editor_tax_rates: auswählbare Steuersätze (``tax_service.tax_rates``,
+       beim Bearbeiten mit ``include`` der Sätze bestehender Positionen) —
+       MwSt ist eine Auswahl, keine freie Eingabe.
 
    Das Partial liefert die Button-Leiste, den Row-Container und alle
    Row-Templates. Der Caller muss den Submit-Button selbst rendern und
@@ -31,12 +34,26 @@
 {% set _accounts = editor_accounts|default([]) %}
 {% set _projects = editor_projects|default([]) %}
 {% set _show_dims = _accounts|length > 0 or _projects|length > 0 %}
+{% set _tax_rates = editor_tax_rates|default([]) %}
 
 {# Zweite Zeile einer Position: die Buchungsdimensionen. `acc_placeholder`
    unterscheidet die Zeilentypen — eine Tarif-Zeile erzeugt drei Positionen mit
    je eigenem Tarif-Konto, ein hier gewähltes Konto überschreibt alle drei.
    Kontext-Variablen werden bewusst als Parameter durchgereicht, damit das
    Makro nicht von der Scope-Aufloesung des Templates abhaengt. #}
+{# MwSt-Auswahl einer freien Position: nur die unter Einstellungen → Steuern
+   hinterlegten Sätze. Numerischer Vergleich (DB liefert 20.00, Option „20"). #}
+{% macro tax_select(prefix, tax_rates, current=none) %}
+<select name="{{ prefix }}row_tax_rate[]" class="form-select form-select-sm" aria-label="MwSt">
+  <option value="">–</option>
+  {% for tr in tax_rates %}
+  <option value="{{ tr.rate }}" {{ 'selected' if current and current|float == tr.rate|float }}>
+    {{ tr.label or (tr.rate | int ~ ' %') }}
+  </option>
+  {% endfor %}
+</select>
+{% endmacro %}
+
 {% macro kontierung(prefix, accounts, projects, acc_placeholder, sel_account=0, sel_project=0) %}
 <div class="row g-2 align-items-center mt-2 pt-2 border-top">
   <div class="col-auto">
@@ -104,13 +121,15 @@
       </div>
       <div class="col-md-2">
         <label class="small">Preis €</label>
+        {# Nachkommastellen wie auf der Rechnung; der Server liest sie beim
+           Speichern aus dem Feld zurueck (``price_format.typed_places``). #}
         <input type="number" name="{{ _prefix }}row_unit_price[]" class="form-control form-control-sm free-price"
-               step="0.01" value="{{ item.unit_price }}" required onchange="itemsEditorCalcFree(this)">
+               step="0.0001" value="{{ '%.*f'|format(item.price_places, item.unit_price) }}" required
+               onchange="itemsEditorCalcFree(this)">
       </div>
       <div class="col-md-1">
-        <label class="small">MwSt %</label>
-        <input type="number" name="{{ _prefix }}row_tax_rate[]" class="form-control form-control-sm"
-               step="0.01" min="0" max="100" value="{{ item.tax_rate or '' }}">
+        <label class="small">MwSt</label>
+        {{ tax_select(_prefix, _tax_rates, item.tax_rate) }}
       </div>
       <div class="col-md-2">
         <label class="small">Betrag</label>
@@ -268,9 +287,8 @@
                step="0.01" placeholder="0.00" required onchange="itemsEditorCalcFree(this)">
       </div>
       <div class="col-md-1">
-        <label class="small">MwSt %</label>
-        <input type="number" name="{{ _prefix }}row_tax_rate[]" class="form-control form-control-sm"
-               step="0.01" min="0" max="100" placeholder="0">
+        <label class="small">MwSt</label>
+        {{ tax_select(_prefix, _tax_rates) }}
       </div>
       <div class="col-md-2">
         <label class="small">Betrag (ca.)</label>

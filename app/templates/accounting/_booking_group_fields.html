@@ -1,0 +1,233 @@
+{# Felder der Sammelbuchung (Kopf, Belege, Buchungszeilen) — ohne <form> und Knöpfe.
+   Eingebunden von booking_group_form.html (eigene Seite) und _booking_group_modal_content.html
+   (Modal der Buchungsliste). Der Speichern-Knopf des umgebenden Formulars trägt
+   data-group-submit; das Skript sperrt ihn unter zwei Zeilen (ADR-002, Regel 1).
+   Nach einem Validierungsfehler (form_data) werden die eingegebenen Zeilen wiederhergestellt. #}
+{% set is_edit = is_edit|default(false) %}
+{% set readonly = readonly|default(false) %}
+{% set _fd = form_data if form_data is defined and form_data else none %}
+
+{% macro group_row(accounts, projects, tax_rates, account_id='', project_id='', description='', tax_rate='', amount='', removable=true) -%}
+<div class="row-child border rounded p-2 mb-2">
+  <div class="row g-2 align-items-end">
+    <div class="col-md-3">
+      <label class="small">Konto <span class="text-danger">*</span></label>
+      <select name="child_account_id[]" class="form-select form-select-sm" required>
+        <option value="">– Konto –</option>
+        {% for a in accounts %}
+        <option value="{{ a.id }}" {{ 'selected' if account_id|string == a.id|string }}>{% if a.code %}{{ a.code }} – {% endif %}{{ a.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="small">Projekt</label>
+      <select name="child_project_id[]" class="form-select form-select-sm">
+        <option value="">– kein –</option>
+        {% for p in projects %}
+        <option value="{{ p.id }}" {{ 'selected' if project_id|string == p.id|string }}>{% if p.code %}{{ p.code }} – {% endif %}{{ p.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="small">Beschreibung</label>
+      <input type="text" name="child_description[]" class="form-control form-control-sm"
+             value="{{ description }}" placeholder="(erbt vom Kopf)">
+    </div>
+    <div class="col-md-1">
+      <label class="small">MwSt</label>
+      {# Nur die unter Einstellungen → Steuern hinterlegten Sätze (wie die Einzelbuchung).
+         Numerischer Vergleich: DB liefert 20.00, Formular-Redisplay „20". #}
+      {% set _cur = tax_rate|string|trim %}
+      <select name="child_tax_rate[]" class="form-select form-select-sm">
+        <option value="">–</option>
+        {% for tr in tax_rates %}
+        <option value="{{ tr.rate }}" {{ 'selected' if _cur and _cur|float == tr.rate|float }}>
+          {{ tr.label or (tr.rate | int ~ ' %') }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="small">Betrag € <span class="text-danger">*</span></label>
+      <input type="number" name="child_amount[]" class="form-control form-control-sm"
+             step="0.01" placeholder="0,00" required value="{{ amount }}">
+    </div>
+    {% if removable %}
+    <div class="col-md-1 d-flex align-items-end">
+      <button type="button" class="btn btn-sm btn-outline-danger" onclick="groupRemoveRow(this)" title="Zeile entfernen">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{%- endmacro %}
+
+{% if readonly and readonly_reason %}
+<div class="alert alert-warning d-flex align-items-start">
+  <i class="fas fa-lock me-2 mt-1"></i>
+  <div><strong>Schreibgeschützt</strong><br>{{ readonly_reason }}</div>
+</div>
+{% endif %}
+
+<p class="text-secondary small">
+  Eine Sammelbuchung gruppiert mehrere Buchungszeilen mit gemeinsamer Belegnummer
+  (z.&nbsp;B. eine Rechnung, deren Positionen auf unterschiedliche Konten, Projekte oder
+  Steuersätze verteilt sind). Es werden mindestens <strong>2 Zeilen</strong> benötigt.
+</p>
+
+<fieldset {% if readonly %}disabled{% endif %}>
+  {# ───────── Kopf ───────── #}
+  {% set hdr_date = (_fd.get('date') if _fd else None) or (group.date.isoformat() if is_edit and group else today.isoformat()) %}
+  {% set hdr_description = (_fd.get('description') if _fd else None) or (group.description if is_edit and group else '') %}
+  {# „or ''“: ohne Belegnummer stand sonst „None“ im Feld — und wurde beim Speichern zur Belegnummer. #}
+  {% set hdr_reference = (_fd.get('reference') if _fd else None) or ((group.reference or '') if is_edit and group else '') %}
+  {% set hdr_customer_id = (_fd.get('customer_id') if _fd else None) or (group.customer_id|string if is_edit and group and group.customer_id else '') %}
+  {% set hdr_invoice_id = (_fd.get('invoice_id') if _fd else None) or (group.invoice_id|string if is_edit and group and group.invoice_id else '') %}
+  {% set _ra_from_child = (group.children|first).real_account_id if is_edit and group and group.children else None %}
+  {% set hdr_real_account_id = (_fd.get('real_account_id') if _fd else None) or (_ra_from_child|string if _ra_from_child else '') %}
+
+  <div class="row g-3">
+    <div class="col-12 col-sm-3">
+      <label class="form-label">Datum <span class="text-danger">*</span></label>
+      <input type="date" name="date" class="form-control" value="{{ hdr_date }}"
+             max="{{ today.isoformat() }}" required>
+    </div>
+    <div class="col-12 col-sm-6">
+      <label class="form-label">Beschreibung <span class="text-danger">*</span></label>
+      <input type="text" name="description" class="form-control" value="{{ hdr_description }}"
+             placeholder="z.B. Zahlung Rechnung 2026-00012" required>
+    </div>
+    <div class="col-12 col-sm-3">
+      <label class="form-label">Belegnr.</label>
+      <input type="text" name="reference" class="form-control" value="{{ hdr_reference }}">
+    </div>
+  </div>
+
+  <div class="row g-3 mt-1">
+    <div class="col-12 col-sm-4">
+      <label class="form-label">Kunde</label>
+      <select name="customer_id" class="form-select tom-select">
+        <option value="">– kein Kunde –</option>
+        {% for c in customers %}
+        <option value="{{ c.id }}" {{ 'selected' if hdr_customer_id == c.id|string }}>{{ c.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-12 col-sm-4">
+      <label class="form-label">Bank/{{ term('cash') }}</label>
+      <select name="real_account_id" class="form-select tom-select">
+        <option value="">– kein Konto –</option>
+        {% for ra in real_accounts %}
+        <option value="{{ ra.id }}"
+                {{ 'selected' if hdr_real_account_id == ra.id|string
+                                 or (not hdr_real_account_id and not is_edit and default_real_account and default_real_account.id == ra.id) }}>
+          {{ ra.name }}{% if ra.iban %} ({{ ra.iban }}){% endif %}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-12 col-sm-4">
+      <label class="form-label">Rechnungs-ID <small class="text-muted">(optional)</small></label>
+      <input type="number" name="invoice_id" class="form-control" value="{{ hdr_invoice_id }}"
+             placeholder="ID der verknüpften Rechnung">
+    </div>
+  </div>
+
+  {# ───────── Belege ───────── #}
+  <div class="row g-3 mt-1"><div class="col-12">
+    {% if not readonly %}
+    {% include "documents/_picker.html" %}
+    {% elif linked_links %}
+    <label class="form-label"><i class="fas fa-paperclip me-1"></i>Belege</label>
+    <ul class="list-unstyled small mb-0">
+      {% for row in linked_links %}
+      <li><i class="fas fa-link text-muted me-1"></i>
+        <a href="{{ url_for('accounting.document_raw', doc_id=row.document.id) }}" target="_blank" hx-boost="false">{{ row.document.display_title }}</a>
+        <span class="text-muted">· <a href="{{ url_for('accounting.document_detail', doc_id=row.document.id) }}" hx-boost="false">Beleg öffnen</a></span></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </div></div>
+
+  <hr>
+
+  {# ───────── Buchungszeilen ───────── #}
+  <h5>Buchungszeilen</h5>
+  <p class="text-secondary small mb-2">
+    Jede Zeile erzeugt eine eigene Buchung mit individuellem Konto,
+    Projekt, Steuersatz und Betrag. Negative Beträge bedeuten Ausgaben.
+  </p>
+
+  <div id="rowsContainer">
+    {% if _fd %}
+      {% set _accs = _fd.getlist('child_account_id[]') %}
+      {% set _projs = _fd.getlist('child_project_id[]') %}
+      {% set _descs = _fd.getlist('child_description[]') %}
+      {% set _taxes = _fd.getlist('child_tax_rate[]') %}
+      {% set _amounts = _fd.getlist('child_amount[]') %}
+      {% for acc in _accs %}
+      {{ group_row(accounts, projects, tax_rates, acc, _projs[loop.index0] if loop.index0 < _projs|length else '',
+                   _descs[loop.index0] if loop.index0 < _descs|length else '',
+                   _taxes[loop.index0] if loop.index0 < _taxes|length else '',
+                   _amounts[loop.index0] if loop.index0 < _amounts|length else '',
+                   removable=not readonly) }}
+      {% endfor %}
+    {% elif is_edit and group %}
+      {% for ch in group.children if not ch.storno_of_id %}
+      {{ group_row(accounts, projects, tax_rates, ch.account_id, ch.project_id or '',
+                   ch.description if ch.description != group.description else '',
+                   ch.tax_rate if ch.tax_rate else '', ch.amount, removable=not readonly) }}
+      {% endfor %}
+    {% endif %}
+  </div>
+
+  {% if not readonly %}
+  <div class="mt-2">
+    <button type="button" class="btn btn-sm btn-outline-primary" onclick="groupAddRow()">
+      <i class="fas fa-plus me-1"></i> Zeile hinzufügen
+    </button>
+  </div>
+  {% endif %}
+
+  <template id="tmplChild">{{ group_row(accounts, projects, tax_rates) }}</template>
+</fieldset>
+
+<script>
+{# Der Speichern-Knopf steht erst NACH diesem Skript (Kartenfuß bzw. modal-footer): beim
+   harten Laden bis DOMContentLoaded warten; im Modal fügt htmx den Inhalt Knoten für Knoten
+   ein und das Skript läuft schon, bevor der modal-footer drin ist — daher einen Tick später. #}
+(function () {
+  function init() {
+  var container = document.getElementById('rowsContainer');
+  var tmpl = document.getElementById('tmplChild');
+  var form = container ? container.closest('form') : null;
+  var submitBtn = form ? form.querySelector('[data-group-submit]') : null;
+  // Schreibgeschützt: kein Speichern-Knopf, nichts zu tun.
+  if (!container || !tmpl || !submitBtn) return;
+
+  function updateSubmit() {
+    submitBtn.disabled = container.querySelectorAll('.row-child').length < 2;
+  }
+  window.groupAddRow = function () {
+    container.appendChild(tmpl.content.cloneNode(true));
+    updateSubmit();
+  };
+  window.groupRemoveRow = function (btn) {
+    btn.closest('.row-child').remove();
+    updateSubmit();
+  };
+  // Neu: mit zwei leeren Zeilen starten; Bearbeiten/Fehler: vorhandene Zeilen behalten.
+  if (container.querySelectorAll('.row-child').length === 0) {
+    window.groupAddRow();
+    window.groupAddRow();
+  }
+  updateSubmit();
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init, { once: true });
+  } else {
+    setTimeout(init, 0);
+  }
+})();
+</script>

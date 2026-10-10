@@ -7,16 +7,21 @@
 {# Out-of-Band-Ziel fuer die Massen-Bearbeiten-Bestaetigung (siehe _bookings_table.html). #}
 <div id="bookings-bulk-flash"></div>
 
+{# Out-of-Band-Ziel für Meldungen aus den Modalen Storno/Sammelbuchung/Umbuchung — der
+   Tabellen-Refresh nach dem Speichern füllt es (siehe _bookings_table.html). #}
+<div id="bookings-flash"></div>
+
 {# Toast-Bereich fuer „Buchung gespeichert"-Rueckmeldungen aus dem Modal. #}
 <div id="booking-toast-host" style="position:fixed;top:1rem;right:1rem;z-index:1090;pointer-events:none"></div>
 
 {# Unsichtbarer Tabellen-Refresher: aktualisiert die Buchungsliste (unter
    Beibehaltung der aktiven Filter), sobald im Modal eine Buchung gespeichert
-   wurde. hx-include ist auf die Filter-Leiste eingegrenzt, damit das offene
-   Modal keine doppelten Parameter einschleust. #}
+   wurde (booking-saved) bzw. ein Storno/eine Sammelbuchung/Umbuchung (bookings-changed,
+   ausgelöst von bkModalSaved). hx-include ist auf die Filter-Leiste eingegrenzt, damit
+   das offene Modal keine doppelten Parameter einschleust. #}
 <span id="bookings-refresher"
       hx-get="{{ url_for('accounting.bookings') }}"
-      hx-trigger="booking-saved from:body"
+      hx-trigger="booking-saved from:body, bookings-changed"
       hx-target="#bookings-table"
       hx-swap="innerHTML"
       hx-include="{{ refresh_include }}"
@@ -162,12 +167,18 @@
           <span class="visually-hidden">Dropdown</span>
         </button>
         <div class="dropdown-menu dropdown-menu-end">
-          <a class="dropdown-item" href="{{ url_for('accounting.booking_group_new') }}">
+          <button type="button" class="dropdown-item"
+                  data-url="{{ url_for('accounting.booking_group_new') }}"
+                  data-modal-title="Neue Sammelbuchung"
+                  onclick="openBookingGroupModal(this)">
             <i class="fas fa-layer-group me-1"></i> Neue Sammelbuchung
-          </a>
-          <a class="dropdown-item" href="{{ url_for('accounting.transfer_new') }}">
+          </button>
+          <button type="button" class="dropdown-item"
+                  data-url="{{ url_for('accounting.transfer_new') }}"
+                  data-modal-title="Neue Umbuchung"
+                  onclick="openTransferModal(this)">
             <i class="fas fa-exchange-alt me-1"></i> Neue Umbuchung
-          </a>
+          </button>
         </div>
       </div>
       <div class="btn-group ms-1">
@@ -202,6 +213,32 @@
 {% endblock %}
 
 {% block scripts %}
+{# Storno, Sammelbuchung und Umbuchung als Modal (setupEditModal, X-From-Modal). Nach dem
+   Speichern schließt das Modal und nur die Tabelle lädt neu (Filter bleiben); die Meldungen
+   der Route kommen mit dem Refresh (#bookings-flash). #}
+{% include "_modal_edit_helpers.html" %}
+<script>
+window.bkModalSaved = function () {
+  var refresher = document.getElementById('bookings-refresher');
+  if (refresher && window.htmx) { htmx.trigger(refresher, 'bookings-changed'); }
+};
+setupEditModal({
+  formId: 'stornoForm', bodyId: 'stornoModalBody', modalId: 'stornoModal',
+  openFn: 'openStornoModal', closeEvent: 'closeStornoModal', savedEvent: 'stornoSaved',
+  savedHandler: 'bkModalSaved',
+});
+setupEditModal({
+  formId: 'bookingGroupForm', bodyId: 'bookingGroupModalBody', modalId: 'bookingGroupModal',
+  openFn: 'openBookingGroupModal', closeEvent: 'closeBookingGroupModal', savedEvent: 'bookingGroupSaved',
+  savedHandler: 'bkModalSaved',
+});
+setupEditModal({
+  formId: 'transferForm', bodyId: 'transferModalBody', modalId: 'transferModal',
+  openFn: 'openTransferModal', closeEvent: 'closeTransferModal', savedEvent: 'transferSaved',
+  savedHandler: 'bkModalSaved',
+});
+</script>
+
 <script>
 {# Das Export-Menü liegt im card-header und wird bei HTMX-Filter-Swaps nicht
    neu gerendert. Daher den "Mit aktuellen Filtern"-Link aus den Live-Werten
@@ -284,6 +321,34 @@
   card.addEventListener('htmx:afterSwap', updateBar);
 
   updateBar();
+
+  {# Sammelbuchungen auf-/zuklappen (Knopf .bk-toggle in _bookings_table.html).
+     Offene Gruppen merkt ein Set auf window, damit sie nach einem Tabellen-Swap
+     (Filter, „Buchung gespeichert", Massen-Bearbeiten) offen bleiben. Zustand nur
+     als Klasse/aria an den Zeilen, kein Merker-Attribut — sonst stellt der
+     htmx-Verlauf (Zurück-Knopf) ihn mit wieder her. #}
+  var openGroups = window.__bkOpenGroups || (window.__bkOpenGroups = new Set());
+  function setGroupOpen(key, on) {
+    card.querySelectorAll('tr[data-bk-parent="' + key + '"]').forEach(function (tr) {
+      tr.classList.toggle('is-open', on);
+    });
+    var btn = card.querySelector('.bk-toggle[data-bk-group="' + key + '"]');
+    if (btn) {
+      btn.setAttribute('aria-expanded', on ? 'true' : 'false');
+      btn.closest('tr').classList.toggle('is-open', on);
+    }
+  }
+  card.addEventListener('click', function (e) {
+    var btn = e.target.closest('.bk-toggle');
+    if (!btn) return;
+    var key = btn.getAttribute('data-bk-group');
+    var on = btn.getAttribute('aria-expanded') !== 'true';
+    if (on) { openGroups.add(key); } else { openGroups.delete(key); }
+    setGroupOpen(key, on);
+  });
+  function restoreGroups() { openGroups.forEach(function (key) { setGroupOpen(key, true); }); }
+  card.addEventListener('htmx:afterSwap', restoreGroups);
+  restoreGroups();
 
   {# Modal-Felder nach dem Schliessen leeren, damit ein erneutes Oeffnen nicht
      die letzte Auswahl vorbelegt. #}
@@ -419,6 +484,9 @@ if (!window.__bookingFocusBound) {
 
 {% block modals %}
 {{ super() }}
+{% include "accounting/_storno_modal.html" %}
+{% include "accounting/_booking_group_modal.html" %}
+{% include "accounting/_transfer_modal.html" %}
 
 {# Offene Buchungen sofort verbuchen (Hinweisleiste in _bookings_table.html). #}
 <div class="modal fade" id="postOpenModal" tabindex="-1" aria-hidden="true">

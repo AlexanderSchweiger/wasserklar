@@ -1,0 +1,17 @@
+{# Inhalt des Sammelbuchungs-Modals (Buchungsliste): Felder + passende Knöpfe. #}
+{% set readonly = readonly|default(false) %}
+{% set is_edit = is_edit|default(false) %}
+<div class="modal-body">
+  {% include "_flash_inline.html" %}
+  {% include "accounting/_booking_group_fields.html" %}
+</div>
+<div class="modal-footer">
+  {% if readonly %}
+  <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Schließen</button>
+  {% else %}
+  <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+  <button type="submit" class="btn btn-primary" data-group-submit>
+    <i class="fas fa-save me-1"></i> {% if is_edit %}Änderungen speichern{% else %}Sammelbuchung speichern{% endif %}
+  </button>
+  {% endif %}
+</div>

@@ -1,6 +1,77 @@
 {% from "_pagination.html" import render_pagination %}
 {% from "notes/_macros.html" import note_pin %}
 {% from "documents/_macros.html" import doc_pin %}
+{# Zellen-Bausteine der Buchungsliste. Nummern (Konto, Beleg, Kontakt, Projekt) stehen bewusst als
+   gedämpfter Text statt als Badge — Badges sind nur für Status (Storno/storniert), damit der Blick
+   auf Beschreibung und Betrag fällt. Styles: Abschnitt „Buchungsliste" in static/css/app.css. #}
+{% macro bk_bank(ra) -%}
+{% if ra %}<i class="fas {{ ra.icon or 'fa-university' }} text-secondary" title="{{ ra.name }}"></i>{% endif %}
+{%- endmacro %}
+
+{% macro bk_account(account) -%}
+<div class="bk-cell" title="{{ account.name }}">
+  {%- if account.code %}<span class="bk-code">{{ account.code }}</span>{% endif -%}
+  <span class="text-truncate">{{ account.name }}</span>
+</div>
+{%- endmacro %}
+
+{% macro bk_project(p) -%}
+{% if p %}
+<a href="{{ url_for('projects.detail', project_id=p.id) }}" class="bk-cell text-reset text-decoration-none" title="{{ p.name }}">
+  <span class="bk-dot" style="background-color:{{ p.color or '#3498db' }}"></span>
+  {%- if p.code %}<span class="bk-code">{{ p.code }}</span>{% endif -%}
+  <span class="text-truncate">{{ p.name }}</span>
+</a>
+{% endif %}
+{%- endmacro %}
+
+{% macro bk_contact(c, number=none) -%}
+{% if c %}
+<a href="{{ url_for('customers.detail', customer_id=c.id) }}" class="bk-cell text-reset text-decoration-none" title="{{ c.name }}">
+  {%- if number %}<span class="bk-code">{{ number }}</span>{% endif -%}
+  <span class="text-truncate">{{ c.name }}</span>
+</a>
+{% endif %}
+{%- endmacro %}
+
+{# Ausgabe → Lieferantennummer, sonst Kunden-/Mitgliedsnummer (je Rolle ein Kreis). #}
+{% macro bk_contact_number(c, amount) -%}
+{{ (c.creditor_number if amount is not none and amount < 0 else none) or c.customer_number or c.creditor_number or '' }}
+{%- endmacro %}
+
+{% macro bk_tax(b) -%}
+{% if b.tax_rate and b.tax_rate > 0 %}<span class="bk-rate">{{ b.tax_rate | int }}&nbsp;%</span> {{ signed_booking_tax(b)|de_number }}&nbsp;€{% endif %}
+{%- endmacro %}
+
+{% macro bk_amount(value, void=false) -%}
+<span class="bk-amount{{ ' bk-in' if value > 0 else (' bk-out' if value < 0) }}{{ ' bk-void' if void }}">{{ value|de_number }}&nbsp;€</span>
+{%- endmacro %}
+
+{# Auf-/Zuklappen einer Sammelbuchung (JS in bookings.html). Button statt <a href="#">,
+   sonst schluckt app.js den Klick. #}
+{% macro bk_toggle(key, count) -%}
+<button type="button" class="bk-toggle" data-bk-group="{{ key }}" aria-expanded="false"
+        title="Positionen der Sammelbuchung ein-/ausblenden">
+  <i class="fas fa-chevron-right bk-toggle-icon me-1"></i>{{ count }} {{ 'Position' if count == 1 else 'Positionen' }}
+</button>
+{%- endmacro %}
+
+{# Kindzeile einer Sammelbuchung (bzw. ihrer Storno-Gegenbuchung) — standardmäßig eingeklappt. #}
+{% macro bk_child_row(b, key, alt) -%}
+<tr class="bk-child{{ alt }}{{ ' bk-storniert' if b.status == 'Storniert' }}" data-bk-parent="{{ key }}">
+  <td></td>
+  <td></td>
+  <td></td>
+  <td class="bk-col-account">{{ bk_account(b.account) }}</td>
+  <td class="bk-col-desc">{{ b.description }}</td>
+  <td class="bk-col-project">{{ bk_project(b.project) }}</td>
+  <td></td>
+  <td class="text-end bk-tax">{{ bk_tax(b) }}</td>
+  <td class="text-end">{{ bk_amount(b.amount, void=(b.status == 'Storniert')) }}</td>
+  <td class="col-actions"></td>
+</tr>
+{%- endmacro %}
+
 {# Zeilen-Notiz-Pins der sichtbaren Einzelbuchungen in EINER Query (kein N+1).
    Sammelbuchungen/Umbuchungen tragen keinen Pin (Notiz hängt an einer Buchung). #}
 {% set _bk_ids = [] %}
@@ -20,6 +91,12 @@
 {% endfor %}
 {% set doc_counts_b = document_counts_for('booking', _bk_ids) %}
 {% set doc_counts_g = document_counts_for('booking_group', _grp_ids) %}
+{# Meldungen aus einem Modal (Storno, Sammelbuchung, Umbuchung): die Route flasht, das Modal
+   schließt per HX-Trigger, der Tabellen-Refresh bringt die Meldungen hierher (Out-of-Band in
+   #bookings-flash, bookings.html). Nur beim Fragment-Refresh — beim Voll-Render zeigt base.html sie. #}
+{% if flash_oob is defined and flash_oob %}
+<div id="bookings-flash" hx-swap-oob="true">{% include "_flash_inline.html" %}</div>
+{% endif %}
 {# Bestaetigung nach Massen-Bearbeitung — wird per Out-of-Band-Swap in die
    #bookings-bulk-flash-Zone (in bookings.html) gehoben. Nur im Bulk-Refresh
    gesetzt (bulk_done_count), beim normalen Filter-/Voll-Render = None. #}
@@ -58,9 +135,11 @@
     </button>
   </div>
   {# Offene Buchungen (heute erfasst) werden nachts automatisch verbucht — hier sofort. Zählt alle
-     offenen Buchungen, nicht nur die gefilterten; Bestätigung im Modal #postOpenModal (bookings.html). #}
+     offenen Buchungen, nicht nur die gefilterten; Bestätigung im Modal #postOpenModal (bookings.html).
+     Der Balken vor dem Badge erklärt den blauen Rand offener Zeilen in der Tabelle. #}
   {% if open_count %}
   <div class="d-flex align-items-center gap-2 small" id="bookings-open-hint">
+    <span class="bk-open-legend" aria-hidden="true"></span>
     <span class="badge bg-azure-lt">{{ open_count }} offen</span>
     <span class="text-secondary d-none d-md-inline">wird über Nacht verbucht</span>
     <button type="button" class="btn btn-sm btn-outline-primary"
@@ -82,7 +161,7 @@
   </div>
 </div>
 <div class="card-body p-0 table-scroll">
-<table class="table table-hover mb-0">
+<table class="table table-hover mb-0 bookings-table">
   <thead>
     <tr>
       <th class="text-center" style="width:1%">
@@ -90,23 +169,35 @@
                aria-label="Alle auswählen" title="Alle auf dieser Seite auswählen">
       </th>
       <th style="white-space:nowrap">Datum</th>
-      <th class="text-center" style="width:1%"><i class="fas fa-university"></i></th>
+      <th class="text-center" style="width:1%" title="Bank/{{ term('cash') }}"><i class="fas fa-university"></i></th>
       <th>Konto</th>
       <th>Beschreibung</th>
       <th>Projekt</th>
-      <th>Kunde</th>
-      <th class="text-center px-1" style="width:1%">%</th>
-      <th class="text-end" style="width:1%; white-space:nowrap">Steuer</th>
-      <th class="text-end" style="white-space:nowrap">Betrag</th>
+      <th>Kontakt</th>
+      <th class="text-end" style="width:1%">Steuer</th>
+      <th class="text-end" style="width:1%">Betrag</th>
       <th class="col-actions" style="width:1%"></th>
     </tr>
   </thead>
   <tbody>
+    {# Monatstrenner bei jedem Monatswechsel; das Zebra zählt je Buchung (Kopf und
+       Positionen einer Sammelbuchung teilen sich den Streifen) und beginnt je Monat neu. #}
+    {% set _month_names = [term('january'), 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'] %}
+    {% set lst = namespace(month=none, block=0) %}
     {% for row in rows %}
+    {% set _ym = row.date.year * 100 + row.date.month %}
+    {% if _ym != lst.month %}
+    {% set lst.month = _ym %}
+    {% set lst.block = 0 %}
+    <tr class="bk-month"><td colspan="10">{{ _month_names[row.date.month - 1] }} {{ row.date.year }}</td></tr>
+    {% endif %}
+    {% set lst.block = lst.block + 1 %}
+    {% set alt = ' bk-alt' if lst.block is even else '' %}
 
     {# ── SAMMELBUCHUNG ────────────────────────────────────────────── #}
     {% if row.type == 'booking_group' %}
     {% set g = row.group %}
+    {% set gkey = 'g' ~ g.id %}
     {% set is_stornogruppe = g.status == 'Storniert' %}
     {% set effective_children = row.children | rejectattr('storno_of_id') | list %}
     {# Generalumkehr: auch eine stornierte Sammelbuchung zeigt ihren Betrag — die
@@ -123,59 +214,28 @@
     {% set total_tax = ns.tax %}
     {% set all_children_offen = effective_children and (effective_children|selectattr('status', 'equalto', 'Offen')|list|length == effective_children|length) %}
     {% set any_child_verbucht = effective_children and (effective_children|selectattr('status', 'equalto', 'Verbucht')|list|length > 0) %}
-    <tr class="booking-group-header
-        {%- if is_stornogruppe %} text-muted
-        {%- elif all_children_offen %} table-info
-        {%- endif %}"
-        {% if is_stornogruppe %}style="opacity:0.55"{% endif %}>
+    {% set is_open = all_children_offen and not is_stornogruppe %}
+    <tr class="bk-group{{ alt }}{{ ' bk-storniert' if is_stornogruppe }}{{ ' bk-open' if is_open }}">
       <td></td>
-      <td style="white-space:nowrap">{{ g.date.strftime('%d.%m.%Y') }}</td>
-      <td class="text-center">
-        <i class="fas fa-layer-group" title="Sammelbuchung" style="color:#b5651d"></i>
-      </td>
-      <td colspan="3">
-        <span class="badge bg-orange text-white me-1" title="Sammelbuchung">
-          <i class="fas fa-layer-group me-1"></i>SAMMEL
-        </span>
-        {% if g.reference %}
-        <span class="badge bg-secondary text-white me-1">{{ g.reference }}</span>
-        {% endif %}
-        <span class="fw-bold">{{ g.description }}</span>
+      <td class="bk-date"{% if is_open %} title="Offen – wird über Nacht verbucht"{% endif %}>{{ g.date.strftime('%d.%m.%Y') }}</td>
+      <td class="text-center">{{ bk_bank((effective_children|first).real_account if effective_children else none) }}</td>
+      <td class="bk-col-account">{{ bk_toggle(gkey, effective_children|length) }}</td>
+      <td class="bk-col-desc">
+        {% if g.reference %}<span class="bk-code">{{ g.reference }}</span>{% endif %}
+        <span>{{ g.description }}</span>
         {% if g.invoice_id %}
         <a href="{{ url_for('invoices.detail', invoice_id=g.invoice_id) }}"
-           class="badge bg-light text-dark ms-1">
-          <i class="fas fa-file-invoice me-1"></i>RE
-        </a>
+           class="bk-link-icon" title="Rechnung öffnen"><i class="fas fa-file-invoice"></i></a>
         {% endif %}
-        <small class="text-muted ms-1">({{ effective_children|length }} Zeilen)</small>
         {% if is_stornogruppe %}
-        <span class="badge bg-danger text-white ms-1"
-              {% if g.storno_reason %}title="{{ g.storno_reason }}"{% endif %}><i class="fas fa-ban me-1"></i>STORNIERT{% if g.storno_date %} am {{ g.storno_date.strftime('%d.%m.%Y') }}{% endif %}</span>
+        <span class="badge bg-danger-lt ms-1"
+              {% if g.storno_reason %}title="{{ g.storno_reason }}"{% endif %}><i class="fas fa-ban me-1"></i>storniert{% if g.storno_date %} am {{ g.storno_date.strftime('%d.%m.%Y') }}{% endif %}</span>
         {% endif %}
       </td>
-      <td style="max-width:140px; white-space:nowrap; overflow:hidden">
-        {% if g.customer %}
-        <a href="{{ url_for('customers.detail', customer_id=g.customer.id) }}"
-           class="text-truncate d-inline-block small text-decoration-none"
-           style="max-width:100%"
-           title="{{ g.customer.name }}">
-          <i class="fas fa-user me-1 text-muted"></i>{{ g.customer.name }}
-        </a>
-        {% else %}
-        <span class="text-muted">—</span>
-        {% endif %}
-      </td>
-      <td class="text-center px-1"><span class="text-muted">—</span></td>
-      <td class="text-end text-nowrap text-muted small">
-        {% if total_tax and total_tax > 0 %}
-          {{ total_tax|de_number }}&nbsp;€
-        {% else %}
-          <span class="text-muted">—</span>
-        {% endif %}
-      </td>
-      <td class="text-end fw-bold text-nowrap {{ 'text-success' if total_gross >= 0 else 'text-danger' }}">
-        {{ total_gross|de_number }}&nbsp;€
-      </td>
+      <td class="bk-col-project"></td>
+      <td class="bk-col-contact">{% if g.customer %}{{ bk_contact(g.customer, bk_contact_number(g.customer, total_gross)) }}{% endif %}</td>
+      <td class="text-end bk-tax">{% if total_tax and total_tax > 0 %}{{ total_tax|de_number }}&nbsp;€{% endif %}</td>
+      <td class="text-end">{{ bk_amount(total_gross, void=is_stornogruppe) }}</td>
       <td class="text-end col-actions" style="white-space:nowrap">
         {{ doc_pin('booking_group', g.id, doc_counts_g.get(g.id, 0)) }}
         {% set fy_locked = effective_children and (effective_children|first).id in locked_booking_ids %}
@@ -184,268 +244,152 @@
         {% elif is_stornogruppe %}
           {# nichts – stornierte Gruppe #}
         {% elif all_children_offen %}
-          <a href="{{ url_for('accounting.booking_group_edit', group_id=g.id) }}"
-             class="btn btn-sm btn-outline-secondary" title="Bearbeiten">
+          <button type="button" class="btn btn-sm btn-outline-secondary" title="Bearbeiten"
+                  data-url="{{ url_for('accounting.booking_group_edit', group_id=g.id) }}"
+                  data-modal-title="Sammelbuchung bearbeiten"
+                  onclick="openBookingGroupModal(this)">
             <i class="fas fa-edit"></i>
-          </a>
+          </button>
           <form method="post" action="{{ url_for('accounting.booking_group_delete', group_id=g.id) }}"
                 style="display:inline"
                 hx-boost="false"
                 onsubmit="return confirm('Sammelbuchung wirklich löschen? Alle {{ effective_children|length }} Zeilen werden entfernt.');">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button type="submit" class="btn btn-sm btn-outline-danger" title="Löschen">
+            <button type="submit" class="btn btn-sm btn-outline-secondary bk-act-danger" title="Löschen">
               <i class="fas fa-trash"></i>
             </button>
           </form>
         {% elif any_child_verbucht %}
-          <a href="{{ url_for('accounting.booking_group_edit', group_id=g.id) }}"
-             class="btn btn-sm btn-outline-secondary" title="Bearbeiten">
-            <i class="fas fa-edit"></i>
-          </a>
-          <a href="{{ url_for('accounting.booking_group_stornieren', group_id=g.id) }}"
-             class="btn btn-sm btn-outline-danger" title="Stornieren">
+          {# Verbucht: nur noch ansehen (schreibgeschützt) oder stornieren. #}
+          <button type="button" class="btn btn-sm btn-outline-secondary" title="Ansehen"
+                  data-url="{{ url_for('accounting.booking_group_edit', group_id=g.id) }}"
+                  data-modal-title="Sammelbuchung ansehen"
+                  onclick="openBookingGroupModal(this)">
+            <i class="fas fa-eye"></i>
+          </button>
+          <button type="button" class="btn btn-sm btn-outline-secondary bk-act-danger" title="Stornieren"
+                  data-url="{{ url_for('accounting.booking_group_stornieren', group_id=g.id) }}"
+                  data-modal-title="Sammelbuchung stornieren"
+                  onclick="openStornoModal(this)">
             <i class="fas fa-ban"></i>
-          </a>
+          </button>
         {% endif %}
       </td>
     </tr>
-    {% for b in row.children %}
-    {% if not b.storno_of_id %}
-    <tr class="booking-group-child
-        {%- if b.status == 'Storniert' %} text-muted
-        {%- elif b.status == 'Offen' %} table-info
-        {%- endif %}"
-        {% if b.status == 'Storniert' %}style="opacity:0.5"{% endif %}>
-      <td></td>
-      <td></td>
-      <td class="text-center">
-        {% if b.real_account %}
-        <i class="fas {{ b.real_account.icon or 'fa-university' }} text-muted" title="{{ b.real_account.name }}"></i>
-        {% else %}
-        <span class="text-muted">—</span>
-        {% endif %}
-      </td>
-      <td style="max-width:140px; white-space:nowrap; overflow:hidden">
-        <div class="d-flex align-items-center gap-1" style="min-width:0">
-          <span class="text-muted flex-shrink-0" title="Kind der Sammelbuchung">↳</span>
-          {% if b.account.code %}
-          <span class="badge bg-secondary text-white flex-shrink-0" title="{{ b.account.name }}">{{ b.account.code }}</span>
-          {% endif %}
-          <span class="text-truncate small" title="{{ b.account.name }}">{{ b.account.name }}</span>
-        </div>
-      </td>
-      <td>
-        <span class="small">{{ b.description }}</span>
-      </td>
-      <td style="max-width:100px; overflow:hidden">
-        {% if b.project %}
-        {% set proj_color = b.project.color or '#3498db' %}
-        {% if b.project.code %}
-        <div class="d-flex align-items-center gap-1" style="min-width:0">
-          <a href="{{ url_for('projects.detail', project_id=b.project.id) }}"
-             class="badge flex-shrink-0"
-             style="background-color:{{ proj_color }};color:#fff"
-             title="{{ b.project.name }}">{{ b.project.code }}</a>
-          <a href="{{ url_for('projects.detail', project_id=b.project.id) }}"
-             class="text-truncate small text-decoration-none text-reset">{{ b.project.name }}</a>
-        </div>
-        {% else %}
-        <a href="{{ url_for('projects.detail', project_id=b.project.id) }}"
-           class="badge text-truncate d-block"
-           style="background-color:{{ proj_color }};color:#fff;max-width:100%"
-           title="{{ b.project.name }}">{{ b.project.name }}</a>
-        {% endif %}
-        {% else %}
-        <span class="text-muted">—</span>
-        {% endif %}
-      </td>
-      <td class="text-muted small">—</td>
-      <td class="text-center px-1">
-        {% if b.tax_rate and b.tax_rate > 0 %}
-          <span class="text-muted small">{{ b.tax_rate | int }}</span>
-        {% else %}
-          <span class="text-muted">—</span>
-        {% endif %}
-      </td>
-      <td class="text-end text-nowrap text-muted small">
-        {% if b.tax_rate and b.tax_rate > 0 %}
-          {{ signed_booking_tax(b)|de_number }}&nbsp;€
-        {% else %}
-          <span class="text-muted">—</span>
-        {% endif %}
-      </td>
-      <td class="text-end text-nowrap small {{ 'text-success' if b.amount > 0 else 'text-danger' }}">
-        {{ b.amount|de_number }}&nbsp;€
-      </td>
-      <td class="col-actions"></td>
-    </tr>
-    {% endif %}
+    {% for b in effective_children %}
+    {{ bk_child_row(b, gkey, alt) }}
     {% endfor %}
 
     {# ── STORNO EINER SAMMELBUCHUNG (Gegenbuchungen am Storno-Datum) ── #}
     {% elif row.type == 'booking_group_storno' %}
     {% set g = row.group %}
+    {% set skey = 's' ~ g.id ~ '-' ~ row.date.strftime('%Y%m%d') %}
     {% set ns = namespace(total=0, tax=0) %}
     {% for c in row.children %}
       {% set ns.total = ns.total + c.amount %}
       {% if c.tax_rate and c.tax_rate > 0 %}{% set ns.tax = ns.tax + signed_booking_tax(c) %}{% endif %}
     {% endfor %}
-    <tr class="booking-group-header booking-storno">
+    <tr class="bk-group{{ alt }}">
       <td></td>
-      <td style="white-space:nowrap">{{ row.date.strftime('%d.%m.%Y') }}</td>
-      <td class="text-center">
-        <i class="fas fa-undo-alt text-danger" title="Storno-Gegenbuchung"></i>
+      <td class="bk-date">{{ row.date.strftime('%d.%m.%Y') }}</td>
+      <td class="text-center">{{ bk_bank((row.children|first).real_account if row.children else none) }}</td>
+      <td class="bk-col-account">{{ bk_toggle(skey, row.children|length) }}</td>
+      <td class="bk-col-desc">
+        <span>Storno: {{ g.description }}</span>
+        <span class="badge bg-danger-lt ms-1"><i class="fas fa-undo-alt me-1"></i>Storno</span>
+        <small class="text-secondary ms-1">zur Sammelbuchung vom {{ g.date.strftime('%d.%m.%Y') }}{% if g.storno_reason %} — {{ g.storno_reason }}{% endif %}</small>
       </td>
-      <td colspan="3">
-        <span class="badge bg-danger text-white me-1"><i class="fas fa-undo-alt me-1"></i>STORNO</span>
-        <span class="fw-bold">Storno: {{ g.description }}</span>
-        <small class="text-muted ms-1">zur Sammelbuchung vom {{ g.date.strftime('%d.%m.%Y') }}
-          ({{ row.children|length }} Zeilen){% if g.storno_reason %} — {{ g.storno_reason }}{% endif %}</small>
-      </td>
-      <td style="max-width:140px; white-space:nowrap; overflow:hidden">
-        {% if g.customer %}
-        <span class="text-truncate d-inline-block small" style="max-width:100%" title="{{ g.customer.name }}">
-          <i class="fas fa-user me-1 text-muted"></i>{{ g.customer.name }}
-        </span>
-        {% else %}<span class="text-muted">—</span>{% endif %}
-      </td>
-      <td class="text-center px-1"><span class="text-muted">—</span></td>
-      <td class="text-end text-nowrap text-muted small">
-        {% if ns.tax %}{{ ns.tax|de_number }}&nbsp;€{% else %}<span class="text-muted">—</span>{% endif %}
-      </td>
-      <td class="text-end fw-bold text-nowrap {{ 'text-success' if ns.total >= 0 else 'text-danger' }}">
-        {{ ns.total|de_number }}&nbsp;€
-      </td>
+      <td class="bk-col-project"></td>
+      <td class="bk-col-contact">{% if g.customer %}{{ bk_contact(g.customer, bk_contact_number(g.customer, ns.total)) }}{% endif %}</td>
+      <td class="text-end bk-tax">{% if ns.tax %}{{ ns.tax|de_number }}&nbsp;€{% endif %}</td>
+      <td class="text-end">{{ bk_amount(ns.total) }}</td>
       <td class="text-end col-actions" style="white-space:nowrap">
-        <a href="{{ url_for('accounting.booking_group_detail', group_id=g.id) }}"
-           class="btn btn-sm btn-outline-secondary" title="Sammelbuchung ansehen">
+        <button type="button" class="btn btn-sm btn-outline-secondary" title="Sammelbuchung ansehen"
+                data-url="{{ url_for('accounting.booking_group_edit', group_id=g.id) }}"
+                data-modal-title="Sammelbuchung ansehen"
+                onclick="openBookingGroupModal(this)">
           <i class="fas fa-eye"></i>
-        </a>
+        </button>
       </td>
     </tr>
     {% for b in row.children %}
-    <tr class="booking-group-child booking-storno">
-      <td></td>
-      <td></td>
-      <td class="text-center">
-        {% if b.real_account %}
-        <i class="fas {{ b.real_account.icon or 'fa-university' }} text-muted" title="{{ b.real_account.name }}"></i>
-        {% else %}<span class="text-muted">—</span>{% endif %}
-      </td>
-      <td style="max-width:140px; white-space:nowrap; overflow:hidden">
-        <div class="d-flex align-items-center gap-1" style="min-width:0">
-          <span class="text-muted flex-shrink-0">↳</span>
-          {% if b.account.code %}
-          <span class="badge bg-secondary text-white flex-shrink-0" title="{{ b.account.name }}">{{ b.account.code }}</span>
-          {% endif %}
-          <span class="text-truncate small" title="{{ b.account.name }}">{{ b.account.name }}</span>
-        </div>
-      </td>
-      <td><span class="small">{{ b.description }}</span></td>
-      <td style="max-width:100px; overflow:hidden">
-        {% if b.project %}<span class="small text-truncate d-block">{{ b.project.name }}</span>{% else %}<span class="text-muted">—</span>{% endif %}
-      </td>
-      <td class="text-muted small">—</td>
-      <td class="text-center px-1">
-        {% if b.tax_rate and b.tax_rate > 0 %}<span class="text-muted small">{{ b.tax_rate | int }}</span>{% else %}<span class="text-muted">—</span>{% endif %}
-      </td>
-      <td class="text-end text-nowrap text-muted small">
-        {% if b.tax_rate and b.tax_rate > 0 %}{{ signed_booking_tax(b)|de_number }}&nbsp;€{% else %}<span class="text-muted">—</span>{% endif %}
-      </td>
-      <td class="text-end text-nowrap small {{ 'text-success' if b.amount > 0 else 'text-danger' }}">
-        {{ b.amount|de_number }}&nbsp;€
-      </td>
-      <td class="col-actions"></td>
-    </tr>
+    {{ bk_child_row(b, skey, alt) }}
     {% endfor %}
 
     {# ── UMBUCHUNG ────────────────────────────────────────────────── #}
     {% elif row.type == 'transfer' %}
     {% set t = row.obj %}
     {% set t_amount = row.amount %}
-    <tr class="table-light">
+    <tr class="bk-transfer{{ alt }}">
       <td></td>
-      <td style="white-space:nowrap">{{ t.date.strftime('%d.%m.%Y') }}</td>
-      <td class="text-center">
-        {% if row.side == 'out' %}
-        <i class="fas {{ t.from_account.icon or 'fa-university' }} text-muted" title="{{ t.from_account.name }}"></i>
-        {% else %}
-        <i class="fas {{ t.to_account.icon or 'fa-university' }} text-muted" title="{{ t.to_account.name }}"></i>
-        {% endif %}
+      <td class="bk-date">{{ t.date.strftime('%d.%m.%Y') }}</td>
+      <td class="text-center">{{ bk_bank(t.from_account if row.side == 'out' else t.to_account) }}</td>
+      <td class="bk-col-account">
+        <span class="badge bg-purple-lt">Umbuchung</span>
       </td>
-      <td>
-        <span class="badge bg-purple text-white">Umbuchung</span>
-      </td>
-      <td colspan="3">
+      <td class="bk-col-desc" colspan="3">
         {% if row.side == 'out' %}
-        <i class="fas fa-arrow-right text-danger me-1" style="font-size:.8em"></i>
-        <span class="text-muted small">{{ t.to_account.name }}</span>
+        <i class="fas fa-arrow-right text-secondary me-1" style="font-size:.8em"></i>
+        <span class="text-secondary">{{ t.to_account.name }}</span>
         {% else %}
-        <i class="fas fa-arrow-left text-success me-1" style="font-size:.8em"></i>
-        <span class="text-muted small">{{ t.from_account.name }}</span>
+        <i class="fas fa-arrow-left text-secondary me-1" style="font-size:.8em"></i>
+        <span class="text-secondary">{{ t.from_account.name }}</span>
         {% endif %}
         {% if t.description %}
-        <span class="ms-2 small">{{ t.description }}</span>
+        <span class="ms-2">{{ t.description }}</span>
         {% endif %}
       </td>
-      <td class="text-center px-1"><span class="text-muted">—</span></td>
-      <td class="text-end text-nowrap text-muted"><span class="text-muted">—</span></td>
-      <td class="text-end fw-bold text-nowrap {{ 'text-success' if t_amount > 0 else 'text-danger' }}">
-        {{ t_amount|de_number }}&nbsp;€
-      </td>
+      <td class="text-end bk-tax"></td>
+      <td class="text-end">{{ bk_amount(t_amount) }}</td>
       <td class="text-end col-actions" style="white-space:nowrap">
-        <a href="{{ url_for('accounting.transfers') }}"
-           class="btn btn-sm btn-outline-secondary" title="Umbuchungen">
-          <i class="fas fa-exchange-alt"></i>
-        </a>
+        {% if t.id in locked_transfer_ids %}
+        <span class="text-muted" title="Buchungsjahr abgeschlossen oder an die Steuerberatung übergeben"><i class="fas fa-lock"></i></span>
+        {% else %}
+        <button type="button" class="btn btn-sm btn-outline-secondary" title="Bearbeiten"
+                data-url="{{ url_for('accounting.transfer_edit', transfer_id=t.id) }}"
+                data-modal-title="Umbuchung bearbeiten"
+                onclick="openTransferModal(this)">
+          <i class="fas fa-edit"></i>
+        </button>
+        {# Kein Storno nötig: eine Umbuchung gleicht man mit der Rückbuchung aus. #}
+        <form method="post" action="{{ url_for('accounting.transfer_delete', transfer_id=t.id) }}"
+              style="display:inline"
+              hx-boost="false"
+              onsubmit="return confirm('Umbuchung wirklich löschen?')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="next" value="{{ url_for('accounting.bookings') }}">
+          <button type="submit" class="btn btn-sm btn-outline-secondary bk-act-danger" title="Löschen">
+            <i class="fas fa-trash"></i>
+          </button>
+        </form>
+        {% endif %}
       </td>
     </tr>
 
     {# ── BUCHUNG ──────────────────────────────────────────────────── #}
     {% else %}
     {% set b = row.obj %}
-    {# Generalumkehr: Original (ausgegraut) und Gegenbuchung (am Storno-Datum)
-       stehen beide in der Liste und zählen beide in der Summe. #}
-    <tr class="
-      {%- if b.status == 'Storniert' %} text-muted
-      {%- elif b.storno_of_id %} booking-storno
-      {%- elif b.status == 'Offen' %} table-info
-      {%- endif %}"
-      {%- if b.status == 'Storniert' %} style="opacity:0.6"{% endif %}>
+    {# Generalumkehr: Original (ausgegraut, Betrag durchgestrichen) und Gegenbuchung
+       (am Storno-Datum) stehen beide in der Liste und zählen beide in der Summe. #}
+    {% set is_open = b.status == 'Offen' and not b.storno_of_id %}
+    <tr class="bk-row{{ alt }}{{ ' bk-storniert' if b.status == 'Storniert' }}{{ ' bk-open' if is_open }}">
       <td class="text-center" style="width:1%">
         {% if b.status != 'Storniert' and not b.storno_of_id and not b.group_id and b.id not in locked_booking_ids %}
         <input type="checkbox" class="form-check-input booking-select"
                name="booking_ids" value="{{ b.id }}" aria-label="Buchung auswählen">
         {% endif %}
       </td>
-      <td style="white-space:nowrap">{{ b.date.strftime('%d.%m.%Y') }}</td>
-      <td class="text-center">
-        {% if b.real_account %}
-        <i class="fas {{ b.real_account.icon or 'fa-university' }} text-muted" title="{{ b.real_account.name }}"></i>
-        {% else %}
-        <span class="text-muted">—</span>
-        {% endif %}
-      </td>
-      <td style="max-width:120px; overflow:hidden">
-        {% if b.account.code %}
-        <div class="d-flex align-items-center gap-1" style="min-width:0">
-          <span class="badge bg-secondary text-white flex-shrink-0" title="{{ b.account.name }}">{{ b.account.code }}</span>
-          <span class="text-truncate small">{{ b.account.name }}</span>
-        </div>
-        {% else %}
-        <span class="text-truncate d-block small" title="{{ b.account.name }}">{{ b.account.name }}</span>
-        {% endif %}
-      </td>
-      <td>
-        {% if b.reference %}
-        <span class="badge bg-secondary text-white me-1">{{ b.reference }}</span>
-        {% endif %}
-        {% if b.storno_of_id %}
-        <span class="badge bg-danger text-white me-1"><i class="fas fa-undo-alt me-1"></i>STORNO</span>
-        {% endif %}
+      <td class="bk-date"{% if is_open %} title="Offen – wird über Nacht verbucht"{% endif %}>{{ b.date.strftime('%d.%m.%Y') }}</td>
+      <td class="text-center">{{ bk_bank(b.real_account) }}</td>
+      <td class="bk-col-account">{{ bk_account(b.account) }}</td>
+      <td class="bk-col-desc">
+        {% if b.reference %}<span class="bk-code">{{ b.reference }}</span>{% endif %}
         <span>{{ b.description }}</span>
-        {% if b.storno_of_id and b.storno_of %}
-        <small class="text-muted ms-1">zur Buchung vom {{ b.storno_of.date.strftime('%d.%m.%Y') }}{% if b.storno_reason %} — {{ b.storno_reason }}{% endif %}</small>
+        {% if b.storno_of_id %}
+        <span class="badge bg-danger-lt ms-1"><i class="fas fa-undo-alt me-1"></i>Storno</span>
+        {% if b.storno_of %}
+        <small class="text-secondary ms-1">zur Buchung vom {{ b.storno_of.date.strftime('%d.%m.%Y') }}{% if b.storno_reason %} — {{ b.storno_reason }}{% endif %}</small>
+        {% endif %}
         {% endif %}
         {% if b.status == 'Storniert' %}
         {% set sb = b.storno_buchung %}
@@ -457,72 +401,13 @@
         {% endif %}
         {% if b.invoice_id %}
         <a href="{{ url_for('invoices.detail', invoice_id=b.invoice_id) }}"
-           class="badge bg-light text-dark ms-1">
-          <i class="fas fa-file-invoice me-1"></i>RE
-        </a>
+           class="bk-link-icon" title="Rechnung öffnen"><i class="fas fa-file-invoice"></i></a>
         {% endif %}
       </td>
-      <td style="max-width:100px; overflow:hidden">
-        {% if b.project %}
-        {% set proj_color = b.project.color or '#3498db' %}
-        {% if b.project.code %}
-        <div class="d-flex align-items-center gap-1" style="min-width:0">
-          <a href="{{ url_for('projects.detail', project_id=b.project.id) }}"
-             class="badge flex-shrink-0"
-             style="background-color:{{ proj_color }};color:#fff"
-             title="{{ b.project.name }}">{{ b.project.code }}</a>
-          <a href="{{ url_for('projects.detail', project_id=b.project.id) }}"
-             class="text-truncate small text-decoration-none text-reset">{{ b.project.name }}</a>
-        </div>
-        {% else %}
-        <a href="{{ url_for('projects.detail', project_id=b.project.id) }}"
-           class="badge text-truncate d-block"
-           style="background-color:{{ proj_color }};color:#fff;max-width:100%"
-           title="{{ b.project.name }}">{{ b.project.name }}</a>
-        {% endif %}
-        {% else %}
-        <span class="text-muted">—</span>
-        {% endif %}
-      </td>
-      <td style="max-width:100px; overflow:hidden">
-        {% if b.customer %}
-        <div class="d-flex align-items-center gap-1" style="min-width:0">
-          {# Ausgabe → Lieferantennummer, sonst Kunden-/Mitgliedsnummer (je Rolle ein Kreis). #}
-          {% set kn = (b.customer.creditor_number if b.amount is not none and b.amount < 0 else none)
-                      or b.customer.customer_number or b.customer.creditor_number %}
-          {% if kn %}
-          <a href="{{ url_for('customers.detail', customer_id=b.customer.id) }}"
-             class="badge bg-secondary text-white flex-shrink-0"
-             title="{{ b.customer.name }}">{{ kn }}</a>
-          <a href="{{ url_for('customers.detail', customer_id=b.customer.id) }}"
-             class="text-truncate small text-decoration-none text-reset">{{ b.customer.name }}</a>
-          {% else %}
-          <a href="{{ url_for('customers.detail', customer_id=b.customer.id) }}"
-             class="text-truncate small text-decoration-none badge bg-secondary text-white"
-             title="{{ b.customer.name }}">{{ b.customer.name }}</a>
-          {% endif %}
-        </div>
-        {% else %}
-        <span class="text-muted">—</span>
-        {% endif %}
-      </td>
-      <td class="text-center px-1">
-        {% if b.tax_rate and b.tax_rate > 0 %}
-          <span class="text-muted small">{{ b.tax_rate | int }}</span>
-        {% else %}
-          <span class="text-muted">—</span>
-        {% endif %}
-      </td>
-      <td class="text-end text-nowrap text-muted small">
-        {% if b.tax_rate and b.tax_rate > 0 %}
-          {{ signed_booking_tax(b)|de_number }}&nbsp;€
-        {% else %}
-          <span class="text-muted">—</span>
-        {% endif %}
-      </td>
-      <td class="text-end fw-bold text-nowrap {{ 'text-success' if b.amount > 0 else 'text-danger' }}">
-        {{ b.amount|de_number }}&nbsp;€
-      </td>
+      <td class="bk-col-project">{{ bk_project(b.project) }}</td>
+      <td class="bk-col-contact">{% if b.customer %}{{ bk_contact(b.customer, bk_contact_number(b.customer, b.amount)) }}{% endif %}</td>
+      <td class="text-end bk-tax">{{ bk_tax(b) }}</td>
+      <td class="text-end">{{ bk_amount(b.amount, void=(b.status == 'Storniert')) }}</td>
       <td class="text-end col-actions" style="white-space:nowrap">
         {% set fy_locked = b.id in locked_booking_ids %}
         {% if b.storno_of_id %}
@@ -535,10 +420,12 @@
         <span class="text-muted" title="Buchungsjahr abgeschlossen"><i class="fas fa-lock"></i></span>
         {% if b.status == 'Verbucht' and not b.group_id and now_year_open %}
         {# Generalumkehr: das Original bleibt im abgeschlossenen Jahr, die Umkehr landet heute. #}
-        <a href="{{ url_for('accounting.booking_stornieren', booking_id=b.id) }}"
-           class="btn btn-sm btn-outline-danger" title="Im laufenden Jahr stornieren">
+        <button type="button" class="btn btn-sm btn-outline-secondary bk-act-danger" title="Im laufenden Jahr stornieren"
+                data-url="{{ url_for('accounting.booking_stornieren', booking_id=b.id) }}"
+                data-modal-title="Buchung stornieren"
+                onclick="openStornoModal(this)">
           <i class="fas fa-ban"></i>
-        </a>
+        </button>
         {% endif %}
         {% elif b.status == 'Offen' %}
         <button type="button" class="btn btn-sm btn-outline-secondary" title="Bearbeiten"
@@ -553,7 +440,7 @@
               hx-boost="false"
               onsubmit="return confirm('Buchung wirklich löschen?')">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button type="submit" class="btn btn-sm btn-outline-danger" title="Löschen">
+          <button type="submit" class="btn btn-sm btn-outline-secondary bk-act-danger" title="Löschen">
             <i class="fas fa-trash"></i>
           </button>
         </form>
@@ -565,10 +452,12 @@
            hx-target="#booking-form-host" hx-swap="innerHTML">
           <i class="fas fa-edit"></i>
         </button>
-        <a href="{{ url_for('accounting.booking_stornieren', booking_id=b.id) }}"
-           class="btn btn-sm btn-outline-danger" title="Stornieren">
+        <button type="button" class="btn btn-sm btn-outline-secondary bk-act-danger" title="Stornieren"
+                data-url="{{ url_for('accounting.booking_stornieren', booking_id=b.id) }}"
+                data-modal-title="Buchung stornieren"
+                onclick="openStornoModal(this)">
           <i class="fas fa-ban"></i>
-        </a>
+        </button>
         {% endif %}
         {% endif %}
       </td>
@@ -577,7 +466,7 @@
 
     {% else %}
     <tr>
-      <td colspan="11" class="text-center text-muted py-3">Keine Buchungen.</td>
+      <td colspan="10" class="text-center text-muted py-3">Keine Buchungen.</td>
     </tr>
     {% endfor %}
   </tbody>

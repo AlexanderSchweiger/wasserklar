@@ -175,6 +175,7 @@ def create_credit_note(original, *, reason=None, created_by_id=None,
             quantity=-Decimal(str(item.quantity or 0)),
             unit=item.unit,
             unit_price=item.unit_price,
+            price_decimals=item.price_decimals,
             amount=-Decimal(str(item.amount or 0)),
             tax_rate=item.tax_rate,
             # Kontierung spiegeln: die Rueckzahlung muss dasselbe Erloeskonto

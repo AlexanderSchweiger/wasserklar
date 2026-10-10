@@ -68,7 +68,7 @@
               <tr>
                 <td>{{ l.description }}</td>
                 <td class="text-end">{{ l.quantity | de_number }} {{ l.unit }}</td>
-                <td class="text-end">{{ l.unit_price | de_number }}</td>
+                <td class="text-end">{{ l.unit_price | de_price(l.price_decimals) }}</td>
                 <td class="text-end">{{ l.amount | de_number }} €</td>
               </tr>
               {% endfor %}

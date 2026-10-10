@@ -47,17 +47,25 @@ window.setupEditModal = function (opts) {
 
   // Dokument-Listener nur einmal pro Event-Name registrieren — hx-boost ruft
   // setupEditModal bei jeder Navigation erneut auf (sonst Mehrfach-Reload).
+  // Die Listener lesen die Optionen der ZULETZT eingerichteten Seite: dasselbe Modal kann
+  // auf mehreren Seiten mit eigenem savedHandler laufen (Umbuchung: Umbuchungsliste lädt
+  // neu, Buchungsliste frischt nur die Tabelle auf).
+  window.__wkModalOpts = window.__wkModalOpts || {};
+  window.__wkModalOpts[opts.closeEvent] = opts;
   window.__wkModalEvents = window.__wkModalEvents || {};
   if (!window.__wkModalEvents[opts.closeEvent]) {
     window.__wkModalEvents[opts.closeEvent] = true;
-    document.addEventListener(opts.closeEvent, function () {
-      var el = document.getElementById(opts.modalId);
+    var closeEvent = opts.closeEvent;
+    document.addEventListener(closeEvent, function () {
+      var cur = window.__wkModalOpts[closeEvent];
+      var el = document.getElementById(cur.modalId);
       if (!el) { return; }
       var modal = bootstrap.Modal.getInstance(el);
       if (modal) { modal.hide(); }
     });
     document.addEventListener(opts.savedEvent, function (e) {
-      var fn = opts.savedHandler ? window[opts.savedHandler] : null;
+      var cur = window.__wkModalOpts[closeEvent];
+      var fn = cur.savedHandler ? window[cur.savedHandler] : null;
       if (typeof fn === 'function') { fn(e); }
       else { window.location.reload(); }
     });

@@ -133,7 +133,7 @@ class TestBillingRun:
     def test_snapshot_shows_tiers_and_condition(self, logged_in, setup):
         resp = _run(logged_in, setup)
         html = logged_in.get(resp.headers["Location"]).get_data(as_text=True)
-        assert "über 200 bis 500 m³: 1,5000" in html
+        assert "über 200 bis 500 m³: 1,50" in html
         assert "nur Mitglied" in html
 
 
@@ -191,7 +191,7 @@ class TestTariffForm:
     def test_edit_form_shows_existing_tiers(self, logged_in, setup):
         html = logged_in.get(f"/invoices/tariffs/{setup['tariff'].id}/edit",
                              headers={"X-From-Modal": "1"}).get_data(as_text=True)
-        assert 'value="1,5000"' in html and 'value="200"' in html
+        assert 'value="1,50"' in html and 'value="200"' in html
         assert "tariffCalcResult" in html
         assert 'name="comp_cond_status_' in html
 
@@ -271,4 +271,4 @@ class TestTariffList:
     def test_badges(self, logged_in, setup):
         html = logged_in.get("/invoices/tariffs").get_data(as_text=True)
         assert "gestaffelt" in html and "nur Mitglied" in html
-        assert "bis 200 m³: 1,2000" in html
+        assert "bis 200 m³: 1,20" in html

@@ -1397,6 +1397,12 @@ class ChargeType(db.Model):
     bestehende Tarife rechnen unveraendert weiter ab. ``is_levy`` markiert
     eine an das Land weitergereichte Abgabe (Wassercent): sie zaehlt in der
     Plankostenrechnung nicht als Ertrag.
+
+    ``price_decimals`` (nur m³-Arten, 2–4, Standard 2): mit so vielen Nachkommastellen
+    erscheint der Preis je m³ im Rechnungstext, in Formularen und auf der
+    Rechnung — gerechnet wird weiter mit 4 Stellen, und ein Preis mit mehr
+    Stellen erscheint vollstaendig (``app/invoices/price_format.py``). Die
+    Rechnungsposition friert den Wert ein (``InvoiceItem.price_decimals``).
     """
     __tablename__ = "charge_types"
 
@@ -1427,10 +1433,17 @@ class ChargeType(db.Model):
                        server_default=sa.true())
     sort_order = db.Column(db.Integer, nullable=False, default=100,
                            server_default=db.text("100"))
+    price_decimals = db.Column(db.SmallInteger, nullable=False, default=2,
+                               server_default=db.text("2"))
 
     @property
     def is_per_m3(self):
         return self.calc_type == self.CALC_PER_M3
+
+    @property
+    def amount_places(self):
+        """Nachkommastellen eines Betrags dieser Art: eingestellt je m³, 2 pauschal."""
+        return self.price_decimals if self.is_per_m3 else 2
 
     @property
     def unit(self):
@@ -1481,27 +1494,28 @@ class WaterTariff(db.Model):
 
     @property
     def summary(self):
-        """Kurzfassung fuer Auswahllisten: ``1,4000 €/m³ · Grundgebühr 32,00 €``.
+        """Kurzfassung fuer Auswahllisten: ``1,4000 €/m³ · Grundgebühr 32,00 €``
+        (m³-Preise mit den Nachkommastellen der Gebührenart).
 
         Staffel: ``1,2000–2,0000 €/m³ gestaffelt``; Bedingung:
         ``Grundgebühr 32,00 € (nur Mitglied)``.
         """
+        from app.invoices.price_format import format_price
         from app.invoices.tariff_spec import status_condition_label
-
-        def _m3(value):
-            return f"{Decimal(str(value)):.4f}".replace(".", ",")
 
         parts = []
         for comp in self.components:
             if comp.amount is None:
                 continue
             if comp.charge_type.is_per_m3:
+                places = comp.charge_type.price_decimals
                 steps = comp.tier_steps
                 if steps:
                     prices = [Decimal(str(comp.amount))] + [s.price for s in steps]
-                    text = f"{_m3(min(prices))}–{_m3(max(prices))} €/m³ gestaffelt"
+                    text = (f"{format_price(min(prices), places)}–"
+                            f"{format_price(max(prices), places)} €/m³ gestaffelt")
                 else:
-                    text = f"{_m3(comp.amount)} €/m³"
+                    text = f"{format_price(comp.amount, places)} €/m³"
             else:
                 value = f"{Decimal(str(comp.amount)):.2f}".replace(".", ",")
                 text = f"{value} €"
@@ -2393,8 +2407,22 @@ class InvoiceItem(db.Model):
     is_dunning_fee = db.Column(db.Integer, default=0, nullable=False)
     dunning_notice_id = db.Column(db.Integer, db.ForeignKey("dunning_notices.id"), nullable=True)
 
+    # Nachkommastellen des Einzelpreises — eingefroren beim Entstehen der
+    # Zeile (Gebührenart bzw. wie im Positions-Editor eingetippt), damit eine
+    # spaetere Umstellung den Beleg nicht veraendert. NULL = Altbeleg.
+    price_decimals = db.Column(db.SmallInteger, nullable=True)
+
     account = db.relationship("Account", foreign_keys=[account_id])
     project = db.relationship("Project", foreign_keys=[project_id])
+
+    @property
+    def price_places(self):
+        """Nachkommastellen des Einzelpreises in Ansicht, PDF und Word:
+        ``price_decimals``, bei Altbelegen 4 je m³ bzw. 2 — nie weniger, als
+        der Preis hat (``app/invoices/price_format.py``)."""
+        from app.invoices.price_format import LEGACY_PLACES, price_places
+        default = self.price_decimals or (LEGACY_PLACES if self.unit == "m³" else 2)
+        return price_places(self.unit_price, default)
 
     @property
     def is_water_consumption(self):

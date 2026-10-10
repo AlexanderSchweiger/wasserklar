@@ -109,18 +109,19 @@ def override_form_rows(owner, form=None):
                 mode, amount = MODE_EXEMPT, ""
             else:
                 mode = MODE_AMOUNT
-                amount = format_amount(ov.amount, ct.is_per_m3)
+                amount = format_amount(ov.amount, ct.amount_places)
         if not ct.active and mode == MODE_INHERIT:
             continue  # ausgeblendete Art ohne Override nicht anbieten
         rows.append({"ct": ct, "mode": mode, "amount": amount})
     return rows
 
 
-def format_amount(value, per_m3=False):
-    """Betrag fuer ein Formularfeld: deutsches Komma, 4 (je m³) bzw. 2 Stellen."""
-    if value is None:
-        return ""
-    return f"{Decimal(str(value)):.{4 if per_m3 else 2}f}".replace(".", ",")
+def format_amount(value, places=2):
+    """Betrag fuer ein Formularfeld: deutsches Komma, ``places`` Stellen
+    (``ChargeType.amount_places``: je m³ eingestellt, pauschal 2) — nie
+    weniger, als der Betrag hat."""
+    from app.invoices.price_format import format_price
+    return format_price(value, places)
 
 
 def parse_amount(raw):
@@ -204,9 +205,9 @@ def overrides_display(owner):
         if ov.amount is None:
             text = "entfällt"
         elif ct.is_per_m3:
-            text = f"{Decimal(str(ov.amount)):.4f} €/m³".replace(".", ",")
+            text = f"{format_amount(ov.amount, ct.price_decimals)} €/m³"
         else:
-            text = f"{Decimal(str(ov.amount)):.2f} €".replace(".", ",")
+            text = f"{format_amount(ov.amount)} €"
         out.append((ct.label, text))
     return out
 
@@ -223,11 +224,6 @@ def tariff_form_params(tariff, *, name=None, valid_from=None, amounts=None):
     Staffel und Bedingungen werden mitkopiert (Mehrfachwerte als Listen —
     ``MultiDict`` bzw. ``url_for`` machen daraus wiederholte Felder).
     """
-    def _fmt(value, per_m3):
-        if value is None:
-            return ""
-        return f"{Decimal(str(value)):.{4 if per_m3 else 2}f}".replace(".", ",")
-
     def _qty(value):
         text = format(Decimal(str(value)).normalize(), "f")
         return text.replace(".", ",")
@@ -251,7 +247,7 @@ def tariff_form_params(tariff, *, name=None, valid_from=None, amounts=None):
         amount = amounts.pop(ct.key, comp.amount)
         params[f"comp_on_{ct.id}"] = "1"
         params[f"comp_label_{ct.id}"] = comp.label
-        params[f"comp_amount_{ct.id}"] = _fmt(amount, ct.is_per_m3)
+        params[f"comp_amount_{ct.id}"] = format_amount(amount, ct.amount_places)
         params[f"comp_tax_{ct.id}"] = _tax(comp.tax_rate)
         params[f"comp_account_{ct.id}"] = comp.account_id or ""
         params[f"comp_valid_from_{ct.id}"] = (
@@ -264,7 +260,8 @@ def tariff_form_params(tariff, *, name=None, valid_from=None, amounts=None):
             params[f"comp_tier_mode_{ct.id}"] = comp.tier_mode
             params[f"comp_tier_above_{ct.id}"] = [_qty(s.above) for s in steps]
             params[f"comp_tier_price_{ct.id}"] = [
-                _fmt(max(s.price + shift, Decimal("0")), True) for s in steps]
+                format_amount(max(s.price + shift, Decimal("0")), ct.price_decimals)
+                for s in steps]
         statuses = comp.contact_statuses
         if statuses and ct.key != ChargeType.KEY_WATER:
             from app.wg import STATUS_LABELS
@@ -278,7 +275,7 @@ def tariff_form_params(tariff, *, name=None, valid_from=None, amounts=None):
             continue
         params[f"comp_on_{ct.id}"] = "1"
         params[f"comp_label_{ct.id}"] = ct.label
-        params[f"comp_amount_{ct.id}"] = _fmt(amount, ct.is_per_m3)
+        params[f"comp_amount_{ct.id}"] = format_amount(amount, ct.amount_places)
     return params
 
 

@@ -425,7 +425,8 @@ def generate_docx(invoice, wg: dict, design: dict | None = None,
         row_cells[0].text = item.description or ""
         _right_align_cell(row_cells[1], _de_fmt(item.quantity, 2), font_size=Pt(10))
         _right_align_cell(row_cells[2], item.unit or "", font_size=Pt(10))
-        _right_align_cell(row_cells[3], f"{_de_fmt(item.unit_price, 2)} €", font_size=Pt(10))
+        _right_align_cell(row_cells[3], f"{_de_fmt(item.unit_price, item.price_places)} €",
+                          font_size=Pt(10))
         _right_align_cell(row_cells[4], f"{_de_fmt(item.amount, 2)} €", font_size=Pt(10))
         for run in row_cells[0].paragraphs[0].runs:
             run.font.size = Pt(10)

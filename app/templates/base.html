@@ -87,7 +87,7 @@
             {# Buchhaltung #}
             {% set _nav_buchungen      = request.endpoint in ('accounting.bookings','accounting.booking_new','accounting.booking_edit') %}
             {% set _nav_eingang        = (request.endpoint or '').startswith('accounting.document') %}
-            {% set _nav_umbuchungen    = request.endpoint in ('accounting.transfers','accounting.transfer_new') %}
+            {% set _nav_umbuchungen    = request.endpoint in ('accounting.transfers','accounting.transfer_new','accounting.transfer_edit') %}
             {% set _nav_buchungsjahre  = request.endpoint in ('accounting.fiscal_years','accounting.fiscal_year_new','accounting.fiscal_year_close','accounting.fiscal_year_reopen') %}
             {% set _nav_bankkonten     = request.endpoint in ('accounting.real_accounts','accounting.real_account_new','accounting.real_account_edit') %}
             {% set _nav_kontenplan     = request.endpoint in ('accounting.accounts','accounting.account_new','accounting.account_edit') %}

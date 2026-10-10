@@ -1,7 +1,9 @@
 {# Form-Body fuers Gebührenart-Modal (Neuanlage + Bearbeitung).
    Erwartet ct (oder None), form (nach Validierungsfehler), calc_choices.
    System-Arten: Berechnungsart + „Abgabe" fest; Wasser: immer aktiv, nie
-   ueberschreibbar (Verbrauch/Schaetzung/Plankostenrechnung haengen daran). #}
+   ueberschreibbar (Verbrauch/Schaetzung/Plankostenrechnung haengen daran).
+   Nachkommastellen nur bei m³-Arten (bei eigenen Arten je nach Auswahl
+   der Berechnung ein-/ausgeblendet). #}
 {% include "_flash_inline.html" %}
 {% if form %}
   {% set val_label = form.get('label', '') %}
@@ -9,20 +11,24 @@
   {% set val_levy = form.get('is_levy') %}
   {% set val_overridable = form.get('overridable') %}
   {% set val_active = form.get('active') %}
+  {% set val_places = form.get('price_decimals', '2')|int %}
 {% elif ct %}
   {% set val_label = ct.label %}
   {% set val_calc = ct.calc_type %}
   {% set val_levy = ct.is_levy %}
   {% set val_overridable = ct.overridable %}
   {% set val_active = ct.active %}
+  {% set val_places = ct.price_decimals %}
 {% else %}
   {% set val_label = '' %}
   {% set val_calc = 'flat' %}
   {% set val_levy = false %}
   {% set val_overridable = true %}
   {% set val_active = true %}
+  {% set val_places = 2 %}
 {% endif %}
 {% set is_system = ct is not none and ct.is_system %}
+{% if is_system %}{% set val_calc = ct.calc_type %}{% endif %}
 {% set is_water = ct is not none and ct.key == 'water' %}
 <div class="mb-3">
   <label class="form-label">Bezeichnung <span class="text-danger">*</span></label>
@@ -35,13 +41,29 @@
   {% if is_system %}
   <input type="text" class="form-control" value="{{ ct.calc_label }}" disabled>
   {% else %}
-  <select name="calc_type" class="form-select">
+  <select name="calc_type" class="form-select"
+          onchange="this.form.querySelector('[data-price-places]').hidden = this.value !== 'per_m3'">
     {% for value, label in calc_choices %}
     <option value="{{ value }}" {{ 'selected' if val_calc == value }}>{{ label }}</option>
     {% endfor %}
   </select>
   {% endif %}
 </div>
+{% if not is_system or val_calc == 'per_m3' %}
+<div class="mb-3" data-price-places {{ 'hidden' if val_calc != 'per_m3' }}>
+  <label class="form-label">Nachkommastellen beim Preis je m³</label>
+  <select name="price_decimals" class="form-select">
+    {% for n in places_choices %}
+    <option value="{{ n }}" {{ 'selected' if val_places == n }}>{{ n }} — z. B. {{ '%.*f'|format(n, 0.1)|replace('.', ',') }} €/m³</option>
+    {% endfor %}
+  </select>
+  <div class="form-text">
+    Gilt für den Rechnungstext („120 m³ × 0,10 €/m³“), die Preisfelder und die Rechnung.
+    Gerechnet wird immer mit dem eingegebenen Preis — hat ein Preis mehr Stellen, erscheint er
+    vollständig. Bereits erstellte Rechnungen bleiben unverändert.
+  </div>
+</div>
+{% endif %}
 {% if not is_system %}
 <label class="form-check mb-2">
   <input type="checkbox" class="form-check-input" name="is_levy" value="1" {{ 'checked' if val_levy }}>

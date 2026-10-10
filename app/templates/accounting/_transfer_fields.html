@@ -1,0 +1,106 @@
+{# Felder einer Umbuchung — ohne <form> und Knöpfe. Eingebunden von _transfer_form_body.html
+   (Modal auf Umbuchungs- und Buchungsliste) und transfer_form.html (eigene Seite).
+   Erwartet real_accounts, today, optional transfer (Bearbeiten) und form (nach Validierungsfehler).
+   TomSelect baut der globale htmx:afterSwap-Listener (app.js) bzw. der Seitenstart auf. #}
+{% set _t = transfer if transfer is defined and transfer else none %}
+{% if form %}
+  {% set val_date = form.get('date', today) %}
+  {% set val_amount = form.get('amount', '') %}
+  {% set val_from = form.get('from_real_account_id', '') %}
+  {% set val_to = form.get('to_real_account_id', '') %}
+  {% set val_description = form.get('description', '') %}
+{% elif _t %}
+  {% set val_date = _t.date.isoformat() %}
+  {% set val_amount = _t.amount %}
+  {% set val_from = _t.from_real_account_id|string %}
+  {% set val_to = _t.to_real_account_id|string %}
+  {% set val_description = _t.description or '' %}
+{% else %}
+  {% set val_date = today %}
+  {% set val_amount = '' %}
+  {% set val_from = '' %}
+  {% set val_to = '' %}
+  {% set val_description = '' %}
+{% endif %}
+<div class="row g-2">
+  <div class="col-md-6">
+    <div class="mb-3">
+      <label class="form-label">Datum <span class="text-danger">*</span></label>
+      <input type="date" name="date" class="form-control" value="{{ val_date }}" required>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="mb-3">
+      <label class="form-label">Betrag (€) <span class="text-danger">*</span></label>
+      <div class="input-group">
+        <input type="number" name="amount" step="0.01" min="0.01"
+          class="form-control" value="{{ val_amount }}" required>
+        <span class="input-group-text">€</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="mb-3">
+  <label class="form-label">Ausgangskonto <span class="text-danger">*</span></label>
+  <select name="from_real_account_id" id="from_account" class="form-select tom-select" required>
+    <option value="">– Konto wählen –</option>
+    {% for ra in real_accounts %}
+    <option value="{{ ra.id }}" {{ 'selected' if val_from == ra.id|string }}>
+      {{ ra.name }}{% if ra.iban %} ({{ ra.iban }}){% endif %}
+    </option>
+    {% endfor %}
+  </select>
+  <small class="form-hint">Von diesem Konto wird der Betrag abgebucht.</small>
+</div>
+
+<div class="mb-3">
+  <label class="form-label">Zielkonto <span class="text-danger">*</span></label>
+  <select name="to_real_account_id" id="to_account" class="form-select tom-select" required>
+    <option value="">– Konto wählen –</option>
+    {% for ra in real_accounts %}
+    <option value="{{ ra.id }}" {{ 'selected' if val_to == ra.id|string }}>
+      {{ ra.name }}{% if ra.iban %} ({{ ra.iban }}){% endif %}
+    </option>
+    {% endfor %}
+  </select>
+  <small class="form-hint">Auf dieses Konto wird der Betrag gutgeschrieben.</small>
+</div>
+
+<div class="mb-3">
+  <label class="form-label">Beschreibung <span class="text-danger">*</span></label>
+  <input type="text" name="description" class="form-control" value="{{ val_description }}"
+    placeholder="z. B. Monatliche Überweisung auf Sparkonto" required>
+</div>
+
+<div id="same-account-warning" class="alert alert-warning d-none mb-0">
+  <i class="fas fa-exclamation-triangle me-1"></i>
+  Ausgangs- und Zielkonto dürfen nicht gleich sein.
+</div>
+<script>
+(function () {
+  function init() {
+    var fromEl = document.getElementById('from_account');
+    var toEl = document.getElementById('to_account');
+    var warning = document.getElementById('same-account-warning');
+    var form = fromEl ? fromEl.closest('form') : null;
+    var submitBtn = form ? form.querySelector('button[type="submit"]') : null;
+    if (!fromEl || !toEl) return;
+    function check() {
+      var same = fromEl.value && toEl.value && fromEl.value === toEl.value;
+      if (warning) warning.classList.toggle('d-none', !same);
+      if (submitBtn) submitBtn.disabled = same;
+    }
+    fromEl.addEventListener('change', check);
+    toEl.addEventListener('change', check);
+    check();
+  }
+  // Der Speichern-Knopf steht erst nach diesem Skript (Kartenfuß bzw. modal-footer, den
+  // htmx erst nach dem modal-body einfügt) — siehe _booking_group_fields.html.
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init, { once: true });
+  } else {
+    setTimeout(init, 0);
+  }
+})();
+</script>

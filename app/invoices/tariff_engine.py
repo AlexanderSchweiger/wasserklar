@@ -38,6 +38,9 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from app.invoices.amounts import line_tax
+from app.invoices.price_format import (
+    DEFAULT_PLACES, LEGACY_PLACES, clamp_places, format_price,
+)
 from app.invoices.tariff_spec import (
     TIER_GRADUATED, TIER_MODES, TIER_WHOLE, conditions_as_dict, contact_statuses,
     parse_tiers, tiers_as_list,
@@ -69,6 +72,7 @@ class Charge:
     tiers: tuple = ()            # weitere Stufen (TierStep), nur m³-Positionen
     tier_mode: str = TIER_GRADUATED
     statuses: frozenset = None   # Bedingung Kontaktstatus (None = alle)
+    price_decimals: int = DEFAULT_PLACES   # Anzeige des m³-Preises (Gebührenart)
 
     @property
     def is_per_m3(self):
@@ -102,9 +106,11 @@ def effective_tax(rate, vat_liable):
 
 def make_charge(*, key, label, calc_type, amount, tax_rate=None, account_id=None,
                 is_levy=False, valid_from=None, sort_order=100, tiers=(),
-                tier_mode=TIER_GRADUATED, statuses=None, source=SOURCE_TARIFF):
+                tier_mode=TIER_GRADUATED, statuses=None, source=SOURCE_TARIFF,
+                price_decimals=None):
     """Baut eine ``Charge`` — die eine Stelle, die Wasser-Sonderregeln kennt
-    (kein ``valid_from``, keine Bedingung) und Staffeln auf m³-Arten begrenzt."""
+    (kein ``valid_from``, keine Bedingung) und Staffeln auf m³-Arten begrenzt.
+    ``price_decimals`` = Nachkommastellen der Gebührenart (Default 2)."""
     per_m3 = calc_type == ChargeType.CALC_PER_M3
     is_water = key == ChargeType.KEY_WATER
     return Charge(
@@ -121,6 +127,7 @@ def make_charge(*, key, label, calc_type, amount, tax_rate=None, account_id=None
         tiers=tuple(tiers or ()) if per_m3 else (),
         tier_mode=tier_mode if tier_mode in TIER_MODES else TIER_GRADUATED,
         statuses=(frozenset(statuses) if statuses and not is_water else None),
+        price_decimals=clamp_places(price_decimals),
     )
 
 
@@ -255,6 +262,7 @@ def resolve_charges(tariff, *, prop=None, customer=None, contact_status=None,
             tiers=tiers,
             tier_mode=comp.tier_mode,
             statuses=statuses,
+            price_decimals=ct.price_decimals,
         ))
     return _sorted(charges)
 
@@ -289,6 +297,7 @@ def charges_from_specs(specs):
             tiers=spec.get("tiers") or (),
             tier_mode=spec.get("tier_mode") or TIER_GRADUATED,
             statuses=contact_statuses(spec.get("conditions")),
+            price_decimals=ct.price_decimals,
         ))
     return _sorted(out)
 
@@ -438,9 +447,10 @@ def active_days(charge, start, end):
     return span_days(lo, end)
 
 
-def fmt_price(value, decimals=4):
-    """``Decimal('1.4')`` -> ``"1,4000"`` (Rechnungstext)."""
-    return f"{Decimal(str(value)):.{decimals}f}".replace(".", ",")
+def fmt_price(value, decimals=DEFAULT_PLACES):
+    """``Decimal('1.4')`` -> ``"1,40"`` bzw. ``"1,4000"`` bei 4 Stellen
+    (Rechnungstext; nie weniger Stellen, als der Preis hat)."""
+    return format_price(value, decimals)
 
 
 def fmt_qty(value):
@@ -495,7 +505,7 @@ def volume_lines(charge, qty, *, head, detail="", start=None, end=None):
         q = band.qty
         if share is not None:
             q = (q * Decimal(share[0]) / Decimal(share[1])).quantize(QTY_STEP)
-        calc = f"{fmt_qty(q)} m³ × {fmt_price(band.price)} €/m³"
+        calc = f"{fmt_qty(q)} m³ × {fmt_price(band.price, charge.price_decimals)} €/m³"
         if not staged:
             desc = f"{head} ({calc}{suffix})"
         elif charge.tier_mode == TIER_WHOLE:
@@ -511,6 +521,7 @@ def volume_lines(charge, qty, *, head, detail="", start=None, end=None):
             "quantity": q,
             "unit": "m³",
             "unit_price": band.price,
+            "price_decimals": charge.price_decimals,
             "amount": money(q * band.price),
             "charge_key": charge.key,
         })
@@ -552,6 +563,7 @@ def flat_line(charge, *, start=None, end=None, period_days=None, label_suffix=""
         "quantity": Decimal("1"),
         "unit": "Pauschal",
         "unit_price": amount,
+        "price_decimals": 2,
         "amount": money(amount),
         "charge_key": charge.key,
     }
@@ -616,6 +628,7 @@ def _water_lines(water, case):
                 "quantity": qty,
                 "unit": "m³",
                 "unit_price": water.unit_price,
+                "price_decimals": water.price_decimals,
                 "amount": money(qty * water.unit_price),
                 "charge_key": water.key,
                 "is_estimated": bool(part.is_estimated),
@@ -640,7 +653,8 @@ def build_lines(charges, case):
     m³-Positionen (z.B. Wassercent) auf die abgerechnete Wassermenge,
     Pauschalen (``include_flat``) ggf. anteilig. Jede Zeile ist ein Dict mit
     genau den ``InvoiceItem``-Feldern ``description, quantity, unit,
-    unit_price, amount, charge_key, tax_rate, account_id, is_estimated``.
+    unit_price, price_decimals, amount, charge_key, tax_rate, account_id,
+    is_estimated``.
     """
     lines = []
     water = water_charge(charges)
@@ -716,6 +730,7 @@ def snapshot(tariff):
             "tier_mode": comp.tier_mode or TIER_GRADUATED,
             "tiers": tiers_as_list(comp.tier_steps),
             "conditions": conditions_as_dict(comp.conditions),
+            "price_decimals": ct.price_decimals,
         })
     return rows
 
@@ -743,6 +758,7 @@ def charges_from_snapshot(rows):
             tiers=parse_tiers(r.get("tiers")),
             tier_mode=r.get("tier_mode") or TIER_GRADUATED,
             statuses=contact_statuses(r.get("conditions")),
+            price_decimals=r.get("price_decimals") or LEGACY_PLACES,   # Altlaeufe: 4
         ))
     return out
 

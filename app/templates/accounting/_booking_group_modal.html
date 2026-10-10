@@ -1,0 +1,19 @@
+{# Sammelbuchungs-Modal der Buchungsliste (Neu, Bearbeiten, schreibgeschützte Ansicht).
+   Inhalt per setupEditModal (X-From-Modal-GET) aus booking_group_new / booking_group_edit;
+   er bringt modal-body UND modal-footer mit (_booking_group_modal_content.html).
+   Erfolg: 204 + closeBookingGroupModal/bookingGroupSaved.
+   Bewusst KEIN modal-dialog-scrollable: dessen overflow würde die TomSelect-Dropdowns abschneiden. #}
+<div class="modal fade" id="bookingGroupModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="fas fa-layer-group me-2"></i><span data-modal-title-text>Sammelbuchung</span></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <form id="bookingGroupForm" method="post" hx-headers='{"X-From-Modal": "1"}'>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div id="bookingGroupModalBody"></div>
+      </form>
+    </div>
+  </div>
+</div>

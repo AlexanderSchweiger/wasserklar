@@ -119,10 +119,11 @@ def _pick(customers, ownership, wanted_street, used, start=40):
 
 
 def _item(invoice, description, qty, unit, price, rate, *, account, charge_key=None):
+    from app.invoices.price_format import typed_places
     from app.models import InvoiceItem
     qty, price = Decimal(str(qty)), Decimal(str(price))
     return InvoiceItem(invoice_id=invoice.id, description=description, quantity=qty, unit=unit,
-                       unit_price=price,
+                       unit_price=price, price_decimals=typed_places(price),
                        amount=(qty * price).quantize(_CENT, rounding=ROUND_HALF_UP),
                        tax_rate=rate, account_id=account.id, charge_key=charge_key)
 

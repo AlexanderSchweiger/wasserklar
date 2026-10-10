@@ -396,6 +396,118 @@ tr.overdue { background-color: #fff3cd !important; }
   .page-wrapper.is-fill .table-scroll { overflow-x: auto; }
 }
 
+/* ============================================================
+   Buchungsliste (accounting/_bookings_table.html)
+   Ruhiger als Tablers Default: kompakte Zeilen, Nummern als gedämpfter
+   Text statt Solid-Badges (Badges nur für Status), Beträge betont,
+   Sammelbuchungen eingeklappt (JS in accounting/bookings.html), Zebra je
+   Buchung — Kopf und Positionen einer Sammelbuchung teilen den Streifen
+   (Klasse bk-alt aus dem Template, nicht nth-of-type).
+   Tabler malt Zell-Hintergründe per box-shadow (inset 9999px) aus den
+   Variablen --tblr-table-bg-type/-state; Zebra und Hover laufen deshalb
+   über diese Variablen, der Offen-Rand legt sich als zweiter Schatten davor.
+   ============================================================ */
+.bookings-table { font-variant-numeric: tabular-nums; }
+.bookings-table > :not(caption) > * > * { padding: .4rem .5rem; vertical-align: middle; }
+/* Tablers striped-bg (#f6f8fb) ist auf Weiß kaum zu sehen; etwas kräftiger, aber klar unter Hover (.075). */
+.bookings-table > tbody > tr.bk-alt > * { --tblr-table-bg-type: rgba(var(--tblr-emphasis-color-rgb), .04); }
+.bookings-table .bk-date { white-space: nowrap; }
+
+/* Offen (wird über Nacht verbucht): linker Rand statt vollflächig blauer Zeile. */
+.bookings-table > tbody > tr.bk-open > td:first-child {
+  box-shadow: inset 3px 0 0 var(--tblr-azure),
+              inset 0 0 0 9999px var(--tblr-table-bg-state, var(--tblr-table-bg-type, var(--tblr-table-accent-bg)));
+}
+.bk-open-legend { display: inline-block; width: 3px; height: 1.1rem; background: var(--tblr-azure); }
+
+/* Storniertes Original: ausgegraut, Betrag durchgestrichen (zählt per Generalumkehr
+   weiter mit, die Gegenbuchung hebt ihn auf). */
+.bookings-table > tbody > tr.bk-storniert { opacity: .55; }
+
+/* Spalten: Konto/Projekt/Kontakt einzeilig mit Ellipse, Beschreibung bekommt den Rest. */
+.bookings-table .bk-col-account { max-width: 13rem; white-space: nowrap; overflow: hidden; }
+.bookings-table .bk-col-project,
+.bookings-table .bk-col-contact { max-width: 11rem; white-space: nowrap; overflow: hidden; }
+.bookings-table .bk-col-desc { min-width: 12rem; }
+.bookings-table .bk-cell { display: flex; align-items: center; gap: .375rem; min-width: 0; }
+.bookings-table .bk-code {
+  font-family: var(--tblr-font-monospace);
+  font-size: .75rem;
+  color: var(--tblr-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.bookings-table .bk-col-desc > .bk-code { margin-right: .375rem; }
+.bookings-table .bk-dot { width: .5rem; height: .5rem; border-radius: 50%; flex-shrink: 0; }
+.bookings-table .bk-link-icon { color: var(--tblr-secondary); margin-left: .375rem; }
+.bookings-table .bk-link-icon:hover { color: var(--tblr-primary); }
+
+/* Steuer gedämpft, Betrag betont. Grün/Rot in den AA-sicheren Tönen der Badge-Overrides oben. */
+.bookings-table .bk-tax { white-space: nowrap; font-size: .8125rem; color: var(--tblr-secondary); }
+.bookings-table .bk-rate { font-size: .75rem; margin-right: .25rem; }
+.bookings-table .bk-amount { font-weight: 600; font-size: .9375rem; white-space: nowrap; }
+.bookings-table .bk-in { color: #2b8a3e; }
+.bookings-table .bk-out { color: #c92a2a; }
+.bookings-table .bk-void { text-decoration: line-through; }
+
+/* Monatstrenner: kein Zebra, kein Hover. */
+.bookings-table > tbody > tr.bk-month > * {
+  --tblr-table-bg-state: transparent;
+  --tblr-table-bg-type: transparent;
+  padding: .85rem .5rem .3rem;
+  font-size: .8125rem;
+  font-weight: 600;
+  color: var(--tblr-secondary);
+}
+
+/* Sammelbuchung: Auf-/Zuklapp-Knopf in der Konto-Spalte, Positionen standardmäßig
+   versteckt; aufgeklappt ohne Trennlinien zwischen Kopf und Positionen. */
+.bookings-table .bk-toggle {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--tblr-secondary);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.bookings-table .bk-toggle:hover { color: var(--tblr-primary); }
+.bookings-table .bk-toggle-icon { width: .75rem; font-size: .75em; transition: transform .15s ease; }
+.bookings-table .bk-toggle[aria-expanded="true"] .bk-toggle-icon { transform: rotate(90deg); }
+.bookings-table > tbody > tr.bk-child:not(.is-open) { display: none; }
+.bookings-table > tbody > tr.bk-child > * {
+  padding-top: .2rem;
+  padding-bottom: .2rem;
+  font-size: .8125rem;
+  color: var(--tblr-secondary);
+}
+.bookings-table > tbody > tr.bk-child > td.bk-col-account { padding-left: 1.5rem; }
+.bookings-table > tbody > tr.bk-child .bk-amount { font-weight: 400; font-size: inherit; }
+.bookings-table > tbody > tr.bk-group.is-open > *,
+.bookings-table > tbody > tr.bk-child:has(+ tr.bk-child.is-open) > * { border-bottom-width: 0; }
+
+/* Aktionen: etwas kleiner als die globalen 2rem-Icon-Knöpfe; Löschen/Stornieren grau,
+   rot erst bei Hover (sonst konkurriert das Rot jeder Zeile mit den Ausgaben-Beträgen).
+   Selektor = der globalen Icon-Knopf-Regel oben plus Präfix — deren sechs :not() heben
+   die Spezifität so weit, dass ein kürzeres :has(> i:only-child) verliert. */
+.bookings-table .col-actions .btn:has(> i:only-child:not([class*=" me-"]):not([class^="me-"]):not([class*=" ms-"]):not([class^="ms-"]):not([class*=" mx-"]):not([class^="mx-"])) {
+  width: 1.75rem;
+  height: 1.75rem;
+}
+.bookings-table .bk-act-danger {
+  --tblr-btn-hover-bg: #c92a2a;
+  --tblr-btn-hover-border-color: #c92a2a;
+  --tblr-btn-hover-color: #fff;
+  --tblr-btn-active-bg: #a51d1d;
+  --tblr-btn-active-color: #fff;
+}
+/* Leere Notiz-/Beleg-Pins nur an der Zeile unter der Maus bzw. mit Fokus (Platz bleibt
+   reserviert, damit die Spalte nicht springt). Touch-Geräte sehen sie immer. */
+@media (hover: hover) {
+  .bookings-table > tbody > tr:not(:hover):not(:focus-within) .note-pin-wrap .btn-ghost-secondary,
+  .bookings-table > tbody > tr:not(:hover):not(:focus-within) .doc-pin-wrap .btn-ghost-secondary { visibility: hidden; }
+}
+
 /* Sidebar: nie einen sichtbaren Scrollbalken zeigen. Tabler setzt
    overflow-y:scroll HART auf .navbar-vertical (Leiste immer da, auch ohne
    Overflow). Inhalt bleibt bei Bedarf scrollbar (Wheel/Touch) — nur die Leiste

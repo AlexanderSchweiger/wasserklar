@@ -276,7 +276,7 @@ def lock_message(handover):
 def transfer_lock_message(handover):
     when = handover.created_at.strftime("%d.%m.%Y") if handover.created_at else ""
     return (f"Diese Umbuchung wurde am {when} an die Steuerberatung übergeben "
-            f"({format_label(handover.format)}) und kann nicht gelöscht werden. "
+            f"({format_label(handover.format)}) und kann nicht geändert oder gelöscht werden. "
             "Zuerst die Übergabe zurückziehen.")
 
 

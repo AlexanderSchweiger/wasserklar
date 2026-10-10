@@ -162,6 +162,18 @@ def create_app(config_name=None):
 
     app.jinja_env.filters["de_number"] = de_number
 
+    def de_price(value, decimals=2):
+        """Preis je m³ im deutschen Format mit den Nachkommastellen der
+        Gebührenart — nie weniger, als der Preis hat (``price_format``)."""
+        from app.invoices.price_format import LEGACY_PLACES, price_places
+        if value is None:
+            return ""
+        if not isinstance(decimals, int):    # fehlt (Altdaten, Undefined/None): wie bisher
+            decimals = LEGACY_PLACES
+        return de_number(value, price_places(value, decimals))
+
+    app.jinja_env.filters["de_price"] = de_price
+
     # Jinja-Globals fuer per-entity import preview macros (ROW_* status vocabulary).
     # The meter-reading import_preview.html passes its own status_badge/status_row_class
     # as render-kwargs and shadows these globals locally — no regression there.

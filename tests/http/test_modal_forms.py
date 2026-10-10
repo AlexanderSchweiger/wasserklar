@@ -351,7 +351,7 @@ class TestTariffModal:
         assert r.status_code == 200
         html = r.get_data(as_text=True)
         assert "Alttarif" in html
-        assert 'value="0,9500"' in html
+        assert 'value="0,95"' in html          # 2 Nachkommastellen (Gebührenart)
 
     def test_edit_modal_updates_and_triggers(self, client, admin):
         from app.invoices.charges import build_tariff
@@ -404,7 +404,7 @@ class TestTariffModal:
                           headers=MODAL).get_data(as_text=True)
         assert 'value="T2025 (Kopie)"' in html
         assert 'value="2026"' in html
-        assert 'value="1,4000"' in html and 'value="32,00"' in html
+        assert 'value="1,40"' in html and 'value="32,00"' in html
 
     def test_standalone_page_still_renders(self, client, admin):
         _login(client)

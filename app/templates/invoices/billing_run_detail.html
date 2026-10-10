@@ -91,12 +91,12 @@
           <dt class="col-6">{{ comp.label }}</dt>
           <dd class="col-6">
             {% if comp.calc_type == 'per_m3' %}
-            <strong>{{ comp.amount | de_number(4) }} €/m³</strong>
+            <strong>{{ comp.amount | de_price(comp.price_decimals or 4) }} €/m³</strong>
             {% else %}
             {{ comp.amount | de_number }} €
             {% endif %}
             {% if comp.tiers %}
-            <div class="small text-muted">{{ tariff_levels_text(comp.amount, comp.tiers, comp.tier_mode) }}</div>
+            <div class="small text-muted">{{ tariff_levels_text(comp.amount, comp.tiers, comp.tier_mode, comp.price_decimals or 4) }}</div>
             {% endif %}
             {% if comp.conditions %}
             <span class="badge bg-purple-lt">{{ tariff_condition_text(comp.conditions) }}</span>

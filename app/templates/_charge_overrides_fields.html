@@ -31,7 +31,7 @@
         <td>
           <div class="input-group input-group-sm">
             <input type="text" inputmode="decimal" name="ov_amount_{{ ct.id }}" class="form-control"
-                   value="{{ row.amount }}" placeholder="{{ '0,0000' if ct.is_per_m3 else '0,00' }}">
+                   value="{{ row.amount }}" placeholder="{{ '0,' ~ '0' * ct.amount_places }}">
             <span class="input-group-text">{{ '€/m³' if ct.is_per_m3 else '€' }}</span>
           </div>
         </td>

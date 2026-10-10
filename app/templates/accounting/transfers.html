@@ -21,6 +21,7 @@
   </div>
   <div class="col text-end">
     <button type="button" data-url="{{ url_for('accounting.transfer_new') }}"
+            data-modal-title="Neue Umbuchung"
             onclick="openTransferModal(this)" class="btn btn-primary">
       <i class="fas fa-plus me-1"></i> Neue Umbuchung
     </button>
@@ -63,15 +64,25 @@
           </td>
           <td>{{ t.description }}</td>
           <td class="text-end text-nowrap fw-bold">{{ t.amount|de_number }} €</td>
-          <td class="text-end">
+          <td class="text-end text-nowrap">
+            {% if t.id in locked_transfer_ids %}
+            <span class="text-muted" title="Buchungsjahr abgeschlossen oder an die Steuerberatung übergeben"><i class="fas fa-lock"></i></span>
+            {% else %}
+            <button type="button" class="btn btn-sm btn-outline-secondary" title="Bearbeiten"
+                    data-url="{{ url_for('accounting.transfer_edit', transfer_id=t.id) }}"
+                    data-modal-title="Umbuchung bearbeiten"
+                    onclick="openTransferModal(this)">
+              <i class="fas fa-edit"></i>
+            </button>
             <form method="post" action="{{ url_for('accounting.transfer_delete', transfer_id=t.id) }}"
-                  hx-boost="false"
+                  class="d-inline" hx-boost="false"
                   onsubmit="return confirm('Umbuchung wirklich löschen?')">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button type="submit" class="btn btn-sm btn-outline-danger" title="Löschen">
                 <i class="fas fa-trash"></i>
               </button>
             </form>
+            {% endif %}
           </td>
         </tr>
         {% else %}

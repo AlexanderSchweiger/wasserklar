@@ -80,6 +80,7 @@ ENDPOINT_TO_DOC = {
     "accounting.document_detail":    "belege#beleg",
     "accounting.transfers":          "buchhaltung#umbuchungen",
     "accounting.transfer_new":       "buchhaltung#umbuchungen",
+    "accounting.transfer_edit":      "buchhaltung#umbuchungen",
     "accounting.fiscal_years":       "buchhaltung#jahresabschluss",
     "accounting.fiscal_year_new":    "buchhaltung#jahresabschluss",
     "accounting.fiscal_year_close":  "buchhaltung#jahresabschluss",

@@ -332,6 +332,14 @@ def _bookings_table_ctx(params, bulk_done_count=None, bulk_handed_over_skipped=0
             if fy.start_date <= b.date <= fy.end_date:
                 locked_booking_ids.add(b.id)
                 break
+    # Umbuchungen: abgeschlossenes Buchungsjahr oder an die Steuerberatung übergeben
+    # → kein Löschen (wie auf der Umbuchungsseite).
+    handed_over_transfers = handover_svc.handed_over_transfer_ids([t.id for t in transfers])
+    locked_transfer_ids = {
+        t.id for t in transfers
+        if t.id in handed_over_transfers
+        or any(fy.start_date <= t.date <= fy.end_date for fy in closed_fys)
+    }
 
     # Generalumkehr: Original und Gegenbuchung zählen beide (jede an ihrem
     # Datum) — wie in allen Auswertungen (acc_svc.ledger_filter).
@@ -361,6 +369,7 @@ def _bookings_table_ctx(params, bulk_done_count=None, bulk_handed_over_skipped=0
         total_vorsteuer=total_vorsteuer,
         total_ust=total_ust,
         locked_booking_ids=locked_booking_ids,
+        locked_transfer_ids=locked_transfer_ids,
         pagination=pagination,
         bulk_done_count=bulk_done_count,
         bulk_handed_over_skipped=bulk_handed_over_skipped,
@@ -381,7 +390,9 @@ def bookings():
     table_ctx, filters = _bookings_table_ctx(request.args)
 
     if request.headers.get("HX-Request"):
-        return render_template("accounting/_bookings_table.html", **table_ctx)
+        # Fragment-Refresh (Filter, nach einem Modal): wartende Meldungen gehen per
+        # Out-of-Band-Swap in #bookings-flash — z. B. „Rechnung … wurde storniert“.
+        return render_template("accounting/_bookings_table.html", flash_oob=True, **table_ctx)
 
     accounts = Account.query.filter_by(active=True).order_by(Account.name).all()
     projects = Project.query.order_by(Project.name).all()
@@ -901,16 +912,45 @@ def booking_delete(booking_id):
     return redirect(url_for("accounting.bookings"))
 
 
+def _modal_saved(close_event, saved_event, **detail):
+    """204 + HX-Trigger für ein ``setupEditModal``-Modal: schließen + gespeichert.
+
+    Meldungen laufen weiter über ``flash()``: die Umbuchungsseite lädt nach dem
+    Speichern neu, die Buchungsliste zeigt sie mit dem Tabellen-Refresh
+    (Out-of-Band-Zone in ``_bookings_table.html``).
+    """
+    resp = make_response("", 204)
+    resp.headers["HX-Trigger"] = json.dumps({close_event: True, saved_event: detail or True})
+    return resp
+
+
+def _modal_message():
+    """Modal-Inhalt ohne Formular: nur die wartenden Flash-Meldungen + „Schließen“."""
+    return render_template("accounting/_modal_message.html")
+
+
 @bp.route("/bookings/<int:booking_id>/stornieren", methods=["GET", "POST"])
 @login_required
 def booking_stornieren(booking_id):
     b = db.get_or_404(Booking, booking_id)
+    is_modal = bool(request.headers.get("X-From-Modal"))
+
+    def _blocked(message, category="warning"):
+        flash(message, category)
+        return _modal_message() if is_modal else redirect(url_for("accounting.bookings"))
+
+    def _render():
+        template = "accounting/_storno_modal_content.html" if is_modal else "accounting/storno_form.html"
+        return render_template(template, booking=b, today_date=date.today())
 
     # Sammelbuchungs-Kinder dürfen nicht einzeln storniert werden (ADR-002,
     # Regel 4: Storno immer der ganzen Gruppe). Weiterleitung auf das
     # Gruppen-Storno-Formular, damit der Anwender die gesamte Sammelbuchung
     # zurücksetzt.
     if b.group_id is not None:
+        if is_modal:
+            return _blocked("Diese Buchung gehört zu einer Sammelbuchung und kann nur als "
+                            "Ganzes storniert werden.")
         flash(
             "Diese Buchung gehört zu einer Sammelbuchung und kann nur als "
             "Ganzes storniert werden.",
@@ -919,24 +959,21 @@ def booking_stornieren(booking_id):
         return redirect(url_for("accounting.booking_group_stornieren", group_id=b.group_id))
 
     if b.status == Booking.STATUS_STORNIERT:
-        flash("Diese Buchung ist bereits storniert.", "warning")
-        return redirect(url_for("accounting.bookings"))
+        return _blocked("Diese Buchung ist bereits storniert.")
     if b.storno_of_id is not None:
-        flash("Eine Storno-Buchung kann nicht erneut storniert werden.", "warning")
-        return redirect(url_for("accounting.bookings"))
+        return _blocked("Eine Storno-Buchung kann nicht erneut storniert werden.")
     # Generalumkehr: die Gegenbuchung trägt das heutige Datum — entscheidend ist
     # das heutige Buchungsjahr. Das Original darf in einem abgeschlossenen Jahr
     # liegen; es bleibt dort unverändert stehen.
     blocker = acc_svc.storno_blocker()
     if blocker:
-        flash(blocker, "danger")
-        return redirect(url_for("accounting.bookings"))
+        return _blocked(blocker, "danger")
 
     if request.method == "POST":
         reason = request.form.get("storno_reason", "").strip()
         if not reason:
             flash("Bitte einen Storno-Grund angeben.", "danger")
-            return render_template("accounting/storno_form.html", booking=b, today_date=date.today())
+            return _render()
 
         try:
             acc_svc.storno_booking(b, reason, current_user.id)
@@ -959,7 +996,7 @@ def booking_stornieren(booking_id):
         except Exception as e:
             db.session.rollback()
             flash(f"Fehler beim Stornieren – alle Änderungen wurden zurückgesetzt: {e}", "danger")
-            return redirect(url_for("accounting.bookings"))
+            return _render() if is_modal else redirect(url_for("accounting.bookings"))
 
         if cancelled_invoice_number:
             flash(
@@ -968,9 +1005,11 @@ def booking_stornieren(booking_id):
                 "warning",
             )
         flash("Buchung erfolgreich storniert.", "success")
+        if is_modal:
+            return _modal_saved("closeStornoModal", "stornoSaved", booking_id=b.id)
         return redirect(url_for("accounting.bookings"))
 
-    return render_template("accounting/storno_form.html", booking=b, today_date=date.today())
+    return _render()
 
 
 # ---------------------------------------------------------------------------
@@ -1006,10 +1045,11 @@ def booking_group_new():
     tax_rates = tax_service.tax_rates()
     default_real_account = RealAccount.query.filter_by(is_default=True, active=True).first()
     today = date.today()
+    is_modal = bool(request.headers.get("X-From-Modal"))
 
     def _render_new(**extra):
         return render_template(
-            "accounting/booking_group_form.html",
+            _group_form_template(is_modal),
             group=None,
             accounts=accounts,
             projects=active_projects,
@@ -1061,6 +1101,7 @@ def booking_group_new():
         child_amounts = request.form.getlist("child_amount[]")
         child_descriptions = request.form.getlist("child_description[]")
 
+        known_rates = set(tax_service.known_rate_values())
         parsed_children = []
         for i, acc_raw in enumerate(child_accounts):
             if not acc_raw:
@@ -1081,11 +1122,8 @@ def booking_group_new():
                 proj_id = int(proj_raw) if proj_raw else None
             except ValueError:
                 proj_id = None
-            tax_raw = child_tax_rates[i] if i < len(child_tax_rates) else ""
-            try:
-                tax_rate = Decimal(tax_raw) if tax_raw else Decimal("0")
-            except Exception:
-                tax_rate = Decimal("0")
+            tax_rate = _parse_child_tax_rate(
+                child_tax_rates[i] if i < len(child_tax_rates) else "", known_rates)
             desc = (
                 child_descriptions[i].strip()
                 if i < len(child_descriptions) and child_descriptions[i].strip()
@@ -1148,9 +1186,28 @@ def booking_group_new():
             return _render_new(form_data=request.form)
 
         flash("Sammelbuchung angelegt.", "success")
+        if is_modal:
+            return _modal_saved("closeBookingGroupModal", "bookingGroupSaved", group_id=group.id)
         return redirect(url_for("accounting.booking_group_edit", group_id=group.id))
 
     return _render_new()
+
+
+def _parse_child_tax_rate(raw, known_rates):
+    """Steuersatz einer Sammelbuchungszeile: nur hinterlegte Saetze (wie die
+    Einzelbuchung, ``_parse_booking_form``); leer/0/unbekannt -> kein Steuersatz."""
+    raw = (raw or "").strip().replace(",", ".")
+    try:
+        rate = Decimal(raw) if raw else None
+    except (InvalidOperation, ValueError):
+        rate = None
+    return rate if rate is not None and rate > 0 and rate in known_rates else None
+
+
+def _group_form_template(is_modal):
+    """Sammelbuchungs-Formular: Modal-Inhalt (Buchungsliste) oder eigene Seite."""
+    return ("accounting/_booking_group_modal_content.html" if is_modal
+            else "accounting/booking_group_form.html")
 
 
 def _group_is_editable(group):
@@ -1200,10 +1257,11 @@ def booking_group_edit(group_id):
     tax_rates = tax_service.tax_rates(include=[c.tax_rate for c in group.children])
     default_real_account = RealAccount.query.filter_by(is_default=True, active=True).first()
     today = date.today()
+    is_modal = bool(request.headers.get("X-From-Modal"))
 
     def _render_edit(**extra):
         return render_template(
-            "accounting/booking_group_form.html",
+            _group_form_template(is_modal),
             group=group,
             accounts=accounts,
             projects=active_projects,
@@ -1226,6 +1284,8 @@ def booking_group_edit(group_id):
     if not ok:
         if request.method == "POST":
             flash(msg, "warning")
+            if is_modal:
+                return _render_edit()
             return redirect(url_for("accounting.booking_group_edit", group_id=group.id))
         return _render_edit()
 
@@ -1268,6 +1328,7 @@ def booking_group_edit(group_id):
         child_amounts = request.form.getlist("child_amount[]")
         child_descriptions = request.form.getlist("child_description[]")
 
+        known_rates = set(tax_service.known_rate_values())
         parsed_children = []
         for i, acc_raw in enumerate(child_accounts):
             if not acc_raw:
@@ -1288,11 +1349,8 @@ def booking_group_edit(group_id):
                 proj_id = int(proj_raw) if proj_raw else None
             except ValueError:
                 proj_id = None
-            tax_raw = child_tax_rates[i] if i < len(child_tax_rates) else ""
-            try:
-                tax_rate = Decimal(tax_raw) if tax_raw else Decimal("0")
-            except Exception:
-                tax_rate = Decimal("0")
+            tax_rate = _parse_child_tax_rate(
+                child_tax_rates[i] if i < len(child_tax_rates) else "", known_rates)
             desc = (
                 child_descriptions[i].strip()
                 if i < len(child_descriptions) and child_descriptions[i].strip()
@@ -1365,6 +1423,8 @@ def booking_group_edit(group_id):
             return _render_edit(form_data=request.form)
 
         flash("Sammelbuchung aktualisiert.", "success")
+        if is_modal:
+            return _modal_saved("closeBookingGroupModal", "bookingGroupSaved", group_id=group.id)
         return redirect(url_for("accounting.booking_group_edit", group_id=group.id))
 
     return _render_edit()
@@ -1402,23 +1462,33 @@ def booking_group_delete(group_id):
 @login_required
 def booking_group_stornieren(group_id):
     group = db.get_or_404(BookingGroup, group_id)
+    is_modal = bool(request.headers.get("X-From-Modal"))
+
+    def _blocked(message, category="warning"):
+        flash(message, category)
+        if is_modal:
+            return _modal_message()
+        return redirect(url_for("accounting.booking_group_edit", group_id=group.id))
+
+    def _render():
+        if is_modal:
+            return render_template("accounting/_storno_modal_content.html", group=group)
+        return render_template("accounting/booking_group_storno_form.html", group=group)
 
     if group.status == BookingGroup.STATUS_STORNIERT:
-        flash("Diese Sammelbuchung ist bereits storniert.", "warning")
-        return redirect(url_for("accounting.booking_group_edit", group_id=group.id))
+        return _blocked("Diese Sammelbuchung ist bereits storniert.")
 
     # Generalumkehr: die Gegenbuchungen tragen das heutige Datum — entscheidend
     # ist deshalb das heutige Buchungsjahr, nicht das der Sammelbuchung.
     blocker = acc_svc.storno_blocker()
     if blocker:
-        flash(blocker, "danger")
-        return redirect(url_for("accounting.booking_group_edit", group_id=group.id))
+        return _blocked(blocker, "danger")
 
     if request.method == "POST":
         reason = request.form.get("storno_reason", "").strip()
         if not reason:
             flash("Bitte einen Storno-Grund angeben.", "danger")
-            return render_template("accounting/booking_group_storno_form.html", group=group)
+            return _render()
 
         try:
             acc_svc.storno_booking_group(group, reason, current_user.id)
@@ -1443,6 +1513,8 @@ def booking_group_stornieren(group_id):
         except Exception as e:
             db.session.rollback()
             flash(f"Fehler beim Stornieren – alle Änderungen wurden zurückgesetzt: {e}", "danger")
+            if is_modal:
+                return _render()
             return redirect(url_for("accounting.booking_group_edit", group_id=group.id))
 
         if cancelled_invoice_number:
@@ -1452,9 +1524,11 @@ def booking_group_stornieren(group_id):
                 "warning",
             )
         flash("Sammelbuchung erfolgreich storniert.", "success")
+        if is_modal:
+            return _modal_saved("closeStornoModal", "stornoSaved", group_id=group.id)
         return redirect(url_for("accounting.bookings"))
 
-    return render_template("accounting/booking_group_storno_form.html", group=group)
+    return _render()
 
 
 # ---------------------------------------------------------------------------
@@ -1945,6 +2019,7 @@ def open_item_invoice(item_id):
         today=date.today(),
         editor_accounts=editor_accounts,
         editor_projects=editor_projects,
+        editor_tax_rates=tax_service.tax_rates(),
     )
 
 
@@ -3416,6 +3491,10 @@ def transfers():
     real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
     years = db.session.query(extract("year", Transfer.date).label("y")).distinct().order_by("y").all()
     all_years = sorted({t.y for t in years} | {date.today().year}, reverse=True)
+    # Abgeschlossenes Buchungsjahr oder an die Steuerberatung übergeben: kein Bearbeiten/Löschen.
+    handed_over = handover_svc.handed_over_transfer_ids([t.id for t in transfers_list])
+    locked_transfer_ids = {t.id for t in transfers_list
+                           if t.id in handed_over or _locked_fiscal_year(t.date)}
     return render_template(
         "accounting/transfers.html",
         transfers=transfers_list,
@@ -3423,95 +3502,135 @@ def transfers():
         has_filter=(year != date.today().year),
         all_years=all_years,
         real_accounts=real_accounts,
+        locked_transfer_ids=locked_transfer_ids,
     )
 
 
 def _transfer_modal_saved(transfer_id):
     """204 + HX-Trigger fuers Umbuchungs-Modal (schliessen + neu laden)."""
-    resp = make_response("", 204)
-    resp.headers["HX-Trigger"] = json.dumps({
-        "closeTransferModal": True,
-        "transferSaved": {"transfer_id": transfer_id},
-    })
-    return resp
+    return _modal_saved("closeTransferModal", "transferSaved", transfer_id=transfer_id)
 
 
-@bp.route("/transfers/new", methods=["GET", "POST"])
-@login_required
-def transfer_new():
+def _parse_transfer_form(form):
+    """Prüft das Umbuchungsformular. Liefert ``(daten, None)`` oder ``(None, Fehlermeldung)``."""
+    try:
+        transfer_date = date.fromisoformat((form.get("date") or "").strip())
+    except ValueError:
+        return None, "Bitte ein gültiges Datum wählen."
+    fy_error = acc_svc.open_fiscal_year_error(transfer_date)
+    if fy_error:
+        return None, f"{fy_error} Umbuchung nicht möglich."
+    try:
+        amount = Decimal((form.get("amount") or "").strip().replace(",", "."))
+    except InvalidOperation:
+        return None, "Ungültiger Betrag."
+    if not amount.is_finite() or amount <= 0:
+        return None, "Der Betrag muss größer als 0 sein."
+    from_id = _valid_fk(form.get("from_real_account_id"), RealAccount)
+    to_id = _valid_fk(form.get("to_real_account_id"), RealAccount)
+    if from_id is None or to_id is None:
+        return None, "Bitte Ausgangs- und Zielkonto wählen."
+    if from_id == to_id:
+        return None, "Ausgangs- und Zielkonto dürfen nicht gleich sein."
+    return {
+        "date": transfer_date,
+        "amount": amount,
+        "description": (form.get("description") or "").strip(),
+        "from_real_account_id": from_id,
+        "to_real_account_id": to_id,
+    }, None
+
+
+def _transfer_edit_blocker(t):
+    """Grund, warum eine Umbuchung nicht (mehr) geändert werden darf, sonst ``None``."""
+    locked = _locked_fiscal_year(t.date)
+    if locked:
+        return f"Das Buchungsjahr {locked.year} ist abgeschlossen. Die Umbuchung kann nicht mehr geändert werden."
+    handover = handover_svc.active_handover_for(t)
+    if handover is not None:
+        return handover_svc.transfer_lock_message(handover)
+    return None
+
+
+def _transfer_form(transfer=None):
+    """Anlegen (``transfer=None``) bzw. Bearbeiten einer Umbuchung — Modal oder eigene Seite."""
     is_modal = bool(request.headers.get("X-From-Modal"))
-    real_accounts = RealAccount.query.filter_by(active=True).order_by(RealAccount.name).all()
+    # Beim Bearbeiten auch ein inzwischen deaktiviertes Konto der Umbuchung anbieten.
+    keep_ids = {transfer.from_real_account_id, transfer.to_real_account_id} if transfer else set()
+    real_accounts = (RealAccount.query
+                     .filter(db.or_(RealAccount.active.is_(True), RealAccount.id.in_(keep_ids)))
+                     .order_by(RealAccount.name).all())
     today = date.today().isoformat()
 
     def _render_form():
-        if is_modal:
-            return render_template(
-                "accounting/_transfer_form_body.html",
-                real_accounts=real_accounts, today=today,
-                form=(request.form or None),
-            )
-        return render_template(
-            "accounting/transfer_form.html", real_accounts=real_accounts, today=today,
-        )
+        template = "accounting/_transfer_form_body.html" if is_modal else "accounting/transfer_form.html"
+        return render_template(template, real_accounts=real_accounts, today=today,
+                               transfer=transfer, form=(request.form or None))
+
+    if transfer is not None:
+        blocker = _transfer_edit_blocker(transfer)
+        if blocker:
+            flash(blocker, "warning")
+            return _modal_message() if is_modal else redirect(url_for("accounting.transfers"))
 
     if request.method == "POST":
-        transfer_date = date.fromisoformat(request.form["date"])
-        fy_error = acc_svc.open_fiscal_year_error(transfer_date)
-        if fy_error:
-            flash(f"{fy_error} Umbuchung nicht möglich.", "danger")
+        data, error = _parse_transfer_form(request.form)
+        if error:
+            flash(error, "danger")
             return _render_form()
-
-        amount_raw = request.form["amount"].replace(",", ".")
-        try:
-            amount = Decimal(amount_raw)
-        except InvalidOperation:
-            flash("Ungültiger Betrag.", "danger")
-            return _render_form()
-
-        if amount <= 0:
-            flash("Der Betrag muss größer als 0 sein.", "danger")
-            return _render_form()
-
-        from_id = int(request.form["from_real_account_id"])
-        to_id = int(request.form["to_real_account_id"])
-        if from_id == to_id:
-            flash("Ausgangs- und Zielkonto dürfen nicht gleich sein.", "danger")
-            return _render_form()
-
-        t = Transfer(
-            date=transfer_date,
-            amount=amount,
-            description=request.form["description"].strip(),
-            from_real_account_id=from_id,
-            to_real_account_id=to_id,
-            created_by_id=current_user.id,
-        )
-        db.session.add(t)
+        if transfer is None:
+            transfer = Transfer(created_by_id=current_user.id)
+            db.session.add(transfer)
+            message = "Umbuchung gespeichert."
+        else:
+            message = "Umbuchung geändert."
+        for key, value in data.items():
+            setattr(transfer, key, value)
         db.session.commit()
-        flash("Umbuchung gespeichert.", "success")
+        flash(message, "success")
         if is_modal:
-            return _transfer_modal_saved(t.id)
+            return _transfer_modal_saved(transfer.id)
         return redirect(url_for("accounting.transfers"))
 
     return _render_form()
 
 
+@bp.route("/transfers/new", methods=["GET", "POST"])
+@login_required
+def transfer_new():
+    return _transfer_form()
+
+
+@bp.route("/transfers/<int:transfer_id>/edit", methods=["GET", "POST"])
+@login_required
+def transfer_edit(transfer_id):
+    return _transfer_form(db.get_or_404(Transfer, transfer_id))
+
+
 @bp.route("/transfers/<int:transfer_id>/delete", methods=["POST"])
 @login_required
 def transfer_delete(transfer_id):
+    """Umbuchung löschen — erlaubt, solange das Buchungsjahr offen und sie nicht übergeben ist.
+
+    Kein Storno: eine Umbuchung lässt sich jederzeit durch die Rückbuchung ausgleichen.
+    ``next`` (nur eigene Pfade) führt zurück, z. B. in die Buchungsliste.
+    """
     t = db.get_or_404(Transfer, transfer_id)
+    target = (request.form.get("next") or "").strip()
+    if not (target.startswith("/") and not target.startswith("//") and "\\" not in target):
+        target = url_for("accounting.transfers")
     locked = _locked_fiscal_year(t.date)
     if locked:
         flash(f"Das Buchungsjahr {locked.year} ist abgeschlossen. Löschen nicht möglich.", "danger")
-        return redirect(url_for("accounting.transfers"))
+        return redirect(target)
     handover = handover_svc.active_handover_for(t)
     if handover is not None:
         flash(handover_svc.transfer_lock_message(handover), "danger")
-        return redirect(url_for("accounting.transfers"))
+        return redirect(target)
     db.session.delete(t)
     db.session.commit()
     flash("Umbuchung gelöscht.", "success")
-    return redirect(url_for("accounting.transfers"))
+    return redirect(target)
 
 
 # ---------------------------------------------------------------------------

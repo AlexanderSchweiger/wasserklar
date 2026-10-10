@@ -110,7 +110,7 @@ class TestLines:
         assert line["quantity"] == Decimal("120")
         assert line["amount"] == Decimal("12.00")
         assert line["charge_key"] == "water_levy"
-        assert line["description"] == ("Wasserentnahmeentgelt 2026 (120 m³ × 0,1000 €/m³)")
+        assert line["description"] == ("Wasserentnahmeentgelt 2026 (120 m³ × 0,10 €/m³)")
 
     def test_volume_line_apportioned_from_valid_from(self):
         """Bayern-Wassercent ab 1.7.2026: 184 von 365 Tagen."""
@@ -250,7 +250,7 @@ class TestTieredTariff:
         base = charge_type("base_fee").id
         assert params[f"comp_tier_above_{water}"] == ["200", "500"]
         # Aufschlag 0,10 €/m³ auf jede Stufe (Plankostenrechnung)
-        assert params[f"comp_tier_price_{water}"] == ["1,6000", "2,1000"]
+        assert params[f"comp_tier_price_{water}"] == ["1,60", "2,10"]
         assert params[f"comp_tier_mode_{water}"] == "graduated"
         assert params[f"comp_cond_status_{base}"] == ["member"]
 
@@ -296,8 +296,8 @@ class TestTariffFormParams:
         water = charge_type("water").id
         levy = charge_type("water_levy").id
         assert params["name"] == "Neu" and params["valid_from"] == 2027
-        assert params[f"comp_amount_{water}"] == "2,0500"
-        assert params[f"comp_amount_{levy}"] == "0,1000"
+        assert params[f"comp_amount_{water}"] == "2,05"
+        assert params[f"comp_amount_{levy}"] == "0,10"
         assert params[f"comp_tax_{levy}"] == "7"
 
     def test_component_unique_per_tariff(self, setup):
@@ -308,3 +308,78 @@ class TestTariffFormParams:
         with pytest.raises(IntegrityError):
             db.session.commit()
         db.session.rollback()
+
+
+class TestPriceDecimals:
+    """Nachkommastellen je Gebührenart: Rechnungstext, eingefrorene Zeile,
+    Snapshot, Formularwerte — gerechnet wird weiter mit 4 Stellen."""
+
+    def _levy_places(self, places):
+        ct = charge_type("water_levy")
+        ct.price_decimals = places
+        db.session.commit()
+
+    def test_default_is_two_places(self, setup):
+        assert charge_type("water_levy").price_decimals == 2
+        lines = engine.build_lines(engine.resolve_charges(setup["tariff"]),
+                                   engine.BillingCase(consumption=Decimal("120")))
+        by_key = {l["charge_key"]: l for l in lines}
+        assert "(120 m³ × 0,10 €/m³)" in by_key["water_levy"]["description"]
+        assert by_key["water_levy"]["price_decimals"] == 2
+        assert by_key["water_levy"]["unit_price"] == Decimal("0.10")
+        assert by_key["water_levy"]["amount"] == Decimal("12.00")
+        assert "× 1,85 €/m³" in by_key["water"]["description"]
+        assert by_key["base_fee"]["price_decimals"] == 2
+
+    def test_levy_text_with_four_places(self, setup):
+        self._levy_places(4)
+        lines = engine.build_lines(engine.resolve_charges(setup["tariff"]),
+                                   engine.BillingCase(consumption=Decimal("120")))
+        by_key = {l["charge_key"]: l for l in lines}
+        assert "(120 m³ × 0,1000 €/m³)" in by_key["water_levy"]["description"]
+        assert by_key["water_levy"]["price_decimals"] == 4
+        # Wasser bleibt bei seiner eigenen Einstellung.
+        assert "× 1,85 €/m³" in by_key["water"]["description"]
+
+    def test_more_places_than_configured_stay_visible(self, setup):
+        """0,0815 bei Einstellung 2: alle Stellen — sonst stimmte Menge × Preis
+        nicht mehr mit dem Betrag."""
+        self._levy_places(2)
+        comp = next(c for c in setup["tariff"].components
+                    if c.charge_type.key == "water_levy")
+        comp.amount = Decimal("0.0815")
+        db.session.commit()
+        [levy] = [l for l in engine.build_lines(
+            engine.resolve_charges(setup["tariff"]),
+            engine.BillingCase(consumption=Decimal("100"))) if l["charge_key"] == "water_levy"]
+        assert "× 0,0815 €/m³" in levy["description"]
+        assert levy["amount"] == Decimal("8.15")
+
+    def test_snapshot_keeps_places(self, setup):
+        self._levy_places(3)
+        rows = engine.snapshot(setup["tariff"])
+        assert {r["key"]: r["price_decimals"] for r in rows}["water_levy"] == 3
+        charges = {c.key: c for c in engine.charges_from_snapshot(rows)}
+        assert charges["water_levy"].price_decimals == 3
+        # Altlaeufe ohne den Schluessel: 4 wie damals.
+        for r in rows:
+            r.pop("price_decimals")
+        assert all(c.price_decimals == 4 for c in engine.charges_from_snapshot(rows))
+
+    def test_summary_and_form_params_use_places(self, setup):
+        self._levy_places(2)
+        assert "Wasserentnahmeentgelt 0,10 €/m³" in setup["tariff"].summary
+        assert setup["tariff"].summary.startswith("1,85 €/m³")
+        params = tariff_form_params(setup["tariff"])
+        assert params[f"comp_amount_{charge_type('water_levy').id}"] == "0,10"
+        self._levy_places(3)
+        assert "Wasserentnahmeentgelt 0,100 €/m³" in setup["tariff"].summary
+
+    def test_invoice_item_places(self, app):
+        from app.models import InvoiceItem
+        assert InvoiceItem(unit="m³", unit_price=Decimal("0.1000")).price_places == 4
+        assert InvoiceItem(unit="Stk", unit_price=Decimal("12.5000")).price_places == 2
+        assert InvoiceItem(unit="m³", unit_price=Decimal("0.1000"),
+                           price_decimals=2).price_places == 2
+        assert InvoiceItem(unit="m³", unit_price=Decimal("0.0815"),
+                           price_decimals=2).price_places == 4

@@ -1,0 +1,71 @@
+{# Storno einer Sammelbuchung: Zusammenfassung, betroffene Zeilen, Hinweise, Storno-Grund —
+   ohne <form> und Knöpfe. Eingebunden von booking_group_storno_form.html (eigene Seite) und
+   _storno_modal_content.html (Buchungsliste). Erwartet group. #}
+<dl class="row mb-2">
+  <dt class="col-sm-3 fw-normal text-secondary">Datum</dt>
+  <dd class="col-sm-9">{{ group.date.strftime('%d.%m.%Y') }}</dd>
+  <dt class="col-sm-3 fw-normal text-secondary">Beschreibung</dt>
+  <dd class="col-sm-9">{{ group.description }}{% if group.reference %} <span class="text-secondary">· Beleg {{ group.reference }}</span>{% endif %}</dd>
+  <dt class="col-sm-3 fw-normal text-secondary">Gesamtbetrag</dt>
+  <dd class="col-sm-9 fw-bold {{ 'text-success' if group.total_amount > 0 else 'text-danger' }}">{{ group.total_amount|de_number }}&nbsp;€</dd>
+</dl>
+
+<div class="table-responsive border rounded mb-3">
+  <table class="table table-sm mb-0">
+    <thead>
+      <tr>
+        <th>Konto</th>
+        <th>Projekt</th>
+        <th>Beschreibung</th>
+        <th class="text-end">Steuer</th>
+        <th class="text-end">Betrag</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for b in group.children if not b.storno_of_id %}
+      <tr>
+        <td class="text-nowrap">{% if b.account.code %}<span class="text-secondary">{{ b.account.code }}</span> {% endif %}{{ b.account.name }}</td>
+        <td>{% if b.project %}{{ b.project.code or b.project.name }}{% endif %}</td>
+        <td>{{ b.description }}</td>
+        <td class="text-end text-nowrap">{% if b.tax_rate %}{{ b.tax_rate | int }}&nbsp;%{% endif %}</td>
+        <td class="text-end text-nowrap {{ 'text-success' if b.amount > 0 else 'text-danger' }}">{{ b.amount|de_number }}&nbsp;€</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="alert alert-warning">
+  <i class="fas fa-info-circle me-1"></i>
+  Für jede Zeile wird eine Gegenbuchung mit umgekehrtem Vorzeichen und dem heutigen Datum
+  angelegt; die Sammelbuchung bleibt unverändert am {{ group.date.strftime('%d.%m.%Y') }} stehen.
+  Storniert wird immer die ganze Sammelbuchung — einzelne Zeilen lassen sich nicht stornieren.
+</div>
+
+{% if group.invoice_id %}
+<div class="alert alert-danger">
+  <i class="fas fa-exclamation-triangle me-1"></i>
+  Diese Sammelbuchung ist mit einer Rechnung verknüpft.
+  <strong>Die Rechnung wird ebenfalls auf "Storniert" gesetzt</strong>
+  und ist danach ungültig. Bitte anschließend eine neue Rechnung ausstellen.
+</div>
+{% endif %}
+
+<div class="mb-3">
+  <label class="form-label" for="storno_reason">Storno-Grund <span class="text-danger">*</span></label>
+  <textarea name="storno_reason" id="storno_reason" class="form-control" rows="3"
+            placeholder="Bitte Grund für die Stornierung angeben …"
+            required minlength="5">{{ request.form.get('storno_reason', '') }}</textarea>
+</div>
+{% if group.children | selectattr('open_item_id') | list %}
+<div class="mb-0">
+  <div class="form-check">
+    <input type="checkbox" class="form-check-input" id="close_open_item"
+           name="close_open_item" value="1">
+    <label class="form-check-label" for="close_open_item">
+      Verknüpfte Offene Posten auf "Offen" zurücksetzen
+      <small class="text-muted d-block">(Hebt die bisherige Zahlung der offenen Posten auf)</small>
+    </label>
+  </div>
+</div>
+{% endif %}

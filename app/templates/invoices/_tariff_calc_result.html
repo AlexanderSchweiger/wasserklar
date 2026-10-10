@@ -24,7 +24,7 @@
           {% if line.unit == 'm³' %}{{ line.quantity|de_number(3)|replace(',000', '') }} m³{% else %}{{ line.unit }}{% endif %}
         </td>
         <td class="text-end text-nowrap">
-          {% if line.unit == 'm³' %}{{ line.unit_price|de_number(4) }} €{% else %}{{ line.unit_price|de_number }} €{% endif %}
+          {{ line.unit_price|de_price(line.price_decimals) }} €
         </td>
         <td class="text-end text-nowrap">{{ line.amount|de_number }} €</td>
         <td class="text-end text-nowrap text-muted">
@@ -64,7 +64,7 @@
   <strong>{{ lv.label }}</strong>
   ({{ 'Gesamtmenge zum Stufenpreis' if lv.mode == 'whole' else 'anteilig' }}):
   {% for r in lv.rows %}
-  <span class="{{ 'text-body fw-bold' if r.reached }}">{{ r.range }}: {{ r.price|de_number(4) }} €/m³</span>{{ ' · ' if not loop.last }}
+  <span class="{{ 'text-body fw-bold' if r.reached }}">{{ r.range }}: {{ r.price|de_price(lv.places) }} €/m³</span>{{ ' · ' if not loop.last }}
   {% endfor %}
 </div>
 {% endfor %}

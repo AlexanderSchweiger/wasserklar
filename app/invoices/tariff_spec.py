@@ -25,6 +25,7 @@ import json
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
+from app.invoices.price_format import format_price
 from app.wg import STATUS_LABELS
 
 TIER_GRADUATED = "graduated"
@@ -200,10 +201,11 @@ def _de_qty(value):
     return format(d.normalize(), "f").replace(".", ",")
 
 
-def levels_text(first_price, tiers, mode=TIER_GRADUATED):
-    """Stufen als Text: ``bis 200 m³: 1,2000 · über 200 m³: 1,5000 €/m³
+def levels_text(first_price, tiers, mode=TIER_GRADUATED, decimals=2):
+    """Stufen als Text: ``bis 200 m³: 1,20 · über 200 m³: 1,50 €/m³
     (anteilig)`` — ``""`` ohne Staffel. ``tiers`` als JSON-Text, Liste von
-    Dicts (Snapshot) oder ``TierStep``-Tupel. Jinja-Global ``tariff_levels_text``."""
+    Dicts (Snapshot) oder ``TierStep``-Tupel; ``decimals`` = Nachkommastellen
+    der Gebührenart. Jinja-Global ``tariff_levels_text``."""
     steps = parse_tiers(tiers)
     if not steps or first_price is None:
         return ""
@@ -219,6 +221,6 @@ def levels_text(first_price, tiers, mode=TIER_GRADUATED):
             rng = f"über {_de_qty(lower)} m³"
         else:
             rng = f"über {_de_qty(lower)} bis {_de_qty(upper)} m³"
-        parts.append(f"{rng}: {_de(price, 4)}")
+        parts.append(f"{rng}: {format_price(price, decimals)}")
     how = "Gesamtmenge zum Stufenpreis" if mode == TIER_WHOLE else "anteilig"
     return " · ".join(parts) + f" €/m³ ({how})"

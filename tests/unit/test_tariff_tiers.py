@@ -69,7 +69,7 @@ class TestTierBands:
 class TestVolumeLines:
     def test_linear_text_unchanged(self):
         [line] = engine.volume_lines(_water(steps=()), D("120"), head="Wasserverbrauch 2026")
-        assert line["description"] == "Wasserverbrauch 2026 (120 m³ × 1,2000 €/m³)"
+        assert line["description"] == "Wasserverbrauch 2026 (120 m³ × 1,20 €/m³)"
         assert line["amount"] == D("144.00")
 
     def test_graduated_one_line_per_band(self):
@@ -79,18 +79,18 @@ class TestVolumeLines:
         assert [l["unit_price"] for l in lines] == [D("1.20"), D("1.50"), D("2.00")]
         assert _amounts(lines) == [D("240.00"), D("450.00"), D("100.00")]
         assert lines[0]["description"] == (
-            "Wasserverbrauch 2026 – Stufe 1 (bis 200 m³): 200 m³ × 1,2000 €/m³ – abzüglich 5 m³")
+            "Wasserverbrauch 2026 – Stufe 1 (bis 200 m³): 200 m³ × 1,20 €/m³ – abzüglich 5 m³")
         assert lines[1]["description"] == (
-            "Wasserverbrauch 2026 – Stufe 2 (über 200 bis 500 m³): 300 m³ × 1,5000 €/m³")
+            "Wasserverbrauch 2026 – Stufe 2 (über 200 bis 500 m³): 300 m³ × 1,50 €/m³")
         assert lines[2]["description"] == (
-            "Wasserverbrauch 2026 – Stufe 3 (über 500 m³): 50 m³ × 2,0000 €/m³")
+            "Wasserverbrauch 2026 – Stufe 3 (über 500 m³): 50 m³ × 2,00 €/m³")
         assert all(l["charge_key"] == "water" for l in lines)
 
     def test_whole_one_line_at_reached_price(self):
         [line] = engine.volume_lines(_water(spec.TIER_WHOLE), D("550"), head="Wasser")
         assert line["amount"] == D("1100.00")
         assert line["description"] == (
-            "Wasser (550 m³ × 2,0000 €/m³, Stufenpreis über 500 m³)")
+            "Wasser (550 m³ × 2,00 €/m³, Stufenpreis über 500 m³)")
 
     def test_whole_jump_at_threshold(self):
         """Die gewünschte Sprungstelle: 200 m³ kosten weniger als 201 m³ × Stufe 2."""
@@ -179,10 +179,16 @@ class TestSpec:
 
     def test_levels_text(self):
         assert spec.levels_text(D("1.2"), STEPS, spec.TIER_WHOLE) == (
-            "bis 200 m³: 1,2000 · über 200 bis 500 m³: 1,5000 · über 500 m³: 2,0000 €/m³ "
+            "bis 200 m³: 1,20 · über 200 bis 500 m³: 1,50 · über 500 m³: 2,00 €/m³ "
             "(Gesamtmenge zum Stufenpreis)")
         assert spec.levels_text(D("1.2"), [{"above": "1000", "price": "1"}]) == (
-            "bis 1.000 m³: 1,2000 · über 1.000 m³: 1,0000 €/m³ (anteilig)")
+            "bis 1.000 m³: 1,20 · über 1.000 m³: 1,00 €/m³ (anteilig)")
+        # Nachkommastellen der Gebührenart; mehr Stellen im Preis bleiben sichtbar.
+        assert spec.levels_text(D("1.2"), [{"above": "200", "price": "1.555"}],
+                                decimals=4) == (
+            "bis 200 m³: 1,2000 · über 200 m³: 1,5550 €/m³ (anteilig)")
+        assert spec.levels_text(D("1.2"), [{"above": "200", "price": "1.555"}]) == (
+            "bis 200 m³: 1,20 · über 200 m³: 1,555 €/m³ (anteilig)")
         assert spec.levels_text(D("1.2"), None) == ""
 
 

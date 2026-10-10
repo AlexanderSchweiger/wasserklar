@@ -114,7 +114,7 @@
           <div class="input-group input-group-sm">
             <input type="text" inputmode="decimal" name="comp_amount_{{ ct.id }}" class="form-control"
                    value="{{ row.amount }}" {{ 'required' if row.is_water }}
-                   placeholder="{{ '0,0000' if ct.is_per_m3 else ('nur individuell' if ct.overridable else '0,00') }}">
+                   placeholder="{{ ('0,' ~ '0' * ct.price_decimals) if ct.is_per_m3 else ('nur individuell' if ct.overridable else '0,00') }}">
             <span class="input-group-text">{{ '€/m³' if ct.is_per_m3 else '€' }}</span>
           </div>
           {% if can_tier %}
@@ -173,7 +173,7 @@
                          value="{{ t.above }}" placeholder="200" aria-label="Grenze in m³">
                   <span class="input-group-text">m³ →</span>
                   <input type="text" inputmode="decimal" name="comp_tier_price_{{ ct.id }}" class="form-control"
-                         value="{{ t.price }}" placeholder="0,0000" aria-label="Preis je m³">
+                         value="{{ t.price }}" placeholder="{{ '0,' ~ '0' * ct.price_decimals }}" aria-label="Preis je m³">
                   <span class="input-group-text">€/m³</span>
                   <button type="button" class="btn btn-outline-danger" data-tier-remove title="Stufe entfernen">
                     <i class="fas fa-times"></i>
@@ -200,7 +200,7 @@
                          placeholder="200" aria-label="Grenze in m³">
                   <span class="input-group-text">m³ →</span>
                   <input type="text" inputmode="decimal" name="comp_tier_price_{{ ct.id }}" class="form-control"
-                         placeholder="0,0000" aria-label="Preis je m³">
+                         placeholder="{{ '0,' ~ '0' * ct.price_decimals }}" aria-label="Preis je m³">
                   <span class="input-group-text">€/m³</span>
                   <button type="button" class="btn btn-outline-danger" data-tier-remove title="Stufe entfernen">
                     <i class="fas fa-times"></i>

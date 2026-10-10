@@ -831,6 +831,7 @@ def new():
         flash(f"Rechnung {inv.invoice_number} erstellt.", "success")
         return redirect(url_for("invoices.detail", invoice_id=inv.id))
 
+    from app import tax_service
     return render_template(
         "invoices/new.html",
         customers=customers,
@@ -838,14 +839,18 @@ def new():
         today=date.today(),
         editor_accounts=editor_accounts,
         editor_projects=editor_projects,
+        editor_tax_rates=tax_service.tax_rates(),
     )
 
 
-def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
+def _apply_row_items_to_invoice(inv, form, is_vat_liable_year, keep_rates=()):
     """Fügt die vom Positions-Editor gesendeten Zeilen als ``InvoiceItem``
-    zur Rechnung hinzu. Shared zwischen ``invoices.new`` und
-    ``accounting.open_item_invoice`` (dort noch inline), damit die
-    Parse-Logik nur einmal existiert.
+    zur Rechnung hinzu. Shared zwischen ``invoices.new``, ``items_save`` und
+    ``accounting.open_item_invoice``, damit die Parse-Logik nur einmal existiert.
+
+    Steuersätze freier Positionen müssen hinterlegt sein (auch deaktivierte);
+    ``keep_rates`` erlaubt zusätzlich die Sätze der bisherigen Positionen, damit
+    das Speichern eines Entwurfs einen Altsatz nicht still verwirft.
     """
     row_types = form.getlist("row_type[]")
     row_tariff_ids = form.getlist("row_tariff_id[]")
@@ -877,7 +882,10 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
             return None
 
     from app import tax_service
+    from app.invoices.price_format import typed_places
     water_tax = tax_service.water_tax_rate() if is_vat_liable_year else None
+    allowed_rates = set(tax_service.known_rate_values())
+    allowed_rates.update(Decimal(str(r)) for r in keep_rates if r is not None)
 
     for i, rtype in enumerate(row_types):
         # Dimensionen gelten pro UI-Zeile. Beim Typ "tariff" erzeugt eine Zeile
@@ -926,6 +934,7 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
                 quantity=consumption,
                 unit="m³",
                 unit_price=unit_price,
+                price_decimals=typed_places(unit_price),   # wie eingetippt
                 amount=amount,
                 tax_rate=water_tax,
                 account_id=row_account_id,
@@ -939,6 +948,8 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
             unit = row_units[i] if i < len(row_units) and row_units[i].strip() else "Stk"
             unit_price = _dec(row_unit_prices, i)
             tax_rate = _dec(row_tax_rates, i) if is_vat_liable_year else Decimal("0")
+            if tax_rate not in allowed_rates:
+                tax_rate = Decimal("0")
             amount = (qty * unit_price).quantize(Decimal("0.01"))
             db.session.add(InvoiceItem(
                 invoice_id=inv.id,
@@ -946,6 +957,7 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year):
                 quantity=qty,
                 unit=unit,
                 unit_price=unit_price,
+                price_decimals=typed_places(unit_price),   # wie eingetippt
                 amount=amount,
                 tax_rate=tax_rate if tax_rate > 0 else None,
                 account_id=row_account_id,
@@ -1012,6 +1024,8 @@ def detail(invoice_id):
         tariffs=tariffs,
         editor_accounts=editor_accounts,
         editor_projects=editor_projects,
+        # Saetze bestehender Positionen mitnehmen (auch wenn inzwischen deaktiviert).
+        editor_tax_rates=tax_service.tax_rates(include=[i.tax_rate for i in invoice.items]),
         tax_summary=invoice.tax_breakdown,
         invoice_gross_total=invoice.total_amount,
         credit_note_blocker=credit_note_blocker(invoice),
@@ -1067,13 +1081,14 @@ def items_save(invoice_id):
     # Alle bestehenden Positionen entfernen — der Editor liefert den kompletten
     # neuen Zustand inklusive der (als "free" gerenderten) bestehenden Items.
     # ADR-003: Mahngebühr-Items bleiben erhalten (werden nur vom Dunning-Service verwaltet).
+    old_rates = [i.tax_rate for i in invoice.items]
     for old_item in list(invoice.items):
         if getattr(old_item, "is_dunning_fee", 0):
             continue
         db.session.delete(old_item)
     db.session.flush()
 
-    _apply_row_items_to_invoice(invoice, request.form, is_vat_liable_year)
+    _apply_row_items_to_invoice(invoice, request.form, is_vat_liable_year, keep_rates=old_rates)
     # Die neuen Items werden via invoice_id-FK (nicht ueber die Relationship-
     # Collection) angelegt. Da invoice.items oben bereits geladen wurde, ist die
     # In-Memory-Collection veraltet — flush + expire erzwingt ein frisches Reload,
@@ -2761,7 +2776,8 @@ def billing_run_export_excel(run_id):
         label = comp["label"] + (" (je m³)" if per_m3 else "")
         kv(r, label, float(comp["amount"]), EUR4 if per_m3 else EUR)
         extra = "; ".join(t for t in (
-            levels_text(comp["amount"], comp.get("tiers"), comp.get("tier_mode")),
+            levels_text(comp["amount"], comp.get("tiers"), comp.get("tier_mode"),
+                        comp.get("price_decimals") or 4),
             condition_text(comp.get("conditions"))) if t)
         if extra:
             ws.cell(row=r, column=3, value=extra)
@@ -2871,11 +2887,11 @@ def _tax_value(rate):
         return ""
 
 
-def _amount_str(value, per_m3):
-    """Betrag fuer das Formularfeld (deutsches Komma, 4 bzw. 2 Stellen)."""
-    if value is None:
-        return ""
-    return f"{Decimal(str(value)):.{4 if per_m3 else 2}f}".replace(".", ",")
+def _amount_str(value, places):
+    """Betrag fuer das Formularfeld (deutsches Komma, ``places`` Stellen —
+    je m³ die der Gebührenart, pauschal 2)."""
+    from app.invoices.charges import format_amount
+    return format_amount(value, places)
 
 
 def _int_or_none(raw):
@@ -2927,12 +2943,13 @@ def _tariff_form_rows(tariff, form=None):
         elif comp is not None:
             on = True
             label = comp.label
-            amount = _amount_str(comp.amount, ct.is_per_m3)
+            amount = _amount_str(comp.amount, ct.amount_places)
             tax = _tax_value(comp.tax_rate)
             account_id = comp.account_id
             valid_from = comp.valid_from.isoformat() if comp.valid_from else ""
             tier_mode = comp.tier_mode or TIER_GRADUATED
-            tiers = [{"above": _qty_str(s.above), "price": _amount_str(s.price, True)}
+            tiers = [{"above": _qty_str(s.above),
+                      "price": _amount_str(s.price, ct.price_decimals)}
                      for s in comp.tier_steps]
             statuses = sorted(comp.contact_statuses or ())
         else:
@@ -3282,6 +3299,7 @@ def _calc_levels(selected, m3):
         out.append({
             "label": c.label,
             "mode": c.tier_mode,
+            "places": c.price_decimals,
             "rows": [{"range": engine.band_range(lo, up), "price": price,
                       "reached": (idx == top if c.tier_mode == "whole" else idx <= top)}
                      for idx, lo, up, price in engine.price_levels(c)],
@@ -3348,8 +3366,10 @@ def tariff_calc():
 # ---------------------------------------------------------------------------
 
 def _charge_type_body(ct, form=None):
+    from app.invoices.price_format import PLACES_CHOICES
     return render_template("invoices/_charge_type_form_body.html", ct=ct, form=form,
-                           calc_choices=ChargeType.CALC_CHOICES)
+                           calc_choices=ChargeType.CALC_CHOICES,
+                           places_choices=PLACES_CHOICES)
 
 
 def _charge_type_saved(ct_id):
@@ -3382,6 +3402,13 @@ def _parse_charge_type_form(ct=None):
         data["overridable"] = bool(form.get("overridable"))
     elif not data["active"]:
         return None, "Die Gebührenart „Wasserverbrauch“ kann nicht deaktiviert werden."
+    calc = data.get("calc_type") or (ct.calc_type if ct is not None else ChargeType.CALC_FLAT)
+    if calc == ChargeType.CALC_PER_M3 and "price_decimals" in form:
+        from app.invoices.price_format import PLACES_CHOICES
+        places = _int_or_none(form.get("price_decimals"))
+        if places not in PLACES_CHOICES:
+            return None, "Ungültige Anzahl an Nachkommastellen."
+        data["price_decimals"] = places
     return data, None
 
 

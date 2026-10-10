@@ -1,0 +1,9 @@
+{# Modal-Inhalt ohne Formular (z. B. „bereits storniert“, „Buchungsjahr abgeschlossen“):
+   die wartenden Flash-Meldungen plus „Schließen“. Passt in jedes setupEditModal-Skelett,
+   dessen Body-Ziel modal-body UND modal-footer aufnimmt (Storno, Sammelbuchung, Umbuchung). #}
+<div class="modal-body">
+  {% include "_flash_inline.html" %}
+</div>
+<div class="modal-footer">
+  <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Schließen</button>
+</div>
