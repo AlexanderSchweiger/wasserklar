@@ -7,7 +7,10 @@ from app.accounting.services import (
     _split_invoice_by_dimensions,
     booking_tax,
     is_effective_booking,
+    parse_ust_period,
     ust_period,
+    ust_period_key,
+    ust_period_label,
 )
 from app.models import Booking
 
@@ -139,6 +142,42 @@ class TestUstPeriod:
         # 2024 ist Schaltjahr – Q1 endet am 31.03.
         start, end = ust_period(2024, 1)
         assert end == date(2024, 3, 31)
+
+    def test_monat_februar_schaltjahr(self):
+        assert ust_period(2024, 0, 2) == (date(2024, 2, 1), date(2024, 2, 29))
+        assert ust_period(2026, 0, 2) == (date(2026, 2, 1), date(2026, 2, 28))
+
+    def test_monat_dezember(self):
+        assert ust_period(2026, 0, 12) == (date(2026, 12, 1), date(2026, 12, 31))
+
+    def test_monat_geht_vor_quartal(self):
+        assert ust_period(2026, 4, 1) == (date(2026, 1, 1), date(2026, 1, 31))
+
+    def test_ungueltiger_monat_ist_gesamtjahr(self):
+        assert ust_period(2026, 0, 13) == (date(2026, 1, 1), date(2026, 12, 31))
+
+
+class TestParseUstPeriod:
+    def test_werte(self):
+        assert parse_ust_period("q1") == (1, 0)
+        assert parse_ust_period("Q4") == (4, 0)
+        assert parse_ust_period("m1") == (0, 1)
+        assert parse_ust_period("m12") == (0, 12)
+
+    def test_unsinn_ist_gesamtjahr(self):
+        for value in (None, "", "year", "q0", "q5", "m0", "m13", "m", "x3", "m-1", "q1a"):
+            assert parse_ust_period(value) == (0, 0), value
+
+    def test_schluessel_hin_und_zurueck(self):
+        cases = [(0, 0)] + [(q, 0) for q in range(1, 5)] + [(0, m) for m in range(1, 13)]
+        for quartal, month in cases:
+            assert parse_ust_period(ust_period_key(quartal, month)) == (quartal, month)
+
+    def test_label(self):
+        assert ust_period_label(2026, 0, 3) == "März 2026"
+        assert ust_period_label(2026, 2) == "Q2/2026"
+        assert ust_period_label(2026, 0) == "2026"
+        assert ust_period_label(2026, 0, 1) in ("Jänner 2026", "Januar 2026")
 
 
 # ---------------------------------------------------------------------------

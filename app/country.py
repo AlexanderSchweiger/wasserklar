@@ -69,6 +69,9 @@ class CountryProfile:
     # Protokolle/Beschluesse haben keine Frist (dauerhaft, ``app/documents/retention.py``).
     business_letter_retention_years: int = 7
     business_letter_retention_hint: str = ""
+    # Wann monatlich statt vierteljährlich vorangemeldet wird + Abgabefrist — nur
+    # Hinweistext in den Steuer-Einstellungen; den Zeitraum wählt der Mandant selbst.
+    vat_return_hint: str = ""
 
     def default_tax_rate_values(self):
         return [rate for rate, _ in self.tax_rates]
@@ -87,6 +90,11 @@ _AT = CountryProfile(
     water_tax_rate=Decimal("10"),
     calibration_years=5,
     calibration_hint="Österreich: 5 Jahre für Kaltwasserzähler (MEG)",
+    vat_return_hint=(
+        "Österreich: vierteljährlich, wenn der Umsatz im Vorjahr höchstens 100.000 € "
+        "betrug, sonst monatlich (§ 21 UStG). Abgabe über FinanzOnline (U30) bis zum "
+        "15. des zweitfolgenden Monats."
+    ),
     vat_id_label="UID-Nummer",
     small_business_note=(
         "Umsatzsteuerbefreit – Kleinunternehmer gemäß § 6 Abs. 1 Z 27 UStG."
@@ -144,6 +152,11 @@ _DE = CountryProfile(
     water_tax_rate=Decimal("7"),
     calibration_years=6,
     calibration_hint="Deutschland: 6 Jahre für Kaltwasserzähler (MessEV)",
+    vat_return_hint=(
+        "Deutschland: vierteljährlich, monatlich wenn die Steuer des Vorjahres mehr als "
+        "9.000 € betrug (§ 18 UStG). Abgabe über ELSTER bis zum 10. des Folgemonats, "
+        "mit Dauerfristverlängerung einen Monat später."
+    ),
     vat_id_label="USt-IdNr.",
     small_business_note="Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.",
     terms={

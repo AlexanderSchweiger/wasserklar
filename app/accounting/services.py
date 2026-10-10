@@ -584,8 +584,27 @@ def year_billing_runs(year):
 # Umsatzsteuer
 # ---------------------------------------------------------------------------
 
-def ust_period(year, quartal):
-    """``(date_from, date_to)`` für Jahr/Quartal. ``quartal == 0`` → Gesamtjahr."""
+_MONTH_NAMES = (
+    None, None, "Februar", "März", "April", "Mai", "Juni", "Juli",
+    "August", "September", "Oktober", "November", "Dezember",
+)
+
+
+def month_name(month):
+    """Deutscher Monatsname; der Jänner/Januar kommt aus dem Länderprofil."""
+    if month == 1:
+        from app import country
+        return country.term("january")
+    return _MONTH_NAMES[month]
+
+
+def ust_period(year, quartal, month=0):
+    """``(date_from, date_to)`` für Jahr/Quartal/Monat.
+
+    ``month`` (1–12) geht vor ``quartal`` (1–4); sind beide 0 → Gesamtjahr.
+    """
+    if month in range(1, 13):
+        return date(year, month, 1), date(year, month, calendar.monthrange(year, month)[1])
     if quartal in (1, 2, 3, 4):
         m_start = (quartal - 1) * 3 + 1
         m_end = quartal * 3
@@ -593,7 +612,41 @@ def ust_period(year, quartal):
     return date(year, 1, 1), date(year, 12, 31)
 
 
-def ust_compute(year, quartal):
+def parse_ust_period(value):
+    """Zeitraum-Schlüssel der Voranmeldung → ``(quartal, month)``.
+
+    ``"q1"``–``"q4"`` Quartal, ``"m1"``–``"m12"`` Monat, alles andere
+    (leer, ``"year"``, Unsinn) → Gesamtjahr ``(0, 0)``.
+    """
+    value = (value or "").strip().lower()
+    if len(value) >= 2 and value[0] in "qm" and value[1:].isdigit():
+        number = int(value[1:])
+        if value[0] == "q" and number in range(1, 5):
+            return number, 0
+        if value[0] == "m" and number in range(1, 13):
+            return 0, number
+    return 0, 0
+
+
+def ust_period_key(quartal, month=0):
+    """Gegenstück zu :func:`parse_ust_period` (Wert der Zeitraum-Auswahl)."""
+    if month in range(1, 13):
+        return f"m{month}"
+    if quartal in (1, 2, 3, 4):
+        return f"q{quartal}"
+    return "year"
+
+
+def ust_period_label(year, quartal, month=0):
+    """Anzeige des Zeitraums: „März 2026“, „Q1/2026“ oder „2026“."""
+    if month in range(1, 13):
+        return f"{month_name(month)} {year}"
+    if quartal in (1, 2, 3, 4):
+        return f"Q{quartal}/{year}"
+    return str(year)
+
+
+def ust_compute(year, quartal, month=0):
     """Berechnet USt/Vorsteuer-Gruppen für einen Zeitraum.
 
     Liefert ``(ust_rows, vst_rows)`` als sortierte Listen
@@ -603,7 +656,7 @@ def ust_compute(year, quartal):
     Seite ihres Originals (USt bzw. Vorsteuer); das Original bleibt in seinem
     Zeitraum stehen.
     """
-    date_from, date_to = ust_period(year, quartal)
+    date_from, date_to = ust_period(year, quartal, month)
 
     q = (
         Booking.query
@@ -630,14 +683,14 @@ def ust_compute(year, quartal):
     return sorted(ust_rows.items()), sorted(vst_rows.items())
 
 
-def ust_totals(year, quartal):
+def ust_totals(year, quartal, month=0):
     """Liefert kompakte Summen-Übersicht für USt-Voranmeldung.
 
     Returns dict with: ``ust_rows, vst_rows, total_ust, total_vst, zahllast,
     ust_brutto, ust_netto, vst_brutto, vst_netto, date_from, date_to``.
     """
-    date_from, date_to = ust_period(year, quartal)
-    ust_rows, vst_rows = ust_compute(year, quartal)
+    date_from, date_to = ust_period(year, quartal, month)
+    ust_rows, vst_rows = ust_compute(year, quartal, month)
     total_ust = sum((v["steuer"] for _, v in ust_rows), Decimal("0"))
     total_vst = sum((v["steuer"] for _, v in vst_rows), Decimal("0"))
     return {

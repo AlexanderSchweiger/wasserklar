@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}USt-Voranmeldung {{ year }}{% endblock %}
+{% block title %}USt-Voranmeldung {{ period_label }}{% endblock %}
 {% block page_title %}<i class="fas fa-percentage me-2"></i> Umsatzsteuervoranmeldung{% endblock %}
 
 {% block content %}
@@ -29,12 +29,25 @@
       </div>
       <div>
         <label class="form-label mb-1">Zeitraum</label>
-        <select name="quartal" class="form-control form-control-sm" onchange="this.form.requestSubmit()">
-          <option value="0" {% if quartal == 0 %}selected{% endif %}>Gesamtjahr</option>
-          <option value="1" {% if quartal == 1 %}selected{% endif %}>Q1 ({{ term('jan_short') }}–Mär)</option>
-          <option value="2" {% if quartal == 2 %}selected{% endif %}>Q2 (Apr–Jun)</option>
-          <option value="3" {% if quartal == 3 %}selected{% endif %}>Q3 (Jul–Sep)</option>
-          <option value="4" {% if quartal == 4 %}selected{% endif %}>Q4 (Okt–Dez)</option>
+        {# Der Voranmeldungszeitraum des Mandanten (Einstellungen → Steuern) steht
+           oben; gewählt werden kann immer jeder Monat und jedes Quartal. #}
+        {% set _quarter_opts %}
+          <optgroup label="Quartale">
+            {% for q, span in [(1, term('jan_short') ~ '–Mär'), (2, 'Apr–Jun'), (3, 'Jul–Sep'), (4, 'Okt–Dez')] %}
+            <option value="q{{ q }}" {{ 'selected' if period_key == 'q' ~ q }}>Q{{ q }} ({{ span }})</option>
+            {% endfor %}
+          </optgroup>
+        {% endset %}
+        {% set _month_opts %}
+          <optgroup label="Monate">
+            {% for m, name in month_names %}
+            <option value="m{{ m }}" {{ 'selected' if period_key == 'm' ~ m }}>{{ name }}</option>
+            {% endfor %}
+          </optgroup>
+        {% endset %}
+        <select name="period" class="form-select form-select-sm" style="min-width:170px" onchange="this.form.requestSubmit()">
+          <option value="year" {{ 'selected' if period_key == 'year' }}>Gesamtjahr</option>
+          {% if vat_return_period == 'month' %}{{ _month_opts }}{{ _quarter_opts }}{% else %}{{ _quarter_opts }}{{ _month_opts }}{% endif %}
         </select>
       </div>
       <div class="d-flex gap-2 align-items-end">
@@ -43,7 +56,7 @@
           <i class="fas fa-times me-1"></i> Filter zurücksetzen
         </a>
         {% endif %}
-        <a href="{{ url_for('accounting.export_ust_csv', year=year, quartal=quartal) }}"
+        <a href="{{ url_for('accounting.export_ust_csv', year=year, period=period_key) }}"
            class="btn btn-outline-secondary">
           <i class="fas fa-file-csv me-1"></i> CSV Export
         </a>
@@ -61,15 +74,24 @@
   <br>
   <i class="fas fa-mouse-pointer me-1"></i>
   Klick auf eine Kachel oder Tabellenzeile zeigt die zugehörigen Buchungen.
+  <br>
+  <i class="fas fa-cog me-1"></i>
+  Voranmeldungszeitraum: <strong>{{ 'monatlich' if vat_return_period == 'month' else 'vierteljährlich' }}</strong>
+  {% if current_user.has_permission('verwaltung') %}
+  &mdash; <a href="{{ url_for('settings.index', _anchor='pane-tax') }}">ändern unter Einstellungen → Steuern</a>
+  {% else %}
+  (Einstellungen → Steuern)
+  {% endif %}
 </p>
 
 {# --- Zusammenfassung oben ---
    Jede Kachel und jede Tabellenzeile verlinkt auf die Buchungsliste, gefiltert
-   auf exakt die Buchungen, aus denen der Betrag stammt (Jahr + Quartal + Typ +
-   Steuersatz). ``quartal or None`` laesst den Parameter beim Gesamtjahr weg. #}
-{% set books_ust  = url_for('accounting.bookings', year=year, quarter=quartal or None, kind='income',  tax='any') %}
-{% set books_vst  = url_for('accounting.bookings', year=year, quarter=quartal or None, kind='expense', tax='any') %}
-{% set books_all  = url_for('accounting.bookings', year=year, quarter=quartal or None, tax='any') %}
+   auf exakt die Buchungen, aus denen der Betrag stammt (Jahr + Quartal bzw.
+   Monat + Typ + Steuersatz). ``quartal or None`` / ``month or None`` lassen den
+   Parameter weg, wenn er nicht gilt. #}
+{% set books_ust  = url_for('accounting.bookings', year=year, quarter=quartal or None, month=month or None, kind='income',  tax='any') %}
+{% set books_vst  = url_for('accounting.bookings', year=year, quarter=quartal or None, month=month or None, kind='expense', tax='any') %}
+{% set books_all  = url_for('accounting.bookings', year=year, quarter=quartal or None, month=month or None, tax='any') %}
 
 <div class="row row-deck row-cards mb-4">
   <div class="col-md-4">
@@ -151,7 +173,7 @@
             <tr class="ust-drill-row">
               <td>
                 <a class="stretched-link text-reset text-decoration-none"
-                   href="{{ url_for('accounting.bookings', year=year, quarter=quartal or None, kind='income', tax=rate) }}"
+                   href="{{ url_for('accounting.bookings', year=year, quarter=quartal or None, month=month or None, kind='income', tax=rate) }}"
                    title="Einnahmen-Buchungen mit {{ rate }} % USt anzeigen">
                   <span class="badge bg-success text-white">{{ rate }} %</span>
                 </a>
@@ -212,7 +234,7 @@
             <tr class="ust-drill-row">
               <td>
                 <a class="stretched-link text-reset text-decoration-none"
-                   href="{{ url_for('accounting.bookings', year=year, quarter=quartal or None, kind='expense', tax=rate) }}"
+                   href="{{ url_for('accounting.bookings', year=year, quarter=quartal or None, month=month or None, kind='expense', tax=rate) }}"
                    title="Ausgaben-Buchungen mit {{ rate }} % VSt anzeigen">
                   <span class="badge bg-warning text-dark">{{ rate }} %</span>
                 </a>

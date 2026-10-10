@@ -2,9 +2,11 @@
    Wird nach dem Speichern im Steuersatz-Modal per htmx neu geladen
    (settings.tax_rates_card, outerHTML auf #taxRatesCard) — die
    Einstellungsseite bleibt stehen, ungespeicherte Eingaben gehen nicht
-   verloren. Das Wasser-Select gehoert zum umschliessenden
-   Einstellungsformular und wird mit „Einstellungen speichern" gespeichert.
-   Erwartet: tax_rate_rows, water_rate_options, water_tax_rate, country_profile. #}
+   verloren. Das Wasser-Select und der Voranmeldungszeitraum gehoeren zum
+   umschliessenden Einstellungsformular und werden mit „Einstellungen speichern"
+   gespeichert.
+   Erwartet: tax_rate_rows, water_rate_options, water_tax_rate, vat_return_period,
+   country_profile. #}
 <div id="taxRatesCard">
   {% include "_flash_inline.html" %}
   <div class="card mb-3">
@@ -115,6 +117,31 @@
                   data-bs-toggle="modal" data-bs-target="#countryDefaultsModal">
             <i class="fas fa-flag me-1"></i> Länder-Defaults übernehmen …
           </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mt-3">
+    <div class="card-header">
+      <h3 class="card-title"><i class="fas fa-calendar-alt me-1"></i> Umsatzsteuer-Voranmeldung</h3>
+    </div>
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-md-5">
+          <label class="form-label">Voranmeldungszeitraum</label>
+          <select name="tax_vat_return_period" class="form-select">
+            <option value="quarter" {{ 'selected' if vat_return_period != 'month' }}>Vierteljährlich</option>
+            <option value="month" {{ 'selected' if vat_return_period == 'month' }}>Monatlich</option>
+          </select>
+        </div>
+        <div class="col-md-7">
+          <div class="form-text mt-md-4">
+            Bestimmt, welche Zeiträume in der USt-Voranmeldung zuerst angeboten werden und ob
+            der Jahresbericht (Excel) die Umsatzsteuer je Quartal oder je Monat aufschlüsselt.
+            Ansehen lässt sich jederzeit jeder Monat und jedes Quartal.
+            {% if country_profile.vat_return_hint %}<br>{{ country_profile.vat_return_hint }}{% endif %}
+          </div>
         </div>
       </div>
     </div>

@@ -94,7 +94,7 @@ ENDPOINT_TO_DOC = {
     "accounting.open_items":         "buchhaltung#offene-posten",
     "accounting.open_item_invoice":  "buchhaltung#offene-posten",
     "accounting.report":             "buchhaltung",
-    "accounting.ust":                "buchhaltung",
+    "accounting.ust":                "buchhaltung#ust-voranmeldung",
 
     # Leitungsnetz (Wasserleitungsplan)
     "network.index":               "leitungsnetz#karte",

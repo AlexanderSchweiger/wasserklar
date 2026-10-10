@@ -114,6 +114,30 @@ def test_water_rate_saved(logged_in, at_rates):
     assert tax_service.water_tax_rate() == Decimal("20")
 
 
+def test_vat_return_period_saved(logged_in, at_rates):
+    html = logged_in.get("/einstellungen/").get_data(as_text=True)
+    assert 'name="tax_vat_return_period"' in html
+    assert "100.000 €" in html  # Hinweis des Länderprofils (AT)
+    assert tax_service.vat_return_period() == "quarter"
+
+    logged_in.post("/einstellungen/", data=_form(org_country="AT", tax_vat_return_period="month"))
+    db.session.expire_all()
+    assert tax_service.vat_return_period() == "month"
+
+    # Unbekannter Wert und fehlendes Feld lassen die Einstellung stehen.
+    logged_in.post("/einstellungen/", data=_form(org_country="AT", tax_vat_return_period="weekly"))
+    logged_in.post("/einstellungen/", data=_form(org_country="AT"))
+    db.session.expire_all()
+    assert tax_service.vat_return_period() == "month"
+
+
+def test_vat_return_hint_follows_country(logged_in, at_rates):
+    AppSetting.set(country.SETTING_KEY, "DE")
+    db.session.commit()
+    html = logged_in.get("/einstellungen/").get_data(as_text=True)
+    assert "9.000 €" in html and "ELSTER" in html
+
+
 def test_apply_country_defaults_route(logged_in, at_rates):
     AppSetting.set(country.SETTING_KEY, "DE")
     db.session.commit()

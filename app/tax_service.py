@@ -17,6 +17,13 @@ from decimal import Decimal, InvalidOperation
 # AppSetting-Key des Standard-USt-Satzes fuer Wasserpositionen.
 WATER_RATE_KEY = "tax.water_rate"
 
+# AppSetting-Key des Voranmeldungszeitraums der Umsatzsteuer (vierteljaehrlich
+# ist der Normalfall in AT und DE; monatlich ab den Schwellen des Landes).
+VAT_RETURN_PERIOD_KEY = "tax.vat_return_period"
+VAT_RETURN_QUARTER = "quarter"
+VAT_RETURN_MONTH = "month"
+VAT_RETURN_PERIODS = (VAT_RETURN_QUARTER, VAT_RETURN_MONTH)
+
 
 class TaxRateOption:
     """Schlanker Steuersatz-Datensatz mit ``.rate`` (Decimal) und ``.label``
@@ -139,3 +146,18 @@ def water_tax_rate():
         return rate
     from app import country
     return country.current_profile().water_tax_rate
+
+
+def vat_return_period():
+    """Voranmeldungszeitraum des Mandanten: ``"quarter"`` (Standard) oder ``"month"``.
+
+    Steuert nur die Darstellung — Reihenfolge der Zeitraum-Auswahl der
+    USt-Voranmeldung und die USt-Blaetter im Jahresbericht. Waehlbar ist auf der
+    Seite immer jeder Monat und jedes Quartal.
+    """
+    try:
+        from app.models import AppSetting
+        raw = AppSetting.get(VAT_RETURN_PERIOD_KEY)
+    except Exception:
+        raw = None
+    return raw if raw in VAT_RETURN_PERIODS else VAT_RETURN_QUARTER

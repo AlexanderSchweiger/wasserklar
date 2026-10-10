@@ -137,6 +137,11 @@ def index():
             if water_rate is not None and water_rate in set(tax_service.known_rate_values()):
                 AppSetting.set(tax_service.WATER_RATE_KEY, str(water_rate))
 
+        # Voranmeldungszeitraum der USt (nur bekannte Werte; fehlt das Feld, bleibt er).
+        vat_period = request.form.get('tax_vat_return_period')
+        if vat_period in tax_service.VAT_RETURN_PERIODS:
+            AppSetting.set(tax_service.VAT_RETURN_PERIOD_KEY, vat_period)
+
         # WG-Kontaktdaten
         for attr in _WG_MAP:
             val = request.form.get(f'wg_{attr}', '').strip()
@@ -455,6 +460,7 @@ def _tax_card_context():
         # gepflegte, falls er inzwischen deaktiviert wurde.
         water_rate_options=tax_service.tax_rates(include=water_rate),
         water_tax_rate=water_rate,
+        vat_return_period=tax_service.vat_return_period(),
         country_profile=country_mod.current_profile(),
     )
 

@@ -2332,7 +2332,8 @@ def report_export_excel():
         _autowidth(ws6)
 
     # ================================================================
-    # BLÄTTER 7-11: USt-Voranmeldungen Q1–Q4 + Gesamtjahr
+    # BLÄTTER 7ff.: USt-Voranmeldungen je Zeitraum des Mandanten (Q1–Q4
+    # bzw. Monate) + Gesamtjahr
     # ================================================================
     def _ust_sheet(ws_ust, label, date_from, date_to, ust_r, vst_r):
         ws_ust.cell(row=1, column=1, value="Zeitraum").font = SUBHDR_FONT
@@ -2365,11 +2366,18 @@ def report_export_excel():
         _autowidth(ws_ust)
 
     if fy_vat_liable:
-        for q in range(1, 5):
-            df, dt = _ust_period(year, q)
-            ur, vr = _ust_berechnen(year, q)
-            ws_q = wb.create_sheet(f"USt Q{q}")
-            _ust_sheet(ws_q, f"Q{q}/{year}", df, dt, ur, vr)
+        if tax_service.vat_return_period() == tax_service.VAT_RETURN_MONTH:
+            for m in range(1, 13):
+                df, dt = _ust_period(year, 0, m)
+                ur, vr = _ust_berechnen(year, 0, m)
+                ws_m = wb.create_sheet(f"USt {acc_svc.month_name(m)}")
+                _ust_sheet(ws_m, acc_svc.ust_period_label(year, 0, m), df, dt, ur, vr)
+        else:
+            for q in range(1, 5):
+                df, dt = _ust_period(year, q)
+                ur, vr = _ust_berechnen(year, q)
+                ws_q = wb.create_sheet(f"USt Q{q}")
+                _ust_sheet(ws_q, f"Q{q}/{year}", df, dt, ur, vr)
 
         df_y, dt_y = _ust_period(year, 0)
         ws_y = wb.create_sheet("USt Gesamtjahr")
@@ -2879,11 +2887,24 @@ def export_csv():
 # Service nur noch zum Aufbereiten der Templates auf.
 
 
+def _ust_period_args(args):
+    """Zeitraum der Voranmeldung aus der Anfrage → ``(quartal, month)``.
+
+    Die Seite schickt ``period`` (``q1``…``q4``, ``m1``…``m12``, ``year``); ältere
+    Links und Lesezeichen tragen noch ``quartal``. Ungültige Werte → Gesamtjahr.
+    """
+    if "period" in args:
+        return acc_svc.parse_ust_period(args.get("period"))
+    quartal = args.get("quartal", 0, type=int)
+    month = args.get("month", 0, type=int)
+    return acc_svc.parse_ust_period(acc_svc.ust_period_key(quartal, month))
+
+
 @bp.route("/ust")
 @login_required
 def ust():
     year = request.args.get("year", date.today().year, type=int)
-    quartal = request.args.get("quartal", 0, type=int)
+    quartal, month = _ust_period_args(request.args)
     # Nur für umsatzsteuerpflichtige Jahre verfügbar
     vat_years = [fy.year for fy in FiscalYear.query.filter_by(is_vat_liable=True)
                  .order_by(FiscalYear.year.desc()).all()]
@@ -2901,12 +2922,16 @@ def ust():
             "warning",
         )
         year = vat_years[0]
-    totals = acc_svc.ust_totals(year, quartal)
+    totals = acc_svc.ust_totals(year, quartal, month)
     default_year = date.today().year if date.today().year in vat_years else vat_years[0]
-    has_filter = quartal != 0 or year != default_year
+    has_filter = quartal != 0 or month != 0 or year != default_year
     return render_template(
         "accounting/ust.html",
-        year=year, quartal=quartal,
+        year=year, quartal=quartal, month=month,
+        period_key=acc_svc.ust_period_key(quartal, month),
+        period_label=acc_svc.ust_period_label(year, quartal, month),
+        month_names=[(m, acc_svc.month_name(m)) for m in range(1, 13)],
+        vat_return_period=tax_service.vat_return_period(),
         vat_years=vat_years,
         has_filter=has_filter,
         date_from=totals["date_from"], date_to=totals["date_to"],
@@ -2922,11 +2947,11 @@ def ust():
 @login_required
 def export_ust_csv():
     year = request.args.get("year", date.today().year, type=int)
-    quartal = request.args.get("quartal", 0, type=int)
+    quartal, month = _ust_period_args(request.args)
     if not acc_svc.is_year_vat_liable(year):
         flash(f"Das Buchungsjahr {year} ist nicht umsatzsteuerpflichtig.", "warning")
         return redirect(url_for("accounting.ust"))
-    totals = acc_svc.ust_totals(year, quartal)
+    totals = acc_svc.ust_totals(year, quartal, month)
     date_from = totals["date_from"]
     date_to = totals["date_to"]
     ust_rows = totals["ust_rows"]
@@ -2935,7 +2960,13 @@ def export_ust_csv():
     total_vst = totals["total_vst"]
     zahllast = totals["zahllast"]
 
-    label = f"Q{quartal}/{year}" if quartal else str(year)
+    label = acc_svc.ust_period_label(year, quartal, month)
+    if month:
+        filename = f"ust_{year}_{month:02d}.csv"
+    elif quartal:
+        filename = f"ust_Q{quartal}_{year}.csv"
+    else:
+        filename = f"ust_{year}.csv"
 
     def fmt(d):
         return str(d.quantize(Decimal("0.01"))).replace(".", ",")
@@ -2959,7 +2990,6 @@ def export_ust_csv():
         writer.writerow(["Zahllast", "", "", "", fmt(zahllast)])
         return output.getvalue()
 
-    filename = f"ust_{label.replace('/', '_')}.csv"
     return Response(
         generate(),
         mimetype="text/csv",
