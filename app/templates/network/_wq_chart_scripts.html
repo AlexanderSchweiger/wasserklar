@@ -70,11 +70,18 @@
     });
   }
 
+  // Auf den Datums-Adapter warten, nicht nur auf window.Chart (beide per defer,
+  // zwei Downloads) — sonst wirft die Zeitachse „Check that a complete date
+  // adapter is provided". Siehe network/monitoring.html.
+  function libsReady() {
+    if (!window.Chart) { return false; }
+    try { new Chart._adapters._date().formats(); return true; } catch (e) { return false; }
+  }
   function whenReady(tries) {
-    if (window.Chart) { initWqChart(); return; }
+    if (libsReady()) { initWqChart(); return; }
     if (tries <= 0) { return; }
     setTimeout(function () { whenReady(tries - 1); }, 50);
   }
-  whenReady(40);
+  whenReady(100);
 })();
 </script>

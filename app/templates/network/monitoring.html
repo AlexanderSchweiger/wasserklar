@@ -168,15 +168,22 @@
     });
   }
 
-  // Chart.js wird mit defer geladen — kann beim Lauf dieses Inline-Skripts noch
-  // fehlen. Kurz pollen statt auf ein einzelnes Event zu wetten (robust gegen
-  // defer-Timing, siehe CLAUDE.md). Abbruch nach ~2 s.
+  // Chart.js und der Datums-Adapter werden mit defer geladen — beide koennen beim
+  // Lauf dieses Inline-Skripts noch fehlen. Kurz pollen statt auf ein einzelnes
+  // Event zu wetten (robust gegen defer-Timing, siehe CLAUDE.md). Auf den ADAPTER
+  // warten, nicht nur auf window.Chart: laedt er langsamer, feuert der Timer
+  // zwischen den beiden Skripten und die Zeitachse wirft „Check that a complete
+  // date adapter is provided". Abbruch nach ~5 s.
+  function libsReady() {
+    if (!window.Chart) { return false; }
+    try { new Chart._adapters._date().formats(); return true; } catch (e) { return false; }
+  }
   function whenReady(tries) {
-    if (window.Chart) { initYieldChart(); return; }
+    if (libsReady()) { initYieldChart(); return; }
     if (tries <= 0) { return; }
     setTimeout(function () { whenReady(tries - 1); }, 50);
   }
-  whenReady(40);
+  whenReady(100);
 })();
 </script>
 {% endblock %}
