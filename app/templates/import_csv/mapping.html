@@ -74,6 +74,12 @@
               {% if country.code == 'DE' %}
               {{ col_select("is_business", "Unternehmer (ja/nein)") }}
               {% endif %}
+              {{ col_select("payment_method", "Zahlungsart (Bankeinzug / Überweisung)") }}
+              {{ col_select("iban", "IBAN") }}
+              {{ col_select("bic", "BIC") }}
+              {{ col_select("account_holder", "Kontoinhaber (falls abweichend)") }}
+              {{ col_select("mandate_reference", "Mandatsreferenz (SEPA)") }}
+              {{ col_select("mandate_signed_on", "Mandat unterschrieben am") }}
               {% if is_wg %}
               {{ col_select("wg_status", "Mitglieds-Status") }}
               {{ col_select("member_since", "Mitglied seit") }}

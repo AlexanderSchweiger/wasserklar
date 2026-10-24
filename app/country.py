@@ -111,6 +111,14 @@ _AT = CountryProfile(
         # Zahlungsaufforderung auf Rechnung/Beleg: „<pay_request>, den Betrag … auf
         # unser Konto <pay_verb>:“
         "pay_request": "Wir ersuchen Sie", "pay_verb": "einzuzahlen",
+        # Statt der Zahlungsaufforderung bei Bankeinzug (app/direct_debit/notice.py);
+        # Platzhalter wie im Einstellungsfeld, ueberschreibbar je Mandant.
+        "debit_title": "Bitte nicht einzahlen.",
+        "debit_text": (
+            "Der Rechnungsbetrag von {{ betrag }} wird {{ abbuchungstermin }} im "
+            "SEPA-Lastschriftverfahren von Ihrem Konto {{ iban }} abgebucht. Bitte achten "
+            "Sie auf ausreichende Kontodeckung."
+        ),
     },
     einvoice_default=False,
     document_retention_years=7,
@@ -169,6 +177,12 @@ _DE = CountryProfile(
         "the_chairman": "der Vorsitzende", "The_chairman": "Der Vorsitzende",
         "role_treasurer": "Kassierer",
         "pay_request": "Wir bitten Sie", "pay_verb": "zu überweisen",
+        "debit_title": "Bitte nicht überweisen.",
+        "debit_text": (
+            "Den Rechnungsbetrag von {{ betrag }} ziehen wir {{ abbuchungstermin }} per "
+            "SEPA-Lastschrift von Ihrem Konto {{ iban }} ein. Bitte sorgen Sie für "
+            "ausreichende Deckung."
+        ),
     },
     document_retention_years=8,
     document_retention_hint=(

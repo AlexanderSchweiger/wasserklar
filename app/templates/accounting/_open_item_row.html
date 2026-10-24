@@ -16,6 +16,9 @@
       <a href="{{ url_for('invoices.detail', invoice_id=item.invoice_id) }}" class="text-reset">
         <code>{{ item.description }}</code>
       </a>
+      {% if direct_debit_ids is defined and item.id in direct_debit_ids and not is_closed %}
+      <span class="badge bg-azure-lt ms-1" title="Steht in einem Lastschrift-Einzug — wird abgebucht, nicht gemahnt"><i class="fas fa-university me-1"></i>im Einzug</span>
+      {% endif %}
     {% else %}
       {{ item.description }}
       {% if item.account %}

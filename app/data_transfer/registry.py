@@ -35,6 +35,7 @@ from app.models import (
     ChargeType, TariffComponent, ChargeOverride,
     IncomingInvoice, Document, DocumentLink, DocumentEvent,
     AccountingHandover, AccountingHandoverItem,
+    DirectDebitRun, DirectDebitItem,
 )
 
 # Spalten die auf users.id verweisen — werden beim Import auf NULL gesetzt,
@@ -50,6 +51,7 @@ NULL_ON_IMPORT_COLS = {
     Invoice: ["created_by_id"],
     Transfer: ["created_by_id"],
     AccountingHandover: ["created_by_id", "withdrawn_by_id"],
+    DirectDebitRun: ["created_by_id"],
     Booking: ["created_by_id"],
     BookingGroup: ["created_by_id"],
     Document: ["created_by_id"],
@@ -145,6 +147,9 @@ CATEGORIES = {
         # Übergaben an die Steuerberatung: reisen mit, damit nach einer Wiederherstellung
         # nichts doppelt übergeben wird und die Sperre erhalten bleibt.
         AccountingHandover, AccountingHandoverItem,
+        # Lastschrift-Einzuege: reisen mit, damit nach einer Wiederherstellung kein Posten
+        # doppelt eingezogen und die Mandats-Historie (Aenderungskennzeichen) erhalten bleibt.
+        DirectDebitRun, DirectDebitItem,
         # Dokumentenregister (+ gelesene E-Rechnungsdaten): alle Bereiche reisen mit den Buchungen
         # (Belege, Ausgangsrechnungen, Mahnungen, Schriftfuehrung); die Dateien als files/<key>.
         # Verknuepfungen zu Mahnungen/Sitzungen nur, wenn deren Kategorie mitkommt (services.py).
@@ -185,6 +190,8 @@ INSERT_ORDER = [
     BillingPeriod, MeterReadingAccessCode, WaterTariff, TariffComponent, MeterReading,
     MeterReplacement,
     BillingRun, Invoice, InvoiceItem, OpenItem, ReadingCorrection,
+    # Lastschrift NACH Customer/Invoice/OpenItem; Kopf VOR Positionen.
+    DirectDebitRun, DirectDebitItem,
     # Eigentuemerwechsel NACH Invoice (settlement_invoice_id) + WaterMeter/
     # BillingPeriod. Meter-Value-Kind NACH OwnerChange.
     OwnerChange, OwnerChangeMeterValue,
@@ -244,6 +251,8 @@ YEAR_FILTERS = {
     # Eine Übergabe liegt immer in genau einem Buchungsjahr; die Items folgen ihrem Kopf
     # (services._build_query_filtered).
     AccountingHandover: "fiscal_year",
+    # Positionen folgen ihrem Lauf (services._build_query_filtered).
+    DirectDebitRun: ("date_year", "created_at"),
     InvoiceCounter: "year",
     Incident: ("date_year", "detected_at"),
     WaterSample: ("date_year", "sample_date"),
@@ -308,6 +317,8 @@ NATURAL_KEYS = {
     RealAccountYearBalance: ("real_account_id", "year"),
     AccountingHandover: None,           # Protokoll — immer Insert
     AccountingHandoverItem: None,       # Kind einer Übergabe — immer Insert
+    DirectDebitRun: ("message_id",),    # eindeutige Nachrichten-ID der Bankdatei
+    DirectDebitItem: None,              # Kind eines Laufs — immer Insert
     DunningPolicy: ("name",),
     DunningStage: ("policy_id", "level"),
     DunningNotice: None,
@@ -409,6 +420,8 @@ FOREIGN_KEYS = {
     RealAccountYearBalance: {"real_account_id": RealAccount},
     AccountingHandoverItem: {"handover_id": AccountingHandover, "booking_id": Booking,
                              "transfer_id": Transfer},
+    DirectDebitItem: {"run_id": DirectDebitRun, "open_item_id": OpenItem, "invoice_id": Invoice,
+                      "customer_id": Customer},
     DunningStage: {"policy_id": DunningPolicy},
     DunningNotice: {"invoice_id": Invoice, "stage_id": DunningStage,
                     "fee_invoice_item_id": InvoiceItem},

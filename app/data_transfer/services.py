@@ -42,7 +42,7 @@ from app.models import (
     Booking, BookingGroup, Customer, CustomerCounter, SupplierCounter,
     DunningNotice, Document, DocumentEvent, DocumentLink, FiscalYear, IncomingInvoice, Invoice,
     InvoiceCounter, InvoiceItem, RolePermission, SchriftverkehrDocument,
-    AccountingHandover, AccountingHandoverItem,
+    AccountingHandover, AccountingHandoverItem, DirectDebitItem, DirectDebitRun,
 )
 from app.data_transfer.registry import (
     CATEGORIES, INSERT_ORDER, YEAR_FILTERS, NATURAL_KEYS, FOREIGN_KEYS,
@@ -246,6 +246,11 @@ def _build_query_filtered(model, years: list[int], invoice_ids: set | None,
         q = q.filter(BookingGroup.id.in_(booking_group_ids or [-1]))
     elif model is BankStatementLineAllocation and bank_line_ids is not None:
         q = q.filter(BankStatementLineAllocation.line_id.in_(bank_line_ids or [-1]))
+    elif model is DirectDebitItem and years:
+        # Positionen folgen ihrem Einzugslauf (Jahr = Anlage des Laufs).
+        q = q.filter(DirectDebitItem.run_id.in_(
+            db.session.query(DirectDebitRun.id).filter(
+                func.extract("year", DirectDebitRun.created_at).in_(years))))
     elif model is AccountingHandoverItem and years:
         # Items folgen ihrer Übergabe (eine Übergabe liegt immer in genau einem Buchungsjahr).
         q = q.filter(AccountingHandoverItem.handover_id.in_(
@@ -423,7 +428,7 @@ def export_to_zip(selection: dict, fileobj, *, exported_by: str = "system") -> d
                     model in YEAR_FILTERS or model in (
                         InvoiceItem, DunningNotice, BookingGroup,
                         Document, IncomingInvoice, DocumentLink, DocumentEvent,
-                        AccountingHandoverItem)
+                        AccountingHandoverItem, DirectDebitItem)
                 ),
             })
 

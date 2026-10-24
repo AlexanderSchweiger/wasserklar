@@ -47,6 +47,7 @@ DEFAULT_EXEMPT_REASON = "Nicht steuerbarer bzw. steuerfreier Umsatz"
 TYPE_INVOICE = "380"
 TYPE_CREDIT_NOTE = "381"
 PAYMENT_MEANS_SEPA_TRANSFER = "58"
+PAYMENT_MEANS_SEPA_DIRECT_DEBIT = "59"
 
 # Auslandsanschriften der Nachbarlaender (AT/DE selbst kommen aus country.PROFILES).
 _FOREIGN_COUNTRIES = {
@@ -237,7 +238,19 @@ def _delivery(invoice, period, profile):
 
 
 def _payment(invoice, profile):
+    from app.direct_debit.notice import creditor_id, debit_info
     from app.settings_service import get_wg
+    # Bankeinzug: SEPA-Lastschrift (59) mit Mandat, Glaeubiger-ID und belastetem
+    # Konto (BG-19) — die eigene IBAN braucht es dafuer nicht.
+    debit = debit_info(invoice)
+    if debit is not None:
+        return Payment(
+            means_code=PAYMENT_MEANS_SEPA_DIRECT_DEBIT,
+            reference=invoice.invoice_number,
+            mandate_reference=_clean(debit.mandate_reference),
+            creditor_id=creditor_id() or None,
+            debtor_iban=_compact(debit.iban),
+        )
     iban = _compact(get_wg("iban"))
     if not iban:
         return None
@@ -266,6 +279,10 @@ def _payment_terms(invoice):
         original = invoice.cancels_invoice
         ref = f" zur Rechnung {original.invoice_number}" if original else ""
         return f"Gutschrift{ref}. Der Betrag wird erstattet bzw. verrechnet."
+    from app.direct_debit.notice import is_debit_invoice
+    if is_debit_invoice(invoice):
+        when = f"am {invoice.due_date.strftime('%d.%m.%Y')} " if invoice.due_date else ""
+        return f"Der Betrag wird {when}per SEPA-Lastschrift eingezogen."
     if invoice.due_date:
         return f"Zahlbar bis {invoice.due_date.strftime('%d.%m.%Y')} ohne Abzug."
     return "Zahlbar sofort ohne Abzug."

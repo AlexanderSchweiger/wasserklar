@@ -143,6 +143,11 @@ ENDPOINT_TO_DOC = {
     "import_csv.upload":           "csv-import#kombiniert",
     "import_csv.preview":          "csv-import#kombiniert",
 
+    # SEPA-Lastschrift (Einzugslaeufe)
+    "direct_debit.index":          "lastschrift",
+    "direct_debit.new":            "lastschrift#einzug",
+    "direct_debit.detail":         "lastschrift#nach-dem-einzug",
+
     # Verwaltung
     "settings.index":              "einstellungen",
     "auth.users":                  "einstellungen#benutzer",

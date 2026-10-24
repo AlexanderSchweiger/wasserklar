@@ -12,10 +12,15 @@ Die stornierte Rechnung war noch nicht bezahlt — bitte betrachten Sie die ursp
 anbei erhalten Sie Ihre Rechnung {{ invoice.invoice_number }} vom {{ invoice.date.strftime('%d.%m.%Y') }}.
 
 Rechnungsbetrag: {{ invoice.total_amount|de_number }} Euro
+{% if sepa_debit %}
+{{ sepa_debit.title }} {{ sepa_debit.text }}
+{% if sepa_debit.creditor_id %}Gläubiger-ID: {{ sepa_debit.creditor_id }}{% endif %}{% if sepa_debit.creditor_id and sepa_debit.mandate_reference %} · {% endif %}{% if sepa_debit.mandate_reference %}Mandatsreferenz: {{ sepa_debit.mandate_reference }}{% endif %}
+{% else %}
 Fälligkeitsdatum: {{ invoice.due_date.strftime('%d.%m.%Y') if invoice.due_date else '—' }}
 {% if wg.iban %}
 IBAN: {{ wg.iban }}
 Verwendungszweck: {{ invoice.invoice_number }}
+{% endif %}
 {% endif %}
 {% endif %}
 

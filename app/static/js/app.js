@@ -340,6 +340,41 @@
     if (t && t.tagName === 'BODY') spinnerReset();
   });
 
+  // Scroll-Sperre eines weggetauschten Modals aufheben. Bootstrap setzt beim
+  // Oeffnen `modal-open` + inline `overflow:hidden; padding-right` auf <body>
+  // und nimmt beides erst in hidden.bs.modal wieder weg. hx-boost tauscht aber
+  // nur den INHALT des <body> — die Attribute bleiben. Verschwindet ein offenes
+  // (oder gerade schliessendes) Modal mit dem Swap (Formular im Modal mit
+  // Redirect, Link im Modal, Zurueck bei offenem Dialog), feuert hidden.bs.modal
+  // nie: die Seite laesst sich nicht mehr scrollen, bis zum harten Reload, und
+  // zwar auf JEDER folgenden Seite. Daher nach jedem Swap: ist kein Modal mehr
+  // offen oder in Animation, Reste wegraeumen. `_isShown` setzt Bootstrap
+  // synchron in show() — ein gerade erst geoeffnetes Modal (Auto-Open-Skript
+  // der neuen Seite) wird also nicht angetastet; `_isTransitioning` schuetzt
+  // das regulaere Schliessen nach einem Modal-Submit (Row-Swap + Close), das
+  // sonst mitten in der Ausblende-Animation den Backdrop verloere.
+  function modalStateReset() {
+    var modals = document.querySelectorAll('.modal');
+    for (var i = 0; i < modals.length; i++) {
+      var inst = window.bootstrap && window.bootstrap.Modal &&
+                 window.bootstrap.Modal.getInstance(modals[i]);
+      if (modals[i].classList.contains('show')) return;
+      if (inst && (inst._isShown || inst._isTransitioning)) return;
+    }
+    document.querySelectorAll('.modal-backdrop').forEach(function (el) { el.remove(); });
+    var b = document.body;
+    if (!b) return;
+    b.classList.remove('modal-open');
+    b.style.removeProperty('overflow');
+    b.style.removeProperty('padding-right');
+    // Von Bootstraps ScrollBarHelper gemerkte Ausgangswerte — stehen sie
+    // noch, stellt der naechste Modal-Close sie wieder her.
+    b.removeAttribute('data-bs-overflow');
+    b.removeAttribute('data-bs-padding-right');
+  }
+  document.addEventListener('htmx:afterSettle', modalStateReset);
+  document.addEventListener('htmx:historyRestore', modalStateReset);
+
   // Vor dem History-Snapshot: TomSelects abbauen, damit kein gerendertes
   // Widget-DOM in den Cache wandert (sonst Doppel-Init beim Zurueck/Vorwaerts).
   document.addEventListener('htmx:beforeHistorySave', function () {

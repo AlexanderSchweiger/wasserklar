@@ -297,6 +297,21 @@ class Customer(db.Model):
     # Elektronische Adresse im Peppol-Schema „Schema:Kennung“ (z.B. 9915:b); UBL verlangt
     # einen Peppol-registrierten Schema-Code (PEPPOL-EN16931-CL008), „EM“ (E-Mail) gilt dort nicht.
     peppol_id = db.Column(db.String(60), nullable=True)
+    # Bankverbindung + Zahlungsart (SEPA-Lastschrift, siehe app/direct_debit/). Die
+    # IBAN ist auch ohne Bankeinzug nuetzlich (Lieferanten, Rueckueberweisung).
+    # ``mandate_reference`` wird beim Umstellen auf Bankeinzug gespeichert (nie bei
+    # jeder Anzeige neu abgeleitet): ein spaeter geaendertes Praefix darf ein
+    # bestehendes Mandat nicht umbenennen.
+    PAYMENT_TRANSFER = "transfer"
+    PAYMENT_DIRECT_DEBIT = "direct_debit"
+    PAYMENT_METHODS = (PAYMENT_TRANSFER, PAYMENT_DIRECT_DEBIT)
+    payment_method = db.Column(db.String(20), nullable=False, default=PAYMENT_TRANSFER,
+                               server_default=db.text("'transfer'"))
+    iban = db.Column(db.String(34), nullable=True)
+    bic = db.Column(db.String(11), nullable=True)
+    account_holder = db.Column(db.String(70), nullable=True)
+    mandate_reference = db.Column(db.String(35), unique=True, nullable=True)
+    mandate_signed_on = db.Column(db.Date, nullable=True)
     phone = db.Column(db.String(50))
     member_since = db.Column(db.Date)
     notes = db.Column(db.Text)
@@ -327,6 +342,27 @@ class Customer(db.Model):
         technische Voraussetzung — beides muss zutreffen, sonst wird der
         Mailversand weder angeboten noch durchgefuehrt."""
         return bool(self.email) and bool(self.rechnung_per_email)
+
+    @property
+    def is_direct_debit(self):
+        """True, wenn der Kontakt per SEPA-Lastschrift zahlt (Bankeinzug)."""
+        return self.payment_method == self.PAYMENT_DIRECT_DEBIT
+
+    @property
+    def debit_holder(self):
+        """Kontoinhaber fuer die Lastschrift; leer = Briefname des Kontakts."""
+        return self.account_holder or self.letter_name
+
+    @property
+    def debit_issues(self):
+        """Fehlende/ungueltige Angaben fuer einen Bankeinzug (leer = einziehbar)."""
+        from app.direct_debit.notice import customer_debit_issues
+        return customer_debit_issues(self)
+
+    @property
+    def iban_display(self):
+        from app.banking import format_iban
+        return format_iban(self.iban)
 
     def address_display(self):
         parts = []
@@ -2050,6 +2086,13 @@ class Invoice(EmailTrackableMixin, db.Model):
     # und das Profil, mit dem es erzeugt wurde (siehe app/einvoice/service.py).
     xml_path = db.Column(db.String(500))
     einvoice_profile = db.Column(db.String(40))
+    # Zahlungsart beim Verlassen des Entwurfs eingefroren (app/direct_debit/notice.py
+    # ``freeze_payment``): NULL = Entwurf bzw. Altbestand → gilt als Ueberweisung. Bei
+    # Lastschrift stehen Mandatsreferenz und belastetes Konto mit fest, damit der
+    # Nachdruck nach einer Stammdatenaenderung dieselbe Vorabankuendigung zeigt.
+    payment_method = db.Column(db.String(20), nullable=True)
+    debit_mandate_reference = db.Column(db.String(35), nullable=True)
+    debit_iban = db.Column(db.String(34), nullable=True)
     notes = db.Column(db.Text)
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -3183,6 +3226,102 @@ class OpenItem(db.Model):
         return f"<OpenItem {self.description} {self.amount}>"
 
 
+class DirectDebitRun(db.Model):
+    """Einzugslauf: ein Lastschrift-Sammelauftrag an die Bank (app/direct_debit/).
+
+    Haelt alle Angaben, aus denen die pain.008-Datei entsteht, als Snapshot — die
+    Datei wird nicht abgelegt, sondern bei jedem Download bitgleich neu gebaut
+    (``created_at`` ist der CreDtTm der Nachricht). ``cancelled`` = die Bank hat die
+    Datei nie bekommen bzw. abgelehnt; die Posten sind dann wieder einziehbar.
+    """
+    __tablename__ = "direct_debit_runs"
+
+    STATUS_ACTIVE = "active"
+    STATUS_CANCELLED = "cancelled"
+
+    id = db.Column(db.Integer, primary_key=True)
+    message_id = db.Column(db.String(35), unique=True, nullable=False)
+    status = db.Column(db.String(20), nullable=False, default=STATUS_ACTIVE,
+                       server_default=db.text("'active'"))
+    creditor_name = db.Column(db.String(70))
+    creditor_id = db.Column(db.String(35))
+    creditor_iban = db.Column(db.String(34))
+    creditor_bic = db.Column(db.String(11))
+    item_count = db.Column(db.Integer, nullable=False, default=0, server_default=db.text("0"))
+    total_amount = db.Column(db.Numeric(12, 2), nullable=False, default=0,
+                             server_default=db.text("0"))
+    notes = db.Column(db.Text)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    cancelled_at = db.Column(db.DateTime)
+
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+    items = db.relationship(
+        "DirectDebitItem", back_populates="run", cascade="all, delete-orphan",
+        order_by="(DirectDebitItem.collection_date, DirectDebitItem.id)",
+    )
+
+    @property
+    def is_cancelled(self):
+        return self.status == self.STATUS_CANCELLED
+
+    def __repr__(self):
+        return f"<DirectDebitRun {self.message_id}>"
+
+
+class DirectDebitItem(db.Model):
+    """Eine Lastschrift innerhalb eines Einzugslaufs (ein offener Posten).
+
+    Mandat, Konto und Name sind Snapshots zum Zeitpunkt des Laufs — die
+    Bankdatei bleibt so reproduzierbar, auch wenn der Kontakt spaeter ein neues
+    Konto bekommt. ``amended_from_*`` merkt sich die Angaben des vorigen Einzugs,
+    wenn sie seither geaendert wurden (pain.008 ``AmdmntInd``).
+    Status abgeleitet: zurueckgegeben (``returned_on``), bezahlt (Posten
+    ausgeglichen) oder im Einzug.
+    """
+    __tablename__ = "direct_debit_items"
+
+    id = db.Column(db.Integer, primary_key=True)
+    run_id = db.Column(db.Integer, db.ForeignKey("direct_debit_runs.id", ondelete="CASCADE"),
+                       nullable=False, index=True)
+    open_item_id = db.Column(db.Integer, db.ForeignKey("open_items.id"), nullable=True, index=True)
+    invoice_id = db.Column(db.Integer, db.ForeignKey("invoices.id"), nullable=True, index=True)
+    customer_id = db.Column(db.Integer, db.ForeignKey("customers.id"), nullable=True, index=True)
+    amount = db.Column(db.Numeric(10, 2), nullable=False)
+    collection_date = db.Column(db.Date, nullable=False)
+    end_to_end_id = db.Column(db.String(35), nullable=False)
+    remittance = db.Column(db.String(140))
+    debtor_name = db.Column(db.String(70))
+    iban = db.Column(db.String(34))
+    bic = db.Column(db.String(11))
+    mandate_reference = db.Column(db.String(35))
+    mandate_signed_on = db.Column(db.Date)
+    amended_from_iban = db.Column(db.String(34))
+    amended_from_mandate = db.Column(db.String(35))
+    returned_on = db.Column(db.Date)
+    return_reason = db.Column(db.String(200))
+
+    run = db.relationship("DirectDebitRun", back_populates="items")
+    open_item = db.relationship("OpenItem", foreign_keys=[open_item_id])
+    invoice = db.relationship("Invoice", foreign_keys=[invoice_id])
+    customer = db.relationship("Customer", foreign_keys=[customer_id])
+
+    STATE_PENDING = "pending"
+    STATE_PAID = "paid"
+    STATE_RETURNED = "returned"
+
+    @property
+    def state(self):
+        if self.returned_on:
+            return self.STATE_RETURNED
+        if self.open_item is not None and self.open_item.open_balance <= 0:
+            return self.STATE_PAID
+        return self.STATE_PENDING
+
+    def __repr__(self):
+        return f"<DirectDebitItem {self.end_to_end_id} {self.amount}>"
+
+
 # ---------------------------------------------------------------------------
 # Anwendungseinstellungen (Key-Value-Speicher)
 # ---------------------------------------------------------------------------
@@ -3373,9 +3512,15 @@ class BankStatementLine(db.Model):
     __tablename__ = "bank_statement_lines"
 
     MATCH_INVOICE_NUMBER = "invoice_number"
+    # IBAN des Gegenkontos = ``Customer.iban`` + exakter offener Betrag.
+    MATCH_IBAN = "iban"
     MATCH_NAME = "name"
     MATCH_MANUAL = "manual"
     MATCH_SPLIT = "split"
+    # Sammelgutschrift eines Einzugslaufs (auf dessen Posten aufgeteilt) bzw.
+    # Ruecklastschrift einer eingezogenen Rechnung (app/direct_debit/).
+    MATCH_DIRECT_DEBIT = "direct_debit"
+    MATCH_DIRECT_DEBIT_RETURN = "direct_debit_return"
 
     STATUS_PENDING = "pending"
     STATUS_COMMITTED = "committed"

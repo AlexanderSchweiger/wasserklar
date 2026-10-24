@@ -526,6 +526,88 @@
 </div>
 {% endif %}
 
+{# ── Zahlung & Bankverbindung (SEPA-Lastschrift, app/direct_debit) ─────────── #}
+{# Marker: ein Formular ohne diesen Abschnitt (Schnellanlage) löscht nichts. #}
+{% set v_payment = fval('payment_method', 'transfer')|trim or 'transfer' %}
+{% if form_data is defined and form_data %}
+  {% set v_iban = form_data.get('iban', '') %}
+  {% set v_signed = form_data.get('mandate_signed_on', '') %}
+{% else %}
+  {% set v_iban = customer.iban_display if customer else '' %}
+  {% set v_signed = customer.mandate_signed_on.isoformat() if customer and customer.mandate_signed_on else '' %}
+{% endif %}
+<input type="hidden" name="payment_fields" value="1">
+<hr class="my-2">
+<h6 class="text-muted mb-2"><i class="fas fa-university me-2"></i>Zahlung &amp; Bankverbindung</h6>
+<div class="row">
+  <div class="col-md-4">
+    <div class="mb-3">
+      <label class="form-label" for="payment_method">Zahlungsart</label>
+      <select name="payment_method" id="payment_method" class="form-select">
+        <option value="transfer" {{ 'selected' if v_payment != 'direct_debit' }}>Überweisung</option>
+        <option value="direct_debit" {{ 'selected' if v_payment == 'direct_debit' }}>Bankeinzug (SEPA-Lastschrift)</option>
+      </select>
+    </div>
+  </div>
+  <div class="col-md-5">
+    <div class="mb-3">
+      <label class="form-label" for="iban">IBAN</label>
+      <input type="text" name="iban" id="iban" class="form-control" maxlength="42"
+        autocomplete="off" spellcheck="false" placeholder="AT61 1904 3002 3457 3201" value="{{ v_iban }}">
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="mb-3">
+      <label class="form-label" for="bic">BIC <small class="text-muted">(optional)</small></label>
+      <input type="text" name="bic" id="bic" class="form-control" maxlength="11"
+        autocomplete="off" spellcheck="false" value="{{ fval('bic') }}">
+    </div>
+  </div>
+</div>
+<div class="row">
+  <div class="col-md-4">
+    <div class="mb-3">
+      <label class="form-label" for="account_holder">Kontoinhaber <small class="text-muted">(falls abweichend)</small></label>
+      <input type="text" name="account_holder" id="account_holder" class="form-control" maxlength="70"
+        placeholder="wie Name" value="{{ fval('account_holder') }}">
+    </div>
+  </div>
+  <div class="col-md-4 {{ 'd-none' if v_payment != 'direct_debit' }}" data-debit-only>
+    <div class="mb-3">
+      <label class="form-label" for="mandate_reference">Mandatsreferenz</label>
+      <input type="text" name="mandate_reference" id="mandate_reference" class="form-control" maxlength="35"
+        autocomplete="off" spellcheck="false"
+        placeholder="{{ mandate_reference_hint(customer) }}" value="{{ fval('mandate_reference') }}">
+    </div>
+  </div>
+  <div class="col-md-4 {{ 'd-none' if v_payment != 'direct_debit' }}" data-debit-only>
+    <div class="mb-3">
+      <label class="form-label" for="mandate_signed_on">Mandat unterschrieben am</label>
+      <input type="date" name="mandate_signed_on" id="mandate_signed_on" class="form-control" value="{{ v_signed }}">
+    </div>
+  </div>
+</div>
+<small class="text-muted d-block mb-3 {{ 'd-none' if v_payment != 'direct_debit' }}" data-debit-only>
+  Bei Bankeinzug steht auf der Rechnung statt der Zahlungsaufforderung ein Hinweis, dass der Betrag
+  abgebucht wird. Die Mandatsreferenz bleibt leer = automatisch (Präfix aus den Einstellungen +
+  Kundennummer); für bestehende Papier-Mandate die dort vergebene Referenz eintragen.
+</small>
+<script>
+(function () {
+  var sel = document.getElementById('payment_method');
+  if (!sel) return;
+  function sync() {
+    var debit = sel.value === 'direct_debit';
+    var form = sel.closest('form') || document;
+    form.querySelectorAll('[data-debit-only]').forEach(function (el) {
+      el.classList.toggle('d-none', !debit);
+    });
+  }
+  sel.addEventListener('change', sync);
+  sync();
+})();
+</script>
+
 <hr class="my-2">
 <h6 class="text-muted mb-2">Weitere Informationen</h6>
 <div class="mb-3">

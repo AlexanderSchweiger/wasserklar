@@ -221,6 +221,18 @@
   als gegenstandslos.
   {% endif %}
 </div>
+{% elif sepa_debit %}
+<div class="payment-info">
+  <strong>{{ sepa_debit.title }}</strong><br>
+  {{ sepa_debit.text }}
+  {% if sepa_debit.creditor_id or sepa_debit.mandate_reference %}
+  <br><span style="font-size:0.9em">
+    {%- if sepa_debit.creditor_id %}Gläubiger-ID: {{ sepa_debit.creditor_id }}{% endif -%}
+    {%- if sepa_debit.creditor_id and sepa_debit.mandate_reference %} · {% endif -%}
+    {%- if sepa_debit.mandate_reference %}Mandatsreferenz: {{ sepa_debit.mandate_reference }}{% endif -%}
+  </span>
+  {% endif %}
+</div>
 {% else %}
 <div class="payment-info">
   <strong>Zahlung</strong><br>

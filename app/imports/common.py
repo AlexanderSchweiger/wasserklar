@@ -642,6 +642,135 @@ def apply_einvoice_columns(customer, values: dict, mapped: set[str]) -> list[str
     return warnings
 
 
+# ---------------------------------------------------------------------------
+# Bankverbindung / SEPA-Lastschrift (shared by both customer importers)
+# ---------------------------------------------------------------------------
+#
+# Dieselben Regeln wie im Kundenformular (``customers/routes.py:_apply_payment_fields``),
+# aber nach Import-Art: Ungueltiges entfaellt mit Warnung, der Rest der Zeile wird
+# importiert. Bankeinzug ohne gueltige IBAN bleibt bei Ueberweisung. Ein fehlendes
+# Mandatsdatum ist erlaubt — der Kontakt gilt dann als „unvollstaendig“ und wird
+# beim Einzug ausgeschlossen, bis es nachgetragen ist.
+
+PAYMENT_KEYS = ("payment_method", "iban", "bic", "account_holder",
+                "mandate_reference", "mandate_signed_on")
+
+
+def parse_payment_method(raw: str) -> str | None:
+    """``'direct_debit'``/``'transfer'`` aus einer Zelle (Bankeinzug, Lastschrift,
+    Einzug … bzw. Überweisung, Zahlschein, Erlagschein …), sonst ``None``."""
+    s = re.sub(r"\s+", " ", (raw or "").strip().lower())
+    if not s:
+        return None
+    if s in ("direct_debit", "dd", "sepa") or any(
+            k in s for k in ("lastschrift", "einzug", "abbuchung", "bankeinzug")):
+        return "direct_debit"
+    if s == "transfer" or any(
+            k in s for k in ("überweis", "ueberweis", "zahlschein", "erlagschein", "bar")):
+        return "transfer"
+    return None
+
+
+def preview_payment_fields(cell) -> tuple[dict, list[str]]:
+    """Liest die Bank-/Lastschrift-Spalten einer Zeile fuer die Vorschau.
+
+    ``cell(key)`` liefert den Rohwert der gemappten Spalte (``""`` wenn nicht
+    gemappt). Rueckgabe: normalisierte Felder + Warnungen.
+    """
+    from app.banking import bic_valid, iban_valid, normalize_bic, normalize_iban, sepa_id_valid
+    warnings = []
+    iban = normalize_iban(cell("iban"))
+    if iban and not iban_valid(iban):
+        warnings.append(f"IBAN »{cell('iban').strip()}« ist ungültig – nicht übernommen")
+        iban = ""
+    bic = normalize_bic(cell("bic"))
+    if bic and not bic_valid(bic):
+        warnings.append(f"BIC »{cell('bic').strip()}« ist ungültig – nicht übernommen")
+        bic = ""
+    reference = (cell("mandate_reference") or "").strip()
+    if reference and not sepa_id_valid(reference):
+        warnings.append(f"Mandatsreferenz »{reference}« enthält unzulässige Zeichen – nicht übernommen")
+        reference = ""
+    signed_raw = cell("mandate_signed_on")
+    signed = parse_date(signed_raw, "auto") if signed_raw else None
+    if signed_raw and signed is None:
+        warnings.append(f"Mandatsdatum »{signed_raw}« ist kein Datum – nicht übernommen")
+    method_raw = cell("payment_method")
+    method = parse_payment_method(method_raw) or ""
+    if method_raw and not method:
+        warnings.append(f"Zahlungsart »{method_raw}« unbekannt – bleibt unverändert")
+    if method == "direct_debit" and not iban:
+        warnings.append("Bankeinzug ohne gültige IBAN – bleibt bei Überweisung")
+    return {
+        "payment_method": method,
+        "iban": iban,
+        "bic": bic,
+        "account_holder": (cell("account_holder") or "").strip()[:70],
+        "mandate_reference": reference,
+        "mandate_signed_on": signed.isoformat() if signed else "",
+    }, warnings
+
+
+def apply_payment_columns(customer, values: dict, mapped: set[str]) -> list[str]:
+    """Schreibt die gemappten Bank-/Lastschrift-Spalten an den Kontakt; gibt Warnungen zurueck.
+
+    ``values`` sind die (ggf. in der Vorschau bearbeiteten) Felder aus
+    ``preview_payment_fields``; ein nicht gemappter Schluessel laesst den Kontakt
+    unberuehrt. Ungueltiges wird nie uebernommen. Muss NACH der Kundennummer
+    laufen: ohne eigene Referenz vergibt ``ensure_mandate_reference`` Praefix + Nummer.
+    """
+    from datetime import date as _date
+
+    from app.banking import (
+        bic_valid, iban_is_sepa, iban_valid, normalize_bic, normalize_iban, sepa_id_valid,
+    )
+    from app.direct_debit.notice import ensure_mandate_reference, mandate_reference_taken
+    warnings = []
+    if "iban" in mapped:
+        iban = normalize_iban(values.get("iban"))
+        if iban and not iban_valid(iban):
+            warnings.append(f"IBAN »{iban}« ist ungültig – nicht übernommen")
+        else:
+            customer.iban = iban or None
+    if "bic" in mapped:
+        bic = normalize_bic(values.get("bic"))
+        if bic and not bic_valid(bic):
+            warnings.append(f"BIC »{bic}« ist ungültig – nicht übernommen")
+        else:
+            customer.bic = bic or None
+    if "account_holder" in mapped:
+        customer.account_holder = (values.get("account_holder") or "").strip()[:70] or None
+    if "mandate_signed_on" in mapped:
+        raw = (values.get("mandate_signed_on") or "").strip()
+        try:
+            signed = _date.fromisoformat(raw) if raw else None
+        except ValueError:
+            signed = parse_date(raw, "auto")
+        if signed and signed > _date.today():
+            warnings.append(f"Mandatsdatum {signed:%d.%m.%Y} liegt in der Zukunft – nicht übernommen")
+        else:
+            customer.mandate_signed_on = signed
+    if "mandate_reference" in mapped:
+        reference = (values.get("mandate_reference") or "").strip()
+        if reference and not sepa_id_valid(reference):
+            warnings.append(f"Mandatsreferenz »{reference}« enthält unzulässige Zeichen – nicht übernommen")
+        elif reference and mandate_reference_taken(reference, exclude_id=customer.id):
+            warnings.append(f"Mandatsreferenz »{reference}« ist schon vergeben – nicht übernommen")
+        elif reference:
+            customer.mandate_reference = reference
+    if "payment_method" in mapped:
+        method = parse_payment_method(values.get("payment_method") or "")
+        if method == "direct_debit":
+            if not (customer.iban and iban_valid(customer.iban) and iban_is_sepa(customer.iban)):
+                warnings.append("Bankeinzug ohne gültige SEPA-IBAN – bleibt bei Überweisung")
+            else:
+                customer.payment_method = "direct_debit"
+        elif method == "transfer":
+            customer.payment_method = "transfer"
+    ensure_mandate_reference(customer)
+    return warnings
+
+
 def resolve_contact_name(*, combined: str = "", last: str = "", first: str = "",
                          salutation: str = "", company: str = "") -> dict:
     """Normalise raw imported name fields into the canonical customer split.

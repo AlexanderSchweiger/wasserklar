@@ -230,6 +230,11 @@ def eligible_invoices_for_stage(policy, today=None):
         .all()
     )
 
+    # Posten im Lastschrift-Einzug (aktiver Lauf, nicht zurueckgegeben) werden
+    # nicht gemahnt — die Bank zieht ein; erst eine Ruecklastschrift gibt sie frei.
+    from app.direct_debit.services import open_item_ids_in_collection
+    in_collection = open_item_ids_in_collection()
+
     results = []
     for inv in overdue_invoices:
         # Teilzahlungen berücksichtigen: bereits (teil-)beglichene Rechnungen
@@ -237,6 +242,8 @@ def eligible_invoices_for_stage(policy, today=None):
         # haben Status 'Bezahlt' und fielen schon oben raus; das fängt den Fall
         # ab, dass per Buchung beglichen wurde, ohne den Status zu wechseln.
         if inv.open_balance <= 0:
+            continue
+        if inv.open_item is not None and inv.open_item.id in in_collection:
             continue
         days_overdue = (today - inv.due_date).days
         cur_level = current_dunning_level(inv)

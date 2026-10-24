@@ -7,6 +7,7 @@ Stammdaten des Mandanten oder des Kunden. Leere Liste = gueltig.
 """
 import re
 
+from app.banking import iban_valid
 from app.einvoice import leitweg
 from app.einvoice.model import PROFILE_PEPPOL_UBL, PROFILE_XRECHNUNG
 
@@ -15,11 +16,7 @@ _VAT_PREFIX = re.compile(r"^[A-Z]{2}[A-Z0-9]+$")
 
 def _iban_valid(iban):
     """IBAN-Pruefziffer nach ISO 7064 MOD 97-10 (BR-DE-19 prueft sie in der XRechnung)."""
-    iban = re.sub(r"\s+", "", iban or "").upper()
-    if not re.fullmatch(r"[A-Z]{2}\d{2}[A-Z0-9]{11,30}", iban):
-        return False
-    moved = iban[4:] + iban[:4]
-    return int("".join(str(int(ch, 36)) for ch in moved)) % 97 == 1
+    return iban_valid(iban)
 
 
 def check(e):
@@ -63,6 +60,11 @@ def check(e):
         if not line.name:
             issues.append(f"Position {line.line_id} hat keine Bezeichnung.")
 
+    # Lastschrift (59): ohne Mandatsreferenz kein gueltiger Einzug (PEPPOL-EN16931-R061).
+    if e.payment and e.payment.is_direct_debit and not e.payment.mandate_reference:
+        issues.append("Für die Lastschrift fehlt die Mandatsreferenz des Kunden "
+                      "(Kontakt → Zahlung & Bankverbindung).")
+
     if e.profile == PROFILE_XRECHNUNG:
         issues.extend(_xrechnung_issues(e))
     elif e.profile == PROFILE_PEPPOL_UBL:
@@ -102,6 +104,14 @@ def _xrechnung_issues(e):
     if e.payment is None:
         issues.append("Die XRechnung braucht eine Zahlungsanweisung: Die IBAN der "
                       "Genossenschaft fehlt (Einstellungen → Kontaktdaten).")
+    elif e.payment.is_direct_debit:
+        # BR-DE-30 / BR-DE-31: Lastschrift braucht Glaeubiger-ID und belastetes Konto
+        if not e.payment.creditor_id:
+            issues.append("Die XRechnung mit Lastschrift braucht die Gläubiger-ID der "
+                          "Genossenschaft (Einstellungen → Kontaktdaten → SEPA-Lastschrift).")
+        if not e.payment.debtor_iban or not _iban_valid(e.payment.debtor_iban):
+            issues.append("Die XRechnung mit Lastschrift braucht eine gültige IBAN des "
+                          "Kunden (Kontakt → Zahlung & Bankverbindung).")
     elif not _iban_valid(e.payment.iban):
         issues.append("Die IBAN der Genossenschaft ist ungültig (Prüfziffer stimmt nicht) — "
                       "bitte in den Einstellungen → Kontaktdaten prüfen.")

@@ -30,6 +30,9 @@
     {% if c.is_business and country.code == 'DE' %}
     <span class="badge bg-azure-lt" title="Unternehmer: E-Rechnung"><i class="fas fa-file-code me-1"></i>Unternehmer</span>
     {% endif %}
+    {% if c.is_direct_debit %}
+    <span class="badge bg-azure-lt" title="Zahlt per SEPA-Lastschrift"><i class="fas fa-university me-1"></i>Bankeinzug</span>
+    {% endif %}
   </td>
   {% if is_wg %}
   {% set _prof = wg_profile_map.get(c.id) if wg_profile_map is defined else none %}

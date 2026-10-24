@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Neuer Einzug{% endblock %}
+{% block page_title %}<i class="fas fa-university me-2"></i> Neuer Einzug{% endblock %}
+{% block content %}
+
+{% if readiness %}
+<div class="alert alert-warning">
+  <i class="fas fa-exclamation-triangle me-2"></i>
+  <strong>Einzug noch nicht möglich:</strong> {{ readiness | join(', ') }}.
+  {% if current_user.has_permission('verwaltung') %}
+  <a href="{{ url_for('settings.index') }}#tab-kontakt" class="alert-link">Zu den Einstellungen</a>
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="card mb-3">
+  <div class="card-header">
+    <h3 class="card-title"><i class="fas fa-filter me-1"></i> Auswahl</h3>
+    <div class="card-options">
+      <a href="{{ url_for('direct_debit.index') }}" class="btn btn-secondary btn-sm">
+        <i class="fas fa-arrow-left me-1"></i> Einzugsläufe
+      </a>
+    </div>
+  </div>
+  <div class="card-body pb-2">
+    <form id="ddFilter" method="get" action="{{ url_for('direct_debit.new') }}"
+          hx-get="{{ url_for('direct_debit.new') }}" hx-target="#ddCandidates" hx-swap="innerHTML"
+          hx-trigger="change">
+      <div class="row g-2">
+        <div class="col-md-4">
+          <label class="form-label" for="ddBillingRun">Rechnungslauf</label>
+          <select name="billing_run" id="ddBillingRun" class="form-select form-select-sm">
+            <option value="">— alle Rechnungen —</option>
+            {% for br in billing_runs %}
+            <option value="{{ br.id }}" {{ 'selected' if billing_run_id == br.id }}>
+              {{ br.created_at.strftime('%d.%m.%Y %H:%M') }}{% if br.billing_period %} – {{ br.billing_period.name }}{% endif %}
+              ({{ br.invoices_created }} Rechnungen)
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label" for="ddDueUntil">Fällig bis</label>
+          <input type="date" name="due_until" id="ddDueUntil" class="form-control form-control-sm"
+                 value="{{ due_until.isoformat() if due_until else '' }}">
+        </div>
+      </div>
+      <div class="form-text mt-2">
+        Eingezogen wird frühestens am {{ earliest.strftime('%d.%m.%Y') }} (zwei Bankarbeitstage
+        Vorlauf), sonst am Fälligkeitstag der Rechnung. Die Rechnung ist die
+        Vorabankündigung: sie muss dem Kunden {{ prenotification_days }} Tage vor dem Einzug
+        vorliegen, außer im Mandat ist eine kürzere Frist vereinbart.
+      </div>
+    </form>
+  </div>
+</div>
+
+<form method="post" action="{{ url_for('direct_debit.create') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div id="ddCandidates">
+    {% include "direct_debit/_candidates.html" %}
+  </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function () {
+    if (window._ddSelectAllBound) return;
+    window._ddSelectAllBound = true;
+    document.addEventListener("change", function (ev) {
+      var all = ev.target.closest && ev.target.closest("[data-dd-select-all]");
+      if (!all) return;
+      document.querySelectorAll("input[name='open_item_id']:not(:disabled)").forEach(function (cb) {
+        cb.checked = all.checked;
+      });
+    });
+  })();
+</script>
+{% endblock %}

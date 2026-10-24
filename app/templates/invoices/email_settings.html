@@ -35,7 +35,13 @@
             <code>{% raw %}{{ betrag }}{% endraw %}</code>,
             <code>{% raw %}{{ faelligkeitsdatum }}{% endraw %}</code>,
             <code>{% raw %}{{ iban }}{% endraw %}</code>,
-            <code>{% raw %}{{ wg_name }}{% endraw %}</code>
+            <code>{% raw %}{{ wg_name }}{% endraw %}</code>,
+            <code>{% raw %}{{ zahlungshinweis }}{% endraw %}</code> (Überweisung bzw. Lastschrift-Hinweis),
+            <code>{% raw %}{{ abbuchungsdatum }}{% endraw %}</code>.
+            Für Kunden mit Bankeinzug:
+            <code>{% raw %}{% if bankeinzug %}…{% else %}…{% endif %}{% endraw %}</code> —
+            der Standardtext macht das schon; eine eigene Vorlage mit fester IBAN-Zeile
+            fordert sonst auch Bankeinzugs-Kunden zum Überweisen auf.
           </div>
           <div class="mb-0">
             <textarea name="email_body_template" id="email_body_template"

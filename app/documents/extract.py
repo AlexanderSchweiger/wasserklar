@@ -27,7 +27,7 @@ from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 
 # Eine Pruefziffer-Logik im Repo: die der E-Rechnung (BR-DE-19).
-from app.einvoice.rules import _iban_valid as iban_valid
+from app.banking import IBAN_LENGTH as _IBAN_LENGTH, iban_valid, normalize_iban  # noqa: F401
 
 MAX_PAGES = 12            # mehr Seiten enthalten fast nie zusaetzliche Kopfdaten
 MAX_CHARS = 60_000        # Obergrenze des gespeicherten Textes
@@ -159,10 +159,6 @@ _IBAN = re.compile(r"(?<![A-Z0-9])[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A
 
 def normalize_vat_id(value):
     return re.sub(r"[\s.\-]", "", value or "").upper()
-
-
-def normalize_iban(value):
-    return re.sub(r"\s+", "", value or "").upper()
 
 
 def _plausible(day, today):
@@ -410,10 +406,6 @@ def find_vat_ids(text, own=()):
         if value not in skip and value not in found:
             found.append(value)
     return found
-
-
-_IBAN_LENGTH = {"AT": 20, "DE": 22, "CH": 21, "LI": 21, "IT": 27, "FR": 27, "NL": 18, "BE": 16, "LU": 20,
-                "CZ": 24, "SK": 24, "HU": 28, "SI": 19, "PL": 28, "HR": 21, "ES": 24, "PT": 25, "DK": 18, "SE": 24}
 
 
 def find_ibans(text, own=()):

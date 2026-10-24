@@ -18,6 +18,8 @@ from app.imports.common import (
     PreviewRow,
     ImportStats,
     apply_einvoice_columns,
+    apply_payment_columns,
+    preview_payment_fields,
     check_buyer_reference,
     normalize_vat_id,
     parse_bool,
@@ -70,6 +72,15 @@ HINTS: dict[str, list[str]] = {
     ],
     "buyer_reference": ["leitweg", "käuferreferenz", "kaeuferreferenz", "buyer reference"],
     "einvoice_format": ["rechnungsformat", "e-rechnung", "erechnung", "xrechnung"],
+    # Bankverbindung / SEPA-Lastschrift
+    # ``=``-Praefix = nur exakt: „bic“ steckt in „Public…“, „mandat“ in „Mandatsdatum“.
+    "payment_method": ["zahlungsart", "zahlweise", "bankeinzug", "lastschrift", "=einzug"],
+    "iban": ["iban"],
+    "bic": ["=bic", "bic/swift", "swift"],
+    "account_holder": ["kontoinhaber", "=inhaber"],
+    "mandate_reference": ["mandatsreferenz", "mandatsref", "mandat-nr", "mandatsnummer", "=mandat"],
+    "mandate_signed_on": ["mandatsdatum", "mandat vom", "unterschrift mandat", "mandat unterschrieben",
+                          "datum mandat"],
     # WG-spezifisch (nur im Genossenschafts-Modus gemappt/angewendet)
     "wg_status": ["status", "mitgliedsstatus", "mitglieds-status"],
     "member_since": [
@@ -111,6 +122,13 @@ class CustomerImportConfig:
     col_vat_id: str = ""
     col_buyer_reference: str = ""
     col_einvoice_format: str = ""
+    # Bankverbindung / SEPA-Lastschrift
+    col_payment_method: str = ""
+    col_iban: str = ""
+    col_bic: str = ""
+    col_account_holder: str = ""
+    col_mandate_reference: str = ""
+    col_mandate_signed_on: str = ""
     # WG-spezifisch (nur im Genossenschafts-Modus relevant)
     col_wg_status: str = ""
     col_member_since: str = ""
@@ -140,6 +158,12 @@ class CustomerImportConfig:
             "col_vat_id": self.col_vat_id,
             "col_buyer_reference": self.col_buyer_reference,
             "col_einvoice_format": self.col_einvoice_format,
+            "col_payment_method": self.col_payment_method,
+            "col_iban": self.col_iban,
+            "col_bic": self.col_bic,
+            "col_account_holder": self.col_account_holder,
+            "col_mandate_reference": self.col_mandate_reference,
+            "col_mandate_signed_on": self.col_mandate_signed_on,
             "col_wg_status": self.col_wg_status,
             "col_member_since": self.col_member_since,
             "col_member_until": self.col_member_until,
@@ -174,6 +198,12 @@ class CustomerImportConfig:
             col_vat_id=d.get("col_vat_id", ""),
             col_buyer_reference=d.get("col_buyer_reference", ""),
             col_einvoice_format=d.get("col_einvoice_format", ""),
+            col_payment_method=d.get("col_payment_method", ""),
+            col_iban=d.get("col_iban", ""),
+            col_bic=d.get("col_bic", ""),
+            col_account_holder=d.get("col_account_holder", ""),
+            col_mandate_reference=d.get("col_mandate_reference", ""),
+            col_mandate_signed_on=d.get("col_mandate_signed_on", ""),
             col_wg_status=d.get("col_wg_status", ""),
             col_member_since=d.get("col_member_since", ""),
             col_member_until=d.get("col_member_until", ""),
@@ -206,6 +236,12 @@ class CustomerImportConfig:
             col_vat_id=form.get("col_vat_id", ""),
             col_buyer_reference=form.get("col_buyer_reference", ""),
             col_einvoice_format=form.get("col_einvoice_format", ""),
+            col_payment_method=form.get("col_payment_method", ""),
+            col_iban=form.get("col_iban", ""),
+            col_bic=form.get("col_bic", ""),
+            col_account_holder=form.get("col_account_holder", ""),
+            col_mandate_reference=form.get("col_mandate_reference", ""),
+            col_mandate_signed_on=form.get("col_mandate_signed_on", ""),
             col_wg_status=form.get("col_wg_status", ""),
             col_member_since=form.get("col_member_since", ""),
             col_member_until=form.get("col_member_until", ""),
@@ -239,6 +275,12 @@ def suggest_config(columns: list[str]) -> CustomerImportConfig:
         col_vat_id=suggest_column(columns, HINTS["vat_id"]),
         col_buyer_reference=suggest_column(columns, HINTS["buyer_reference"]),
         col_einvoice_format=suggest_column(columns, HINTS["einvoice_format"]),
+        col_payment_method=suggest_column(columns, HINTS["payment_method"]),
+        col_iban=suggest_column(columns, HINTS["iban"]),
+        col_bic=suggest_column(columns, HINTS["bic"]),
+        col_account_holder=suggest_column(columns, HINTS["account_holder"]),
+        col_mandate_reference=suggest_column(columns, HINTS["mandate_reference"]),
+        col_mandate_signed_on=suggest_column(columns, HINTS["mandate_signed_on"]),
         col_wg_status=suggest_column(columns, HINTS["wg_status"]),
         col_member_since=suggest_column(columns, HINTS["member_since"]),
         col_member_until=suggest_column(columns, HINTS["member_until"]),
@@ -323,6 +365,9 @@ def build_preview_rows(df, cfg: CustomerImportConfig,
         buyer_reference, reference_warning = check_buyer_reference(
             _cell(raw_row, cfg.col_buyer_reference))
         ei_warnings = [w for w in (vat_warning, reference_warning) if w]
+        pay_fields, pay_warnings = preview_payment_fields(
+            lambda key: _cell(raw_row, getattr(cfg, f"col_{key}")))
+        ei_warnings += pay_warnings
 
         # --- empty row guard --------------------------------------------------
         if not resolved["name"] and not cnum_raw and not ext_key:
@@ -377,6 +422,7 @@ def build_preview_rows(df, cfg: CustomerImportConfig,
             "vat_id": vat_id,
             "buyer_reference": buyer_reference,
             "einvoice_format": parse_einvoice_format(_cell(raw_row, cfg.col_einvoice_format)),
+            **pay_fields,
         }
 
         if is_wg:
@@ -422,6 +468,8 @@ def apply_edits(form, rows: list[PreviewRow]) -> list[PreviewRow]:
             "strasse", "hausnummer", "plz", "ort", "land",
             "email", "phone", "notes",
             "is_business", "vat_id", "buyer_reference", "einvoice_format",
+            "payment_method", "iban", "bic", "account_holder",
+            "mandate_reference", "mandate_signed_on",
             "wg_status", "member_since", "member_until",
         ):
             if field_name in row_edits:
@@ -504,6 +552,9 @@ def commit(rows: list[PreviewRow], cfg: CustomerImportConfig,
         ("buyer_reference", cfg.col_buyer_reference),
         ("einvoice_format", cfg.col_einvoice_format),
     ) if col}
+    pay_mapped = {key for key in (
+        "payment_method", "iban", "bic", "account_holder", "mandate_reference",
+        "mandate_signed_on") if getattr(cfg, f"col_{key}")}
 
     for row in rows:
         # skip checkbox
@@ -568,6 +619,8 @@ def commit(rows: list[PreviewRow], cfg: CustomerImportConfig,
                 if cfg.col_notes:
                     existing.notes = row.fields.get("notes") or None
                 ei_warned = bool(apply_einvoice_columns(existing, row.fields, ei_mapped))
+                if pay_mapped:
+                    ei_warned = bool(apply_payment_columns(existing, row.fields, pay_mapped)) or ei_warned
                 if is_wg:
                     _apply_wg_to_customer(existing, row.fields, cfg, is_new=False)
                 stats.updated += 1
@@ -606,6 +659,8 @@ def commit(rows: list[PreviewRow], cfg: CustomerImportConfig,
                 )
                 db.session.add(customer)
                 ei_warned = bool(apply_einvoice_columns(customer, row.fields, ei_mapped))
+                if pay_mapped:
+                    ei_warned = bool(apply_payment_columns(customer, row.fields, pay_mapped)) or ei_warned
                 if is_wg:
                     _apply_wg_to_customer(customer, row.fields, cfg, is_new=True)
                 stats.created += 1

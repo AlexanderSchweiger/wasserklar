@@ -3,7 +3,7 @@
 {% macro sort_header(key, label) %}
   {% set active = sort == key %}
   {% set new_dir = 'desc' if (active and dir == 'asc') else 'asc' %}
-  <a href="{{ url_for('customers.index', type=type_filter, q=q or none, sort=key, dir=new_dir, country=country_filter or none, status=status_filter or none, func=func_filter or none) }}"
+  <a href="{{ url_for('customers.index', type=type_filter, q=q or none, sort=key, dir=new_dir, country=country_filter or none, status=status_filter or none, func=func_filter or none, business=business_filter or none, payment=payment_filter or none) }}"
      class="text-reset text-decoration-none d-inline-flex align-items-center gap-1">
     {{ label }}
     {% if active %}

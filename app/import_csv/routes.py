@@ -15,6 +15,7 @@ from app.temp_files import resolve_wizard_file, wizard_path
 from app.extensions import db
 from app.imports.common import (
     apply_einvoice_columns, resolve_contact_name, split_street_number,
+    PAYMENT_KEYS, apply_payment_columns, preview_payment_fields,
 )
 from app.imports.relations import OwnerConflictTracker, MeterObjectTracker
 from app.models import (
@@ -63,6 +64,14 @@ _COLUMN_HINTS = {
     ],
     "buyer_reference": ["leitweg", "käuferreferenz", "kaeuferreferenz", "buyer reference"],
     "einvoice_format": ["rechnungsformat", "e-rechnung", "erechnung", "xrechnung"],
+    # Bankverbindung / SEPA-Lastschrift (``=`` = nur exakt, siehe customers/import_service)
+    "payment_method": ["zahlungsart", "zahlweise", "bankeinzug", "lastschrift", "=einzug"],
+    "iban": ["iban"],
+    "bic": ["=bic", "bic/swift", "swift"],
+    "account_holder": ["kontoinhaber", "=inhaber"],
+    "mandate_reference": ["mandatsreferenz", "mandatsref", "mandat-nr", "mandatsnummer", "=mandat"],
+    "mandate_signed_on": ["mandatsdatum", "mandat vom", "unterschrift mandat", "mandat unterschrieben",
+                          "datum mandat"],
     # WG-spezifisch (nur im Genossenschafts-Modus gemappt/angewendet)
     "wg_status": ["status", "mitgliedsstatus", "mitglieds-status"],
     "member_since": ["mitglied seit", "mitglied-seit", "beitritt", "beitrittsdatum", "eintritt"],
@@ -332,6 +341,9 @@ def _run_import(df, col_map: dict, duplicate_mode: str,
     ei_cols = {key: col_map.get(key, "") for key in
                ("is_business", "vat_id", "buyer_reference", "einvoice_format")}
     ei_mapped = {key for key, col in ei_cols.items() if col}
+    # Bankverbindung / SEPA-Lastschrift: ebenso nur gemappte Spalten.
+    pay_cols = {key: col_map.get(key, "") for key in PAYMENT_KEYS}
+    pay_mapped = {key for key, col in pay_cols.items() if col}
     # WG-spezifisch (nur im Genossenschafts-Modus angewendet)
     wg_customer_cols = (
         col_map.get("wg_status", ""),
@@ -478,6 +490,16 @@ def _run_import(df, col_map: dict, duplicate_mode: str,
                         ei_mapped):
                     results["warnings"].append(f"Zeile {line}: {warning}")
 
+            def _apply_payment(cust, source_row, line):
+                """Bankverbindung, Zahlungsart, Mandat (nach der Kundennummer)."""
+                if not pay_mapped:
+                    return
+                values, warnings = preview_payment_fields(
+                    lambda key: _get_cell(source_row, pay_cols[key]))
+                warnings += apply_payment_columns(cust, values, pay_mapped)
+                for warning in dict.fromkeys(warnings):
+                    results["warnings"].append(f"Zeile {line}: {warning}")
+
             # --- Kunde bestimmen (neu / aus DB / aus diesem Lauf) ---
             if cnum in seen_customers:
                 customer = seen_customers[cnum]
@@ -493,6 +515,7 @@ def _run_import(df, col_map: dict, duplicate_mode: str,
                         _apply_name_fields(customer, is_new=False)
                         _apply_einvoice(customer, row, idx)
                         db.session.flush()
+                        _apply_payment(customer, row, idx)
                         if is_wg:
                             _apply_wg_customer(customer, row, wg_customer_cols, actions)
                         results["customers_updated"] += 1
@@ -510,6 +533,7 @@ def _run_import(df, col_map: dict, duplicate_mode: str,
                     _apply_einvoice(customer, row, idx)
                     db.session.add(customer)
                     db.session.flush()
+                    _apply_payment(customer, row, idx)
                     seen_customers[cnum] = customer
                     if is_wg:
                         _apply_wg_customer(customer, row, wg_customer_cols, actions)

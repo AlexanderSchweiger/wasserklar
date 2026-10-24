@@ -75,7 +75,7 @@ def _address(parent, tag, address):
     _cbc(country, "IdentificationCode", address.country_code or "")
 
 
-def _party(parent, tag, party):
+def _party(parent, tag, party, sepa_creditor_id=None):
     wrapper = _cac(parent, tag)
     node = _cac(wrapper, "Party")
     if party.endpoint:
@@ -83,6 +83,11 @@ def _party(parent, tag, party):
     if party.identifier:
         ident = _cac(node, "PartyIdentification")
         _cbc(ident, "ID", party.identifier)
+    if sepa_creditor_id:
+        # BT-90 (Glaeubiger-ID) — bewusst NACH der Kennung BT-29: e-Rechnung.gv.at
+        # liest PartyIdentification[1] als Lieferantennummer.
+        ident = _cac(node, "PartyIdentification")
+        _cbc(ident, "ID", sepa_creditor_id, schemeID="SEPA")
     name = _cac(node, "PartyName")
     _cbc(name, "Name", party.name)
     _address(node, "PostalAddress", party.address)
@@ -171,7 +176,8 @@ def serialize(e):
              base64.b64encode(e.attachment.data).decode("ascii"),
              mimeCode=e.attachment.mime_code, filename=e.attachment.filename)
 
-    _party(root, "AccountingSupplierParty", e.seller)
+    _party(root, "AccountingSupplierParty", e.seller,
+           sepa_creditor_id=e.payment.creditor_id if e.payment else None)
     _party(root, "AccountingCustomerParty", e.buyer)
 
     if e.delivery and (e.delivery.date or e.delivery.address):
@@ -194,12 +200,19 @@ def serialize(e):
             _cbc(means, "PaymentDueDate", _iso(e.due_date))
         if e.payment.reference:
             _cbc(means, "PaymentID", e.payment.reference)
-        account = _cac(means, "PayeeFinancialAccount")
-        _cbc(account, "ID", e.payment.iban)
-        if e.payment.account_name:
-            _cbc(account, "Name", e.payment.account_name)
-        if e.payment.bic:
-            _cbc(_cac(account, "FinancialInstitutionBranch"), "ID", e.payment.bic)
+        if e.payment.iban:
+            account = _cac(means, "PayeeFinancialAccount")
+            _cbc(account, "ID", e.payment.iban)
+            if e.payment.account_name:
+                _cbc(account, "Name", e.payment.account_name)
+            if e.payment.bic:
+                _cbc(_cac(account, "FinancialInstitutionBranch"), "ID", e.payment.bic)
+        if e.payment.mandate_reference or e.payment.debtor_iban:
+            mandate = _cac(means, "PaymentMandate")
+            if e.payment.mandate_reference:
+                _cbc(mandate, "ID", e.payment.mandate_reference)               # BT-89
+            if e.payment.debtor_iban:
+                _cbc(_cac(mandate, "PayerFinancialAccount"), "ID", e.payment.debtor_iban)  # BT-91
     if e.payment_terms:
         _cbc(_cac(root, "PaymentTerms"), "Note", e.payment_terms)
 

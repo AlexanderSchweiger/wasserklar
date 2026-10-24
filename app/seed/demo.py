@@ -164,6 +164,39 @@ def fill_demo_identity(code=None) -> list[str]:
     return filled
 
 
+# Demo-Glaeubiger-IDs (gueltige Pruefziffer; DE = Beispiel der Deutschen Bundesbank).
+_DEMO_CREDITOR_IDS = {"AT": "AT61ZZZ01234567890", "DE": "DE98ZZZ09999999999"}
+
+
+def _seed_direct_debit(customers, loc, signed_base) -> int:
+    """Jeder dritte Kunde zahlt per Bankeinzug (SEPA-Lastschrift).
+
+    Bewusst **ohne** Zufallszahlen: IBAN und Mandat leiten sich aus der Kundennummer
+    ab — ein zusaetzlicher RNG-Aufruf verschoebe den ganzen (bitgleichen) AT-Datensatz.
+    Glaeubiger-ID und Mandats-Praefix nur, wenn noch leer. Kein commit.
+    """
+    from app.direct_debit.notice import CREDITOR_ID_KEY, MANDATE_PREFIX_KEY
+    from app.models import AppSetting, Customer
+    from app.seed.demo_locale import iban
+
+    if not (AppSetting.get(CREDITOR_ID_KEY) or "").strip():
+        AppSetting.set(CREDITOR_ID_KEY, _DEMO_CREDITOR_IDS.get(loc.code, _DEMO_CREDITOR_IDS["AT"]))
+    if AppSetting.get(MANDATE_PREFIX_KEY) is None:
+        AppSetting.set(MANDATE_PREFIX_KEY, "WG-")
+    count = 0
+    for c in customers:
+        n = c.customer_number or 0
+        if n % 3:
+            continue
+        bban = (f"20815{n:011d}" if loc.code == "AT" else f"70150000{n:010d}")
+        c.payment_method = Customer.PAYMENT_DIRECT_DEBIT
+        c.iban = iban(loc.code, bban).replace(" ", "")
+        c.mandate_reference = f"WG-{n}"
+        c.mandate_signed_on = c.member_since or signed_base
+        count += 1
+    return count
+
+
 def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
                    verbose: bool = True, author=None, country: str = None) -> dict:
     """Seedet den vollstaendigen Demo-Datensatz.
@@ -461,6 +494,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
             customers.append(c)
     db.session.flush()
     counts["customers"] = len(customers)
+    counts["direct_debit_customers"] = _seed_direct_debit(customers, loc, member_since_base)
 
     # ------------------------------------------------------------------
     # Objekte (AT 120): 80 Kunden bekommen 1, 20 Kunden bekommen 2

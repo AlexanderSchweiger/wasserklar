@@ -74,6 +74,9 @@
     {% if line.is_split %}
       <div class="mb-1">
         <span class="badge bg-purple-lt"><i class="fas fa-code-branch me-1"></i>Aufgeteilt auf {{ line.allocations | length }} Posten</span>
+        {% if line.match_type == 'direct_debit' %}
+          <span class="badge bg-azure-lt" title="Sammelgutschrift eines Lastschrift-Einzugs — automatisch auf dessen Rechnungen aufgeteilt"><i class="fas fa-university me-1"></i>Lastschrift-Einzug</span>
+        {% endif %}
       </div>
       {% for a in line.allocations %}
         <div class="small">
@@ -106,8 +109,12 @@
         <span class="badge bg-green-lt"><i class="fas fa-link me-1"></i>Zugeordnet</span>
         {% if line.match_type == 'invoice_number' %}
           <span class="badge bg-azure-lt" title="Automatisch über die Rechnungsnummer erkannt">Rechnungsnr.</span>
+        {% elif line.match_type == 'iban' %}
+          <span class="badge bg-azure-lt" title="Automatisch über die IBAN des Gegenkontos (beim Kontakt hinterlegt) + Betrag erkannt">IBAN</span>
         {% elif line.match_type == 'name' %}
           <span class="badge bg-azure-lt" title="Automatisch über Name + Betrag erkannt">Name</span>
+        {% elif line.match_type == 'direct_debit_return' %}
+          <span class="badge bg-red-lt" title="Rücklastschrift: die eingezogene Zahlung wird zurückgebucht, die Rechnung ist danach wieder offen"><i class="fas fa-undo me-1"></i>Rücklastschrift</span>
         {% endif %}
       </div>
       <div>

@@ -116,6 +116,28 @@ class TestRowSwap:
         assert "Kunde erkannt".encode() in r.data
         assert b"bg-blue-lt" in r.data
 
+    def test_preview_shows_iban_badge(self, client, statement):
+        # Automatische Zuordnung ueber die IBAN des Gegenkontos -> Badge „IBAN".
+        stmt, line = statement
+        cust = Customer(name="Iban Kundin", active=True)
+        db.session.add(cust)
+        db.session.flush()
+        op = OpenItem(
+            customer_id=cust.id, description="Offen", amount=Decimal("113.75"),
+            status=OpenItem.STATUS_OPEN,
+        )
+        db.session.add(op)
+        db.session.flush()
+        line.matched_open_item_id = op.id
+        line.matched_customer_id = cust.id
+        line.match_type = BankStatementLine.MATCH_IBAN
+        db.session.commit()
+        _login(client)
+        r = client.get(f"/bank-import/statements/{stmt.id}")
+        assert r.status_code == 200
+        assert "IBAN des Gegenkontos".encode() in r.data
+        assert b">IBAN</span>" in r.data
+
     def test_set_open_item_swaps_to_matched_branch(self, client, statement):
         stmt, line = statement
         cust = Customer(name="Zahler Unbekannt", active=True)

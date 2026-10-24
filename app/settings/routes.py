@@ -34,6 +34,8 @@ _INVOICE_RENDER_KEYS = (
     'wg.iban', 'wg.bic', 'wg.account_holder', 'wg.vat_id', 'wg.tax_number',
     'invoice.small_business_note',
     'wg.logo', 'wg.logo_text', 'wg.logo_subtitle',
+    # SEPA-Lastschrift: Hinweis + Glaeubiger-ID stehen auf Rechnungen an Bankeinzugs-Kunden
+    'sepa.creditor_id', 'sepa.notice_title', 'sepa.notice_text',
 )
 
 
@@ -57,6 +59,56 @@ def _invalidate_cached_invoice_documents():
         {Invoice.pdf_path: None, Invoice.doc_path: None},
         synchronize_session=False,
     )
+
+
+def _save_sepa_settings(form):
+    """SEPA-Lastschrift: Glaeubiger-ID, Mandats-Praefix und Hinweistext (alles optional).
+
+    Ungueltiges wird nicht uebernommen (Warnung), der Rest der Seite schon.
+    """
+    from app.banking import normalize_creditor_id, sepa_id_valid
+    from app.direct_debit import notice
+
+    cid = normalize_creditor_id(form.get('sepa_creditor_id'))
+    issue = notice.creditor_id_issue(cid)
+    if issue:
+        flash(issue + ' Nicht übernommen.', 'warning')
+    else:
+        AppSetting.set(notice.CREDITOR_ID_KEY, cid or None)
+
+    prefix = (form.get('sepa_mandate_prefix') or '').strip()
+    if prefix and (len(prefix) > 20 or not sepa_id_valid(prefix)):
+        flash('Das Präfix der Mandatsreferenz darf nur Buchstaben, Ziffern und - / . enthalten '
+              '(höchstens 20 Zeichen, keine Leerzeichen) — nicht übernommen.', 'warning')
+    else:
+        AppSetting.set(notice.MANDATE_PREFIX_KEY, prefix or None)
+
+    title = (form.get('sepa_notice_title') or '').strip()[:100]
+    AppSetting.set(notice.NOTICE_TITLE_KEY, title or None)
+
+    text = (form.get('sepa_notice_text') or '').strip()[:1000]
+    if text:
+        sample = {key: f'[{key}]' for key, _label in notice.NOTICE_PLACEHOLDERS}
+        try:
+            notice.render_notice_text(text, sample)
+        except Exception:
+            flash('Der Lastschrift-Hinweistext enthält einen Platzhalter-Fehler (z. B. eine nicht '
+                  'geschlossene {{ … }}) — nicht übernommen.', 'warning')
+            return
+    AppSetting.set(notice.NOTICE_TEXT_KEY, text or None)
+
+
+def _sepa_context():
+    from app.direct_debit import notice
+    return {
+        'creditor_id': AppSetting.get(notice.CREDITOR_ID_KEY) or '',
+        'mandate_prefix': AppSetting.get(notice.MANDATE_PREFIX_KEY) or '',
+        'notice_title': AppSetting.get(notice.NOTICE_TITLE_KEY) or '',
+        'notice_text': AppSetting.get(notice.NOTICE_TEXT_KEY) or '',
+        'default_title': notice.default_title(),
+        'default_text': notice.default_text(),
+        'placeholders': notice.NOTICE_PLACEHOLDERS,
+    }
 
 
 def _save_supplier_number_start(raw):
@@ -146,6 +198,10 @@ def index():
         for attr in _WG_MAP:
             val = request.form.get(f'wg_{attr}', '').strip()
             AppSetting.set(f'wg.{attr}', val if val else None)
+
+        # SEPA-Lastschrift (Karte unter „Bankdaten“) — nur, wenn sie im Formular steht.
+        if request.form.get('sepa_fields') == '1':
+            _save_sepa_settings(request.form)
 
         # Logo-Text/-Untertitel (Wortmarke als Alternative zum Logo-Bild).
         for attr in ('logo_text', 'logo_subtitle'):
@@ -360,6 +416,7 @@ def index():
     from app.einvoice.service import settings_context as einvoice_settings_context
     return render_template('settings/index.html', wg=wg, mail=mail_cfg, mail_raw=mail_raw,
                            einvoice=einvoice_settings_context(),
+                           sepa=_sepa_context(),
                            db_info=db_info,
                            org_type=org_type(),
                            number_ranges=_number_ranges(),

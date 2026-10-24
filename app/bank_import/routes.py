@@ -92,6 +92,9 @@ def _line_render_context(lines):
             # Nach dem Verbuchen ist der OP auf 0 — eine Diff-Warnung waere
             # irrefuehrend ("Ueberzahlung um den vollen Eingangsbetrag").
             continue
+        if l.match_type == BankStatementLine.MATCH_DIRECT_DEBIT_RETURN:
+            # Ruecklastschrift nimmt eine Zahlung zurueck — kein Soll/Ist-Vergleich.
+            continue
         if l.matched_open_item_id and l.matched_open_item is not None:
             amt = _round2(l.amount)
             bal = _round2(l.matched_open_item.open_balance)

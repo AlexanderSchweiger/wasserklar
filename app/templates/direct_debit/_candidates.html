@@ -1,0 +1,119 @@
+{# Vorschau eines neuen Einzugs: einziehbare Posten (mit Häkchen) und ausgeschlossene
+   (mit Grund). Wird beim Ändern des Filters per hx-get neu geladen. #}
+{% set total = ready | selectattr('preselected') | map(attribute='amount') | sum %}
+{% if not_listed %}
+<div class="alert alert-info mb-3">
+  <div class="d-flex"><i class="fas fa-info-circle me-2 mt-1"></i><div>
+    <strong>Nicht in der Auswahl:</strong>
+    <ul class="mb-0 ps-3">
+      {% if not_listed.drafts %}
+      <li>{{ not_listed.drafts }} {{ 'Rechnung' if not_listed.drafts == 1 else 'Rechnungen' }} von
+        Kontakten mit Bankeinzug {{ 'ist' if not_listed.drafts == 1 else 'sind' }} noch Entwurf.
+        Erst die versendete Rechnung kündigt den Einzug an — bitte zuerst versenden.</li>
+      {% endif %}
+      {% if not_listed.due_later %}
+      <li>{{ not_listed.due_later }} {{ 'Posten wird' if not_listed.due_later == 1 else 'Posten werden' }}
+        erst nach dem {{ due_until.strftime('%d.%m.%Y') }} fällig (spätestens am
+        {{ not_listed.last_due.strftime('%d.%m.%Y') }}) —
+        <a href="{{ url_for('direct_debit.new', billing_run=billing_run_id, due_until=not_listed.last_due.isoformat()) }}"
+           hx-get="{{ url_for('direct_debit.new', billing_run=billing_run_id, due_until=not_listed.last_due.isoformat()) }}"
+           hx-target="#ddCandidates" hx-swap="innerHTML"
+           onclick="var f=document.getElementById('ddDueUntil'); if(f) f.value='{{ not_listed.last_due.isoformat() }}';">„Fällig bis“ auf diesen Tag setzen</a>.</li>
+      {% endif %}
+    </ul>
+  </div></div>
+</div>
+{% endif %}
+<div class="card mb-3">
+  <div class="card-header">
+    <h3 class="card-title">Einziehbar ({{ ready | length }})</h3>
+    <div class="card-options">
+      <span class="text-muted me-3">vorausgewählt: <strong>{{ total | de_number }} €</strong></span>
+      <button type="submit" class="btn btn-primary" {{ 'disabled' if readiness or not ready }}>
+        <i class="fas fa-check me-1"></i> Einzugslauf anlegen
+      </button>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+    <table class="table table-hover mb-0">
+      <thead>
+        <tr>
+          <th class="w-1"><input type="checkbox" class="form-check-input" data-dd-select-all title="alle"
+                 {{ 'checked' if ready and (ready | selectattr('preselected') | list | length) == (ready | length) }}></th>
+          <th>Kontakt</th>
+          <th>Rechnung</th>
+          <th>Fällig</th>
+          <th>Einzug am</th>
+          <th>IBAN</th>
+          <th>Mandat</th>
+          <th class="text-end">Betrag</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in ready %}
+        <tr>
+          <td>
+            <input type="checkbox" class="form-check-input" name="open_item_id" value="{{ c.open_item.id }}"
+                   {{ 'checked' if c.preselected }}>
+          </td>
+          <td>
+            {{ c.customer.name }}
+            {% if c.customer.customer_number %}<span class="text-muted small">#{{ c.customer.customer_number }}</span>{% endif %}
+            {% for w in c.warnings %}
+            <div class="small text-warning"><i class="fas fa-exclamation-triangle me-1"></i>{{ w }}</div>
+            {% endfor %}
+          </td>
+          <td><a href="{{ url_for('invoices.detail', invoice_id=c.invoice.id) }}">{{ c.invoice.invoice_number }}</a></td>
+          <td>{{ c.open_item.due_date.strftime('%d.%m.%Y') if c.open_item.due_date else '—' }}</td>
+          <td>{{ c.collection_date.strftime('%d.%m.%Y') }}</td>
+          <td class="text-nowrap">{{ c.customer.iban_display }}</td>
+          <td class="text-nowrap">{{ c.customer.mandate_reference }}</td>
+          <td class="text-end text-nowrap">{{ c.amount | de_number }} €</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8" class="text-center text-muted py-4">
+          Keine offenen Posten von Kontakten mit Bankeinzug in dieser Auswahl.
+        </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+  <div class="card-footer">
+    <label class="form-label" for="ddNotes">Notiz zum Lauf (optional)</label>
+    <input type="text" name="notes" id="ddNotes" class="form-control" maxlength="500"
+           placeholder="z. B. Jahresabrechnung 2026">
+  </div>
+</div>
+
+{% if excluded %}
+<div class="card mb-3">
+  <div class="card-header">
+    <h3 class="card-title text-warning"><i class="fas fa-ban me-1"></i> Nicht einziehbar ({{ excluded | length }})</h3>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+    <table class="table mb-0">
+      <thead>
+        <tr><th>Kontakt</th><th>Rechnung</th><th class="text-end">Betrag</th><th>Grund</th></tr>
+      </thead>
+      <tbody>
+        {% for c in excluded %}
+        <tr>
+          <td>
+            {% if current_user.has_permission('stammdaten') %}
+            <a href="{{ url_for('customers.detail', customer_id=c.customer.id) }}">{{ c.customer.name }}</a>
+            {% else %}{{ c.customer.name }}{% endif %}
+          </td>
+          <td><a href="{{ url_for('invoices.detail', invoice_id=c.invoice.id) }}">{{ c.invoice.invoice_number }}</a></td>
+          <td class="text-end text-nowrap">{{ c.amount | de_number }} €</td>
+          <td>{{ c.issues | join(', ') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+{% endif %}

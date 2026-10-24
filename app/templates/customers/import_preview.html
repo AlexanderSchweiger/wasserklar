@@ -23,11 +23,18 @@
   ('col_vat_id', 'USt-IdNr. / UID'),
   ('col_buyer_reference', 'Leitweg-ID / Käuferreferenz'),
   ('col_einvoice_format', 'Rechnungsformat (XRechnung)'),
+  ('col_payment_method', 'Zahlungsart (Bankeinzug/Überweisung)'),
+  ('col_iban', 'IBAN'),
+  ('col_bic', 'BIC'),
+  ('col_account_holder', 'Kontoinhaber'),
+  ('col_mandate_reference', 'Mandatsreferenz'),
+  ('col_mandate_signed_on', 'Mandat unterschrieben am'),
 ] %}
 {% if country.code == 'DE' %}
 {% set col_fields = col_fields + [('col_is_business', 'Unternehmer (ja/nein)')] %}
 {% endif %}
 {% set ei_cols = cfg.col_is_business or cfg.col_vat_id or cfg.col_buyer_reference or cfg.col_einvoice_format %}
+{% set pay_cols = cfg.col_payment_method or cfg.col_iban or cfg.col_bic or cfg.col_account_holder or cfg.col_mandate_reference or cfg.col_mandate_signed_on %}
 {% if is_wg %}
 {% set col_fields = col_fields + [
   ('col_wg_status', 'Status'),
@@ -142,6 +149,7 @@
               <th style="min-width:100px">Telefon</th>
               <th style="min-width:120px">Notizen</th>
               {% if ei_cols %}<th style="min-width:190px">E-Rechnung</th>{% endif %}
+              {% if pay_cols %}<th style="min-width:220px">Bank / Lastschrift</th>{% endif %}
               {% if is_wg %}
               <th style="min-width:130px">Mitglieds-Status</th>
               <th style="min-width:140px">Mitglied seit</th>
@@ -261,6 +269,37 @@
                 {% endif %}
               </td>
               {% endif %}
+              {% if pay_cols %}
+              <td>
+                {% if cfg.col_payment_method %}
+                <select name="rows[{{ row.idx }}][payment_method]" class="form-select form-select-sm mb-1">
+                  <option value="" {{ 'selected' if row.fields.get('payment_method') not in ('direct_debit', 'transfer') }}>— unverändert —</option>
+                  <option value="transfer" {{ 'selected' if row.fields.get('payment_method') == 'transfer' }}>Überweisung</option>
+                  <option value="direct_debit" {{ 'selected' if row.fields.get('payment_method') == 'direct_debit' }}>Bankeinzug</option>
+                </select>
+                {% endif %}
+                {% if cfg.col_iban %}
+                <input type="text" name="rows[{{ row.idx }}][iban]" class="form-control form-control-sm mb-1"
+                       placeholder="IBAN" value="{{ row.fields.get('iban', '') }}">
+                {% endif %}
+                {% if cfg.col_bic %}
+                <input type="text" name="rows[{{ row.idx }}][bic]" class="form-control form-control-sm mb-1"
+                       placeholder="BIC" value="{{ row.fields.get('bic', '') }}">
+                {% endif %}
+                {% if cfg.col_account_holder %}
+                <input type="text" name="rows[{{ row.idx }}][account_holder]" class="form-control form-control-sm mb-1"
+                       placeholder="Kontoinhaber" value="{{ row.fields.get('account_holder', '') }}">
+                {% endif %}
+                {% if cfg.col_mandate_reference %}
+                <input type="text" name="rows[{{ row.idx }}][mandate_reference]" class="form-control form-control-sm mb-1"
+                       placeholder="Mandatsreferenz" value="{{ row.fields.get('mandate_reference', '') }}">
+                {% endif %}
+                {% if cfg.col_mandate_signed_on %}
+                <input type="date" name="rows[{{ row.idx }}][mandate_signed_on]" class="form-control form-control-sm"
+                       title="Mandat unterschrieben am" value="{{ row.fields.get('mandate_signed_on', '') }}">
+                {% endif %}
+              </td>
+              {% endif %}
               {% if is_wg %}
               <td>
                 <select name="rows[{{ row.idx }}][wg_status]"
@@ -287,7 +326,7 @@
             </tr>
             {% else %}
             <tr>
-              <td colspan="{{ (17 if is_wg else 14) + (1 if ei_cols else 0) }}" class="text-center text-muted py-4">
+              <td colspan="{{ (17 if is_wg else 14) + (1 if ei_cols else 0) + (1 if pay_cols else 0) }}" class="text-center text-muted py-4">
                 Keine Zeilen — bitte mindestens eine Spalte zuordnen und auf
                 „Vorschau aktualisieren" klicken.
               </td>

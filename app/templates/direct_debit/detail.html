@@ -1,0 +1,281 @@
+{% extends "base.html" %}
+{% block title %}Einzugslauf {{ run.created_at.strftime('%d.%m.%Y') }}{% endblock %}
+{% block page_title %}<i class="fas fa-university me-2"></i> Einzugslauf vom {{ run.created_at.strftime('%d.%m.%Y %H:%M') }}{% endblock %}
+{% block content %}
+
+<div class="card mb-3">
+  <div class="card-header">
+    <h3 class="card-title">
+      {{ run.item_count }} Lastschrift{{ 'en' if run.item_count != 1 }} · {{ run.total_amount | de_number }} €
+      {% if status == 'cancelled' %}
+        <span class="badge bg-secondary-lt ms-2">verworfen</span>
+      {% elif status == 'done' %}
+        <span class="badge bg-green-lt ms-2">erledigt</span>
+      {% else %}
+        <span class="badge bg-azure-lt ms-2">{{ stats.pending[0] }} im Einzug</span>
+      {% endif %}
+    </h3>
+    <div class="card-options">
+      <a href="{{ url_for('direct_debit.index') }}" class="btn btn-secondary">
+        <i class="fas fa-arrow-left me-1"></i> Einzugsläufe
+      </a>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-6">
+        <dl class="row mb-0">
+          <dt class="col-5">Nachrichten-ID</dt><dd class="col-7"><code>{{ run.message_id }}</code></dd>
+          <dt class="col-5">Gläubiger</dt><dd class="col-7">{{ run.creditor_name }}</dd>
+          <dt class="col-5">Gläubiger-ID</dt><dd class="col-7">{{ run.creditor_id }}</dd>
+          <dt class="col-5">Gutschrift auf</dt><dd class="col-7">{{ run.creditor_iban | default('', true) }}</dd>
+          <dt class="col-5">Angelegt von</dt><dd class="col-7">{{ run.created_by.username if run.created_by else '—' }}</dd>
+          {% if run.notes %}<dt class="col-5">Notiz</dt><dd class="col-7">{{ run.notes }}</dd>{% endif %}
+          {% if run.cancelled_at %}<dt class="col-5">Verworfen am</dt><dd class="col-7">{{ run.cancelled_at.strftime('%d.%m.%Y %H:%M') }}</dd>{% endif %}
+        </dl>
+      </div>
+      <div class="col-md-6">
+        <div class="d-flex flex-column gap-2 align-items-md-end">
+          {% if not run.is_cancelled %}
+          <div>
+            <a href="{{ url_for('direct_debit.download_xml', run_id=run.id) }}" hx-boost="false" class="btn btn-primary">
+              <i class="fas fa-file-code me-1"></i> Datei für die Bank (pain.008)
+            </a>
+            <a href="{{ url_for('direct_debit.download_csv', run_id=run.id) }}" hx-boost="false" class="btn btn-outline-secondary ms-1">
+              <i class="fas fa-file-csv me-1"></i> Kontrollliste (CSV)
+            </a>
+          </div>
+          <div class="text-muted small text-md-end">
+            Die XML-Datei im Online-Banking unter „SEPA-Lastschrift / Datei-Upload“ einlesen.
+          </div>
+          <div>
+            {% if stats.pending[0] %}
+            <button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#ddBookModal">
+              <i class="fas fa-check-double me-1"></i> Als bezahlt verbuchen
+            </button>
+            {% endif %}
+            {% if not cancel_blocker %}
+            <button type="button" class="btn btn-outline-danger ms-1" data-bs-toggle="modal" data-bs-target="#ddCancelModal">
+              <i class="fas fa-ban me-1"></i> Lauf verwerfen
+            </button>
+            {% endif %}
+          </div>
+          {% else %}
+          <div class="text-muted">Dieser Lauf wurde verworfen; seine Posten können neu eingezogen werden.</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h3 class="card-title">Lastschriften</h3>
+    <div class="card-options text-muted small">
+      im Einzug {{ stats.pending[0] }} · bezahlt {{ stats.paid[0] }} · zurück {{ stats.returned[0] }}
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+    <table class="table table-hover mb-0">
+      <thead>
+        <tr>
+          <th>Einzug am</th>
+          <th>Kontakt</th>
+          <th>Rechnung</th>
+          <th>IBAN</th>
+          <th>Mandat</th>
+          <th class="text-end">Betrag</th>
+          <th>Stand</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in run.items %}
+        {% set st = item.state %}
+        <tr>
+          <td>{{ item.collection_date.strftime('%d.%m.%Y') }}</td>
+          <td>
+            {{ item.customer.name if item.customer else item.debtor_name }}
+            {% if item.debtor_name and item.customer and item.debtor_name != item.customer.name %}
+            <div class="small text-muted">Kontoinhaber: {{ item.debtor_name }}</div>
+            {% endif %}
+          </td>
+          <td>
+            {% if item.invoice %}<a href="{{ url_for('invoices.detail', invoice_id=item.invoice.id) }}">{{ item.invoice.invoice_number }}</a>{% else %}—{% endif %}
+          </td>
+          <td class="text-nowrap">{{ item.iban | default('', true) }}
+            {% if item.amended_from_iban %}<span class="badge bg-yellow-lt ms-1" title="vorher {{ item.amended_from_iban }}">neues Konto</span>{% endif %}
+          </td>
+          <td class="text-nowrap">{{ item.mandate_reference }}
+            {% if item.mandate_signed_on %}<div class="small text-muted">vom {{ item.mandate_signed_on.strftime('%d.%m.%Y') }}</div>{% endif %}
+          </td>
+          <td class="text-end text-nowrap">{{ item.amount | de_number }} €</td>
+          <td>
+            {% if st == 'returned' %}
+              <span class="badge bg-red-lt">zurück {{ item.returned_on.strftime('%d.%m.%Y') }}</span>
+              {% if item.return_reason %}<div class="small text-muted">{{ item.return_reason }}</div>{% endif %}
+            {% elif st == 'paid' %}
+              <span class="badge bg-green-lt">bezahlt</span>
+            {% elif run.is_cancelled %}
+              <span class="badge bg-secondary-lt">verworfen</span>
+            {% else %}
+              <span class="badge bg-azure-lt">im Einzug</span>
+            {% endif %}
+          </td>
+          <td class="text-end">
+            {% if not run.is_cancelled and st != 'returned' %}
+            <button type="button" class="btn btn-sm btn-outline-danger" title="Rücklastschrift erfassen"
+                    data-bs-toggle="modal" data-bs-target="#ddReturnModal"
+                    data-dd-action="{{ url_for('direct_debit.item_return', item_id=item.id) }}"
+                    data-dd-label="{{ item.invoice.invoice_number if item.invoice else item.end_to_end_id }} · {{ item.amount | de_number }} €">
+              <i class="fas fa-undo"></i>
+            </button>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block modals %}
+{% macro real_account_select(id) %}
+<select name="real_account_id" id="{{ id }}" class="form-select" required>
+  {% for ra in real_accounts %}
+  <option value="{{ ra.id }}" {{ 'selected' if default_real_account and ra.id == default_real_account.id }}>
+    {{ ra.name }}{% if ra.iban %} ({{ ra.iban }}){% endif %}
+  </option>
+  {% endfor %}
+</select>
+{% endmacro %}
+
+<div class="modal fade" id="ddBookModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <form method="post" action="{{ url_for('direct_debit.book', run_id=run.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="fas fa-check-double me-1"></i> Als bezahlt verbuchen</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+        </div>
+        <div class="modal-body">
+          <p>
+            Bucht die {{ stats.pending[0] }} offenen Lastschriften als Zahlungseingang — jede am
+            Einzugsdatum. Nur nötig, wenn Sie den Kontoauszug <strong>nicht</strong> über den
+            Bankimport einlesen; dort wird die Sammelgutschrift automatisch zugeordnet.
+          </p>
+          <div class="mb-3">
+            <label class="form-label" for="ddBookAccount">Bankkonto</label>
+            {{ real_account_select('ddBookAccount') }}
+          </div>
+          {% if needs_account %}
+          <div class="mb-1">
+            <label class="form-label" for="ddFallbackAccount">Buchungskonto für Positionen ohne Kontierung</label>
+            <select name="account_id" id="ddFallbackAccount" class="form-select">
+              <option value="">— keines (solche Rechnungen überspringen) —</option>
+              {% for acc in accounts %}
+              <option value="{{ acc.id }}">{% if acc.code %}{{ acc.code }} – {% endif %}{{ acc.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          {% endif %}
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+          <button type="submit" class="btn btn-success"><i class="fas fa-check me-1"></i> Verbuchen</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal fade" id="ddReturnModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    {# hx-boost="false": htmx merkt sich die Action eines geboosteten Formulars schon beim Laden —
+       die per JS je Position gesetzte Action griffe sonst nicht (POST ginge an die Laufseite). #}
+    <form method="post" action="#" id="ddReturnForm" hx-boost="false">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="fas fa-undo me-1"></i> Rücklastschrift erfassen</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+        </div>
+        <div class="modal-body">
+          <p class="mb-2"><strong id="ddReturnLabel"></strong></p>
+          <p class="text-muted small">
+            War die Zahlung schon verbucht, wird sie am Rückgabetag zurückgebucht. Die Rechnung ist danach
+            wieder offen und kann gemahnt oder in einem neuen Lauf eingezogen werden. Rücklastschrift-Gebühren
+            der Bank bitte gesondert buchen.
+          </p>
+          <div class="row g-2">
+            <div class="col-6">
+              <label class="form-label" for="ddReturnDate">Rückgabe am</label>
+              <input type="date" name="returned_on" id="ddReturnDate" class="form-control"
+                     value="{{ today.isoformat() }}" required>
+            </div>
+            <div class="col-6">
+              <label class="form-label" for="ddReturnAccount">Bankkonto</label>
+              {{ real_account_select('ddReturnAccount') }}
+            </div>
+            <div class="col-12">
+              <label class="form-label" for="ddReturnReason">Grund (optional)</label>
+              <input type="text" name="reason" id="ddReturnReason" class="form-control" maxlength="200"
+                     placeholder="z. B. Konto erloschen, Widerspruch, keine Deckung">
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+          <button type="submit" class="btn btn-danger"><i class="fas fa-undo me-1"></i> Rücklastschrift erfassen</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal fade" id="ddCancelModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <form method="post" action="{{ url_for('direct_debit.cancel', run_id=run.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title text-danger"><i class="fas fa-ban me-1"></i> Einzugslauf verwerfen</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+        </div>
+        <div class="modal-body">
+          Nur verwerfen, wenn die Bank die Datei <strong>nicht</strong> ausgeführt hat (nicht hochgeladen
+          oder abgelehnt). Die Posten werden wieder frei und können in einem neuen Lauf eingezogen werden.
+          Der Lauf bleibt als „verworfen“ in der Liste.
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+          <button type="submit" class="btn btn-danger"><i class="fas fa-ban me-1"></i> Verwerfen</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function () {
+    if (window._ddReturnBound) return;
+    window._ddReturnBound = true;
+    document.addEventListener("show.bs.modal", function (ev) {
+      if (!ev.target || ev.target.id !== "ddReturnModal") return;
+      var btn = ev.relatedTarget;
+      if (!btn) return;
+      var form = document.getElementById("ddReturnForm");
+      var label = document.getElementById("ddReturnLabel");
+      if (form) form.setAttribute("action", btn.getAttribute("data-dd-action"));
+      if (label) label.textContent = btn.getAttribute("data-dd-label") || "";
+    });
+  })();
+</script>
+{% endblock %}

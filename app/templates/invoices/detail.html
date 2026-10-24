@@ -57,6 +57,18 @@
           <dd class="col-sm-7">{{ invoice.date.strftime('%d.%m.%Y') }}</dd>
           <dt class="col-sm-5">Fällig</dt>
           <dd class="col-sm-7">{{ invoice.due_date.strftime('%d.%m.%Y') if invoice.due_date else '—' }}</dd>
+          {% if debit %}
+          <dt class="col-sm-5">Zahlungsart</dt>
+          <dd class="col-sm-7">
+            <span class="badge bg-azure-lt"><i class="fas fa-university me-1"></i>SEPA-Lastschrift</span>
+            {% if debit.mandate_reference %}<div class="small text-muted">Mandat {{ debit.mandate_reference }}</div>{% endif %}
+            {% if debit_item %}
+            <div class="small">
+              <a href="{{ url_for('direct_debit.detail', run_id=debit_item.run_id) }}">Einzug am {{ debit_item.collection_date.strftime('%d.%m.%Y') }}</a>
+            </div>
+            {% endif %}
+          </dd>
+          {% endif %}
           <dt class="col-sm-5">Gesamt</dt>
           <dd class="col-sm-7"><strong>{{ invoice.total_amount|de_number }} €</strong></dd>
           <dt class="col-sm-5">Status</dt>

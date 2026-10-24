@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}Lastschrift-Einzug{% endblock %}
+{% block page_title %}<i class="fas fa-university me-2"></i> Lastschrift-Einzug{% endblock %}
+{% block content %}
+
+{% if readiness %}
+<div class="alert alert-warning">
+  <div class="d-flex">
+    <div><i class="fas fa-exclamation-triangle me-2"></i></div>
+    <div>
+      <strong>Für einen Einzug fehlen noch Angaben:</strong>
+      <ul class="mb-1">
+        {% for issue in readiness %}<li>{{ issue }}</li>{% endfor %}
+      </ul>
+      {% if current_user.has_permission('verwaltung') %}
+      <a href="{{ url_for('settings.index') }}#tab-kontakt" class="alert-link">Zu den Einstellungen (Kontaktdaten → Bankdaten / SEPA-Lastschrift)</a>
+      {% else %}
+      Bitte die Verwaltung bitten, die Bankdaten und die Gläubiger-ID unter Einstellungen zu hinterlegen.
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<div class="row row-cards mb-3">
+  <div class="col-sm-6 col-lg-4">
+    <div class="card card-sm">
+      <div class="card-body">
+        <div class="row align-items-center">
+          <div class="col-auto"><span class="bg-azure-lt avatar"><i class="fas fa-user-check"></i></span></div>
+          <div class="col">
+            <div class="font-weight-medium">{{ debit_count }} Kontakt{{ 'e' if debit_count != 1 }} mit Bankeinzug</div>
+            <div class="text-muted">
+              {% if current_user.has_permission('stammdaten') %}
+              <a href="{{ url_for('customers.index', payment='direct_debit') }}">anzeigen</a>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% if incomplete_count %}
+  <div class="col-sm-6 col-lg-4">
+    <div class="card card-sm">
+      <div class="card-body">
+        <div class="row align-items-center">
+          <div class="col-auto"><span class="bg-yellow-lt avatar"><i class="fas fa-exclamation"></i></span></div>
+          <div class="col">
+            <div class="font-weight-medium">{{ incomplete_count }} mit unvollständigen Angaben</div>
+            <div class="text-muted">
+              {% if current_user.has_permission('stammdaten') %}
+              <a href="{{ url_for('customers.index', payment='incomplete') }}">IBAN/Mandat ergänzen</a>
+              {% else %}IBAN oder Mandat fehlt{% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h3 class="card-title">Einzugsläufe</h3>
+    <div class="card-options">
+      <a href="{{ url_for('direct_debit.new') }}" class="btn btn-primary">
+        <i class="fas fa-plus me-1"></i> Neuer Einzug
+      </a>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+    <table class="table table-hover mb-0">
+      <thead>
+        <tr>
+          <th>Angelegt</th>
+          <th>Einzugsdatum</th>
+          <th>Benutzer</th>
+          <th class="text-end">Lastschriften</th>
+          <th class="text-end">Summe</th>
+          <th>Stand</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        {% set run = row.run %}
+        {% set dates = run.items | map(attribute='collection_date') | unique | list %}
+        <tr>
+          <td>
+            <a href="{{ url_for('direct_debit.detail', run_id=run.id) }}">{{ run.created_at.strftime('%d.%m.%Y %H:%M') }}</a>
+          </td>
+          <td>
+            {% if dates %}{{ (dates | min).strftime('%d.%m.%Y') }}{% if dates|length > 1 %} – {{ (dates | max).strftime('%d.%m.%Y') }}{% endif %}{% else %}—{% endif %}
+          </td>
+          <td>{{ run.created_by.username if run.created_by else '—' }}</td>
+          <td class="text-end">{{ run.item_count }}</td>
+          <td class="text-end">{{ run.total_amount | de_number }} €</td>
+          <td>
+            {% if row.status == 'cancelled' %}
+              <span class="badge bg-secondary-lt">verworfen</span>
+            {% elif row.status == 'done' %}
+              <span class="badge bg-green-lt">erledigt</span>
+            {% else %}
+              <span class="badge bg-azure-lt">{{ row.stats.pending[0] }} im Einzug</span>
+            {% endif %}
+            {% if row.stats.returned[0] %}
+              <span class="badge bg-red-lt">{{ row.stats.returned[0] }} zurück</span>
+            {% endif %}
+          </td>
+          <td class="text-end text-nowrap">
+            {% if not run.is_cancelled %}
+            <a href="{{ url_for('direct_debit.download_xml', run_id=run.id) }}" hx-boost="false"
+               class="btn btn-sm btn-outline-primary" title="Datei für die Bank (pain.008)">
+              <i class="fas fa-file-code"></i>
+            </a>
+            {% endif %}
+            <a href="{{ url_for('direct_debit.detail', run_id=run.id) }}"
+               class="btn btn-sm btn-outline-secondary ms-1" title="Details">
+              <i class="fas fa-eye"></i>
+            </a>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="7" class="text-center text-muted py-4">
+            Noch kein Einzugslauf. Stellen Sie Kontakte auf <em>Bankeinzug</em>, versenden Sie die
+            Rechnungen und legen Sie dann hier einen Einzug an.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

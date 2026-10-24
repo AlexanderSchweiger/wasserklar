@@ -172,17 +172,32 @@ DEFAULT_INVOICE_EMAIL_SUBJECT = "{{ wg_name }} - Rechnung {{ rechnungsnummer }}"
 
 
 def _email_template_context(invoice):
-    """Gemeinsame Platzhalter fuer Betreff- und Body-Vorlage des Rechnungsmails."""
+    """Gemeinsame Platzhalter fuer Betreff- und Body-Vorlage des Rechnungsmails.
+
+    ``bankeinzug``/``abbuchungsdatum``/``zahlungshinweis``: bei Kunden mit
+    SEPA-Lastschrift steht statt „bitte ueberweisen“ der Lastschrift-Hinweis
+    (derselbe Text wie auf der Rechnung, app/direct_debit/notice.py).
+    """
+    from app.direct_debit.notice import debit_notice
+    debit = debit_notice(invoice)
+    due = invoice.due_date.strftime("%d.%m.%Y") if invoice.due_date else "—"
+    if debit:
+        hint = f"{debit['title']} {debit['text']}"
+    else:
+        hint = (f"Bitte überweisen Sie den Betrag bis {due} auf {get_wg('iban') or 'unser Konto'} "
+                f"(Verwendungszweck {invoice.invoice_number}).")
     return dict(
         name=invoice.customer.letter_name,
         rechnungsnummer=invoice.invoice_number,
         buchungsjahr=(invoice.billing_period.name if invoice.billing_period else ""),
         betrag=f"{invoice.total_amount:.2f}",
-        faelligkeitsdatum=(
-            invoice.due_date.strftime("%d.%m.%Y") if invoice.due_date else "—"
-        ),
+        faelligkeitsdatum=due,
         iban=get_wg('iban'),
         wg_name=get_wg('name'),
+        bankeinzug=bool(debit),
+        abbuchungsdatum=(debit["collection_date"].strftime("%d.%m.%Y")
+                         if debit and debit["collection_date"] else ""),
+        zahlungshinweis=hint,
     )
 
 
@@ -218,7 +233,9 @@ def _render_email_body(invoice):
     custom = AppSetting.get("email_body_template")
     if custom:
         return SandboxedEnvironment().from_string(custom).render(**_email_template_context(invoice))
-    return render_template("invoices/email_body.txt", invoice=invoice)
+    from app.direct_debit.notice import debit_notice
+    return render_template("invoices/email_body.txt", invoice=invoice,
+                           sepa_debit=debit_notice(invoice))
 
 
 _SORT_KEYS = {"nr", "kunde", "objekt", "datum", "faellig", "betrag", "status"}
@@ -786,6 +803,11 @@ def new():
             date.fromisoformat(request.form["due_date"])
             if request.form.get("due_date") else None
         )
+        if due_date is None and customer.is_direct_debit:
+            # Bankeinzug: die Faelligkeit ist der angekuendigte Abbuchungstag.
+            flash("Der Kunde zahlt per Bankeinzug — bitte ein Fälligkeitsdatum angeben "
+                  "(es steht als Abbuchungstag auf der Rechnung).", "danger")
+            return redirect(url_for("invoices.new"))
         notes = request.form.get("notes", "").strip()
 
         # Abrechnungsperiode aus dem Rechnungsdatum ableiten (nicht blind die
@@ -1009,9 +1031,18 @@ def detail(invoice_id):
     from app.einvoice.obligation import delivery_problem, required_for
     from app.einvoice.service import invoice_status as einvoice_status
 
+    # Zahlungsart: Lastschrift-Hinweis + laufende Lastschrift (Einzugslauf), falls Bankeinzug.
+    from app.direct_debit.notice import debit_info
+    from app.direct_debit.services import current_item_for_open_item
+    debit = debit_info(invoice)
+    debit_item = (current_item_for_open_item(invoice.open_item.id)
+                  if invoice.open_item is not None else None)
+
     return render_template(
         "invoices/detail.html",
         invoice=invoice,
+        debit=debit,
+        debit_item=debit_item,
         **_archive_context(invoice),
         einvoice=einvoice_status(invoice),
         einvoice_required=required_for(invoice),
@@ -1046,6 +1077,10 @@ def edit(invoice_id):
         return redirect(url_for("invoices.detail", invoice_id=invoice.id))
     customers = Customer.query.filter_by(active=True).order_by(Customer.name).all()
     if request.method == "POST":
+        if not request.form.get("due_date") and invoice.customer.is_direct_debit:
+            flash("Der Kunde zahlt per Bankeinzug — bitte ein Fälligkeitsdatum angeben "
+                  "(es steht als Abbuchungstag auf der Rechnung).", "danger")
+            return redirect(url_for("invoices.edit", invoice_id=invoice.id))
         invoice.date = date.fromisoformat(request.form["date"])
         invoice.due_date = date.fromisoformat(request.form["due_date"]) if request.form.get("due_date") else None
         invoice.notes = request.form.get("notes", "")

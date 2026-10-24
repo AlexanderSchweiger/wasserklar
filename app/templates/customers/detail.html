@@ -66,6 +66,25 @@
         {% if customer.notes %}
         <p class="text-muted"><em>{{ customer.notes }}</em></p>
         {% endif %}
+        {% if customer.iban or customer.is_direct_debit %}
+        <hr>
+        <small class="text-muted d-block mb-1"><i class="fas fa-university me-1"></i> Zahlung &amp; Bankverbindung</small>
+        <small class="d-block">
+          Zahlungsart:
+          {% if customer.is_direct_debit %}<span class="badge bg-azure-lt">Bankeinzug</span>{% else %}<strong>Überweisung</strong>{% endif %}
+        </small>
+        {% if customer.iban %}<small class="d-block">IBAN: <strong class="text-nowrap">{{ customer.iban_display }}</strong>{% if customer.bic %} · BIC {{ customer.bic }}{% endif %}</small>{% endif %}
+        {% if customer.account_holder %}<small class="d-block">Kontoinhaber: {{ customer.account_holder }}</small>{% endif %}
+        {% if customer.is_direct_debit %}
+        <small class="d-block">Mandat: <strong>{{ customer.mandate_reference or '—' }}</strong>{% if customer.mandate_signed_on %} vom {{ customer.mandate_signed_on.strftime('%d.%m.%Y') }}{% endif %}</small>
+        {% set _dd_issues = customer.debit_issues %}
+        {% if _dd_issues %}
+        <div class="alert alert-warning py-1 px-2 mt-2 mb-0 small">
+          <i class="fas fa-exclamation-triangle me-1"></i>Für den Einzug fehlt: {{ _dd_issues | join(', ') }}
+        </div>
+        {% endif %}
+        {% endif %}
+        {% endif %}
         {% set _overrides = charge_overrides_display(customer) %}
         {% if _overrides %}
         <hr>

@@ -1684,7 +1684,14 @@ def open_items():
         accounts=accounts,
         billing_periods=billing_periods,
         needs_account_map={i.id: _open_item_needs_account(i) for i in pagination.items},
+        direct_debit_ids=_direct_debit_ids(),
     )
+
+
+def _direct_debit_ids():
+    """Posten, die gerade in einem Lastschrift-Einzug stehen (Badge „im Einzug“)."""
+    from app.direct_debit.services import open_item_ids_in_collection
+    return open_item_ids_in_collection()
 
 
 def _open_item_form_ctx():
@@ -1835,7 +1842,8 @@ def open_item_row(item_id):
     item = db.get_or_404(OpenItem, item_id)
     return render_template("accounting/_open_item_row.html",
                            item=item, today=date.today(),
-                           needs_account=_open_item_needs_account(item))
+                           needs_account=_open_item_needs_account(item),
+                           direct_debit_ids=_direct_debit_ids())
 
 
 @bp.route("/open-items/<int:item_id>/pay", methods=["POST"])

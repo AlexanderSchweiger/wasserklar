@@ -61,11 +61,19 @@ class Delivery:
 
 @dataclass
 class Payment:
-    means_code: str                     # BT-81 (58 = SEPA-Überweisung)
-    iban: str                           # BT-84
+    means_code: str                     # BT-81 (58 = SEPA-Überweisung, 59 = SEPA-Lastschrift)
+    iban: Optional[str] = None          # BT-84 (nur Überweisung)
     account_name: Optional[str] = None  # BT-85
     bic: Optional[str] = None           # BT-86
     reference: Optional[str] = None     # BT-83 (Verwendungszweck)
+    # Lastschrift (BG-19, nur bei 59)
+    mandate_reference: Optional[str] = None  # BT-89
+    creditor_id: Optional[str] = None        # BT-90 (Gläubiger-ID)
+    debtor_iban: Optional[str] = None        # BT-91 (belastetes Konto)
+
+    @property
+    def is_direct_debit(self):
+        return self.means_code == "59"
 
 
 @dataclass

@@ -128,6 +128,9 @@ def create_app(config_name=None):
     from app.notes import bp as notes_bp
     app.register_blueprint(notes_bp)
 
+    from app.direct_debit import bp as direct_debit_bp
+    app.register_blueprint(direct_debit_bp)
+
     # hx-boost-Navigationen (base.html: <body hx-boost="true">) senden
     # sowohl "HX-Request: true" als auch "HX-Boosted: true". Unsere Routen
     # verwenden "HX-Request" als Signal fuer Partial-Fragment-Antworten
@@ -338,6 +341,26 @@ def create_app(config_name=None):
             return dict(einvoice_enabled=is_enabled())
         except Exception:
             return dict(einvoice_enabled=True)
+
+    # Menuepunkt „Lastschrift-Einzug“ nur, wenn Lastschrift genutzt wird — als
+    # Funktion (nicht Context-Processor), damit nur die Seitenleiste die Abfrage zahlt.
+    def direct_debit_nav_visible():
+        from app.direct_debit.services import nav_visible
+        try:
+            return nav_visible()
+        except Exception:
+            return False
+
+    app.jinja_env.globals["direct_debit_nav_visible"] = direct_debit_nav_visible
+
+    def mandate_reference_hint(customer):
+        from app.direct_debit.notice import mandate_reference_hint as _hint
+        try:
+            return _hint(customer)
+        except Exception:
+            return "automatisch"
+
+    app.jinja_env.globals["mandate_reference_hint"] = mandate_reference_hint
 
     # Context Processor: OSS-Version fuer Footer/About — SaaS-Layer
     # ueberschreibt den Footer-Block selbst und kombiniert mit saas_version.

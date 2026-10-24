@@ -8,19 +8,19 @@
     <ul class="nav nav-pills" role="tablist">
       <li class="nav-item">
         <a class="nav-link btn-sm {% if type_filter == 'customer' %}active{% endif %}"
-           href="{{ url_for('customers.index', type='customer', q=q or none, sort=sort, dir=dir, country=country_filter or none) }}">
+           href="{{ url_for('customers.index', type='customer', q=q or none, sort=sort, dir=dir, country=country_filter or none, status=status_filter or none, func=func_filter or none, business=business_filter or none, payment=payment_filter or none) }}">
           <i class="fas fa-user me-1"></i> Kunden
         </a>
       </li>
       <li class="nav-item">
         <a class="nav-link btn-sm {% if type_filter == 'supplier' %}active{% endif %}"
-           href="{{ url_for('customers.index', type='supplier', q=q or none, sort=sort, dir=dir, country=country_filter or none) }}">
+           href="{{ url_for('customers.index', type='supplier', q=q or none, sort=sort, dir=dir, country=country_filter or none, status=status_filter or none, func=func_filter or none, business=business_filter or none, payment=payment_filter or none) }}">
           <i class="fas fa-truck me-1"></i> Lieferanten
         </a>
       </li>
       <li class="nav-item">
         <a class="nav-link btn-sm {% if type_filter == 'all' %}active{% endif %}"
-           href="{{ url_for('customers.index', type='all', q=q or none, sort=sort, dir=dir, country=country_filter or none) }}">
+           href="{{ url_for('customers.index', type='all', q=q or none, sort=sort, dir=dir, country=country_filter or none, status=status_filter or none, func=func_filter or none, business=business_filter or none, payment=payment_filter or none) }}">
           <i class="fas fa-list me-1"></i> Alle
         </a>
       </li>
@@ -32,7 +32,7 @@
         hx-get="{{ url_for('customers.index') }}"
         hx-trigger="input changed delay:300ms, search"
         hx-target="#customer-table"
-        hx-include="[name='q'], [name='type'], [name='sort'], [name='dir'], [name='country'], [name='status'], [name='func'], [name='business']">
+        hx-include="[name='q'], [name='type'], [name='sort'], [name='dir'], [name='country'], [name='status'], [name='func'], [name='business'], [name='payment']">
       <span class="input-group-text"><i class="fas fa-search"></i></span>
     </div>
     {% if countries | length > 1 %}
@@ -41,7 +41,7 @@
       hx-get="{{ url_for('customers.index') }}"
       hx-trigger="change"
       hx-target="#customer-table"
-      hx-include="[name='q'], [name='type'], [name='sort'], [name='dir'], [name='country'], [name='status'], [name='func'], [name='business']">
+      hx-include="[name='q'], [name='type'], [name='sort'], [name='dir'], [name='country'], [name='status'], [name='func'], [name='business'], [name='payment']">
       <option value="">Alle Länder</option>
       {% for c in countries %}
       <option value="{{ c }}" {% if c == country_filter %}selected{% endif %}>{{ c }}</option>
@@ -54,7 +54,7 @@
       hx-get="{{ url_for('customers.index') }}"
       hx-trigger="change"
       hx-target="#customer-table"
-      hx-include="[name='q'], [name='type'], [name='sort'], [name='dir'], [name='country'], [name='status'], [name='func'], [name='business']">
+      hx-include="[name='q'], [name='type'], [name='sort'], [name='dir'], [name='country'], [name='status'], [name='func'], [name='business'], [name='payment']">
       <option value="">Alle Status</option>
       {% for key, label in wg_status_labels.items() %}
       <option value="{{ key }}" {% if key == status_filter %}selected{% endif %}>{{ label }}</option>
@@ -65,7 +65,7 @@
       hx-get="{{ url_for('customers.index') }}"
       hx-trigger="change"
       hx-target="#customer-table"
-      hx-include="[name='q'], [name='type'], [name='sort'], [name='dir'], [name='country'], [name='status'], [name='func'], [name='business']">
+      hx-include="[name='q'], [name='type'], [name='sort'], [name='dir'], [name='country'], [name='status'], [name='func'], [name='business'], [name='payment']">
       <option value="">Alle Funktionen</option>
       <option value="__any__" {% if func_filter == '__any__' %}selected{% endif %}>Alle mit Funktion</option>
       <option value="__none__" {% if func_filter == '__none__' %}selected{% endif %}>Alle ohne Funktion</option>
@@ -82,12 +82,23 @@
       hx-get="{{ url_for('customers.index') }}"
       hx-trigger="change"
       hx-target="#customer-table"
-      hx-include="[name='q'], [name='type'], [name='sort'], [name='dir'], [name='country'], [name='status'], [name='func'], [name='business']">
+      hx-include="[name='q'], [name='type'], [name='sort'], [name='dir'], [name='country'], [name='status'], [name='func'], [name='business'], [name='payment']">
       <option value="">Alle Kunden</option>
       <option value="yes" {% if business_filter == 'yes' %}selected{% endif %}>Nur Unternehmer</option>
       <option value="no_email" {% if business_filter == 'no_email' %}selected{% endif %}>Unternehmer ohne E-Mail-Versand</option>
     </select>
     {% endif %}
+    <select name="payment" class="form-select form-select-sm" style="width:200px"
+      data-filter-field
+      hx-get="{{ url_for('customers.index') }}"
+      hx-trigger="change"
+      hx-target="#customer-table"
+      hx-include="[name='q'], [name='type'], [name='sort'], [name='dir'], [name='country'], [name='status'], [name='func'], [name='business'], [name='payment']">
+      <option value="">Alle Zahlungsarten</option>
+      <option value="direct_debit" {% if payment_filter == 'direct_debit' %}selected{% endif %}>Bankeinzug</option>
+      <option value="incomplete" {% if payment_filter == 'incomplete' %}selected{% endif %}>Bankeinzug, Angaben fehlen</option>
+      <option value="transfer" {% if payment_filter == 'transfer' %}selected{% endif %}>Überweisung</option>
+    </select>
     <input type="hidden" name="type" value="{{ type_filter }}">
     <input type="hidden" name="sort" value="{{ sort }}">
     <input type="hidden" name="dir" value="{{ dir }}">

@@ -186,19 +186,25 @@ def serialize(e, guideline=None):
         _date(event, "OccurrenceDateTime", e.delivery.date)
 
     settlement = _ram(transaction, "ApplicableHeaderTradeSettlement")
+    if e.payment and e.payment.creditor_id:
+        _ram(settlement, "CreditorReferenceID", e.payment.creditor_id)      # BT-90
     if e.payment and e.payment.reference:
         _ram(settlement, "PaymentReference", e.payment.reference)
     _ram(settlement, "InvoiceCurrencyCode", e.currency)
     if e.payment:
         means = _ram(settlement, "SpecifiedTradeSettlementPaymentMeans")
         _ram(means, "TypeCode", e.payment.means_code)
-        account = _ram(means, "PayeePartyCreditorFinancialAccount")
-        _ram(account, "IBANID", e.payment.iban)
-        if e.payment.account_name:
-            _ram(account, "AccountName", e.payment.account_name)
-        if e.payment.bic:
-            institution = _ram(means, "PayeeSpecifiedCreditorFinancialInstitution")
-            _ram(institution, "BICID", e.payment.bic)
+        if e.payment.debtor_iban:
+            debtor = _ram(means, "PayerPartyDebtorFinancialAccount")         # BT-91
+            _ram(debtor, "IBANID", e.payment.debtor_iban)
+        if e.payment.iban:
+            account = _ram(means, "PayeePartyCreditorFinancialAccount")
+            _ram(account, "IBANID", e.payment.iban)
+            if e.payment.account_name:
+                _ram(account, "AccountName", e.payment.account_name)
+            if e.payment.bic:
+                institution = _ram(means, "PayeeSpecifiedCreditorFinancialInstitution")
+                _ram(institution, "BICID", e.payment.bic)
     for vat in e.vat:
         tax = _ram(settlement, "ApplicableTradeTax")
         _ram(tax, "CalculatedAmount", _amount(vat.tax_amount))
@@ -212,12 +218,15 @@ def serialize(e, guideline=None):
         period = _ram(settlement, "BillingSpecifiedPeriod")
         _date(period, "StartDateTime", e.period_start)
         _date(period, "EndDateTime", e.period_end)
-    if e.payment_terms or e.due_date:
+    mandate = e.payment.mandate_reference if e.payment else None
+    if e.payment_terms or e.due_date or mandate:
         terms = _ram(settlement, "SpecifiedTradePaymentTerms")
         if e.payment_terms:
             _ram(terms, "Description", e.payment_terms)
         if e.due_date:
             _date(terms, "DueDateDateTime", e.due_date)
+        if mandate:
+            _ram(terms, "DirectDebitMandateID", mandate)                     # BT-89
     totals = _ram(settlement, "SpecifiedTradeSettlementHeaderMonetarySummation")
     _ram(totals, "LineTotalAmount", _amount(e.line_total))
     _ram(totals, "TaxBasisTotalAmount", _amount(e.tax_basis_total))

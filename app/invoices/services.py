@@ -57,6 +57,11 @@ def create_or_update_open_item(invoice):
         from app.invoices.credit_note import create_refund_open_item
         return create_refund_open_item(invoice)
 
+    # Zahlungsart (Ueberweisung/Lastschrift) samt Mandat einfrieren — dieselbe
+    # Weiche fuer alle fuenf Versandwege, siehe oben.
+    from app.direct_debit.notice import freeze_payment
+    freeze_payment(invoice)
+
     oi = invoice.open_item
     if oi is None:
         oi = OpenItem(

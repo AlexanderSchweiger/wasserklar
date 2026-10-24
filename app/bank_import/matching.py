@@ -2,8 +2,9 @@ import re
 import unicodedata
 from decimal import Decimal
 
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 
+from app.banking import iban_valid, normalize_iban
 from app.models import (
     BankStatementLine,
     Customer,
@@ -92,8 +93,11 @@ def match_line(line: BankStatementLine) -> None:
     """Automatisches Matching fuer eine Bankauszug-Zeile.
 
     Reihenfolge:
+    0. Sammelgutschrift eines Lastschrift-Einzugs
     1. Rechnungsnummer (Format YYYY-NNNNN) im Verwendungszweck
-    2. Name des Absenders -> Kunde -> offene OPs (exakter Betrags-Match bevorzugt)
+       (1b. Ruecklastschrift einer eingezogenen Rechnung)
+    2. IBAN des Gegenkontos -> Kontakt -> offener Posten mit exaktem Betrag
+    3. Name des Absenders -> Kunde -> offene OPs (exakter Betrags-Match bevorzugt)
 
     Gilt fuer **beide** Richtungen: Zahlungseingaenge auf offene Forderungen und
     Rueckueberweisungen (negativer Betrag) auf die negativen Offenen Posten aus
@@ -113,6 +117,13 @@ def match_line(line: BankStatementLine) -> None:
     if amount == 0:
         return
 
+    # 0) Sammelgutschrift eines Lastschrift-Einzugs (Betrag = offene Summe eines
+    #    Laufs) — VOR der Rechnungsnummer: der Verwendungszweck einer Sammel-
+    #    buchung nennt oft nur die erste Rechnung des Laufs.
+    from app.direct_debit.services import match_bank_line
+    if amount > 0 and match_bank_line(line):
+        return
+
     # 1) Rechnungsnummer im Verwendungszweck
     if line.purpose:
         num = _find_invoice_number(line.purpose)
@@ -126,8 +137,83 @@ def match_line(line: BankStatementLine) -> None:
                 line.selected = True
                 return
 
-    # 2) Name (reihenfolgeunabhaengig) + Betrag
+    # 1b) Ruecklastschrift einer eingezogenen, bezahlten Rechnung (negativ).
+    if amount < 0 and match_bank_line(line):
+        return
+
+    # 2) IBAN des Gegenkontos -> Kontakt -> exakter offener Betrag. Ohne Betrags-
+    #    Treffer bleibt nur der Kontakt vorgemerkt, und der Name darf es noch
+    #    versuchen (z.B. zweiter Kontakt derselben Person ohne IBAN).
+    if _match_by_iban(line):
+        return
+    iban_customer_id = line.matched_customer_id
+
+    # 3) Name (reihenfolgeunabhaengig) + Betrag
     _match_by_name_amount(line)
+    if iban_customer_id and line.matched_open_item_id is None:
+        # Ohne Posten ist der Kontakt aus der IBAN verlaesslicher als einer aus
+        # dem (oft gekuerzten) OFX-Namen.
+        line.matched_customer_id = iban_customer_id
+
+
+def _match_by_iban(line: BankStatementLine) -> bool:
+    """Zuordnung ueber die IBAN des Gegenkontos, wenn die Rechnungsnummer fehlt.
+
+    Die IBAN ist der stabile Anker: George-OFX liefert viele Eingaenge ohne
+    Verwendungszweck und mit auf 32 Zeichen gekuerztem Namen.
+
+    1. Kontakte mit dieser IBAN (``Customer.iban``) suchen — auch inaktive, ein
+       ehemaliger Kontakt zahlt noch seine Schlussrechnung.
+    2. Genau ein offener Posten dieser Kontakte mit exakt passendem Betrag ->
+       zuordnen. Teilen sich mehrere Kontakte eine IBAN (Ehepaar mit gemeinsamem
+       Konto), entscheidet also nur ein eindeutiger Betrag.
+    3. Sonst nur den Kontakt vormerken, wenn er eindeutig ist (einziger Kontakt
+       oder einziger mit offenen Posten).
+
+    Das Vorzeichen traegt der Betragsvergleich mit: eine Rueckueberweisung
+    (Gegenkonto = Empfaenger = Kontakt) trifft nur einen Gutschrifts-Posten.
+    Gibt True zurueck, wenn ein offener Posten zugeordnet wurde.
+    """
+    iban = normalize_iban(line.counterparty_iban)
+    if not iban_valid(iban):
+        # OFX liefert im ACCTID mitunter eine nationale Kontonummer statt IBAN.
+        return False
+
+    # ``Customer.iban`` wird normalisiert gespeichert; replace/upper faengt
+    # Altbestand mit Leerzeichen ab (in allen drei Dialekten vorhanden).
+    customers = (
+        Customer.query
+        .filter(func.upper(func.replace(Customer.iban, " ", "")) == iban)
+        .all()
+    )
+    if not customers:
+        return False
+
+    amount = _as_decimal(line.amount)
+    ops = (
+        OpenItem.query.filter(
+            OpenItem.customer_id.in_([c.id for c in customers]),
+            OpenItem.status.in_([OpenItem.STATUS_OPEN, OpenItem.STATUS_PARTIAL]),
+        ).all()
+    )
+
+    exact = [op for op in ops if _as_decimal(op.open_balance) == amount]
+    if len(exact) == 1:
+        op = exact[0]
+        line.matched_open_item_id = op.id
+        line.matched_invoice_id = op.invoice_id
+        line.matched_customer_id = op.customer_id
+        line.match_type = BankStatementLine.MATCH_IBAN
+        line.selected = True
+        return True
+
+    if len(customers) == 1:
+        line.matched_customer_id = customers[0].id
+        return False
+    custs_with_ops = {op.customer_id for op in ops}
+    if len(custs_with_ops) == 1:
+        line.matched_customer_id = next(iter(custs_with_ops))
+    return False
 
 
 # Akademische Titel + Verbindungswoerter, die kein Namensbestandteil sind und

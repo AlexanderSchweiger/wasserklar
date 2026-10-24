@@ -476,8 +476,18 @@ def generate_docx(invoice, wg: dict, design: dict | None = None,
     payment_cell = payment_tbl.cell(0, 0)
     _set_cell_bg(payment_cell, payment_bg_hex)
 
+    # Bankeinzug: Lastschrift-Hinweis statt Zahlungsaufforderung (wie im PDF).
+    from app.direct_debit.notice import debit_notice
+    sepa_debit = None if is_credit else debit_notice(invoice)
+
     p_pay = payment_cell.paragraphs[0]
-    run_pay_lbl = p_pay.add_run("Rückzahlung" if is_credit else "Zahlung")
+    if is_credit:
+        pay_label = "Rückzahlung"
+    elif sepa_debit:
+        pay_label = sepa_debit["title"]
+    else:
+        pay_label = "Zahlung"
+    run_pay_lbl = p_pay.add_run(pay_label)
     run_pay_lbl.bold = True
     run_pay_lbl.font.color.rgb = heading_rgb
 
@@ -499,6 +509,15 @@ def generate_docx(invoice, wg: dict, design: dict | None = None,
                 "Es ergibt sich kein Rückzahlungsbetrag — die stornierte Rechnung "
                 "war noch nicht bezahlt. Bitte betrachten Sie die ursprüngliche "
                 "Zahlungsaufforderung als gegenstandslos.")
+    elif sepa_debit:
+        payment_cell.add_paragraph(sepa_debit["text"])
+        ids = []
+        if sepa_debit["creditor_id"]:
+            ids.append(f"Gläubiger-ID: {sepa_debit['creditor_id']}")
+        if sepa_debit["mandate_reference"]:
+            ids.append(f"Mandatsreferenz: {sepa_debit['mandate_reference']}")
+        if ids:
+            payment_cell.add_paragraph(" · ".join(ids))
     else:
         p_pay2 = payment_cell.add_paragraph(f"{term('pay_request')}, den Rechnungsbetrag von ")
         p_pay2.add_run(f"{_de_fmt(invoice.total_amount, 2)} €").bold = True

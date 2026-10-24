@@ -36,6 +36,8 @@ _DEFAULT_SORT = "name"
 
 # Erlaubte Werte des business-Filters (E-Rechnung, nur DE).
 _BUSINESS_FILTERS = {"yes", "no_email"}
+# Zahlungsart-Filter (SEPA-Lastschrift): incomplete = Bankeinzug ohne IBAN/Mandat.
+_PAYMENT_FILTERS = {"direct_debit", "transfer", "incomplete"}
 
 
 @bp.route("/")
@@ -57,6 +59,9 @@ def index():
     business_filter = request.args.get("business", "").strip()
     if business_filter not in _BUSINESS_FILTERS:
         business_filter = ""
+    payment_filter = request.args.get("payment", "").strip()
+    if payment_filter not in _PAYMENT_FILTERS:
+        payment_filter = ""
 
     query = Customer.query.filter_by(active=True)
     if type_filter == "customer":
@@ -78,6 +83,11 @@ def index():
         query = query.filter(Customer.is_business.is_(True))
         if business_filter == "no_email":
             query = query.filter(no_email_clause())
+    if payment_filter == "incomplete":
+        from app.direct_debit.notice import incomplete_clause
+        query = query.filter(incomplete_clause())
+    elif payment_filter:
+        query = query.filter(Customer.payment_method == payment_filter)
     # WG-Filter: Status (fehlendes Profil = Mitglied, Default) + Funktion. Der Status
     # gilt nur fuer Kunden — reine Lieferanten sind nie Mitglieder.
     if status_filter in STATUS_LABELS:
@@ -171,7 +181,9 @@ def index():
         status_filter=status_filter,
         func_filter=func_filter,
         business_filter=business_filter,
-        has_filter=bool(q or country_filter or status_filter or func_filter or business_filter),
+        payment_filter=payment_filter,
+        has_filter=bool(q or country_filter or status_filter or func_filter or business_filter
+                        or payment_filter),
         wg_profile_map=wg_profile_map,
         wg_functions_map=wg_functions_map,
         suppressed_emails=suppressed_emails,
@@ -804,6 +816,9 @@ def _apply_customer_fields(customer, form, *, is_new: bool) -> str | None:
     einvoice_error = _apply_einvoice_fields(customer, form)
     if einvoice_error:
         return einvoice_error
+    payment_error = _apply_payment_fields(customer, form)
+    if payment_error:
+        return payment_error
     if is_new:
         customer.active = True
     # member_since nur anfassen, wenn das Feld gesendet wurde — im Versorger-
@@ -843,6 +858,9 @@ def _apply_customer_fields(customer, form, *, is_new: bool) -> str | None:
         if result.error:
             return result.error
     numbers.assign_numbers(customer)
+    # Bankeinzug ohne eigene Mandatsreferenz: Praefix + Kundennummer (braucht die Nummer).
+    from app.direct_debit.notice import ensure_mandate_reference
+    ensure_mandate_reference(customer)
 
     # WG-Felder nur im Genossenschafts-Modus anwenden — im Versorger-Modus
     # fehlen sie im Formular, bestehende WG-Daten bleiben unangetastet.
@@ -892,6 +910,70 @@ def _apply_einvoice_fields(customer, form) -> str | None:
     customer.supplier_number = form.get("supplier_number", "").strip() or None
     customer.peppol_id = peppol_id or None
     _apply_business_flag(customer, form)
+    return None
+
+
+def _apply_payment_fields(customer, form) -> str | None:
+    """Zahlungsart, Bankverbindung und SEPA-Mandat aus dem Formular.
+
+    Nur mit Marker ``payment_fields=1`` (sonst bleibt alles stehen). Erst alles
+    pruefen, dann setzen. Die automatische Mandatsreferenz vergibt
+    ``ensure_mandate_reference`` nach der Kundennummer.
+    """
+    from datetime import date as _date
+
+    from app.banking import (
+        bic_valid, iban_is_sepa, iban_valid, normalize_bic, normalize_iban, sepa_id_valid,
+    )
+    from app.direct_debit.notice import mandate_reference_taken
+
+    if form.get("payment_fields") != "1":
+        return None
+    method = form.get("payment_method", "").strip()
+    if method not in Customer.PAYMENT_METHODS:
+        method = Customer.PAYMENT_TRANSFER
+    iban = normalize_iban(form.get("iban"))
+    bic = normalize_bic(form.get("bic"))
+    holder = form.get("account_holder", "").strip()
+    reference = form.get("mandate_reference", "").strip()
+    signed_raw = form.get("mandate_signed_on", "").strip()
+
+    if iban and not iban_valid(iban):
+        return "Die IBAN ist ungültig — Prüfziffer oder Länge stimmt nicht."
+    if bic and not bic_valid(bic):
+        return "Der BIC ist ungültig (8 oder 11 Zeichen, z. B. RZOOAT2L)."
+    if len(holder) > 70:
+        return "Der Kontoinhaber darf höchstens 70 Zeichen lang sein."
+    signed = None
+    if signed_raw:
+        try:
+            signed = _date.fromisoformat(signed_raw)
+        except ValueError:
+            return "Das Datum der Mandatsunterschrift ist ungültig."
+        if signed > _date.today():
+            return "Das Datum der Mandatsunterschrift liegt in der Zukunft."
+    if reference:
+        if not sepa_id_valid(reference):
+            return ("Die Mandatsreferenz darf nur Buchstaben, Ziffern und + ? / - : ( ) . , ' "
+                    "enthalten (keine Leerzeichen, höchstens 35 Zeichen).")
+        if mandate_reference_taken(reference, exclude_id=customer.id):
+            return f"Die Mandatsreferenz „{reference}“ ist schon bei einem anderen Kontakt vergeben."
+    if method == Customer.PAYMENT_DIRECT_DEBIT:
+        if not customer.is_customer:
+            return "Bankeinzug gibt es nur für Kunden — bitte die Kunden-Rolle wählen."
+        if not iban:
+            return "Für den Bankeinzug ist die IBAN Pflicht."
+        if not iban_is_sepa(iban):
+            return "Diese IBAN liegt außerhalb des SEPA-Raums — ein Bankeinzug ist nicht möglich."
+        if not signed:
+            return "Für den Bankeinzug ist das Datum der Mandatsunterschrift Pflicht."
+
+    customer.payment_method = method
+    customer.iban = iban or None
+    customer.bic = bic or None
+    customer.account_holder = holder or None
+    customer.mandate_reference = reference or None
+    customer.mandate_signed_on = signed
     return None
 
 
@@ -1075,6 +1157,18 @@ def import_preview():
             cfg.col_buyer_reference = suggested.col_buyer_reference
         if not cfg.col_einvoice_format:
             cfg.col_einvoice_format = suggested.col_einvoice_format
+        if not cfg.col_payment_method:
+            cfg.col_payment_method = suggested.col_payment_method
+        if not cfg.col_iban:
+            cfg.col_iban = suggested.col_iban
+        if not cfg.col_bic:
+            cfg.col_bic = suggested.col_bic
+        if not cfg.col_account_holder:
+            cfg.col_account_holder = suggested.col_account_holder
+        if not cfg.col_mandate_reference:
+            cfg.col_mandate_reference = suggested.col_mandate_reference
+        if not cfg.col_mandate_signed_on:
+            cfg.col_mandate_signed_on = suggested.col_mandate_signed_on
         if is_wg:
             if not cfg.col_wg_status:
                 cfg.col_wg_status = suggested.col_wg_status

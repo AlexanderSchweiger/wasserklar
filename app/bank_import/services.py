@@ -270,6 +270,13 @@ def commit_statement(statement_id: int, user_id: int) -> dict:
         try:
             if line.is_split:
                 created = _commit_split(line, stmt, user_id)
+            elif (line.match_type == BankStatementLine.MATCH_DIRECT_DEBIT_RETURN
+                  and line.matched_open_item_id):
+                # Ruecklastschrift: Zahlung zuruecknehmen + Lastschrift als zurueckgegeben
+                from app.direct_debit.services import commit_return_line
+                created = commit_return_line(line, stmt, user_id)
+                line.booking_id = next((b for b, _g in created if b), None)
+                line.booking_group_id = next((g for _b, g in created if g), None)
             elif line.matched_open_item_id:
                 created = _commit_with_op(line, stmt, user_id)
             else:

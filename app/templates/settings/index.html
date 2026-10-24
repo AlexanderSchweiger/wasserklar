@@ -317,8 +317,8 @@
           </div>
           <div class="alert alert-info mb-3">
             <i class="fas fa-info-circle me-1"></i>
-            Die Bankdaten werden ausschließlich auf Rechnungen angezeigt und haben
-            sonst keinerlei weitere Behandlung.
+            Die Bankdaten stehen auf den Rechnungen und sind das Konto, auf dem
+            Lastschrift-Einzüge gutgeschrieben werden.
           </div>
           <h4 class="mb-2">Steuerliche Angaben <small class="text-muted fw-normal">(Pflichtangaben auf Rechnungen)</small></h4>
           <div class="row g-2">
@@ -341,6 +341,64 @@
             Werden — sofern ausgefüllt — auf jeder Rechnung gedruckt. Für umsatzsteuerpflichtige
             Rechnungen ist eine der beiden Angaben vorgeschrieben
             ({{ 'UStG § 11' if country.code == 'AT' else '§ 14 Abs. 4 UStG' }}).
+          </div>
+        </div>
+      </div>
+
+      {# ── SEPA-Lastschrift (app/direct_debit) ─────────────────────────── #}
+      <div class="card mt-3" id="sepa-card">
+        <div class="card-header">
+          <h3 class="card-title"><i class="fas fa-file-signature me-1"></i> SEPA-Lastschrift <small class="text-muted fw-normal">(optional)</small></h3>
+        </div>
+        <div class="card-body">
+          <input type="hidden" name="sepa_fields" value="1">
+          <p class="text-muted">
+            Für Kontakte mit Zahlungsart <strong>Bankeinzug</strong>: Die Rechnung zeigt statt der
+            Zahlungsaufforderung einen Hinweis, dass der Betrag abgebucht wird, und unter
+            <em>Rechnungen / OP → Lastschrift-Einzug</em> entsteht die Datei für die Bank.
+          </p>
+          <div class="row g-2">
+            <div class="col-md-6">
+              <div class="mb-3">
+                <label class="form-label" for="sepa_creditor_id">Gläubiger-ID</label>
+                <input type="text" name="sepa_creditor_id" id="sepa_creditor_id" class="form-control"
+                       maxlength="35" value="{{ sepa.creditor_id }}"
+                       placeholder="{{ 'AT61ZZZ01234567890' if country.code == 'AT' else 'DE98ZZZ09999999999' }}">
+                <div class="form-text">
+                  {% if country.code == 'AT' %}Vergibt die Oesterreichische Nationalbank (Antrag über die Hausbank).
+                  {% else %}Vergibt die Deutsche Bundesbank (Antrag online).{% endif %}
+                  Ohne Gläubiger-ID ist kein Einzug möglich.
+                </div>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="mb-3">
+                <label class="form-label" for="sepa_mandate_prefix">Präfix der Mandatsreferenz</label>
+                <input type="text" name="sepa_mandate_prefix" id="sepa_mandate_prefix" class="form-control"
+                       maxlength="20" value="{{ sepa.mandate_prefix }}" placeholder="z. B. WG-">
+                <div class="form-text">
+                  Neue Mandate bekommen automatisch Präfix + Kundennummer (z. B. WG-10023). Bestehende
+                  Mandate behalten ihre Referenz.
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="sepa_notice_title">Hinweis auf der Rechnung (fett)</label>
+            <input type="text" name="sepa_notice_title" id="sepa_notice_title" class="form-control"
+                   maxlength="100" value="{{ sepa.notice_title }}" placeholder="{{ sepa.default_title }}">
+          </div>
+          <div class="mb-2">
+            <label class="form-label" for="sepa_notice_text">Hinweistext</label>
+            <textarea name="sepa_notice_text" id="sepa_notice_text" class="form-control" rows="3"
+                      maxlength="1000" placeholder="{{ sepa.default_text }}">{{ sepa.notice_text }}</textarea>
+            <div class="form-text">
+              Leer = Standardtext (siehe Platzhalter im Feld). Darunter druckt die Rechnung immer
+              Gläubiger-ID und Mandatsreferenz — damit gilt sie als Vorabankündigung des Einzugs.
+              Platzhalter:
+              {% for key, label in sepa.placeholders %}<code>{{ '{{ ' ~ key ~ ' }}' }}</code> {{ label }}{{ ', ' if not loop.last else '.' }}
+              {% endfor %}
+            </div>
           </div>
         </div>
       </div>
