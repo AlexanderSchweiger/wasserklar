@@ -35,7 +35,7 @@ from app.models import (
     ChargeType, TariffComponent, ChargeOverride,
     IncomingInvoice, Document, DocumentLink, DocumentEvent,
     AccountingHandover, AccountingHandoverItem,
-    DirectDebitRun, DirectDebitItem,
+    DirectDebitRun, DirectDebitItem, DirectDebitMandateEvent,
 )
 
 # Spalten die auf users.id verweisen — werden beim Import auf NULL gesetzt,
@@ -127,6 +127,8 @@ CATEGORIES = {
         WaterSample, LabResult,
         CustomerWgProfile, PropertyWgProfile, WgFunction,
         InvoiceEmailOptInCode, CustomerEmailConsentLog,
+        # Nachweis online erteilter Lastschrift-Mandate: gehoert zum Kontakt.
+        DirectDebitMandateEvent,
         Meeting, MeetingAgendaItem, MeetingInvitation, MeetingDeliveryLog,
         MeetingAttendance, MeetingResolution, MeetingProtocol,
         SchriftverkehrDocument,
@@ -187,7 +189,7 @@ INSERT_ORDER = [
     ChargeOverride,
     CustomerWgProfile, PropertyWgProfile, WgFunction,
     # Consent/Opt-in: kunden-gebunden → NACH Customer.
-    InvoiceEmailOptInCode, CustomerEmailConsentLog,
+    InvoiceEmailOptInCode, CustomerEmailConsentLog, DirectDebitMandateEvent,
     BillingPeriod, MeterReadingAccessCode, WaterTariff, TariffComponent, MeterReading,
     MeterReplacement,
     BillingRun, Invoice, InvoiceItem, InvoiceMeterReading, OpenItem, ReadingCorrection,
@@ -346,6 +348,7 @@ NATURAL_KEYS = {
     # Consent-Log ist append-only → immer Insert.
     InvoiceEmailOptInCode: ("customer_id",),
     CustomerEmailConsentLog: None,
+    DirectDebitMandateEvent: None,      # append-only Nachweis → immer Insert
     EmailSuppression: ("email",),
     # Schriftfuehrung: Sitzung + alle Kinder ohne stabilen natuerlichen
     # Schluessel → immer Insert (Voll-Replace ist der Regelpfad).
@@ -377,6 +380,7 @@ FOREIGN_KEYS = {
     PropertyOwnership: {"property_id": Property, "customer_id": Customer},
     InvoiceEmailOptInCode: {"customer_id": Customer},
     CustomerEmailConsentLog: {"customer_id": Customer},
+    DirectDebitMandateEvent: {"customer_id": Customer},
     CustomerWgProfile: {"customer_id": Customer},
     PropertyWgProfile: {"property_id": Property},
     WgFunction: {"customer_id": Customer},

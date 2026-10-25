@@ -36,32 +36,39 @@ _DEFAULT_SORT = "name"
 
 # Erlaubte Werte des business-Filters (E-Rechnung, nur DE).
 _BUSINESS_FILTERS = {"yes", "no_email"}
-# Zahlungsart-Filter (SEPA-Lastschrift): incomplete = Bankeinzug ohne IBAN/Mandat.
-_PAYMENT_FILTERS = {"direct_debit", "transfer", "incomplete"}
+# Zahlungsart-Filter (SEPA-Lastschrift): incomplete = Bankeinzug ohne IBAN/Mandat,
+# no_mandate = kein vollstaendiges Mandat (Ueberweiser + incomplete).
+_PAYMENT_FILTERS = {"direct_debit", "transfer", "incomplete", "no_mandate"}
 
 
-@bp.route("/")
-@login_required
-def index():
-    q = request.args.get("q", "").strip()
-    type_filter = request.args.get("type", "all")
-    if type_filter not in _TYPE_FILTERS:
-        type_filter = "all"
-    sort = request.args.get("sort", _DEFAULT_SORT)
-    if sort not in _SORT_KEYS:
-        sort = _DEFAULT_SORT
-    direction = request.args.get("dir", "asc")
-    if direction not in ("asc", "desc"):
-        direction = "asc"
-    country_filter = request.args.get("country", "").strip()
-    status_filter = request.args.get("status", "").strip()
-    func_filter = request.args.get("func", "").strip()
-    business_filter = request.args.get("business", "").strip()
-    if business_filter not in _BUSINESS_FILTERS:
-        business_filter = ""
-    payment_filter = request.args.get("payment", "").strip()
-    if payment_filter not in _PAYMENT_FILTERS:
-        payment_filter = ""
+def _list_filters(args):
+    """Liest und normalisiert die Filter der Kontaktliste (Liste + Sammeldruck)."""
+    def _pick(key, allowed, default=""):
+        value = (args.get(key) or "").strip()
+        return value if value in allowed else default
+
+    return {
+        "q": (args.get("q") or "").strip(),
+        "type": _pick("type", _TYPE_FILTERS, "all"),
+        "sort": _pick("sort", _SORT_KEYS, _DEFAULT_SORT),
+        "dir": _pick("dir", {"asc", "desc"}, "asc"),
+        "country": (args.get("country") or "").strip(),
+        "status": (args.get("status") or "").strip(),
+        "func": (args.get("func") or "").strip(),
+        "business": _pick("business", _BUSINESS_FILTERS),
+        "payment": _pick("payment", _PAYMENT_FILTERS),
+    }
+
+
+def _filtered_customer_query(f):
+    """Aktive Kontakte nach den Listenfiltern ``f`` (siehe ``_list_filters``), sortiert."""
+    q = f["q"]
+    type_filter = f["type"]
+    country_filter = f["country"]
+    status_filter = f["status"]
+    func_filter = f["func"]
+    business_filter = f["business"]
+    payment_filter = f["payment"]
 
     query = Customer.query.filter_by(active=True)
     if type_filter == "customer":
@@ -86,6 +93,9 @@ def index():
     if payment_filter == "incomplete":
         from app.direct_debit.notice import incomplete_clause
         query = query.filter(incomplete_clause())
+    elif payment_filter == "no_mandate":
+        from app.direct_debit.mandate_form import no_mandate_clause
+        query = query.filter(no_mandate_clause())
     elif payment_filter:
         query = query.filter(Customer.payment_method == payment_filter)
     # WG-Filter: Status (fehlendes Profil = Mitglied, Default) + Funktion. Der Status
@@ -119,7 +129,24 @@ def index():
             )
         ))
 
-    query = _apply_customer_sort(query, sort, direction)
+    return _apply_customer_sort(query, f["sort"], f["dir"])
+
+
+@bp.route("/")
+@login_required
+def index():
+    f = _list_filters(request.args)
+    q = f["q"]
+    type_filter = f["type"]
+    sort = f["sort"]
+    direction = f["dir"]
+    country_filter = f["country"]
+    status_filter = f["status"]
+    func_filter = f["func"]
+    business_filter = f["business"]
+    payment_filter = f["payment"]
+
+    query = _filtered_customer_query(f)
 
     pagination = paginate_query(query, page_key="customers")
     customers = pagination.items
@@ -293,10 +320,118 @@ def detail(customer_id):
     )
     open_corrections = open_corrections_for_customer(customer_id)
     correction_balance = customer_correction_balance(customer_id)
+    # Lastschrift-Mandat: Formular (nur mit Glaeubiger-ID) + Nachweise online erteilter Mandate.
+    from app.direct_debit.notice import creditor_id
     return render_template("customers/detail.html", customer=customer,
                            invoices=invoices, suppression=suppression,
                            open_corrections=open_corrections,
-                           correction_balance=correction_balance)
+                           correction_balance=correction_balance,
+                           mandate_form_available=bool(creditor_id()),
+                           mandate_events=customer.mandate_events.limit(5).all())
+
+
+# ---------------------------------------------------------------------------
+# SEPA-Lastschrift-Mandatsformular (app/direct_debit/mandate_form.py)
+# ---------------------------------------------------------------------------
+
+def _weasyprint_missing_redirect(target):
+    try:
+        import weasyprint  # noqa: F401 — nur Verfügbarkeitsprüfung
+        return None
+    except (ImportError, OSError):
+        flash("WeasyPrint ist nicht installiert. PDF-Export nur im Docker-Container verfügbar.",
+              "danger")
+        return redirect(target)
+
+
+@bp.route("/<int:customer_id>/mandate-form.pdf")
+@login_required
+def mandate_form_pdf(customer_id):
+    """Vorausgefülltes Lastschrift-Mandat eines Kontakts zum Unterschreiben."""
+    from app.direct_debit import mandate_form, notice
+    customer = db.get_or_404(Customer, customer_id)
+    back = url_for("customers.detail", customer_id=customer_id)
+    if not notice.creditor_id():
+        flash("Für das Mandatsformular fehlt die Gläubiger-ID (Einstellungen → Rechnung → "
+              "SEPA-Lastschrift).", "warning")
+        return redirect(back)
+    if (resp := _weasyprint_missing_redirect(back)):
+        return resp
+    pdf = mandate_form.render_mandate_pdf(customer)
+    response = make_response(pdf)
+    response.headers["Content-Type"] = "application/pdf"
+    filename = f"Lastschrift-Mandat_{customer.customer_number or customer.id}.pdf"
+    response.headers["Content-Disposition"] = f'inline; filename="{filename}"'
+    return response
+
+
+def _mandate_print_query(f):
+    """Kontakte für den Sammeldruck: Listenfilter + Kunde ohne vollständiges Mandat."""
+    from app.direct_debit.mandate_form import no_mandate_clause
+    return (_filtered_customer_query(f)
+            .filter(Customer.is_customer.is_(True))
+            .filter(no_mandate_clause()))
+
+
+@bp.route("/mandate-forms/preview")
+@login_required
+def mandate_forms_preview():
+    """Modal-Inhalt: wie viele Formulare der aktuelle Filter ergibt, in Teilen."""
+    from flask import current_app
+    from app.direct_debit import notice
+    f = _list_filters(request.args)
+    limit = current_app.config.get("BULK_PRINT_MAX", 100)
+    total = _mandate_print_query(f).order_by(None).count()
+    parts = [(i, i * limit + 1, min((i + 1) * limit, total))
+             for i in range((total + limit - 1) // limit)]
+    return render_template("customers/_mandate_forms_preview.html", total=total, parts=parts,
+                           filters=f, creditor_missing=not notice.creditor_id())
+
+
+@bp.route("/mandate-forms", methods=["POST"])
+@login_required
+def mandate_forms():
+    """Sammeldruck: ein Mandatsformular je Kontakt des aktuellen Filters (ein Teil)."""
+    from flask import current_app
+    from app.direct_debit import mandate_form, notice
+    from app.temp_files import send_pdf_writer
+    f = _list_filters(request.form)
+    back = url_for("customers.index", **{k: v for k, v in f.items() if v})
+    if not notice.creditor_id():
+        flash("Für das Mandatsformular fehlt die Gläubiger-ID.", "warning")
+        return redirect(back)
+    if (resp := _weasyprint_missing_redirect(back)):
+        return resp
+    limit = current_app.config.get("BULK_PRINT_MAX", 100)
+    part = max(request.form.get("part", 0, type=int) or 0, 0)
+    customers = _mandate_print_query(f).offset(part * limit).limit(limit).all()
+    if not customers:
+        flash("Keine Kontakte ohne vollständiges Mandat gefunden.", "info")
+        return redirect(back)
+    writer = mandate_form.render_merged_mandates(customers)
+    suffix = f"_Teil{part + 1}" if part else ""
+    return send_pdf_writer(writer, f"Lastschrift-Mandate{suffix}.pdf")
+
+
+@bp.route("/<int:customer_id>/mandate-proof/<int:event_id>.pdf")
+@login_required
+def mandate_proof_pdf(customer_id, event_id):
+    """Nachweis eines online erteilten Mandats (für die Akte / die Bank)."""
+    from app.direct_debit import mandate_form
+    from app.models import DirectDebitMandateEvent
+    event = db.get_or_404(DirectDebitMandateEvent, event_id)
+    if event.customer_id != customer_id:
+        from flask import abort
+        abort(404)
+    back = url_for("customers.detail", customer_id=customer_id)
+    if (resp := _weasyprint_missing_redirect(back)):
+        return resp
+    response = make_response(mandate_form.render_proof_pdf(event))
+    response.headers["Content-Type"] = "application/pdf"
+    ref = re.sub(r"[^A-Za-z0-9._-]", "_", event.mandate_reference or str(event.id))
+    filename = f"Mandatsnachweis_{ref}.pdf"
+    response.headers["Content-Disposition"] = f'inline; filename="{filename}"'
+    return response
 
 
 @bp.route("/<int:customer_id>/edit", methods=["GET", "POST"])

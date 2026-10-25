@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<style>
+  /* Briefkopf + Adressblock wie das Rechnungs-PDF (Fensterkuvert). Das Formular
+     MUSS auf eine Seite passen: render_mandate_pdf rendert bei Ueberlauf mit
+     ``compact`` 1 (dichter) bzw. 2 (ohne Einleitungstext) erneut.
+     app/direct_debit/mandate_form.py */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: {{ design.font_family | safe }};
+    font-size: {{ '8.5pt' if compact else '9.5pt' }};
+    color: {{ design.text_color }};
+    line-height: {{ '1.28' if compact else '1.35' }};
+  }
+  @page {
+    @bottom-center { content: element(pagefoot); vertical-align: top; width: 100%; }
+  }
+  .footer {
+    position: running(pagefoot);
+    font-size: 7.5pt;
+    color: {{ design.muted_color }};
+    border-top: 1px solid {{ design.border_color }};
+    padding-top: 2mm;
+  }
+  .header { display: flex; justify-content: space-between; margin-bottom: {{ '0.5cm' if compact else '0.9cm' }}; }
+  .invoice-logo { max-height: 60px; max-width: 220px; margin-bottom: 6px; }
+  .brand-wordmark .bw-name { font-size: 15pt; font-weight: bold; line-height: 1.1; color: {{ design.heading_color }}; }
+  .brand-wordmark .bw-sub { font-size: 8pt; letter-spacing: 0.15em; text-transform: uppercase; margin-top: 3px; color: {{ design.muted_color }}; }
+  .contact-info { color: {{ design.accent_color }}; line-height: 1.15; }
+  .recipient { margin-top: 0.3cm; font-size: 10.5pt; line-height: 1.3; }
+  .sender-return {
+    font-size: 7pt; color: {{ design.muted_color }}; line-height: 1.2; margin-bottom: 4px;
+    white-space: nowrap; overflow: hidden;
+    border-bottom: 0.5pt solid {{ design.border_color }}; padding-bottom: 3px;
+  }
+  h1 { font-size: {{ '13pt' if compact else '15pt' }}; margin: {{ '0.35cm 0 0.15cm 0' if compact else '0.5cm 0 0.2cm 0' }}; color: {{ design.heading_color }}; }
+  .intro { white-space: pre-line; margin-bottom: 0.2cm; }
+  .online {
+    display: grid; grid-template-columns: {{ '1.6cm' if compact else '2cm' }} 1fr; gap: 0.35cm; align-items: center;
+    border: 1pt solid {{ design.accent_color }}; border-radius: 3pt;
+    padding: 0.15cm 0.3cm; margin-bottom: 0.15cm;
+  }
+  .online img { width: {{ '1.6cm' if compact else '2cm' }}; height: {{ '1.6cm' if compact else '2cm' }}; }
+  .online .t { font-weight: bold; color: {{ design.heading_color }}; }
+  .online .url { font-family: monospace; font-size: 8.5pt; word-break: break-all; }
+  .muted { color: {{ design.muted_color }}; }
+  .keep { break-inside: avoid; }
+  .section-title {
+    font-weight: bold; font-size: 8.5pt; text-transform: uppercase; letter-spacing: 0.06em;
+    color: {{ design.heading_color }};
+    border-bottom: 0.75pt solid {{ design.border_color }};
+    padding-bottom: 1pt; margin: {{ '0.15cm 0 0.08cm 0' if compact else '0.22cm 0 0.1cm 0' }};
+  }
+  .ids { display: grid; grid-template-columns: 1.2fr 1fr 0.8fr; gap: 0.4cm; margin-top: 1pt; }
+  .ids .k, .lbl { color: {{ design.muted_color }}; }
+  tr { break-inside: avoid; }
+  .authorization p { margin-bottom: 0.06cm; text-align: justify; }
+  .field { margin-top: {{ '0.12cm' if compact else '0.2cm' }}; }
+  .field .label { font-size: 7.5pt; color: {{ design.muted_color }}; }
+  .field .line { border-bottom: 0.75pt solid {{ design.text_color }}; height: {{ '0.5cm' if compact else '0.55cm' }}; }
+  .boxes { display: grid; grid-template-columns: repeat({{ iban_boxes }}, 1fr); margin-top: 1pt; }
+  .boxes span { border: 0.6pt solid {{ design.text_color }}; border-left: none; height: {{ '0.5cm' if compact else '0.58cm' }}; }
+  .boxes span:first-child { border-left: 0.6pt solid {{ design.text_color }}; }
+  .boxes span.gap { border-left: 1.4pt solid {{ design.text_color }}; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6cm; }
+  .sign { display: grid; grid-template-columns: 1fr 1.4fr; gap: 0.6cm; }
+  .sign .line { height: {{ '0.75cm' if compact else '0.85cm' }}; }
+  .return {
+    margin-top: 0.2cm; font-size: 8pt; padding: 0.15cm 0.3cm;
+    background: {{ design.header_bg }}; color: {{ design.header_text }};
+  }
+</style>
+</head>
+<body>
+
+<div class="footer">
+  {{ wg.name }}
+  {% if wg.address %} &mdash; {{ wg.address | replace('\n', ' | ') | replace('\\n', ' | ') }}{% endif %}
+  {% if creditor.creditor_id %} &mdash; Gläubiger-ID {{ creditor.creditor_id }}{% endif %}
+  {% if wg.email %} &mdash; {{ wg.email }}{% endif %}
+</div>
+
+<div class="header">
+  <div>
+    {% if wg.logo %}<img class="invoice-logo" src="{{ wg.logo }}" alt="{{ wg.name }}">
+    {% elif wg.logo_text %}
+    <div class="brand-wordmark">
+      <div class="bw-name">{{ wg.logo_text }}</div>
+      {% if wg.logo_subtitle %}<div class="bw-sub">{{ wg.logo_subtitle }}</div>{% endif %}
+    </div>
+    {% endif %}
+  </div>
+  <div class="contact-info">
+    {% if contact_info %}<div style="font-size:{{ contact_info_font_size | default(10) }}pt">{{ contact_info | safe }}</div>{% endif %}
+  </div>
+</div>
+
+<div class="recipient">
+  {% if invoice_sender_address %}<div class="sender-return">{{ invoice_sender_address | e }}</div>{% endif %}
+  {{ customer.letter_name }}<br>
+  {% set street = [customer.strasse, customer.hausnummer] | select | join(' ') %}
+  {% set city = [customer.plz, customer.ort] | select | join(' ') %}
+  {% if street %}{{ street }}<br>{% endif %}
+  {% if city %}{{ city }}<br>{% endif %}
+  {% if customer.land is foreign_country %}{{ customer.land }}<br>{% endif %}
+</div>
+
+<h1>SEPA-Lastschrift-Mandat</h1>
+
+{% if intro and compact < 2 %}<div class="intro">{{ intro }}</div>{% endif %}
+
+{% if online_mandate and online_mandate.url %}
+<div class="online keep">
+  {% if online_mandate.qr_src %}<img src="{{ online_mandate.qr_src }}" alt="QR-Code">{% else %}<div></div>{% endif %}
+  <div>
+    <div class="t">Schneller geht es online</div>
+    QR-Code scannen oder Adresse öffnen, Kontodaten eingeben, bestätigen — dann müssen Sie
+    dieses Formular nicht zurückschicken.
+    <div><span class="url">{{ online_mandate.url }}</span>{% if online_mandate.code %} · Code <strong>{{ online_mandate.code }}</strong>{% endif %}</div>
+  </div>
+</div>
+{% endif %}
+
+<div class="keep">
+  <div class="section-title">Zahlungsempfänger</div>
+  <div>{{ creditor.name }}{% if creditor.street %}, {{ creditor.street }}{% endif %}{% if creditor.city %}, {{ creditor.city }}{% endif %}</div>
+  <div class="ids">
+    <div><span class="k">Gläubiger-ID</span> {{ creditor.creditor_id }}</div>
+    <div><span class="k">Mandatsreferenz</span>
+      {% if reference %}<strong>{{ reference }}</strong>{% else %}folgt mit der Rechnung{% endif %}</div>
+    <div><span class="k">Zahlung</span> wiederkehrend</div>
+  </div>
+</div>
+
+<div class="keep authorization">
+  <div class="section-title">Ermächtigung</div>
+  {% for p in paragraphs %}<p>{{ p }}</p>{% endfor %}
+</div>
+
+<div class="keep">
+  <div class="section-title">Zahlungspflichtige/r</div>
+  <div>{{ customer.letter_name }}, {{ customer.address_display() }}{% if customer.customer_number %}
+    <span class="muted">({{ contact_number_label(customer) }} {{ customer.customer_number }})</span>{% endif %}</div>
+
+  <div class="field">
+    <div class="label">Kontoinhaber/in (falls abweichend)</div>
+    <div class="line"></div>
+  </div>
+  <div class="field">
+    <div class="label">IBAN</div>
+    <div class="boxes">{% for i in range(iban_boxes) %}<span{% if i and i % 4 == 0 %} class="gap"{% endif %}></span>{% endfor %}</div>
+  </div>
+  <div class="two">
+    <div class="field">
+      <div class="label">BIC (freiwillig)</div>
+      <div class="line"></div>
+    </div>
+    <div class="field">
+      <div class="label">Kreditinstitut</div>
+      <div class="line"></div>
+    </div>
+  </div>
+  <div class="sign">
+    <div class="field">
+      <div class="label">Ort, Datum</div>
+      <div class="line"></div>
+    </div>
+    <div class="field">
+      <div class="label">Unterschrift Kontoinhaber/in</div>
+      <div class="line"></div>
+    </div>
+  </div>
+</div>
+
+<div class="return keep">
+  <strong>Bitte unterschrieben zurück an:</strong>
+  {{ creditor.name }}{% if creditor.street %}, {{ creditor.street }}{% endif %}{% if creditor.city %}, {{ creditor.city }}{% endif %}
+  {% if wg.email %} — eingescannt auch per E-Mail an {{ wg.email }}{% endif %}.
+  Das Mandat können Sie jederzeit bei uns widerrufen.
+</div>
+
+</body>
+</html>

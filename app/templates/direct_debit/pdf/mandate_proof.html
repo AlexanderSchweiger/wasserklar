@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<style>
+  /* Nachweis eines online erteilten SEPA-Mandats fuer die Akte
+     (app/direct_debit/mandate_form.py: render_proof_html). */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: {{ design.font_family | safe }}; font-size: 10pt; color: {{ design.text_color }}; line-height: 1.4; }
+  h1 { font-size: 15pt; margin-bottom: 0.15cm; color: {{ design.heading_color }}; }
+  .sub { color: {{ design.muted_color }}; margin-bottom: 0.5cm; }
+  .section-title {
+    font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.06em;
+    color: {{ design.heading_color }}; border-bottom: 0.75pt solid {{ design.border_color }};
+    padding-bottom: 1.5pt; margin: 0.45cm 0 0.15cm 0;
+  }
+  table.kv { width: 100%; border-collapse: collapse; }
+  table.kv td { padding: 2pt 0; vertical-align: top; }
+  table.kv td.k { width: 5cm; color: {{ design.muted_color }}; }
+  tr { break-inside: avoid; }
+  .text { white-space: pre-line; text-align: justify; }
+  .note { margin-top: 0.6cm; font-size: 8.5pt; color: {{ design.muted_color }}; }
+</style>
+</head>
+<body>
+
+<h1>Nachweis: SEPA-Lastschrift-Mandat (online erteilt)</h1>
+<div class="sub">{{ wg.name }}</div>
+
+<div class="section-title">Erteilung</div>
+<table class="kv">
+  <tr><td class="k">Zeitpunkt (UTC)</td><td>{{ event.created_at.strftime('%d.%m.%Y %H:%M:%S') }}</td></tr>
+  <tr><td class="k">IP-Adresse</td><td>{{ event.ip or '—' }}</td></tr>
+  <tr><td class="k">Browser</td><td>{{ event.user_agent or '—' }}</td></tr>
+  <tr><td class="k">Bestätigung an</td><td>{{ event.email or '—' }}</td></tr>
+  <tr><td class="k">Identifikation</td><td>persönlicher Code aus dem Schreiben an den Zahlungspflichtigen</td></tr>
+</table>
+
+<div class="section-title">Zahlungsempfänger</div>
+<table class="kv">
+  <tr><td class="k">Name</td><td>{{ event.creditor_name or '—' }}</td></tr>
+  <tr><td class="k">Gläubiger-ID</td><td>{{ event.creditor_id or '—' }}</td></tr>
+  <tr><td class="k">Mandatsreferenz</td><td><strong>{{ event.mandate_reference or '—' }}</strong></td></tr>
+  <tr><td class="k">Zahlungsart</td><td>Wiederkehrende Zahlungen</td></tr>
+</table>
+
+<div class="section-title">Zahlungspflichtige/r</div>
+<table class="kv">
+  <tr><td class="k">Kontakt</td><td>{{ customer.letter_name }}{% if customer.customer_number %} ({{ customer.customer_number }}){% endif %}</td></tr>
+  <tr><td class="k">Anschrift</td><td>{{ customer.address_display() }}</td></tr>
+  <tr><td class="k">Kontoinhaber/in</td><td>{{ event.account_holder or '—' }}</td></tr>
+  <tr><td class="k">IBAN</td><td>{{ iban_display or '—' }}</td></tr>
+  <tr><td class="k">BIC</td><td>{{ event.bic or '—' }}</td></tr>
+</table>
+
+<div class="section-title">Wortlaut, dem zugestimmt wurde ({{ event.mandate_text_version or '—' }})</div>
+<div class="text">{{ event.mandate_text }}</div>
+
+<div class="note">
+  Erstellt am {{ generated_on.strftime('%d.%m.%Y') }} aus dem Protokoll des Programms.
+  Der Eintrag wird beim Erteilen geschrieben und danach nicht mehr verändert.
+</div>
+
+</body>
+</html>

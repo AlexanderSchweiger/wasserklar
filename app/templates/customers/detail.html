@@ -66,9 +66,18 @@
         {% if customer.notes %}
         <p class="text-muted"><em>{{ customer.notes }}</em></p>
         {% endif %}
-        {% if customer.iban or customer.is_direct_debit %}
+        {% if customer.iban or customer.is_direct_debit or (mandate_form_available and customer.is_customer) %}
         <hr>
-        <small class="text-muted d-block mb-1"><i class="fas fa-university me-1"></i> Zahlung &amp; Bankverbindung</small>
+        <div class="d-flex align-items-center mb-1">
+          <small class="text-muted"><i class="fas fa-university me-1"></i> Zahlung &amp; Bankverbindung</small>
+          {% if mandate_form_available and customer.is_customer %}
+          <a href="{{ url_for('customers.mandate_form_pdf', customer_id=customer.id) }}" target="_blank"
+             hx-boost="false" class="btn btn-sm btn-outline-secondary ms-auto"
+             title="Vorausgefülltes SEPA-Lastschrift-Mandat zum Unterschreiben">
+            <i class="fas fa-file-signature me-1"></i> Mandatsformular
+          </a>
+          {% endif %}
+        </div>
         <small class="d-block">
           Zahlungsart:
           {% if customer.is_direct_debit %}<span class="badge bg-azure-lt">Bankeinzug</span>{% else %}<strong>Überweisung</strong>{% endif %}
@@ -84,6 +93,13 @@
         </div>
         {% endif %}
         {% endif %}
+        {% for ev in mandate_events %}
+        <small class="d-block text-muted">
+          <i class="fas fa-globe me-1"></i>Mandat online erteilt am {{ ev.created_at.strftime('%d.%m.%Y %H:%M') }} UTC{% if ev.ip %} (IP {{ ev.ip }}){% endif %}
+          · <a href="{{ url_for('customers.mandate_proof_pdf', customer_id=customer.id, event_id=ev.id) }}"
+               target="_blank" hx-boost="false">Nachweis</a>
+        </small>
+        {% endfor %}
         {% endif %}
         {% set _overrides = charge_overrides_display(customer) %}
         {% if _overrides %}

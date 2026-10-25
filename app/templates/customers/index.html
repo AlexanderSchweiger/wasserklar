@@ -98,6 +98,7 @@
       <option value="direct_debit" {% if payment_filter == 'direct_debit' %}selected{% endif %}>Bankeinzug</option>
       <option value="incomplete" {% if payment_filter == 'incomplete' %}selected{% endif %}>Bankeinzug, Angaben fehlen</option>
       <option value="transfer" {% if payment_filter == 'transfer' %}selected{% endif %}>Überweisung</option>
+      <option value="no_mandate" {% if payment_filter == 'no_mandate' %}selected{% endif %}>Ohne vollständiges Mandat</option>
     </select>
     <input type="hidden" name="type" value="{{ type_filter }}">
     <input type="hidden" name="sort" value="{{ sort }}">
@@ -124,6 +125,11 @@
           <li>
             <button type="button" class="dropdown-item" data-bs-toggle="modal" data-bs-target="#fixHousenumbersModal">
               <i class="fas fa-map-marker-alt me-2"></i> Hausnummern korrigieren
+            </button>
+          </li>
+          <li>
+            <button type="button" class="dropdown-item" data-bs-toggle="modal" data-bs-target="#mandateFormsModal">
+              <i class="fas fa-file-signature me-2"></i> Lastschrift-Mandate drucken
             </button>
           </li>
         </ul>
@@ -173,10 +179,48 @@
     </div>
   </div>
 </div>
+<div class="modal fade" id="mandateFormsModal" tabindex="-1" aria-labelledby="mandateFormsModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="mandateFormsModalLabel">
+          <i class="fas fa-file-signature me-2"></i> Lastschrift-Mandate drucken
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <div class="modal-body" id="mandateFormsBody">
+        <div class="text-muted"><i class="fas fa-spinner fa-spin me-1"></i> Wird gezählt …</div>
+      </div>
+      <div class="modal-footer">
+        <span class="text-muted small me-auto">Es gilt der aktuelle Filter der Liste.</span>
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Schließen</button>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
 {% include "_modal_edit_helpers.html" %}
+<script>
+// Mandats-Sammeldruck: beim Öffnen mit den aktuellen Filtern zählen lassen.
+(function () {
+  var modal = document.getElementById('mandateFormsModal');
+  if (!modal) return;
+  modal.addEventListener('show.bs.modal', function () {
+    var body = document.getElementById('mandateFormsBody');
+    if (!window.htmx || !body) return;
+    var params = {};
+    ['q', 'type', 'sort', 'dir', 'country', 'status', 'func', 'business', 'payment'].forEach(function (name) {
+      var el = document.querySelector('[name="' + name + '"]:not(#mandateFormsBody *)');
+      if (el && el.value) params[name] = el.value;
+    });
+    htmx.ajax('GET', '{{ url_for("customers.mandate_forms_preview") }}', {
+      target: '#mandateFormsBody', swap: 'innerHTML', values: params,
+    });
+  });
+})();
+</script>
 <script>
 // Nach dem Modal-Speichern nur die betroffene Zeile neu laden und an Ort und
 // Stelle tauschen — statt window.location.reload(), das Filter, Suche und

@@ -101,6 +101,8 @@ def _save_sepa_settings(form):
     title = (form.get('sepa_notice_title') or '').strip()[:100]
     AppSetting.set(notice.NOTICE_TITLE_KEY, title or None)
 
+    _save_mandate_form_settings(form)
+
     text = (form.get('sepa_notice_text') or '').strip()[:1000]
     if text:
         sample = {key: f'[{key}]' for key, _label in notice.NOTICE_PLACEHOLDERS}
@@ -113,9 +115,37 @@ def _save_sepa_settings(form):
     AppSetting.set(notice.NOTICE_TEXT_KEY, text or None)
 
 
+def _save_mandate_form_settings(form):
+    """Mandatsformular: Umfang, Einleitungstext, Beilage im Rechnungsdruck."""
+    from app.direct_debit import mandate_form
+
+    scope = ' '.join((form.get('sepa_mandate_scope') or '').split())[:300]
+    AppSetting.set(mandate_form.SCOPE_KEY, scope or None)
+
+    enclosure = form.get('sepa_mandate_form_enclosure') == 'on'
+    AppSetting.set(mandate_form.ENCLOSURE_KEY, 'true' if enclosure else None)
+
+    intro = (form.get('sepa_mandate_form_intro') or '').strip()[:1000]
+    if intro:
+        sample = {key: f'[{key}]' for key, _label in mandate_form.INTRO_PLACEHOLDERS}
+        try:
+            mandate_form.render_intro(intro, sample)
+        except Exception:
+            flash('Der Einleitungstext des Mandatsformulars enthält einen Platzhalter-Fehler '
+                  '— nicht übernommen.', 'warning')
+            return
+    AppSetting.set(mandate_form.INTRO_KEY, intro or None)
+
+
 def _sepa_context():
-    from app.direct_debit import notice
+    from app.direct_debit import mandate_form, notice
     return {
+        'mandate_scope': AppSetting.get(mandate_form.SCOPE_KEY) or '',
+        'default_scope': mandate_form.default_scope(),
+        'mandate_form_intro': AppSetting.get(mandate_form.INTRO_KEY) or '',
+        'default_intro': mandate_form.default_intro(),
+        'intro_placeholders': mandate_form.INTRO_PLACEHOLDERS,
+        'mandate_form_enclosure': AppSetting.get(mandate_form.ENCLOSURE_KEY) == 'true',
         'creditor_id': AppSetting.get(notice.CREDITOR_ID_KEY) or '',
         'mandate_prefix': AppSetting.get(notice.MANDATE_PREFIX_KEY) or '',
         'notice_title': AppSetting.get(notice.NOTICE_TITLE_KEY) or '',

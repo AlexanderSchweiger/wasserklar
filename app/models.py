@@ -3383,6 +3383,49 @@ class DirectDebitItem(db.Model):
         return f"<DirectDebitItem {self.end_to_end_id} {self.amount}>"
 
 
+class DirectDebitMandateEvent(db.Model):
+    """Append-only Nachweis zu einem SEPA-Lastschrift-Mandat (app/direct_debit/).
+
+    Beim online erteilten Mandat (SaaS, ``online_granted``) tritt dieser Eintrag an
+    die Stelle der Unterschrift: Zeitpunkt, IP, Browser und der genaue Wortlaut,
+    dem der Zahler zugestimmt hat. Die Mandatsdaten sind ein Snapshot — der
+    Kontakt kann spaeter ein anderes Konto bekommen, der Nachweis bleibt.
+    """
+    __tablename__ = "direct_debit_mandate_events"
+
+    ONLINE_GRANTED = "online_granted"
+
+    id = db.Column(db.Integer, primary_key=True)
+    customer_id = db.Column(
+        db.Integer, db.ForeignKey("customers.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    action = db.Column(db.String(32), nullable=False)
+    mandate_reference = db.Column(db.String(35))
+    iban = db.Column(db.String(34))
+    bic = db.Column(db.String(11))
+    account_holder = db.Column(db.String(70))
+    creditor_name = db.Column(db.String(200))
+    creditor_id = db.Column(db.String(35))
+    mandate_text = db.Column(db.Text)
+    mandate_text_version = db.Column(db.String(20))
+    email = db.Column(db.String(120))
+    ip = db.Column(db.String(64))
+    user_agent = db.Column(db.String(255))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    customer = db.relationship(
+        "Customer",
+        backref=db.backref(
+            "mandate_events", lazy="dynamic", cascade="all, delete-orphan",
+            order_by="DirectDebitMandateEvent.id.desc()",
+        ),
+    )
+
+    def __repr__(self):
+        return f"<DirectDebitMandateEvent customer={self.customer_id} {self.action}>"
+
+
 # ---------------------------------------------------------------------------
 # Anwendungseinstellungen (Key-Value-Speicher)
 # ---------------------------------------------------------------------------

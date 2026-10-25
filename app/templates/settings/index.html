@@ -400,6 +400,46 @@
               {% endfor %}
             </div>
           </div>
+
+          <hr class="my-3">
+          <h4 class="mb-2"><i class="fas fa-signature me-1"></i> Mandatsformular</h4>
+          <p class="text-muted small mb-2">
+            Ein vorausgefülltes Formular zum Unterschreiben — einzeln am Kontakt, als Sammeldruck
+            aus der Kontaktliste (Aktion „Lastschrift-Mandat drucken“) oder als Beilage hinter der
+            Rechnung.{% if is_saas is defined and is_saas %} Im Pro-Tarif steht darauf zusätzlich ein
+            QR-Code, mit dem das Mitglied das Mandat online erteilt — klären Sie vorher mit Ihrer
+            Bank, dass Ihre Inkassovereinbarung online erteilte Mandate erlaubt.{% endif %}
+          </p>
+          <div class="mb-3">
+            <label class="form-label" for="sepa_mandate_scope">Umfang des Mandats</label>
+            <input type="text" name="sepa_mandate_scope" id="sepa_mandate_scope" class="form-control"
+                   maxlength="300" value="{{ sepa.mandate_scope }}" placeholder="{{ sepa.default_scope }}">
+            <div class="form-text">
+              Steht im Ermächtigungstext („… Zahlungen <em>{{ sepa.default_scope }}</em> von meinem Konto
+              … einzuziehen“). Nennen Sie alles, was Sie abbuchen wollen — ein Mandat „nur für
+              Wassergebühren“ deckt z. B. keine Poolbefüllung. Leer = Standard.
+            </div>
+          </div>
+          <div class="mb-2">
+            <label class="form-label" for="sepa_mandate_form_intro">Einleitungstext</label>
+            <textarea name="sepa_mandate_form_intro" id="sepa_mandate_form_intro" class="form-control" rows="4"
+                      maxlength="1000" placeholder="{{ sepa.default_intro }}">{{ sepa.mandate_form_intro }}</textarea>
+            <div class="form-text">
+              Leer = Standardtext. Platzhalter:
+              {% for key, label in sepa.intro_placeholders %}<code>{{ '{{ ' ~ key ~ ' }}' }}</code> {{ label }}{{ ', ' if not loop.last else '.' }}
+              {% endfor %}
+            </div>
+          </div>
+          <label class="form-check form-switch mt-2">
+            <input class="form-check-input" type="checkbox" name="sepa_mandate_form_enclosure"
+                   {% if sepa.mandate_form_enclosure %}checked{% endif %}>
+            <span class="form-check-label">Mandatsformular dem Rechnungsdruck beilegen</span>
+          </label>
+          <div class="form-text">
+            Beim Sammeldruck (Rechnungsliste, Post-Versand eines Rechnungslaufs) folgt hinter der
+            ersten Rechnung jedes Kunden ohne vollständiges Mandat ein Formular. Beim beidseitigen
+            Druck beginnt es auf der Rückseite, wenn die Rechnung eine ungerade Seitenzahl hat.
+          </div>
         </div>
       </div>
 

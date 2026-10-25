@@ -1347,12 +1347,15 @@ def bulk_pdf_merged():
     # konsumiert die Bild-Buffer der beteiligten Dokumente, sodass danach auch
     # ein Einzel-write_pdf desselben Dokuments scheitert (kein sauberer Fallback
     # moeglich). Einzel-Render + pypdf-Concat laeuft dagegen stabil durch.
+    from app.direct_debit.mandate_form import EnclosureAppender
+    enclosures = EnclosureAppender()  # Lastschrift-Mandat als Beilage (Einstellung)
     writer = PdfWriter()
     for invoice in invoices:
         pdf_bytes = render_invoice_pdf(invoice)
         if _invoice_is_locked(invoice) and not safe_tenant_path(invoice.pdf_path):
             archive_invoice_file(invoice, pdf_bytes, "pdf")
         writer.append(io.BytesIO(pdf_bytes))
+        enclosures.after(writer, invoice)
     db.session.commit()
     # Byte-identische Objekte fasst send_pdf_writer zusammen (hilft bei deckenden Logos;
     # bei transparenten PNGs mit SMask greift es kaum — bekannte Einschraenkung). Anonyme
@@ -2728,6 +2731,8 @@ def billing_run_post_bulk(run_id):
     if not invoices:
         return redirect(url_for("invoices.billing_run_detail", run_id=run_id))
 
+    from app.direct_debit.mandate_form import EnclosureAppender
+    enclosures = EnclosureAppender()  # Lastschrift-Mandat als Beilage (Einstellung)
     writer = PdfWriter()
     for invoice in invoices:
         # Der Post-Beleg wird jetzt versendet — seine E-Rechnungsdaten einfrieren,
@@ -2740,6 +2745,8 @@ def billing_run_post_bulk(run_id):
             invoice.status = Invoice.STATUS_SENT
             _create_or_update_open_item(invoice)
         writer.append(io.BytesIO(pdf_bytes))
+        # Beilage nur im Sammel-PDF, nie im archivierten Rechnungsbeleg.
+        enclosures.after(writer, invoice)
     db.session.commit()
     return send_pdf_writer(writer, "Rechnungen_Post.pdf")
 
