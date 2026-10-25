@@ -47,6 +47,7 @@ def render_invoice_html(invoice, *, for_email=False):
     template_name = design.get("template", "invoices/pdf_template.html")
     extra = build_pdf_context(invoice, for_email=for_email)
     from app.direct_debit.notice import debit_notice
+    from app.invoices import meter_statement
     from app.invoices.services import invoice_legal_context
     return render_template(
         template_name,
@@ -55,6 +56,8 @@ def render_invoice_html(invoice, *, for_email=False):
         legal=invoice_legal_context(invoice),
         # Bankeinzug: Lastschrift-Hinweis statt Zahlungsaufforderung (None = Ueberweisung).
         sepa_debit=debit_notice(invoice),
+        # Verbrauchsnachweis: gedruckt nur bei ``meter_statement.show``.
+        meter_statement=meter_statement.for_document(invoice),
         contact_info=get_contact_info(),
         contact_info_font_size=get_contact_info_font_size(),
         invoice_sender_address=get_invoice_sender_address(),

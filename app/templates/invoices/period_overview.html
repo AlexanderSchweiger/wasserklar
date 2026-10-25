@@ -329,7 +329,7 @@
     </div>
   </div>
   <div class="card-body p-0">
-    <div class="table-responsive">
+    <div class="table-responsive table-pin-actions">
       <table class="table table-hover table-striped mb-0 align-middle" id="po-table">
         <thead>
           <tr>
@@ -343,7 +343,7 @@
             {# Je Gebührenart des Tarifs (ohne Wasser) eine Spalte — Wassercent,
                Grund-/Zusatzgebühr, eigene Arten. #}
             {% for col in charge_columns %}
-            <th class="po-sort text-end" data-key="charge{{ loop.index0 }}" data-type="num">{{ col.label }} <i class="fas fa-sort text-muted"></i></th>
+            <th class="po-sort text-end" data-key="charge{{ loop.index0 }}" data-type="num" title="{{ col.label }}"><span class="th-truncate">{{ col.label }}</span> <i class="fas fa-sort text-muted"></i></th>
             {% endfor %}
             <th class="po-sort text-end" data-key="netto" data-type="num">Netto <i class="fas fa-sort text-muted"></i></th>
             {% if run_has_vat %}
@@ -352,7 +352,7 @@
             <th class="po-sort text-end" data-key="brutto" data-type="num">Brutto <i class="fas fa-sort text-muted"></i></th>
             <th class="po-sort" data-key="mailstatus" data-type="text">Mail-Status <i class="fas fa-sort text-muted"></i></th>
             <th class="po-sort" data-key="status" data-type="text">Status <i class="fas fa-sort text-muted"></i></th>
-            <th></th>
+            <th class="col-actions"></th>
           </tr>
         </thead>
         <tbody>
@@ -446,7 +446,7 @@
                 <span class="badge bg-warning text-dark">{{ inv.status }}</span>
               {% endif %}
             </td>
-            <td class="text-nowrap">
+            <td class="text-nowrap col-actions">
               <a href="{{ url_for('invoices.detail', invoice_id=inv.id) }}"
                  class="btn btn-sm btn-outline-secondary" title="Rechnungsdetail">
                 <i class="fas fa-eye"></i>

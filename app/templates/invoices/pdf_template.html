@@ -71,24 +71,55 @@
     border-bottom: none;
     color: {{ design.heading_color }};
   }
+  /* Fusszeile im unteren Seitenrand (jede Seite) statt im Textfluss — sonst
+     schob sie eine volle Rechnung allein auf eine zweite Seite. */
+  @page {
+    @bottom-center {
+      content: element(pagefoot);
+      vertical-align: top;
+      width: 100%;
+    }
+  }
   .footer {
-    margin-top: 2cm;
-    font-size: 9pt;
+    position: running(pagefoot);
+    font-size: 8pt;
     color: {{ design.muted_color }};
     border-top: 1px solid {{ design.border_color }};
-    padding-top: 0.5cm;
+    padding-top: 2mm;
   }
   .payment-info {
-    margin-top: 1cm;
+    margin-top: 0.7cm;
     padding: 0.5cm;
     background: {{ design.payment_bg }};
     border: 1px solid {{ design.payment_border }};
     color: {{ design.payment_text }};
   }
   .payment-info strong { color: {{ design.heading_color }}; }
+  /* Verbrauchsnachweis (Zaehlerstaende) */
+  .meter-statement { margin-top: 0.4cm; break-inside: avoid; }
+  .ms-head { font-size: 10pt; font-weight: bold; color: {{ design.heading_color }}; margin-bottom: 2px; }
+  .ms-head .ms-period { font-weight: normal; font-size: 9pt; color: {{ design.muted_color }}; }
+  table.ms-table { margin: 0; }
+  table.ms-table th {
+    background: none; color: {{ design.muted_color }}; font-weight: normal;
+    font-size: 8.5pt; padding: 3px 8px; border-bottom: 1px solid {{ design.border_color }};
+  }
+  table.ms-table td { font-size: 9pt; padding: 3px 8px; }
+  .ms-date { color: {{ design.muted_color }}; font-size: 8.5pt; margin-right: 4px; }
+  .ms-tag { color: {{ design.muted_color }}; font-size: 8pt; font-style: italic; }
+  .ms-note { font-size: 8.5pt; color: {{ design.muted_color }}; margin-top: 3px; }
 </style>
 </head>
 <body>
+
+{# Laeuft als Fusszeile auf jeder Seite mit — muss deshalb vor dem Inhalt stehen. #}
+<div class="footer">
+  {{ wg.name }}
+  {% if wg.address %} &mdash; {{ wg.address | replace('\n', ' | ') | replace('\\n', ' | ') }}{% endif %}
+  {% if wg.email %} &mdash; {{ wg.email }}{% endif %}
+  {% if legal and legal.vat_id %} &mdash; {{ legal.vat_id_label }} {{ legal.vat_id }}{% endif %}
+  {% if legal and legal.tax_number %} &mdash; Steuernr. {{ legal.tax_number }}{% endif %}
+</div>
 
 <div class="header">
   <div>
@@ -169,7 +200,8 @@
     </tr>
   </thead>
   <tbody>
-    {% for item in invoice.items %}
+    {# Mahngebuehren sind Positionen, gehoeren aber nicht zur Rechnung (Summen ohne sie). #}
+    {% for item in invoice.items if not item.is_dunning_fee %}
     <tr>
       <td>{{ item.description }}{% if item.is_estimated %} <strong>(geschätzt)</strong>{% endif %}</td>
       <td class="text-right">{{ item.quantity|de_number(2) }}</td>
@@ -201,6 +233,45 @@
 
 {% if legal and legal.small_business_note %}
 <p style="margin-top:0.3cm">{{ legal.small_business_note }}</p>
+{% endif %}
+
+{# Verbrauchsnachweis — nur wenn er die abgerechnete Menge exakt erklaert
+   (app/invoices/meter_statement.py). #}
+{% if meter_statement and meter_statement.show %}
+{% set ms = meter_statement %}
+<div class="meter-statement">
+  <div class="ms-head">Zählerstände{% if ms.period_name %} <span class="ms-period">· Abrechnungsperiode {{ ms.period_name }}</span>{% endif %}</div>
+  <table class="ms-table">
+    <thead>
+      <tr><th>Zähler</th><th>Anfangsstand</th><th>Endstand</th><th class="text-right">Verbrauch</th></tr>
+    </thead>
+    <tbody>
+      {% for r in ms.rows %}
+      <tr>
+        <td>{{ r.meter_number }}{% if r.is_sub %} <span class="ms-tag">Subzähler</span>{% endif %}
+          {%- if r.end_event == 'removed' %} <span class="ms-tag">ausgebaut</span>
+          {%- elif r.start_event == 'installed' %} <span class="ms-tag">eingebaut</span>{% endif %}</td>
+        <td>{% if r.start_value is not none %}{% if r.start_date %}<span class="ms-date">{{ r.start_date.strftime('%d.%m.%Y') }}</span>{% endif %}{{ ms.fmt(r.start_value) }}
+          {%- if r.start_estimated %} <span class="ms-tag">geschätzt</span>{% endif %}
+          {%- if r.start_event == 'owner_change' %} <span class="ms-tag">Eigentümerwechsel</span>{% endif %}{% else %}—{% endif %}</td>
+        <td>{% if r.end_date %}<span class="ms-date">{{ r.end_date.strftime('%d.%m.%Y') }}</span>{% endif %}{{ ms.fmt(r.end_value) }}
+          {%- if r.end_estimated %} <span class="ms-tag">geschätzt</span>{% endif %}
+          {%- if r.end_event == 'owner_change' %} <span class="ms-tag">Eigentümerwechsel</span>{% endif %}</td>
+        <td class="text-right">{{ ms.fmt(r.consumption) }} m³</td>
+      </tr>
+      {% endfor %}
+      {% if ms.rows | length > 1 %}
+      <tr class="total-row">
+        <td colspan="3" class="text-right">Verbrauch gesamt</td>
+        <td class="text-right">{{ ms.fmt(ms.total) }} m³</td>
+      </tr>
+      {% endif %}
+    </tbody>
+  </table>
+  {% for c in ms.corrections %}
+  <div class="ms-note">Korrektur {{ c.period_name }} · Zähler {{ c.meter_number }}: geschätzt {{ ms.fmt(c.estimated) }} m³, abgelesen {{ ms.fmt(c.real) }} m³ → {{ ms.fmt(c.delta|abs) }} m³ {{ 'nachverrechnet' if c.delta > 0 else 'gutgeschrieben' }}.</div>
+  {% endfor %}
+</div>
 {% endif %}
 
 {% if invoice.notes %}
@@ -247,13 +318,6 @@
 
 <p class="closing">Mit freundlichen Grüßen<br>{{ wg.name }}</p>
 
-<div class="footer">
-  {{ wg.name }}
-  {% if wg.address %} &mdash; {{ wg.address | replace('\n', ' | ') | replace('\\n', ' | ') }}{% endif %}
-  {% if wg.email %} &mdash; {{ wg.email }}{% endif %}
-  {% if legal and legal.vat_id %} &mdash; {{ legal.vat_id_label }} {{ legal.vat_id }}{% endif %}
-  {% if legal and legal.tax_number %} &mdash; Steuernr. {{ legal.tax_number }}{% endif %}
-</div>
 
 </body>
 </html>

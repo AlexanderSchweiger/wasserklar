@@ -24,6 +24,7 @@ from app.accounting.services import (
     default_water_tax_rate, is_year_vat_liable, open_fiscal_year_error,
 )
 from app.invoices import tariff_engine as engine
+from app.invoices import meter_statement
 from app.meters.estimation import (
     _base_value, apply_corrections_to_invoice, cap_invoice_at_zero,
     customer_correction_balance, estimate_meter_value,
@@ -378,6 +379,8 @@ def _build_settlement_invoice(*, prop, period, stichtag, tariff, fee_mode,
     billed_meter_ids = []
     for line in lines:
         db.session.add(InvoiceItem(invoice_id=inv.id, **line))
+    # Verbrauchsnachweis: Stand am Stichtag je Zaehler mit einfrieren.
+    meter_statement.freeze(inv, meter_statement.rows_for_settlement(period, stichtag, snapshots))
     for snap in snapshots:
         if snap["consumption_billed"] is not None:
             billed_meter_ids.append(snap["meter"].id)

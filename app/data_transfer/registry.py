@@ -16,7 +16,7 @@ from app.models import (
     WaterTariff, TaxRate, Account, RealAccount, Project,
     FiscalYear, MeterReadingAccessCode, MeterReading, MeterReplacement,
     MeterTour, MeterTourStop, OwnerChange, OwnerChangeMeterValue,
-    Invoice, InvoiceItem, BillingRun, BillingPeriod, OpenItem,
+    Invoice, InvoiceItem, InvoiceMeterReading, BillingRun, BillingPeriod, OpenItem,
     BookingGroup, Booking, Transfer, RealAccountYearBalance,
     DunningPolicy, DunningStage, DunningNotice,
     AppSetting, InvoiceCounter, CustomerCounter, SupplierCounter,
@@ -139,7 +139,8 @@ CATEGORIES = {
         Note,
     ],
     "buchungen": [
-        MeterReading, MeterReplacement, BillingRun, Invoice, InvoiceItem, OpenItem,
+        MeterReading, MeterReplacement, BillingRun, Invoice, InvoiceItem, InvoiceMeterReading,
+        OpenItem,
         MeterTour, MeterTourStop,
         OwnerChange, OwnerChangeMeterValue,
         ReadingCorrection,
@@ -189,7 +190,7 @@ INSERT_ORDER = [
     InvoiceEmailOptInCode, CustomerEmailConsentLog,
     BillingPeriod, MeterReadingAccessCode, WaterTariff, TariffComponent, MeterReading,
     MeterReplacement,
-    BillingRun, Invoice, InvoiceItem, OpenItem, ReadingCorrection,
+    BillingRun, Invoice, InvoiceItem, InvoiceMeterReading, OpenItem, ReadingCorrection,
     # Lastschrift NACH Customer/Invoice/OpenItem; Kopf VOR Positionen.
     DirectDebitRun, DirectDebitItem,
     # Eigentuemerwechsel NACH Invoice (settlement_invoice_id) + WaterMeter/
@@ -303,6 +304,7 @@ NATURAL_KEYS = {
     BillingRun: None,                   # kein natuerlicher Schluessel
     Invoice: ("invoice_number",),
     InvoiceItem: None,
+    InvoiceMeterReading: None,         # Kind einer Rechnung — immer Insert
     OpenItem: None,
     ReadingCorrection: None,
     BookingGroup: None,
@@ -401,6 +403,7 @@ FOREIGN_KEYS = {
     InvoiceItem: {"invoice_id": Invoice, "account_id": Account, "project_id": Project,
                   "dunning_notice_id": DunningNotice,        # zweiter Pass
                   "reading_correction_id": ReadingCorrection},  # zweiter Pass
+    InvoiceMeterReading: {"invoice_id": Invoice, "meter_id": WaterMeter},
     OpenItem: {"customer_id": Customer, "invoice_id": Invoice, "account_id": Account},
     ReadingCorrection: {"customer_id": Customer, "meter_id": WaterMeter,
                         "billing_period_id": BillingPeriod,

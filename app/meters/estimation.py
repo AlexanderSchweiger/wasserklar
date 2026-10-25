@@ -61,9 +61,14 @@ def average_consumption(meter, *, limit=5):
     return avg, n
 
 
-def _base_value(meter, period):
-    """Letzter bekannter Zaehlerstand VOR ``period`` (nach Perioden-Startdatum),
-    sonst der ``initial_value`` des Zaehlers. ``None`` wenn beides fehlt."""
+def base_reading(meter, period):
+    """Stand, ab dem der Verbrauch in ``period`` zaehlt — dieselbe Kette wie
+    ``recompute_meter_chain``: die letzte Ablesung VOR ``period`` (nach
+    Perioden-Startdatum), sonst der ``initial_value`` zum Einbaudatum.
+
+    Dict ``{value, date, is_estimated, from_install}``; ``value`` ist ``None``,
+    wenn beides fehlt. Der Verbrauchsnachweis der Rechnung zeigt Datum und
+    Schaetz-Marker mit an."""
     prev = (
         MeterReading.query
         .join(BillingPeriod, BillingPeriod.id == MeterReading.billing_period_id)
@@ -75,8 +80,16 @@ def _base_value(meter, period):
         .first()
     )
     if prev is not None:
-        return prev.value
-    return meter.initial_value
+        return {"value": prev.value, "date": prev.reading_date,
+                "is_estimated": bool(prev.is_estimated), "from_install": False}
+    return {"value": meter.initial_value, "date": meter.installed_from,
+            "is_estimated": False, "from_install": True}
+
+
+def _base_value(meter, period):
+    """Letzter bekannter Zaehlerstand VOR ``period`` (nach Perioden-Startdatum),
+    sonst der ``initial_value`` des Zaehlers. ``None`` wenn beides fehlt."""
+    return base_reading(meter, period)["value"]
 
 
 def estimate_meter_value(meter, period):

@@ -391,7 +391,8 @@ def generate_docx(invoice, wg: dict, design: dict | None = None,
         doc.add_paragraph("Wir stellen wie folgt in Rechnung:")
 
     # ── Positionen-Tabelle ────────────────────────────────────────────────
-    items = invoice.items
+    # Mahngebuehren sind Positionen, gehoeren aber nicht zur Rechnung (Summen ohne sie).
+    items = [item for item in invoice.items if not item.is_dunning_fee]
     tax_summary = invoice.tax_breakdown  # {rate: {"net", "tax"}}
     has_tax = bool(tax_summary)
     col_count = 5  # Beschreibung / Menge / Einheit / Einzelpreis / Betrag
@@ -461,6 +462,13 @@ def generate_docx(invoice, wg: dict, design: dict | None = None,
     # ── Kleinunternehmer-Hinweis (nur nicht USt-pflichtige Jahre, opt-in) ─
     if legal["small_business_note"]:
         doc.add_paragraph(legal["small_business_note"])
+
+    # ── Verbrauchsnachweis (wie im PDF, nur bei ``show``) ─────────────────
+    from app.invoices.meter_statement import for_document
+    statement = for_document(invoice)
+    if statement.show:
+        _add_meter_statement(doc, statement, font_name=font_name,
+                             muted_rgb=muted_rgb, heading_rgb=heading_rgb)
 
     # ── Hinweistext ───────────────────────────────────────────────────────
     if invoice.notes:
@@ -558,6 +566,78 @@ def generate_docx(invoice, wg: dict, design: dict | None = None,
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()
+
+
+_METER_TAGS = {"installed": "eingebaut", "removed": "ausgebaut"}
+
+
+def _meter_value_text(statement, day, value, estimated, event) -> str:
+    if value is None:
+        return "—"
+    parts = [day.strftime("%d.%m.%Y")] if day else []
+    parts.append(statement.fmt(value))
+    if estimated:
+        parts.append("(geschätzt)")
+    if event == "owner_change":
+        parts.append("(Eigentümerwechsel)")
+    return " ".join(parts)
+
+
+def _add_meter_statement(doc, statement, *, font_name, muted_rgb, heading_rgb):
+    """Zaehlerstaende unter den Positionen — gleicher Inhalt wie im PDF
+    (``app/invoices/meter_statement.py``)."""
+    p_head = doc.add_paragraph()
+    run = p_head.add_run("Zählerstände")
+    run.bold = True
+    run.font.color.rgb = heading_rgb
+    if statement.period_name:
+        run_period = p_head.add_run(f" · Abrechnungsperiode {statement.period_name}")
+        run_period.font.color.rgb = muted_rgb
+
+    tbl = doc.add_table(rows=1, cols=4)
+    tbl.style = "Table Grid"
+    for i, hdr in enumerate(("Zähler", "Anfangsstand", "Endstand", "Verbrauch")):
+        if i == 3:
+            _right_align_cell(tbl.rows[0].cells[i], hdr, font_name=font_name,
+                              font_size=Pt(9), color=muted_rgb)
+        else:
+            tbl.rows[0].cells[i].text = hdr
+            hdr_run = tbl.rows[0].cells[i].paragraphs[0].runs[0]
+            hdr_run.font.size = Pt(9)
+            hdr_run.font.color.rgb = muted_rgb
+    for r in statement.rows:
+        cells = tbl.add_row().cells
+        meter = r.meter_number
+        if r.is_sub:
+            meter += " (Subzähler)"
+        tag = _METER_TAGS.get(r.end_event) or _METER_TAGS.get(r.start_event)
+        if tag:
+            meter += f" – {tag}"
+        cells[0].text = meter
+        cells[1].text = _meter_value_text(statement, r.start_date, r.start_value,
+                                          r.start_estimated, r.start_event)
+        cells[2].text = _meter_value_text(statement, r.end_date, r.end_value,
+                                          r.end_estimated, r.end_event)
+        _right_align_cell(cells[3], f"{statement.fmt(r.consumption)} m³", font_size=Pt(9))
+        for cell in cells[:3]:
+            for cell_run in cell.paragraphs[0].runs:
+                cell_run.font.size = Pt(9)
+    if len(statement.rows) > 1:
+        row = tbl.add_row().cells
+        row[0].merge(row[2])
+        _right_align_cell(row[0], "Verbrauch gesamt", font_size=Pt(9), bold=True)
+        _right_align_cell(row[3], f"{statement.fmt(statement.total)} m³",
+                          font_size=Pt(9), bold=True)
+    for corr in statement.corrections:
+        delta = corr["delta"]
+        verb = "nachverrechnet" if delta > 0 else "gutgeschrieben"
+        p_corr = doc.add_paragraph()
+        corr_run = p_corr.add_run(
+            f"Korrektur {corr['period_name']} · Zähler {corr['meter_number']}: "
+            f"geschätzt {statement.fmt(corr['estimated'])} m³, abgelesen "
+            f"{statement.fmt(corr['real'])} m³ → {statement.fmt(abs(delta))} m³ {verb}.")
+        corr_run.font.size = Pt(8.5)
+        corr_run.font.color.rgb = muted_rgb
 
 
 def _add_total_row(tbl, col_count: int, amount, label: str, color_rgb: RGBColor | None = None):

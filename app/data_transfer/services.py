@@ -41,7 +41,7 @@ from app.models import (
     AppSetting, BankStatementLine, BankStatementLineAllocation,
     Booking, BookingGroup, Customer, CustomerCounter, SupplierCounter,
     DunningNotice, Document, DocumentEvent, DocumentLink, FiscalYear, IncomingInvoice, Invoice,
-    InvoiceCounter, InvoiceItem, RolePermission, SchriftverkehrDocument,
+    InvoiceCounter, InvoiceItem, InvoiceMeterReading, RolePermission, SchriftverkehrDocument,
     AccountingHandover, AccountingHandoverItem, DirectDebitItem, DirectDebitRun,
 )
 from app.data_transfer.registry import (
@@ -240,6 +240,8 @@ def _build_query_filtered(model, years: list[int], invoice_ids: set | None,
             q = q.filter(func.extract("year", getattr(model, spec[1])).in_(years))
     elif model is InvoiceItem and invoice_ids is not None:
         q = q.filter(InvoiceItem.invoice_id.in_(invoice_ids or [-1]))
+    elif model is InvoiceMeterReading and invoice_ids is not None:
+        q = q.filter(InvoiceMeterReading.invoice_id.in_(invoice_ids or [-1]))
     elif model is DunningNotice and invoice_ids is not None:
         q = q.filter(DunningNotice.invoice_id.in_(invoice_ids or [-1]))
     elif model is BookingGroup and booking_group_ids is not None:
@@ -319,7 +321,8 @@ def export_to_zip(selection: dict, fileobj, *, exported_by: str = "system") -> d
     schema = _active_schema()
     existing_tables_pre = set(sa_inspect(db.engine).get_table_names(schema=schema))
     invoice_ids = (_filtered_invoice_ids(years)
-                   if (years and any(m in models for m in (Invoice, InvoiceItem, DunningNotice))
+                   if (years and any(m in models for m in (Invoice, InvoiceItem, InvoiceMeterReading,
+                                                           DunningNotice))
                        and Invoice.__tablename__ in existing_tables_pre)
                    else None)
     booking_group_ids = (_filtered_booking_group_ids(years)
@@ -426,7 +429,7 @@ def export_to_zip(selection: dict, fileobj, *, exported_by: str = "system") -> d
                 "rows": len(records),
                 "filtered": bool(years) and (
                     model in YEAR_FILTERS or model in (
-                        InvoiceItem, DunningNotice, BookingGroup,
+                        InvoiceItem, InvoiceMeterReading, DunningNotice, BookingGroup,
                         Document, IncomingInvoice, DocumentLink, DocumentEvent,
                         AccountingHandoverItem, DirectDebitItem)
                 ),

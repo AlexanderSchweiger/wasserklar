@@ -2099,8 +2099,16 @@ class Invoice(EmailTrackableMixin, db.Model):
 
     # E-Mail-Versand-Tracking-Spalten kommen aus EmailTrackableMixin.
 
+    # order_by: Postgres liefert ohne ORDER BY keine feste Reihenfolge — die
+    # Positionen erscheinen auf Rechnung, Word und E-Rechnung in Anlage-Reihenfolge.
     items = db.relationship("InvoiceItem", backref="invoice", lazy="select",
-                            cascade="all, delete-orphan")
+                            cascade="all, delete-orphan", order_by="InvoiceItem.id")
+    # Verbrauchsnachweis: die beim Entstehen eingefrorenen Zaehlerstaende
+    # (app/invoices/meter_statement.py).
+    meter_readings = db.relationship(
+        "InvoiceMeterReading", backref="invoice", lazy="select",
+        cascade="all, delete-orphan",
+        order_by="(InvoiceMeterReading.sort_order, InvoiceMeterReading.id)")
     created_by = db.relationship("User", foreign_keys=[created_by_id])
     bookings = db.relationship("Booking", backref="invoice", lazy="dynamic")
     billing_period = db.relationship("BillingPeriod")
@@ -2477,6 +2485,59 @@ class InvoiceItem(db.Model):
 
     def __repr__(self):
         return f"<InvoiceItem {self.description}>"
+
+
+class InvoiceMeterReading(db.Model):
+    """Verbrauchsnachweis einer Rechnung: je Zaehler Anfangs- und Endstand
+    samt dem daraus verrechneten Verbrauch — eingefroren beim Entstehen der
+    Rechnung (Rechnungslauf, Schlussrechnung) bzw. beim Versenden eines
+    Altentwurfs. Ablesungen bleiben danach aenderbar (Schaetzung → echter
+    Stand, Eigentuemerwechsel ueberschreibt den Periodenstand); die Rechnung
+    zeigt trotzdem, was sie abgerechnet hat. Regeln: app/invoices/meter_statement.py.
+
+    ``start_event``: ``installed`` (Einbau in der Periode) | ``owner_change``
+    (Stand beim Eigentuemerwechsel) | NULL. ``end_event``: ``removed``
+    (Ausbau beim Zaehlertausch) | ``owner_change`` (Stichtag der
+    Schlussrechnung) | NULL. ``consumption`` = dem Rechnungsempfaenger
+    verrechnete m³ dieses Zaehlers (nach Abzug laut Schlussrechnung)."""
+    __tablename__ = "invoice_meter_readings"
+
+    EVENT_INSTALLED = "installed"
+    EVENT_REMOVED = "removed"
+    EVENT_OWNER_CHANGE = "owner_change"
+
+    id = db.Column(db.Integer, primary_key=True)
+    invoice_id = db.Column(
+        db.Integer, db.ForeignKey("invoices.id", ondelete="CASCADE"),
+        nullable=False, index=True)
+    sort_order = db.Column(db.Integer, nullable=False, default=0, server_default=db.text("0"))
+    # Zaehler kann spaeter verschwinden — Nummer + Art sind eingefroren.
+    meter_id = db.Column(
+        db.Integer, db.ForeignKey("water_meters.id", ondelete="SET NULL"), nullable=True)
+    meter_number = db.Column(db.String(100), nullable=False)
+    meter_type = db.Column(db.String(10), nullable=False, default="main",
+                           server_default=db.text("'main'"))
+    start_date = db.Column(db.Date, nullable=True)
+    start_value = db.Column(db.Numeric(12, 3), nullable=True)
+    start_estimated = db.Column(db.Boolean, nullable=False, default=False,
+                                server_default=db.text("false"))
+    start_event = db.Column(db.String(20), nullable=True)
+    end_date = db.Column(db.Date, nullable=True)
+    end_value = db.Column(db.Numeric(12, 3), nullable=True)
+    end_estimated = db.Column(db.Boolean, nullable=False, default=False,
+                              server_default=db.text("false"))
+    end_event = db.Column(db.String(20), nullable=True)
+    consumption = db.Column(db.Numeric(12, 3), nullable=False)
+
+    meter = db.relationship("WaterMeter")
+
+    @property
+    def is_sub(self):
+        return self.meter_type == "sub"
+
+    def __repr__(self):
+        return (f"<InvoiceMeterReading inv={self.invoice_id} {self.meter_number} "
+                f"{self.start_value}->{self.end_value}>")
 
 
 # ---------------------------------------------------------------------------

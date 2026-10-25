@@ -16,6 +16,7 @@ from app.invoices.send_email_hooks import run_before_send, read_message_id
 from app.extensions import db
 from app.models import Invoice, InvoiceItem, EmailEvent, Customer, WaterMeter, MeterReading, WaterTariff, Booking, Account, Property, OpenItem, Project, RealAccount, InvoiceCounter, AppSetting, BillingRun, BillingPeriod, ReadingCorrection, ChargeType, TariffComponent
 from app.invoices import tariff_engine as engine
+from app.invoices import meter_statement
 from app.meters.estimation import apply_corrections_to_invoice, cap_invoice_at_zero, reverse_corrections_for_invoice
 from app.email_tracking import record_email_sent
 from app.file_safety import safe_tenant_path
@@ -682,6 +683,10 @@ def generate():
             for line in engine.build_lines(charges, case):
                 db.session.add(InvoiceItem(invoice_id=inv.id, project_id=run_project_id,
                                            **line))
+            # Verbrauchsnachweis: die Zaehlerstaende, aus denen die Wassermenge
+            # entsteht, mit der Rechnung einfrieren (app/invoices/meter_statement.py).
+            meter_statement.freeze(
+                inv, meter_statement.rows_for_billing(prop, period, prop_readings, ded))
 
             # Damit USt (sofern vorhanden) im Gesamtbetrag berücksichtigt wird:
             db.session.flush()
@@ -1065,6 +1070,7 @@ def detail(invoice_id):
         # direkt im Template.)
         refund_suggestion=refund_suggestion(invoice),
         email_blocked_reason=email_blocked_reason,
+        meter_statement=meter_statement.statement_for(invoice),
     )
 
 

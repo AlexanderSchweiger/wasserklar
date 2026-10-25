@@ -380,6 +380,33 @@ tr.overdue { background-color: #fff3cd !important; }
   white-space: nowrap;
 }
 
+/* Dieselbe fixierte Actions-Spalte fuer breite Tabellen ausserhalb der
+   is-fill-Kette (Seite scrollt normal, nur die Tabelle horizontal), z.B.
+   Rechnungslauf-Detail und Jahresuebersicht mit einer Spalte je Gebuehrenart.
+   Opt-in via .table-pin-actions am .table-responsive-Wrapper. */
+.table-pin-actions > .table > tbody > tr > td.col-actions,
+.table-pin-actions > .table > thead > tr > th.col-actions {
+  position: sticky;
+  right: 0;
+  width: 1%;
+  white-space: nowrap;
+  background: var(--tblr-bg-surface, #fff);
+  box-shadow: inset 1px 0 0 var(--tblr-border-color, #dee2e6);
+}
+.table-pin-actions > .table > tbody > tr > td.col-actions { z-index: 1; }
+.table-pin-actions > .table > thead > tr > th.col-actions { z-index: 2; }
+
+/* Lange Spaltenkoepfe (Gebuehrenarten) kuerzen; der volle Text steht im
+   title-Attribut des <th> und erscheint beim Hovern. */
+.th-truncate {
+  display: inline-block;
+  max-width: 7rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
 /* Druck + schmale Viewports: zurueck auf normalen Seitenfluss. */
 @media print {
   .page-wrapper.is-fill,

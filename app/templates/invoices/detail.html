@@ -597,6 +597,88 @@
       </div>
     </div>
     {% endif %}
+
+    {# Verbrauchsnachweis: die mit der Rechnung festgehaltenen Zaehlerstaende
+       (app/invoices/meter_statement.py) — hier immer sichtbar, auf PDF/Word nur
+       mit Einstellung und passender Summe. #}
+    {% if meter_statement and meter_statement.rows %}
+    {% set ms = meter_statement %}
+    <div class="card mt-3">
+      <div class="card-header">
+        <h3 class="card-title"><i class="fas fa-tachometer-alt me-1"></i> Zählerstände</h3>
+        {% if ms.period_name %}<div class="card-actions text-muted small">Abrechnungsperiode {{ ms.period_name }}</div>{% endif %}
+      </div>
+      {% if not ms.matches %}
+      <div class="alert alert-warning m-3 mb-0">
+        <i class="fas fa-exclamation-triangle me-1"></i>
+        Die Summe der Zählerstände ({{ ms.fmt(ms.total) }} m³) passt nicht zur abgerechneten
+        Wassermenge ({{ ms.fmt(ms.billed) if ms.billed is not none else '—' }} m³) —
+        die Zählerstände erscheinen deshalb nicht auf der Rechnung.
+      </div>
+      {% elif not ms.enabled %}
+      <div class="card-body py-2 small text-muted">
+        Erscheint nicht auf der Rechnung — unter Einstellungen → Dokumentformat abgeschaltet.
+      </div>
+      {% elif not ms.frozen %}
+      <div class="card-body py-2 small text-muted">
+        Aus den aktuellen Ablesungen ermittelt; wird beim Versenden mit der Rechnung festgehalten.
+      </div>
+      {% endif %}
+      <div class="table-responsive">
+        <table class="table table-sm mb-0">
+          <thead>
+            <tr>
+              <th>Zähler</th>
+              <th>Anfangsstand</th>
+              <th>Endstand</th>
+              <th class="text-end">Verbrauch</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in ms.rows %}
+            <tr>
+              <td>
+                {{ r.meter_number }}
+                {% if r.is_sub %}<span class="badge bg-azure-lt ms-1">Subzähler</span>{% endif %}
+                {% if r.end_event == 'removed' %}<span class="badge bg-secondary-lt ms-1">ausgebaut</span>
+                {% elif r.start_event == 'installed' %}<span class="badge bg-secondary-lt ms-1">eingebaut</span>{% endif %}
+              </td>
+              <td>
+                {% if r.start_value is not none %}
+                <span class="text-muted me-1">{{ r.start_date.strftime('%d.%m.%Y') if r.start_date else '' }}</span>{{ ms.fmt(r.start_value) }}
+                {% if r.start_estimated %}<span class="badge bg-yellow text-dark ms-1">geschätzt</span>{% endif %}
+                {% if r.start_event == 'owner_change' %}<span class="badge bg-purple-lt ms-1">Eigentümerwechsel</span>{% endif %}
+                {% else %}—{% endif %}
+              </td>
+              <td>
+                <span class="text-muted me-1">{{ r.end_date.strftime('%d.%m.%Y') if r.end_date else '' }}</span>{{ ms.fmt(r.end_value) }}
+                {% if r.end_estimated %}<span class="badge bg-yellow text-dark ms-1">geschätzt</span>{% endif %}
+                {% if r.end_event == 'owner_change' %}<span class="badge bg-purple-lt ms-1">Eigentümerwechsel</span>{% endif %}
+              </td>
+              <td class="text-end">{{ ms.fmt(r.consumption) }} m³</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+          {% if ms.rows | length > 1 %}
+          <tfoot>
+            <tr>
+              <th colspan="3" class="text-end">Verbrauch gesamt</th>
+              <th class="text-end">{{ ms.fmt(ms.total) }} m³</th>
+            </tr>
+          </tfoot>
+          {% endif %}
+        </table>
+      </div>
+      {% if ms.corrections %}
+      <div class="card-footer small text-muted">
+        {% for c in ms.corrections %}
+        <div>Korrektur {{ c.period_name }} · Zähler {{ c.meter_number }}: geschätzt {{ ms.fmt(c.estimated) }} m³,
+          abgelesen {{ ms.fmt(c.real) }} m³ → {{ ms.fmt(c.delta|abs) }} m³ {{ 'nachverrechnet' if c.delta > 0 else 'gutgeschrieben' }}.</div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
   </div>
 </div>
 

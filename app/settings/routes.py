@@ -36,13 +36,28 @@ _INVOICE_RENDER_KEYS = (
     'wg.logo', 'wg.logo_text', 'wg.logo_subtitle',
     # SEPA-Lastschrift: Hinweis + Glaeubiger-ID stehen auf Rechnungen an Bankeinzugs-Kunden
     'sepa.creditor_id', 'sepa.notice_title', 'sepa.notice_text',
+    # Verbrauchsnachweis (Zaehlerstaende) auf der Rechnung
+    'invoice.show_meter_readings',
 )
+
+# Spaeter dazugekommene Keys mit Standardwert: steht der Key auf dem Standard,
+# zaehlt er nicht zur Signatur — sonst verwuerfe das erste Speichern nach dem
+# Update ohne jede Aenderung alle gecachten Rechnungen.
+_INVOICE_RENDER_DEFAULTS = {
+    'invoice.show_meter_readings': 'true',
+}
 
 
 def _invoice_render_signature():
     """Stabiler Hash aller render-relevanten Einstellungen als Vergleichsschluessel."""
     import hashlib
-    raw = "\x1f".join((AppSetting.get(k) or "") for k in _INVOICE_RENDER_KEYS)
+    parts = []
+    for key in _INVOICE_RENDER_KEYS:
+        value = AppSetting.get(key) or ""
+        if key in _INVOICE_RENDER_DEFAULTS and value in ("", _INVOICE_RENDER_DEFAULTS[key]):
+            continue
+        parts.append(value)
+    raw = "\x1f".join(parts)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -254,6 +269,9 @@ def index():
         # Zählerwechsel-Detail auf Rechnungen (Checkbox)
         print_swap = 'true' if request.form.get('invoice_print_meter_swap') else 'false'
         AppSetting.set('invoice.print_meter_swap', print_swap)
+        # Zaehlerstaende (Verbrauchsnachweis) auf Rechnungen (Checkbox, Standard an)
+        AppSetting.set('invoice.show_meter_readings',
+                       'true' if request.form.get('invoice_show_meter_readings') else 'false')
 
         # „Rechnung per E-Mail?"-Block auf gedruckten Rechnungen (Checkbox).
         # Nur relevant im SaaS-Kontext (Selbstregistrierung) + wenn das Design
@@ -411,6 +429,8 @@ def index():
         invoice_design = 'classic'
     contact_info = AppSetting.get('invoice.contact_info') or ''
     print_meter_swap = AppSetting.get('invoice.print_meter_swap') == 'true'
+    from app.invoices import meter_statement
+    show_meter_readings = meter_statement.enabled()
     show_email_signup = AppSetting.get('invoice.show_email_signup') == 'true'
     show_payment_qr = AppSetting.get('invoice.show_payment_qr') == 'true'
     from app.einvoice.service import settings_context as einvoice_settings_context
@@ -436,6 +456,7 @@ def index():
                            invoice_sender_address=get_invoice_sender_address(),
                            invoice_small_business_note=AppSetting.get('invoice.small_business_note') or '',
                            invoice_print_meter_swap=print_meter_swap,
+                           invoice_show_meter_readings=show_meter_readings,
                            invoice_show_email_signup=show_email_signup,
                            invoice_show_payment_qr=show_payment_qr,
                            meter_replacement_interval=meter_replacement_interval())

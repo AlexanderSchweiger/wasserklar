@@ -212,9 +212,9 @@
                    value="{{ wg.name }}" placeholder="Wassergenossenschaft …">
           </div>
           <div class="mb-3">
-            <label class="form-label">Adresse <small class="text-muted">(Zeilenumbruch mit \n)</small></label>
+            <label class="form-label">Adresse</label>
             <textarea name="wg_address" class="form-control" rows="3"
-                      placeholder="Musterstraße 1\n1234 Musterdorf">{{ wg.address }}</textarea>
+                      placeholder="Musterstraße 1&#10;1234 Musterdorf">{{ wg.address }}</textarea>
           </div>
           <div class="mb-3">
             <label class="form-label">E-Mail</label>
@@ -561,8 +561,6 @@
 
           <hr class="my-3">
 
-          <hr class="my-3">
-
           <div class="mb-3">
             <label class="form-label">Hinweis bei Umsatzsteuerbefreiung <small class="text-muted">(Kleinunternehmer, optional)</small></label>
             <input type="text" name="invoice_small_business_note" class="form-control"
@@ -574,6 +572,18 @@
           </div>
 
           <div class="mb-3">
+            <div class="form-label">Zähler auf Rechnungen</div>
+            <label class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" name="invoice_show_meter_readings"
+                     {% if invoice_show_meter_readings %}checked{% endif %}>
+              <span class="form-check-label">Zählerstände auf Rechnungen ausweisen</span>
+            </label>
+            <div class="form-text mb-2">
+              Zeigt unter den Positionen, aus welchen Zählerständen sich der verrechnete
+              Verbrauch ergibt — je Zähler Anfangs- und Endstand, auch bei Zählertausch,
+              Eigentümerwechsel und geschätzten Ständen. Die Stände werden mit der Rechnung
+              festgehalten; vor dieser Funktion versendete Rechnungen bleiben unverändert.
+            </div>
             <label class="form-check form-switch">
               <input class="form-check-input" type="checkbox" name="invoice_print_meter_swap"
                      {% if invoice_print_meter_swap %}checked{% endif %}>

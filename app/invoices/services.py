@@ -64,6 +64,11 @@ def create_or_update_open_item(invoice):
 
     oi = invoice.open_item
     if oi is None:
+        # Erstversand: den Verbrauchsnachweis eines Entwurfs von vor dem Feature
+        # einfrieren (sonst laengst beim Entstehen geschehen). Ein erneuter
+        # Versand einer Altrechnung (Posten existiert) bleibt unveraendert.
+        from app.invoices.meter_statement import freeze_if_missing
+        freeze_if_missing(invoice)
         oi = OpenItem(
             customer_id=invoice.customer_id,
             description=invoice.invoice_number,
