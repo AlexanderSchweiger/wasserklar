@@ -507,7 +507,7 @@ def goal_print(goal_id):
 def goal_report_pdf(goal_id):
     goal = db.get_or_404(FundingGoal, goal_id)
     try:
-        from weasyprint import HTML
+        from app.pdf_html import HTML
     except (ImportError, OSError):
         # WeasyPrint importiert auch ohne GTK3 und stirbt erst beim Laden der
         # Bibliotheken (OSError) — deshalb beide Fehler abfangen.

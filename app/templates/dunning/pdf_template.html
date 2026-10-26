@@ -67,7 +67,7 @@
 <div class="header">
   <div>
     <strong class="sender-name">{{ wg.name }}</strong><br>
-    <span class="sender-info">{{ wg.address | replace('\n', '<br>') | replace('\\n', '<br>') | safe }}</span>
+    <span class="sender-info">{{ wg.address | replace('\\n', '\n') | replace('\n', '<br>' | safe) }}</span>
   </div>
   <div class="contact-info">
     {% if wg.email %}<div>{{ wg.email }}</div>{% endif %}

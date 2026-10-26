@@ -403,7 +403,7 @@ def print_view():
 def report_pdf():
     year = request.args.get("year", type=int)
     try:
-        from weasyprint import HTML
+        from app.pdf_html import HTML
     except (ImportError, OSError):
         flash("PDF-Export ist nur im Docker-Container verfügbar. "
               "Die Druckansicht steht als Alternative bereit.", "warning")

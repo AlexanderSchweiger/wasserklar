@@ -195,7 +195,7 @@ def build_mandate_form_context(customer) -> dict:
 
 def _weasyprint():
     try:
-        from weasyprint import HTML
+        from app.pdf_html import HTML
         return HTML
     except (ImportError, OSError):
         return None

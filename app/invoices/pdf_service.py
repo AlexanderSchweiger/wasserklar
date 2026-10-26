@@ -80,7 +80,7 @@ def render_invoice_pdf(invoice, *, for_email=False, freeze_einvoice=False, embed
 
     ``embed=False`` liefert immer das normale PDF ohne E-Rechnungsdaten.
     """
-    from weasyprint import HTML
+    from app.pdf_html import HTML
 
     from app.einvoice import service as einvoice
     from app.einvoice.model import XML_ONLY_PROFILES

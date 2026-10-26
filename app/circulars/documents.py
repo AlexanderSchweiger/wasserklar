@@ -26,7 +26,7 @@ def current_design():
 def _weasyprint():
     """WeasyPrint-HTML-Klasse oder None (GTK/WeasyPrint lokal nicht installiert)."""
     try:
-        from weasyprint import HTML
+        from app.pdf_html import HTML
         return HTML
     except (ImportError, OSError):
         return None

@@ -752,6 +752,7 @@ def import_from_zip(extract_dir: Path, manifest: dict, *, mode: str = "replace",
     # und Preis/m³ noch als Tarif-Spalten — ohne Uebersetzung gingen die
     # Gebuehren und die individuellen Betraege beim Re-Import still verloren.
     _upgrade_legacy_tariff_records(table_records, models)
+    _sanitize_imported_markup(table_records)
 
     # Der ganze Lauf (inkl. commit — der flusht) laeuft unter dem Import-Guard,
     # damit aufgesetzte before_flush-Listener keine Folgeobjekte anlegen, die
@@ -790,6 +791,34 @@ def import_from_zip(extract_dir: Path, manifest: dict, *, mode: str = "replace",
     _relink_path_columns(table_records, id_map, mode)
 
     return stats
+
+
+# Felder, die die Vorlagen als HTML (``| safe``) ausgeben. Die Formulare bereinigen sie beim
+# Speichern; der Import muss dasselbe tun, sonst kaeme ueber eine praeparierte ZIP beliebiges
+# HTML in Seiten und PDFs (SECURITY_AUDIT #11).
+_RICH_TEXT_SETTINGS = ("invoice.contact_info",)
+
+
+def _sanitize_imported_markup(table_records: dict):
+    """Bereinigt Rich-Text-Felder und das Logo der Import-Records wie die Formulare."""
+    from app.models import AppSetting, Meeting, MeetingProtocol
+    from app.settings_service import sanitize_rich_text, validate_logo_data_uri
+
+    for rec in table_records.get(AppSetting) or []:
+        key, value = rec.get("key"), rec.get("value")
+        if not value:
+            continue
+        if key in _RICH_TEXT_SETTINGS:
+            rec["value"] = sanitize_rich_text(value) or None
+        elif key == "wg.logo":
+            logo, _error = validate_logo_data_uri(value)
+            rec["value"] = logo
+    for model, columns in ((Meeting, ("intro_text", "closing_text")),
+                           (MeetingProtocol, ("content_html",))):
+        for rec in table_records.get(model) or []:
+            for col in columns:
+                if rec.get(col):
+                    rec[col] = sanitize_rich_text(rec[col])
 
 
 # Gleiche Definition wie in der Migration c3e8a1f6d2b9 (bewusst dupliziert).

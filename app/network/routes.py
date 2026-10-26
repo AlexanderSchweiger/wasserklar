@@ -1025,7 +1025,7 @@ def water_quality_print():
 @login_required
 def water_quality_report_pdf():
     try:
-        from weasyprint import HTML
+        from app.pdf_html import HTML
     except (ImportError, OSError):
         flash("PDF-Export ist nur im Docker-Container verfügbar. "
               "Die Druckansicht steht als Alternative bereit.", "warning")

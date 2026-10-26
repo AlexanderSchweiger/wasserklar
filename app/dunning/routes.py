@@ -75,10 +75,10 @@ def _dunning_template_name(design):
 
 def _render_dunning_pdf_bytes(notice):
     """PDF-Bytes (WeasyPrint). Wirft ImportError/OSError ohne WeasyPrint."""
-    import weasyprint
+    from app.pdf_html import HTML
     ctx = _dunning_pdf_context(notice)
     html_str = render_template(_dunning_template_name(ctx["design"]), **ctx)
-    return weasyprint.HTML(string=html_str).write_pdf()
+    return HTML(string=html_str).write_pdf()
 
 
 def _render_dunning_docx_bytes(notice):
@@ -617,7 +617,7 @@ def bulk_pdf_merged():
         return resp
 
     try:
-        import weasyprint
+        from app.pdf_html import HTML
     except (ImportError, OSError):
         if current_app.debug:
             flash("WeasyPrint nicht verfügbar. Einzelne PDF-Vorschau unter /dunning/notices/<id>/pdf-preview.", "info")
@@ -644,7 +644,7 @@ def bulk_pdf_merged():
         else:
             ctx = _dunning_pdf_context(notice)
             html_str = render_template(_dunning_template_name(ctx["design"]), **ctx)
-            pdf_bytes = weasyprint.HTML(string=html_str).render().write_pdf()
+            pdf_bytes = HTML(string=html_str).render().write_pdf()
             writer.append(io.BytesIO(pdf_bytes))
     # Anonyme Temp-Datei statt festem Namen (gleichzeitige Sammeldrucke, kein Rest auf der Platte).
     return send_pdf_writer(writer, "Mahnungen_gesamt.pdf")
