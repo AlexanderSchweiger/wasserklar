@@ -108,6 +108,7 @@
             dem Tarifwert). Ersetzen nur den <strong>Betrag</strong> der Tarifposition.
           </p>
           {% set override_rows = charge_override_rows(property) %}
+          {% set minimum_rows = minimum_override_rows(property) %}
           {% set inherit_label = 'wie Kunde bzw. Tarif' %}
           {% include "_charge_overrides_fields.html" %}
         </div>

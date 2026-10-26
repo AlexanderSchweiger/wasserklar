@@ -182,11 +182,14 @@ def _extra_volume_prices(invoice):
     for it in invoice.items:
         key = it.charge_key
         if (not key or key == "water" or it.unit != "m³" or key in seen
-                or getattr(it, "is_dunning_fee", 0)):
+                or getattr(it, "is_dunning_fee", 0) or it.is_minimum_fill):
             continue
         seen.add(key)
+        # Nur die Verbrauchszeilen — die Auffuellung der Mindestabnahme
+        # ueberhoehte sonst den Preis je verbrauchtem m³.
         amount = sum((Decimal(str(x.amount or 0)) for x in invoice.items
-                      if x.charge_key == key and x.unit == "m³"), Decimal("0"))
+                      if x.charge_key == key and x.unit == "m³"
+                      and not x.is_minimum_fill), Decimal("0"))
         price = (amount / water_qty).quantize(Decimal("0.0001"))
         if price == 0:
             continue
@@ -213,26 +216,62 @@ def _run_charges(invoice):
         return {}
 
 
-def _tiered_delta(invoice, charge, base_qty, delta, *, water):
-    """Korrekturbetrag einer **gestaffelten** m³-Position: ``A(Q + Δ) − A(Q)``
-    mit der Staffel des Rechnungslaufs (Tarif-Engine) — exakt auch dann, wenn
-    die Mehrmenge in eine andere Stufe faellt. ``None``, wenn die Position
-    nicht gestaffelt ist oder die Rechnung nicht nachweislich mit dieser
-    Staffel entstand (z.B. individueller Preis, abweichende Abgrenzung): dann
-    gilt der lineare Weg."""
-    if charge is None or not charge.is_tiered:
+def _position_items(invoice, key, *, water):
+    """Alle Zeilen einer m³-Position der Rechnung — Verbrauch UND Auffuellung
+    der Mindestabnahme (ohne Mahngebuehren)."""
+    from app.models import ChargeType
+    out = []
+    for it in invoice.items:
+        if getattr(it, "is_dunning_fee", 0) or it.unit != "m³":
+            continue
+        if water:
+            if it.is_water_consumption or (
+                    it.is_minimum_fill and it.charge_key in (None, ChargeType.KEY_WATER)):
+                out.append(it)
+        elif it.charge_key == key:
+            out.append(it)
+    return out
+
+
+def _frozen_minimum(items):
+    """Effektive Mindestmenge, mit der die Position entstand (eingefroren an
+    ihren Zeilen) — ``None`` ohne Mindestabnahme."""
+    for it in items:
+        if it.min_quantity is not None and Decimal(str(it.min_quantity)) > 0:
+            return Decimal(str(it.min_quantity))
+    return None
+
+
+def _billed_delta(base_qty, delta, minimum):
+    """Aenderung der abgerechneten Menge, wenn der Verbrauch ``base_qty`` um
+    ``delta`` wandert — unter der Mindestmenge aendert sich nichts."""
+    if not minimum:
+        return delta
+    from app.invoices import tariff_engine as engine
+    return (engine.billed_quantity(base_qty + delta, minimum)
+            - engine.billed_quantity(base_qty, minimum))
+
+
+def _volume_delta(invoice, charge, base_qty, delta, *, water, minimum=None):
+    """Korrekturbetrag einer m³-Position mit **Staffel oder Mindestabnahme**:
+    ``A(Q + Δ) − A(Q)`` mit der Staffel des Rechnungslaufs und der an der
+    Rechnung eingefrorenen Mindestmenge (Tarif-Engine) — exakt auch dann, wenn
+    die Mehrmenge in eine andere Stufe faellt oder unter der Mindestmenge
+    bleibt. ``None``, wenn nichts davon greift oder die Rechnung nicht
+    nachweislich so entstand (z.B. individueller Preis, abweichende
+    Abgrenzung): dann gilt der lineare Weg."""
+    if charge is None or not (charge.is_tiered or minimum):
         return None
     from app.invoices import tariff_engine as engine
-    items = [it for it in invoice.items
-             if (it.is_water_consumption if water
-                 else (it.charge_key == charge.key and it.unit == "m³"))]
+    items = _position_items(invoice, charge.key, water=water)
     billed = sum((Decimal(str(it.amount or 0)) for it in items), Decimal("0"))
     start = end = None
     if not water and invoice.billing_period is not None:
         start, end = invoice.billing_period.start_date, invoice.billing_period.end_date
-    if engine.volume_amount(charge, base_qty, start=start, end=end) != billed:
+    if engine.volume_amount(charge, base_qty, start=start, end=end, minimum=minimum) != billed:
         return None
-    return engine.volume_amount(charge, base_qty + delta, start=start, end=end) - billed
+    return engine.volume_amount(charge, base_qty + delta, start=start, end=end,
+                                minimum=minimum) - billed
 
 
 def build_correction(reading, estimated_consumption, *, created_by_id=None):
@@ -266,7 +305,7 @@ def build_correction(reading, estimated_consumption, *, created_by_id=None):
     water_qty = sum((Decimal(str(it.quantity or 0)) for it in invoice.items
                      if it.is_water_consumption), Decimal("0"))
 
-    def _corr(amount, price, tax, charge_key=None, label=None):
+    def _corr(amount, price, tax, charge_key=None, label=None, minimum=None):
         c = ReadingCorrection(
             customer_id=invoice.customer_id,
             meter_id=meter.id,
@@ -280,6 +319,7 @@ def build_correction(reading, estimated_consumption, *, created_by_id=None):
             tax_rate=tax,
             charge_key=charge_key,
             label=label,
+            min_quantity=minimum,
             amount=amount,
             remaining_amount=amount,
             status=ReadingCorrection.STATUS_OPEN,
@@ -288,24 +328,33 @@ def build_correction(reading, estimated_consumption, *, created_by_id=None):
         db.session.add(c)
         return c
 
+    def _amount(charge, minimum, price, *, water):
+        """``(Betrag, Preis, Mindestmenge mit Wirkung)`` einer m³-Position."""
+        billed_delta = _billed_delta(water_qty, delta, minimum)
+        effect = minimum if billed_delta != delta else None
+        value = _volume_delta(invoice, charge, water_qty, delta, water=water, minimum=minimum)
+        if value is None:
+            value = (billed_delta * price).quantize(Decimal("0.01"))
+            if effect is None:
+                return value, price, None
+        # Effektiver Preis je m³ Zaehlerdifferenz (Staffel/Mindestabnahme).
+        return value, (value / delta).quantize(Decimal("0.0001")), effect
+
     corr = None
-    amount = _tiered_delta(invoice, run_charges.get("water"), water_qty, delta, water=True)
-    if amount is not None:
-        unit_price = (amount / delta).quantize(Decimal("0.0001"))   # effektiver Preis
-    else:
-        amount = (delta * unit_price).quantize(Decimal("0.01"))
+    # Mindestabnahme: die an der Rechnung eingefrorene Menge (ggf. individuell
+    # oder zeitanteilig) — eine Aenderung unterhalb davon kostet nichts.
+    water_min = _frozen_minimum(_position_items(invoice, "water", water=True))
+    amount, unit_price, effect = _amount(run_charges.get("water"), water_min, unit_price,
+                                         water=True)
     if amount != 0:
-        corr = _corr(amount, unit_price, tax_rate, charge_key="water")
+        corr = _corr(amount, unit_price, tax_rate, charge_key="water", minimum=effect)
     # Weitere m³-Positionen (Wassercent …) bekommen einen eigenen Posten, damit
     # die Korrektur wie auf der Originalrechnung getrennt ausgewiesen wird.
     for key, label, price, tax in _extra_volume_prices(invoice):
-        extra = _tiered_delta(invoice, run_charges.get(key), water_qty, delta, water=False)
-        if extra is not None:
-            price = (extra / delta).quantize(Decimal("0.0001"))
-        else:
-            extra = (delta * price).quantize(Decimal("0.01"))
+        extra_min = _frozen_minimum(_position_items(invoice, key, water=False))
+        extra, price, effect = _amount(run_charges.get(key), extra_min, price, water=False)
         if extra != 0:
-            c = _corr(extra, price, tax, charge_key=key, label=label)
+            c = _corr(extra, price, tax, charge_key=key, label=label, minimum=effect)
             corr = corr or c
     return corr
 
@@ -371,7 +420,12 @@ def _add_correction_item(inv, corr, net_amount, *, partial):
     """
     period_name = corr.billing_period.name if corr.billing_period else ""
     meter_no = corr.meter.meter_number if corr.meter else "?"
-    part_suffix = " (Teilbetrag, Rest folgt)" if partial else ""
+    min_note = ""
+    if corr.min_quantity is not None:
+        from app.invoices.tariff_engine import fmt_qty
+        min_note = f"Mindestabnahme {fmt_qty(corr.min_quantity)} m³ berücksichtigt"
+    part_suffix = (f" (Teilbetrag, Rest folgt{'; ' + min_note if min_note else ''})"
+                   if partial else "")
     if corr.delta_m3 is None:
         # Carry-forward aus einer auf 0 gekappten Vorperioden-Rechnung
         # (negativer Verbrauch) — kein m³-Delta, daher anders beschriften.
@@ -385,7 +439,8 @@ def _add_correction_item(inv, corr, net_amount, *, partial):
             qty_suffix = part_suffix
         else:
             delta_abs = abs(Decimal(str(corr.delta_m3 or 0)))
-            qty_suffix = f" ({delta_abs.quantize(Decimal('1'))} m³)"
+            qty_suffix = (f" ({delta_abs.quantize(Decimal('1'))} m³"
+                          f"{', ' + min_note if min_note else ''})")
         # Korrektur einer weiteren m³-Position (z.B. Wassercent) mit deren Text.
         subject = ("geschätzter Wasserverbrauch"
                    if corr.charge_key in (None, "water") or not corr.label

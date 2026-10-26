@@ -103,6 +103,10 @@
     <input type="hidden" name="{{ _prefix }}row_tariff_id[]" value="">
     <input type="hidden" name="{{ _prefix }}row_consumption_m3[]" value="">
     <input type="hidden" name="{{ _prefix }}existing_item_id[]" value="{{ item.id }}">
+    {# Zeilen-ID (in jeder Zeilenvorlage, sonst verrutschen die Listen): der
+       Server uebernimmt Gebührenart und Kennzeichen (geschätzt,
+       Mindestabnahme) aus der bisherigen Position. #}
+    <input type="hidden" name="{{ _prefix }}row_item_id[]" value="{{ item.id }}">
     <div class="row align-items-end g-2">
       <div class="col-md-4">
         <label class="small">Beschreibung</label>
@@ -179,6 +183,7 @@
 <template id="tmplTariff">
   <div class="row-item border rounded p-2 mb-2 bg-light">
     <input type="hidden" name="{{ _prefix }}row_type[]" value="tariff">
+    <input type="hidden" name="{{ _prefix }}row_item_id[]" value="">
     <input type="hidden" name="{{ _prefix }}row_description[]" value="">
     <input type="hidden" name="{{ _prefix }}row_quantity[]" value="">
     <input type="hidden" name="{{ _prefix }}row_unit[]" value="">
@@ -229,6 +234,7 @@
 <template id="tmplWater">
   <div class="row-item border rounded p-2 mb-2 bg-light">
     <input type="hidden" name="{{ _prefix }}row_type[]" value="water">
+    <input type="hidden" name="{{ _prefix }}row_item_id[]" value="">
     <input type="hidden" name="{{ _prefix }}row_tariff_id[]" value="">
     <input type="hidden" name="{{ _prefix }}row_tax_rate[]" value="0">
     <div class="row align-items-end g-2">
@@ -264,6 +270,7 @@
 <template id="tmplFree">
   <div class="row-item border rounded p-2 mb-2">
     <input type="hidden" name="{{ _prefix }}row_type[]" value="free">
+    <input type="hidden" name="{{ _prefix }}row_item_id[]" value="">
     <input type="hidden" name="{{ _prefix }}row_tariff_id[]" value="">
     <input type="hidden" name="{{ _prefix }}row_consumption_m3[]" value="">
     <div class="row align-items-end g-2">

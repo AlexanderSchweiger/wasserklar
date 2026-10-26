@@ -550,6 +550,8 @@ def generate():
         ignored_overrides = {}
         # Kontaktstatus-Bedingungen gelten nur im WG-Modus — einmal je Lauf.
         wg_mode = engine.wg_mode_active()
+        # Objekte, bei denen die Mindestabnahme aufgefuellt hat (Hinweis).
+        minimum_filled = 0
         for property_id, prop_readings in sorted_items:
             prop = prop_readings[0].meter.property
             ownership = prop.current_owner()
@@ -668,6 +670,9 @@ def generate():
             usage_start = period.start_date
             if ded and ded.get("change_date") and ded_total > 0:
                 usage_start = max(ded["change_date"], period.start_date)
+            # Mindestabnahme wie die Grundgebuehr: nach einer pro-rata-
+            # Schlussrechnung nur fuer die restlichen Tage.
+            min_share = (period_days - fee_days, period_days) if fee_days else None
 
             # Alle Positionen aus der Tarif-Engine: Wasser (ggf. je Zaehler
             # bzw. gestaffelt) zuerst, dann m³-Positionen (z.B. Wassercent) auf
@@ -678,9 +683,12 @@ def generate():
                 usage_start=usage_start, usage_end=period.end_date,
                 fee_start=fee_start, fee_end=period.end_date, period_days=period_days,
                 meter_parts=meter_parts, water_detail=water_detail,
-                is_estimated=is_any_estimated,
+                is_estimated=is_any_estimated, min_share=min_share,
             )
-            for line in engine.build_lines(charges, case):
+            lines = engine.build_lines(charges, case)
+            if any(line.get("is_minimum_fill") for line in lines):
+                minimum_filled += 1
+            for line in lines:
                 db.session.add(InvoiceItem(invoice_id=inv.id, project_id=run_project_id,
                                            **line))
             # Verbrauchsnachweis: die Zaehlerstaende, aus denen die Wassermenge
@@ -734,14 +742,18 @@ def generate():
             flash(f"Fehler beim Rechnungslauf – alle Änderungen wurden zurückgesetzt: {e}", "danger")
             return redirect(url_for("invoices.generate"))
         flash(f"{created} Rechnungen erstellt, {skipped} übersprungen.", "success")
+        if minimum_filled:
+            flash(f"Mindestabnahme bei {minimum_filled} "
+                  f"{'Objekt' if minimum_filled == 1 else 'Objekten'} verrechnet "
+                  f"(eigene Zeile auf der Rechnung).", "info")
         if ignored_overrides:
             parts = "; ".join(
                 f"{label}: {', '.join(dict.fromkeys(objs))}"
                 for label, objs in sorted(ignored_overrides.items()))
             flash(
-                "Individuelle Gebühren für Gebührenarten, die der Tarif "
-                f"„{tariff.name}“ nicht enthält (bzw. deren Bedingung nicht "
-                f"erfüllt ist), wurden nicht berechnet — {parts}.",
+                "Individuelle Gebühren bzw. Mindestabnahmen für Gebührenarten, "
+                f"die der Tarif „{tariff.name}“ nicht enthält (bzw. deren "
+                f"Bedingung nicht erfüllt ist), wurden nicht berechnet — {parts}.",
                 "warning")
         if clamp_warnings:
             objs = ", ".join(dict.fromkeys(clamp_warnings))
@@ -870,7 +882,24 @@ def new():
     )
 
 
-def _apply_row_items_to_invoice(inv, form, is_vat_liable_year, keep_rates=()):
+def _frozen_item_fields(items):
+    """``{"<id>": {Feld: Wert}}`` der eingefrorenen Merkmale bisheriger
+    Positionen — der Positions-Editor schickt bestehende Zeilen als „frei“
+    zurueck; ohne das verloren sie Gebührenart, „geschätzt“ und die
+    Kennzeichen der Mindestabnahme (eine Auffuell- oder Wassercent-Zeile
+    zaehlte danach als Verbrauch)."""
+    return {
+        str(item.id): {
+            "charge_key": item.charge_key,
+            "is_estimated": bool(item.is_estimated),
+            "is_minimum_fill": bool(item.is_minimum_fill),
+            "min_quantity": item.min_quantity,
+        }
+        for item in items
+    }
+
+
+def _apply_row_items_to_invoice(inv, form, is_vat_liable_year, keep_rates=(), carry=None):
     """Fügt die vom Positions-Editor gesendeten Zeilen als ``InvoiceItem``
     zur Rechnung hinzu. Shared zwischen ``invoices.new``, ``items_save`` und
     ``accounting.open_item_invoice``, damit die Parse-Logik nur einmal existiert.
@@ -878,7 +907,13 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year, keep_rates=()):
     Steuersätze freier Positionen müssen hinterlegt sein (auch deaktivierte);
     ``keep_rates`` erlaubt zusätzlich die Sätze der bisherigen Positionen, damit
     das Speichern eines Entwurfs einen Altsatz nicht still verwirft.
+
+    ``carry`` (``_frozen_item_fields`` der bisherigen Positionen): eine
+    bestehende Zeile (``row_item_id[]``) behaelt ihre Gebührenart, die
+    m³-Kennzeichen nur, solange sie in m³ abgerechnet wird.
     """
+    carry = carry or {}
+    row_item_ids = form.getlist("row_item_id[]")
     row_types = form.getlist("row_type[]")
     row_tariff_ids = form.getlist("row_tariff_id[]")
     row_consumptions = form.getlist("row_consumption_m3[]")
@@ -978,6 +1013,8 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year, keep_rates=()):
             if tax_rate not in allowed_rates:
                 tax_rate = Decimal("0")
             amount = (qty * unit_price).quantize(Decimal("0.01"))
+            frozen = carry.get(row_item_ids[i] if i < len(row_item_ids) else "") or {}
+            per_m3 = unit == "m³"
             db.session.add(InvoiceItem(
                 invoice_id=inv.id,
                 description=desc,
@@ -989,6 +1026,10 @@ def _apply_row_items_to_invoice(inv, form, is_vat_liable_year, keep_rates=()):
                 tax_rate=tax_rate if tax_rate > 0 else None,
                 account_id=row_account_id,
                 project_id=row_project_id,
+                charge_key=frozen.get("charge_key"),
+                is_estimated=per_m3 and bool(frozen.get("is_estimated")),
+                is_minimum_fill=per_m3 and bool(frozen.get("is_minimum_fill")),
+                min_quantity=frozen.get("min_quantity") if per_m3 else None,
             ))
 
 
@@ -1123,13 +1164,15 @@ def items_save(invoice_id):
     # neuen Zustand inklusive der (als "free" gerenderten) bestehenden Items.
     # ADR-003: Mahngebühr-Items bleiben erhalten (werden nur vom Dunning-Service verwaltet).
     old_rates = [i.tax_rate for i in invoice.items]
+    carry = _frozen_item_fields(i for i in invoice.items if not getattr(i, "is_dunning_fee", 0))
     for old_item in list(invoice.items):
         if getattr(old_item, "is_dunning_fee", 0):
             continue
         db.session.delete(old_item)
     db.session.flush()
 
-    _apply_row_items_to_invoice(invoice, request.form, is_vat_liable_year, keep_rates=old_rates)
+    _apply_row_items_to_invoice(invoice, request.form, is_vat_liable_year, keep_rates=old_rates,
+                                carry=carry)
     # Die neuen Items werden via invoice_id-FK (nicht ueber die Relationship-
     # Collection) angelegt. Da invoice.items oben bereits geladen wurde, ist die
     # In-Memory-Collection veraltet — flush + expire erzwingt ein frisches Reload,
@@ -2236,6 +2279,10 @@ def _invoice_amounts(invoice, columns, label_map):
             water_net += amount
             m3 += item.quantity or Decimal("0")
             continue
+        if item.is_minimum_fill and item.charge_key == ChargeType.KEY_WATER:
+            # Auffuellung der Mindestabnahme: Wasser-Erloes, aber kein Verbrauch.
+            water_net += amount
+            continue
         key = item.charge_key or label_map.get(item.description)
         if key in charges:
             charges[key] += amount
@@ -2816,7 +2863,7 @@ def billing_run_export_excel(run_id):
     r += 1
     kv(r, "Name", run.tariff_name); r += 1
     kv(r, "Gültig", f"{run.tariff_valid_from or '—'} – {run.tariff_valid_to or 'aktuell'}"); r += 1
-    from app.invoices.tariff_spec import condition_text, levels_text
+    from app.invoices.tariff_spec import condition_text, levels_text, minimum_text
     for comp in run.tariff_components_snapshot:
         if comp.get("amount") is None:
             continue
@@ -2826,6 +2873,7 @@ def billing_run_export_excel(run_id):
         extra = "; ".join(t for t in (
             levels_text(comp["amount"], comp.get("tiers"), comp.get("tier_mode"),
                         comp.get("price_decimals") or 4),
+            minimum_text(comp.get("min_quantity")),
             condition_text(comp.get("conditions"))) if t)
         if extra:
             ws.cell(row=r, column=3, value=extra)
@@ -2974,7 +3022,7 @@ def _tariff_form_rows(tariff, form=None):
         if not (ct.active or comp is not None or in_form):
             continue
         is_water = ct.key == ChargeType.KEY_WATER
-        tier_mode, tiers, statuses = TIER_GRADUATED, [], []
+        tier_mode, tiers, statuses, min_qty = TIER_GRADUATED, [], [], ""
         if form is not None:
             on = is_water or bool(form.get(f"comp_on_{ct.id}"))
             label = form.get(f"comp_label_{ct.id}", "") or ""
@@ -2988,6 +3036,7 @@ def _tariff_form_rows(tariff, form=None):
                 form.getlist(f"comp_tier_above_{ct.id}"),
                 form.getlist(f"comp_tier_price_{ct.id}")) if (a or p)]
             statuses = [s for s in form.getlist(f"comp_cond_status_{ct.id}") if s]
+            min_qty = (form.get(f"comp_min_qty_{ct.id}") or "").strip()
         elif comp is not None:
             on = True
             label = comp.label
@@ -3000,6 +3049,7 @@ def _tariff_form_rows(tariff, form=None):
                       "price": _amount_str(s.price, ct.price_decimals)}
                      for s in comp.tier_steps]
             statuses = sorted(comp.contact_statuses or ())
+            min_qty = _qty_str(comp.min_quantity) if ct.is_per_m3 else ""
         else:
             # Neuer Tarif: Wasser, Grund-/Zusatzgebuehr (wie im frueheren
             # Formular) und eine aktive Landesabgabe sind vorausgewaehlt.
@@ -3013,8 +3063,11 @@ def _tariff_form_rows(tariff, form=None):
             "valid_from": valid_from,
             "tier_mode": tier_mode, "tiers": tiers,
             "statuses": statuses if not is_water else [],
-            # Zweite Zeile („Staffel / Bedingung") offen, sobald etwas gesetzt ist.
-            "advanced_open": bool(tiers or (statuses and not is_water)),
+            "min_qty": min_qty if ct.is_per_m3 else "",
+            # Zweite Zeile („Staffel / Mindestabnahme / Bedingung") offen,
+            # sobald etwas gesetzt ist.
+            "advanced_open": bool(tiers or (statuses and not is_water)
+                                  or (min_qty and ct.is_per_m3)),
         })
     return rows
 
@@ -3068,7 +3121,8 @@ def _parse_tariff_form(form=None, *, require_meta=True):
     """
     from app.invoices.charges import parse_amount
     from app.invoices.tariff_spec import (COND_CONTACT_STATUS, TIER_GRADUATED,
-                                          TIER_MODES, parse_conditions)
+                                          TIER_MODES, parse_conditions,
+                                          parse_min_quantity)
     form = request.form if form is None else form
     name = form.get("name", "").strip()
     valid_from = valid_to = None
@@ -3115,6 +3169,15 @@ def _parse_tariff_form(form=None, *, require_meta=True):
                 return None, None, (f"Die Staffel bei „{label}“ braucht im Feld "
                                     f"„Betrag“ den Preis der 1. Stufe.")
 
+        # Mindestabnahme (nur m³-Positionen), m³ je Abrechnungszeitraum.
+        min_quantity = None
+        if ct.is_per_m3:
+            try:
+                min_quantity = parse_min_quantity(form.get(f"comp_min_qty_{ct.id}"),
+                                                  typed=True)
+            except ValueError as exc:
+                return None, None, f"Mindestabnahme bei „{label}“: {exc}"
+
         # Bedingung (Kontaktstatus); nie an der Wasser-Position.
         conditions = {}
         statuses = [s for s in form.getlist(f"comp_cond_status_{ct.id}") if s]
@@ -3144,6 +3207,7 @@ def _parse_tariff_form(form=None, *, require_meta=True):
             "account_id": _int_or_none(form.get(f"comp_account_{ct.id}")),
             "valid_from": valid_from_date,
             "tiers": tiers, "tier_mode": tier_mode, "conditions": conditions,
+            "min_quantity": min_quantity,
         })
 
     data = dict(name=name, valid_from=valid_from, valid_to=valid_to,
@@ -3170,6 +3234,7 @@ def _apply_tariff_components(tariff, components):
         comp.tier_mode = spec["tier_mode"]
         comp.tier_steps = spec["tiers"]
         comp.condition_data = spec["conditions"]
+        comp.min_quantity = spec.get("min_quantity")
         keep.add(ct.id)
     for ct_id, comp in existing.items():
         if ct_id not in keep:
@@ -3333,6 +3398,10 @@ def _calc_notes(charges, selected, *, status, wg_mode, specs=None):
     if not wg_mode and any(c.statuses for c in charges):
         notes.append("Bedingungen nach dem Kontaktstatus wirken nur im Mandant-Typ "
                      "Wassergenossenschaft — hier gelten die Positionen für alle.")
+    if any(c.min_qty for c in selected):
+        notes.append("Mindestabnahme laut Tarif — abweichende Mengen am Kontakt oder "
+                     "Objekt gelten hier nicht; beim Eigentümerwechsel wird sie wie die "
+                     "Grundgebühr aufgeteilt.")
     return notes
 
 
@@ -3342,7 +3411,8 @@ def _calc_levels(selected, m3):
     for c in selected:
         if not c.is_tiered:
             continue
-        reached = engine.tier_bands(c, m3)
+        # Stufe nach der abgerechneten Menge (inkl. Mindestabnahme).
+        reached = engine.tier_bands(c, engine.billed_quantity(m3, c.min_qty))
         top = reached[-1].index if reached else 1
         out.append({
             "label": c.label,
@@ -3499,14 +3569,15 @@ def charge_type_edit(ct_id):
 def charge_type_delete(ct_id):
     """Loescht eine eigene, unbenutzte Gebührenart. Benutzte werden deaktiviert
     (Rechnungspositionen tragen ihren Schluessel weiter)."""
-    from app.models import ChargeOverride
+    from app.models import ChargeOverride, MinimumOverride
     ct = db.get_or_404(ChargeType, ct_id)
     if ct.is_system:
         flash("System-Gebührenarten lassen sich nicht löschen — ggf. deaktivieren.", "warning")
     elif (TariffComponent.query.filter_by(charge_type_id=ct.id).first() is not None
-          or ChargeOverride.query.filter_by(charge_type_id=ct.id).first() is not None):
-        flash(f"„{ct.label}“ wird noch in einem Tarif oder einer individuellen Gebühr "
-              "verwendet — bitte stattdessen deaktivieren.", "warning")
+          or ChargeOverride.query.filter_by(charge_type_id=ct.id).first() is not None
+          or MinimumOverride.query.filter_by(charge_type_id=ct.id).first() is not None):
+        flash(f"„{ct.label}“ wird noch in einem Tarif, einer individuellen Gebühr oder "
+              "Mindestabnahme verwendet — bitte stattdessen deaktivieren.", "warning")
     else:
         db.session.delete(ct)
         db.session.commit()

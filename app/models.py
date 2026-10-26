@@ -324,6 +324,10 @@ class Customer(db.Model):
     charge_overrides = db.relationship(
         "ChargeOverride", foreign_keys="ChargeOverride.customer_id",
         back_populates="customer", cascade="all, delete-orphan")
+    # Individuelle Mindestabnahme je m³-Gebührenart (siehe MinimumOverride).
+    minimum_overrides = db.relationship(
+        "MinimumOverride", foreign_keys="MinimumOverride.customer_id",
+        back_populates="customer", cascade="all, delete-orphan")
     ownerships = db.relationship("PropertyOwnership", backref="customer", lazy="dynamic")
     # WG-spezifisch (Mandant-Typ Wassergenossenschaft): 1:1-Profil + mehrwertige
     # Funktionen. Cascade delete-orphan, damit beim Hard-Delete eines Kontakts
@@ -484,6 +488,10 @@ class Property(db.Model):
     # Individuelle Gebuehren (Vorrang vor Kunden-Overrides, siehe ChargeOverride).
     charge_overrides = db.relationship(
         "ChargeOverride", foreign_keys="ChargeOverride.property_id",
+        back_populates="property", cascade="all, delete-orphan")
+    # Individuelle Mindestabnahme (Vorrang vor der des Kunden, siehe MinimumOverride).
+    minimum_overrides = db.relationship(
+        "MinimumOverride", foreign_keys="MinimumOverride.property_id",
         back_populates="property", cascade="all, delete-orphan")
     # WG-spezifisch (Mandant-Typ Wassergenossenschaft): Anteile + m2.
     wg_profile = db.relationship("PropertyWgProfile", uselist=False,
@@ -995,6 +1003,8 @@ class ReadingCorrection(db.Model):
     # bzw. Kappungs-Uebertrag (dann gilt der Wasserverbrauch).
     charge_key = db.Column(db.String(40), nullable=True)
     label = db.Column(db.String(100), nullable=True)                     # Positionstext-Snapshot
+    # Mindestabnahme, die den Korrekturbetrag veraendert hat (NULL = keine Wirkung).
+    min_quantity = db.Column(db.Numeric(12, 3), nullable=True)
     amount = db.Column(db.Numeric(10, 2), nullable=False)                # signed netto
     remaining_amount = db.Column(db.Numeric(10, 2), nullable=False)      # signed netto, noch offen
     status = db.Column(
@@ -1533,11 +1543,12 @@ class WaterTariff(db.Model):
         """Kurzfassung fuer Auswahllisten: ``1,4000 €/m³ · Grundgebühr 32,00 €``
         (m³-Preise mit den Nachkommastellen der Gebührenart).
 
-        Staffel: ``1,2000–2,0000 €/m³ gestaffelt``; Bedingung:
-        ``Grundgebühr 32,00 € (nur Mitglied)``.
+        Staffel: ``1,2000–2,0000 €/m³ gestaffelt``; Mindestabnahme:
+        ``1,40 €/m³ (mind. 50 m³)``; Bedingung: ``Grundgebühr 32,00 € (nur
+        Mitglied)``.
         """
         from app.invoices.price_format import format_price
-        from app.invoices.tariff_spec import status_condition_label
+        from app.invoices.tariff_spec import minimum_short_text, status_condition_label
 
         parts = []
         for comp in self.components:
@@ -1552,6 +1563,8 @@ class WaterTariff(db.Model):
                             f"{format_price(max(prices), places)} €/m³ gestaffelt")
                 else:
                     text = f"{format_price(comp.amount, places)} €/m³"
+                if comp.min_quantity:
+                    text += f" ({minimum_short_text(comp.min_quantity)})"
             else:
                 value = f"{Decimal(str(comp.amount)):.2f}".replace(".", ",")
                 text = f"{value} €"
@@ -1586,6 +1599,11 @@ class TariffComponent(db.Model):
     nur für Rechnungsempfänger mit einem der genannten Kontaktstatus (WG-Modus).
     Regeln + Prüfung: ``app/invoices/tariff_spec.py``; gelesen/geschrieben nur
     über ``tier_steps`` / ``condition_data`` / ``contact_statuses``.
+
+    **Mindestabnahme** (``min_quantity``, nur m³-Positionen): so viele m³ werden
+    je Abrechnungszeitraum mindestens verrechnet — die nicht verbrauchte
+    Differenz steht als eigene Auffüllzeile auf der Rechnung. Abweichungen je
+    Kunde/Objekt: ``MinimumOverride``. Regeln: ``app/invoices/tariff_engine.py``.
     """
     __tablename__ = "tariff_components"
 
@@ -1606,6 +1624,8 @@ class TariffComponent(db.Model):
                           server_default=db.text("'graduated'"))
     tiers = db.Column(db.Text, nullable=True)
     conditions = db.Column(db.Text, nullable=True)
+    # Mindestabnahme je Abrechnungszeitraum (nur m³-Positionen; NULL = keine).
+    min_quantity = db.Column(db.Numeric(12, 3), nullable=True)
 
     __table_args__ = (
         db.UniqueConstraint("tariff_id", "charge_type_id",
@@ -1707,6 +1727,61 @@ class ChargeOverride(db.Model):
     def __repr__(self):
         scope = f"c{self.customer_id}" if self.customer_id else f"p{self.property_id}"
         return f"<ChargeOverride {self.charge_type_id} {scope} {self.amount}>"
+
+
+class MinimumOverride(db.Model):
+    """Individuelle Mindestabnahme eines Kunden ODER Objekts für eine
+    m³-Gebührenart — unabhängig von einer individuellen Gebühr
+    (``ChargeOverride`` ersetzt den Preis, das hier die Menge).
+
+    * Prioritaet je Gebührenart: Objekt > Kunde > Tarif (``min_quantity`` der
+      Tarifposition).
+    * Keine Zeile = erbt; ``min_quantity`` gesetzt = eigene Mindestmenge (wirkt
+      auch, wenn der Tarif selbst keine hat); ``min_quantity`` NULL = keine
+      Mindestabnahme.
+    * Wirkt nur, wenn die Position im Tarif steht und für den Kunden entsteht.
+
+    Genau eines von ``customer_id``/``property_id`` ist gesetzt (App-seitig
+    geprueft, kein CHECK-Constraint — dialekt-portabel).
+    """
+    __tablename__ = "minimum_overrides"
+
+    id = db.Column(db.Integer, primary_key=True)
+    charge_type_id = db.Column(
+        db.Integer, db.ForeignKey("charge_types.id", ondelete="CASCADE"),
+        nullable=False)
+    customer_id = db.Column(
+        db.Integer, db.ForeignKey("customers.id", ondelete="CASCADE"),
+        nullable=True, index=True)
+    property_id = db.Column(
+        db.Integer, db.ForeignKey("properties.id", ondelete="CASCADE"),
+        nullable=True, index=True)
+    min_quantity = db.Column(db.Numeric(12, 3), nullable=True)
+    note = db.Column(db.String(200), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        db.UniqueConstraint("charge_type_id", "customer_id",
+                            name="uq_minimum_overrides_customer"),
+        db.UniqueConstraint("charge_type_id", "property_id",
+                            name="uq_minimum_overrides_property"),
+    )
+
+    # Vor den Relationships (``property`` ueberschattet sonst den Decorator).
+    @property
+    def is_exempt(self):
+        """True = für diesen Kunden/dieses Objekt gilt keine Mindestabnahme."""
+        return self.min_quantity is None
+
+    charge_type = db.relationship("ChargeType")
+    customer = db.relationship("Customer", foreign_keys=[customer_id],
+                               back_populates="minimum_overrides")
+    property = db.relationship("Property", foreign_keys=[property_id],
+                               back_populates="minimum_overrides")
+
+    def __repr__(self):
+        scope = f"c{self.customer_id}" if self.customer_id else f"p{self.property_id}"
+        return f"<MinimumOverride {self.charge_type_id} {scope} {self.min_quantity}>"
 
 
 # ---------------------------------------------------------------------------
@@ -2463,6 +2538,17 @@ class InvoiceItem(db.Model):
     # spaetere Umstellung den Beleg nicht veraendert. NULL = Altbeleg.
     price_decimals = db.Column(db.SmallInteger, nullable=True)
 
+    # Mindestabnahme (Tarif-Engine): ``is_minimum_fill`` markiert die
+    # Auffuellzeile (nicht verbrauchte Differenz bis zur Mindestmenge) — sie
+    # zaehlt NICHT zum Verbrauch. ``min_quantity`` = die effektive Mindestmenge
+    # (ggf. zeitanteilig), mit der jede Zeile der m³-Position entstand;
+    # eingefroren fuer die Schaetzkorrektur. NULL = ohne Mindestabnahme.
+    is_minimum_fill = db.Column(
+        db.Boolean, default=False, nullable=False,
+        server_default=db.text("false"),
+    )
+    min_quantity = db.Column(db.Numeric(12, 3), nullable=True)
+
     account = db.relationship("Account", foreign_keys=[account_id])
     project = db.relationship("Project", foreign_keys=[project_id])
 
@@ -2478,8 +2564,11 @@ class InvoiceItem(db.Model):
     @property
     def is_water_consumption(self):
         """True fuer die Wasserverbrauchs-Zeile(n) — Altbelege ohne
-        ``charge_key`` ueber die Einheit m³ (damals die einzige m³-Position)."""
+        ``charge_key`` ueber die Einheit m³ (damals die einzige m³-Position).
+        Die Auffuellzeile der Mindestabnahme ist kein Verbrauch."""
         if self.unit != "m³" or getattr(self, "is_dunning_fee", 0):
+            return False
+        if getattr(self, "is_minimum_fill", False):
             return False
         return self.charge_key in (None, ChargeType.KEY_WATER)
 

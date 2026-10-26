@@ -46,6 +46,7 @@
               {% if comp.tax_rate is not none %}<span class="text-muted">· {{ tax_rate_label(comp.tax_rate) }}</span>{% endif %}
               {% if comp.valid_from %}<span class="text-muted">· ab {{ comp.valid_from.strftime('%d.%m.%Y') }}</span>{% endif %}
               {% if comp.tiers %}<span class="badge bg-azure-lt ms-1">gestaffelt</span>{% endif %}
+              {% if comp.min_quantity and comp.charge_type.is_per_m3 %}<span class="badge bg-teal-lt ms-1">{{ tariff_minimum_short_text(comp.min_quantity) }}</span>{% endif %}
               {% if comp.conditions %}<span class="badge bg-purple-lt ms-1"
                 {% if not is_wg %}title="Wirkt nur im Mandant-Typ Wassergenossenschaft"{% endif %}>{{ tariff_condition_text(comp.conditions) }}</span>{% endif %}
             </div>

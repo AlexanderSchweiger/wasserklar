@@ -22,6 +22,7 @@ from app.models import (
     ChargeType,
     Customer,
     FundingGoal,
+    MinimumOverride,
     Property,
     PropertyOwnership,
     WaterMeter,
@@ -185,8 +186,11 @@ def baseline(tariff, avg_years=3):
 
     Positionen mit Kontaktstatus-Bedingung zaehlen nur bei Objekten, deren
     Eigentuemer die Bedingung erfuellt (``charge_sources``). Bei einem
-    gestaffelten Wasserpreis rechnet der Mengenertrag mit dem mittleren Preis
-    je m³ (``effective_water_price``).
+    gestaffelten Wasserpreis bzw. einer Mindestabnahme rechnet der
+    Mengenertrag mit dem mittleren Preis je verbrauchtem m³
+    (``effective_water_price``); ``billed_factor`` = abgerechnete je
+    verbrauchte m³ (Auffuellung der Mindestabnahme) fuer den Mehrertrag eines
+    m³-Aufschlags.
 
     ``abrechenbar`` = aktives Objekt mit mindestens einem aktiven Zaehler und
     einem aktuellen Eigentuemer. Mehrere parallele aktive ``PropertyOwnership``
@@ -262,6 +266,8 @@ def baseline(tariff, avg_years=3):
         # Staffelpreis: mittlerer Preis je m³ (Tarif-Engine ueber die
         # Objektverbraeuche der letzten Periode) statt des Preises der 1. Stufe.
         "water_tiered": water_info["tiered"],
+        "water_minimum": water_info["minimum"],
+        "billed_factor": water_info["billed_factor"],
         "effective_price": water_info["price"],
         "effective_price_period": water_info["period"],
         "current_base_revenue": _q(current_base_revenue),
@@ -274,9 +280,10 @@ def baseline(tariff, avg_years=3):
 
 
 def _property_consumptions():
-    """Verbrauch je Objekt (Liste positiver ``Decimal``) der juengsten
-    abgeschlossenen Abrechnungsperiode mit Ablesungen — sonst der juengsten
-    Periode ueberhaupt. ``(werte, periode)``; ``([], None)`` ohne Daten."""
+    """Verbrauch je Objekt ``{property_id: Decimal ≥ 0}`` der juengsten
+    abgeschlossenen Abrechnungsperiode mit Verbrauch — sonst der juengsten
+    Periode ueberhaupt. Objekte ohne Verbrauch (0 m³) zaehlen mit: sie zahlen
+    eine Mindestabnahme. ``(werte, periode)``; ``({}, None)`` ohne Daten."""
     from collections import defaultdict
     from datetime import date as _date
     from app.models import BillingPeriod, MeterReading
@@ -296,38 +303,86 @@ def _property_consumptions():
         for prop_id, cons in rows:
             if cons is not None:
                 per_prop[prop_id] += Decimal(str(cons))
-        values = [v for v in per_prop.values() if v > 0]
-        if values:
+        values = {pid: v for pid, v in per_prop.items() if v >= 0}
+        if any(v > 0 for v in values.values()):
             return values, period
-    return [], None
+    return {}, None
+
+
+def _water_minimums(comp, prop_ids):
+    """Mindestabnahme der Wasserposition je Objekt — Objekt > aktueller
+    Eigentuemer > Tarif, wie im Rechnungslauf (``engine.resolve_charges``)."""
+    ct_id = comp.charge_type_id
+    rows = MinimumOverride.query.filter(MinimumOverride.charge_type_id == ct_id).all()
+    by_prop = {r.property_id: r.min_quantity for r in rows if r.property_id is not None}
+    by_cust = {r.customer_id: r.min_quantity for r in rows if r.customer_id is not None}
+    owners = {}
+    if by_cust:
+        for pid, cid in (db.session.query(PropertyOwnership.property_id,
+                                          PropertyOwnership.customer_id)
+                         .filter(PropertyOwnership.valid_to.is_(None)).all()):
+            owners.setdefault(pid, cid)
+    out = {}
+    for pid in prop_ids:
+        if pid in by_prop:
+            out[pid] = by_prop[pid]
+        elif owners.get(pid) in by_cust:
+            out[pid] = by_cust[owners[pid]]
+        else:
+            out[pid] = comp.min_quantity
+    return out
+
+
+def _has_water_minimum(comp):
+    if comp.min_quantity is not None and comp.min_quantity > 0:
+        return True
+    return db.session.query(MinimumOverride.id).filter(
+        MinimumOverride.charge_type_id == comp.charge_type_id,
+        MinimumOverride.min_quantity.isnot(None)).first() is not None
 
 
 def effective_water_price(tariff):
-    """Preis je m³, den die Wasserposition im Mittel bringt.
+    """Preis je verbrauchtem m³, den die Wasserposition im Mittel bringt.
 
-    Ohne Staffel schlicht der Tarifpreis. Mit Staffel rechnet die Tarif-Engine
-    die Objektverbraeuche der letzten Periode durch (Summe der Betraege durch
-    Summe der m³) — so bleibt der heutige Mengenertrag ehrlich, auch wenn
-    Grossverbraucher in einer teureren Stufe liegen. Ein Paket-Aufschlag
-    verschiebt alle Stufen um dasselbe Delta; der Mehrertrag bleibt damit
-    exakt ``Delta × m³``.
+    Ohne Staffel und ohne Mindestabnahme schlicht der Tarifpreis. Sonst
+    rechnet die Tarif-Engine die Objektverbraeuche der letzten Periode durch
+    (Summe der Betraege inkl. Auffuellung der Mindestabnahme je Objekt durch
+    Summe der verbrauchten m³) — so bleibt der heutige Mengenertrag ehrlich,
+    auch wenn Grossverbraucher in einer teureren Stufe liegen oder
+    Kleinverbraucher die Mindestmenge zahlen. Ein Paket-Aufschlag verschiebt
+    alle Stufen um dasselbe Delta; der Mehrertrag ist damit exakt
+    ``Delta × abgerechnete m³`` = ``Delta × m³ × billed_factor``.
 
-    ``{"price", "tiered", "period"}`` (``price`` None ohne Wasserpreis).
+    ``{"price", "tiered", "minimum", "billed_factor", "period"}`` (``price``
+    None ohne Wasserpreis).
     """
+    one = Decimal("1")
     comp = tariff.water_component if tariff is not None else None
     if comp is None or comp.amount is None:
-        return {"price": None, "tiered": False, "period": None}
+        return {"price": None, "tiered": False, "minimum": False, "billed_factor": one,
+                "period": None}
     price = Decimal(comp.amount)
-    if not comp.is_tiered:
-        return {"price": price, "tiered": False, "period": None}
+    tiered = comp.is_tiered
+    has_minimum = _has_water_minimum(comp)
+    if not tiered and not has_minimum:
+        return {"price": price, "tiered": False, "minimum": False, "billed_factor": one,
+                "period": None}
     water = engine.water_charge(engine.resolve_charges(tariff))
     values, period = _property_consumptions()
-    total = sum(values, ZERO)
+    total = sum(values.values(), ZERO)
     if water is None or total <= 0:
-        return {"price": price, "tiered": True, "period": None}
-    revenue = sum((engine.volume_amount(water, q) for q in values), ZERO)
+        return {"price": price, "tiered": tiered, "minimum": has_minimum,
+                "billed_factor": one, "period": None}
+    minimums = _water_minimums(comp, values) if has_minimum else {}
+    revenue = billed = ZERO
+    for pid, qty in values.items():
+        minimum = minimums.get(pid)
+        revenue += engine.volume_amount(water, qty, minimum=minimum)
+        billed += engine.billed_quantity(qty, minimum)
     return {"price": (revenue / total).quantize(M3_PRICE_STEP, rounding=ROUND_HALF_UP),
-            "tiered": True, "period": period}
+            "tiered": tiered, "minimum": has_minimum,
+            "billed_factor": (billed / total).quantize(M3_PRICE_STEP, rounding=ROUND_HALF_UP),
+            "period": period}
 
 
 # ---------------------------------------------------------------------------
@@ -393,6 +448,9 @@ def build_scenarios(required, base_info, rounding="exact",
 
     tariff = base_info["tariff"]
     avg_m3 = Decimal(base_info["avg_m3"] or 0)
+    # Mindestabnahme: ein m³-Aufschlag wirkt auf die abgerechnete Menge
+    # (Verbrauch + Auffuellung), nicht nur auf den Verbrauch.
+    billed_m3 = avg_m3 * Decimal(base_info.get("billed_factor") or 1)
     base_units = base_info["base_fee_units"]
     current_base = _component_amount(tariff, ChargeType.KEY_BASE_FEE)
     current_price = _component_amount(tariff, ChargeType.KEY_WATER) or ZERO
@@ -435,7 +493,7 @@ def build_scenarios(required, base_info, rounding="exact",
         elif avg_m3 <= 0:
             delta_price = ZERO
         else:
-            delta_price = _round_price(need_volume / avg_m3, rounding)
+            delta_price = _round_price(need_volume / billed_m3, rounding)
 
         sc.delta_base_fee = delta_base
         sc.delta_price_per_m3 = delta_price
@@ -446,7 +504,7 @@ def build_scenarios(required, base_info, rounding="exact",
         sc.price_per_m3 = (current_price + delta_price).quantize(
             M3_PRICE_STEP, rounding=ROUND_HALF_UP)
 
-        sc.realized = _q(delta_base * Decimal(base_units) + delta_price * avg_m3)
+        sc.realized = _q(delta_base * Decimal(base_units) + delta_price * billed_m3)
         sc.coverage = (
             (sc.realized / required * Decimal("100")).quantize(CENT,
                                                                rounding=ROUND_HALF_UP)

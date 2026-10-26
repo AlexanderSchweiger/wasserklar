@@ -4,12 +4,14 @@
   (Wasser, Wassercent, Grund-/Zusatzgebühr). Laeuft in der Alembic-Migration
   (jeder neue Tenant), bei ``init-db``/Reset und in den Tests.
 * ``apply_override_form`` — liest den Abschnitt „Individuelle Gebühren" aus dem
-  Kunden- bzw. Objektformular und schreibt ``ChargeOverride``-Zeilen.
+  Kunden- bzw. Objektformular und schreibt ``ChargeOverride``-Zeilen sowie die
+  individuelle Mindestabnahme (``MinimumOverride``) je m³-Gebührenart.
 """
 from decimal import Decimal, InvalidOperation
 
 from app.extensions import db
-from app.models import ChargeOverride, ChargeType, TariffComponent, WaterTariff
+from app.models import (ChargeOverride, ChargeType, MinimumOverride, TariffComponent,
+                        WaterTariff)
 
 # (key, label, calc_type, is_levy, overridable, sort_order)
 SYSTEM_CHARGE_TYPES = (
@@ -169,19 +171,115 @@ def _parse_override_form(form):
     return parsed, None
 
 
+# --- Individuelle Mindestabnahme (je m³-Gebührenart) ------------------------
+
+def minimum_charge_types():
+    """m³-Gebührenarten fuer den Abschnitt „Mindestabnahme“ (auch inaktive —
+    eine gesetzte Ausnahme soll sichtbar bleiben und entfernt werden koennen)."""
+    return (ChargeType.query
+            .filter(ChargeType.calc_type == ChargeType.CALC_PER_M3)
+            .order_by(ChargeType.sort_order, ChargeType.label).all())
+
+
+def minimums_by_type(owner):
+    """``{charge_type_id: MinimumOverride}`` eines Kunden oder Objekts."""
+    if owner is None or owner.id is None:
+        return {}
+    return {mo.charge_type_id: mo for mo in owner.minimum_overrides}
+
+
+def format_quantity(value):
+    """Menge fuer ein Formularfeld: deutsches Komma, ohne Nullen."""
+    if value is None:
+        return ""
+    return format(Decimal(str(value)).normalize(), "f").replace(".", ",")
+
+
+def minimum_override_rows(owner, form=None):
+    """Zeilen fuer den Formularabschnitt „Mindestabnahme“: je m³-Gebührenart
+    ``{"ct", "mode", "qty"}`` — Modus wie bei den Gebühren (erbt · eigene
+    Menge · keine)."""
+    current = minimums_by_type(owner)
+    rows = []
+    for ct in minimum_charge_types():
+        if form is not None and f"min_mode_{ct.id}" in form:
+            mode = form.get(f"min_mode_{ct.id}", MODE_INHERIT)
+            qty = form.get(f"min_qty_{ct.id}", "")
+        else:
+            mo = current.get(ct.id)
+            if mo is None:
+                mode, qty = MODE_INHERIT, ""
+            elif mo.min_quantity is None:
+                mode, qty = MODE_EXEMPT, ""
+            else:
+                mode, qty = MODE_AMOUNT, format_quantity(mo.min_quantity)
+        if not ct.active and mode == MODE_INHERIT:
+            continue
+        rows.append({"ct": ct, "mode": mode, "qty": qty})
+    return rows
+
+
+def _parse_minimum_form(form):
+    """``({charge_type_id: (mode, menge)}, error)`` — nur Arten, deren
+    Auswahlfeld im Formular steht. Eine eingetippte Menge bei „wie Tarif“
+    gilt als eigene Menge."""
+    from app.invoices.tariff_spec import parse_min_quantity
+    parsed = {}
+    for ct in minimum_charge_types():
+        field = f"min_mode_{ct.id}"
+        if field not in form:
+            continue
+        mode = form.get(field, MODE_INHERIT) or MODE_INHERIT
+        raw = (form.get(f"min_qty_{ct.id}") or "").strip()
+        if mode == MODE_INHERIT and raw:
+            mode = MODE_AMOUNT
+        qty = None
+        if mode == MODE_AMOUNT:
+            try:
+                qty = parse_min_quantity(raw, typed=True)
+            except ValueError as exc:
+                return None, f"Mindestabnahme bei „{ct.label}“: {exc}"
+            if qty is None:
+                return None, (f"Bitte für „{ct.label}“ eine Mindestabnahme in m³ angeben "
+                              f"(oder „keine Mindestabnahme“ wählen).")
+        elif mode not in (MODE_INHERIT, MODE_EXEMPT):
+            continue
+        parsed[ct.id] = (mode, qty)
+    return parsed, None
+
+
+def _apply_minimums(owner, parsed):
+    current = minimums_by_type(owner)
+    for ct_id, (mode, qty) in parsed.items():
+        existing = current.get(ct_id)
+        if mode == MODE_INHERIT:
+            if existing is not None:
+                owner.minimum_overrides.remove(existing)
+            continue
+        if existing is None:
+            existing = MinimumOverride(charge_type_id=ct_id)
+            owner.minimum_overrides.append(existing)
+        existing.min_quantity = qty
+
+
 def validate_override_form(form):
     """Deutsche Fehlermeldung oder ``None`` — ohne Seiteneffekte."""
-    return _parse_override_form(form)[1]
+    return _parse_override_form(form)[1] or _parse_minimum_form(form)[1]
 
 
 def apply_override_form(owner, form):
-    """Schreibt die individuellen Gebühren aus ``form`` auf ``owner`` (Kunde
-    oder Objekt). Validiert zuerst alles und aendert bei einem Fehler nichts.
-    Gibt eine deutsche Fehlermeldung zurueck oder ``None``.
+    """Schreibt die individuellen Gebühren und Mindestabnahmen aus ``form``
+    auf ``owner`` (Kunde oder Objekt). Validiert zuerst alles und aendert bei
+    einem Fehler nichts. Gibt eine deutsche Fehlermeldung zurueck oder
+    ``None``.
     """
     parsed, err = _parse_override_form(form)
     if err:
         return err
+    minimums, err = _parse_minimum_form(form)
+    if err:
+        return err
+    _apply_minimums(owner, minimums)
     current = overrides_by_type(owner)
     for ct_id, (mode, amount) in parsed.items():
         existing = current.get(ct_id)
@@ -197,7 +295,9 @@ def apply_override_form(owner, form):
 
 
 def overrides_display(owner):
-    """Kurzliste fuer Detailseiten: ``[(label, text)]`` der gesetzten Overrides."""
+    """Kurzliste fuer Detailseiten: ``[(label, text)]`` der gesetzten Overrides
+    (Gebühren und Mindestabnahmen)."""
+    from app.invoices.tariff_spec import minimum_text
     out = []
     for ov in sorted(owner.charge_overrides,
                      key=lambda o: (o.charge_type.sort_order, o.charge_type.label)):
@@ -209,6 +309,11 @@ def overrides_display(owner):
         else:
             text = f"{format_amount(ov.amount)} €"
         out.append((ct.label, text))
+    for mo in sorted(owner.minimum_overrides,
+                     key=lambda o: (o.charge_type.sort_order, o.charge_type.label)):
+        text = (minimum_text(mo.min_quantity) if mo.min_quantity is not None
+                else "keine Mindestabnahme")
+        out.append((mo.charge_type.label, text))
     return out
 
 
@@ -221,8 +326,9 @@ def tariff_form_params(tariff, *, name=None, valid_from=None, amounts=None):
     Grundgebuehr aus einem Tarifpaket). Ersetzt ``amounts`` den Preis einer
     **gestaffelten** Position, verschieben sich alle weiteren Stufen um
     dieselbe Differenz (Plankostenrechnung: Aufschlag je m³ auf jede Stufe).
-    Staffel und Bedingungen werden mitkopiert (Mehrfachwerte als Listen —
-    ``MultiDict`` bzw. ``url_for`` machen daraus wiederholte Felder).
+    Staffel, Mindestabnahme und Bedingungen werden mitkopiert (Mehrfachwerte
+    als Listen — ``MultiDict`` bzw. ``url_for`` machen daraus wiederholte
+    Felder).
     """
     def _qty(value):
         text = format(Decimal(str(value)).normalize(), "f")
@@ -262,6 +368,8 @@ def tariff_form_params(tariff, *, name=None, valid_from=None, amounts=None):
             params[f"comp_tier_price_{ct.id}"] = [
                 format_amount(max(s.price + shift, Decimal("0")), ct.price_decimals)
                 for s in steps]
+        if ct.is_per_m3 and comp.min_quantity is not None:
+            params[f"comp_min_qty_{ct.id}"] = _qty(comp.min_quantity)
         statuses = comp.contact_statuses
         if statuses and ct.key != ChargeType.KEY_WATER:
             from app.wg import STATUS_LABELS
@@ -285,7 +393,7 @@ _WATER_RATE = object()   # Sentinel: USt = Wasser-Satz des Mandanten
 def build_tariff(*, name, valid_from, water_price, valid_to=None, base_fee=None,
                  additional_fee=None, water_levy=None, tax_rate=_WATER_RATE,
                  labels=None, accounts=None, notes=None, include_empty_fees=True,
-                 tiers=None, tier_modes=None, conditions=None):
+                 tiers=None, tier_modes=None, conditions=None, minimums=None):
     """Legt einen Tarif mit Standardpositionen an (Seeds, Tests, Demo) —
     ``flush``, kein Commit.
 
@@ -298,7 +406,8 @@ def build_tariff(*, name, valid_from, water_price, valid_to=None, base_fee=None,
     ``tiers`` (``{charge_key: [(ab_m3, preis), …]}``), ``tier_modes``
     (``{charge_key: "graduated"|"whole"}``) und ``conditions``
     (``{charge_key: ["member", …]}`` = Kontaktstatus) setzen Staffel und
-    Bedingung der jeweiligen Position.
+    Bedingung der jeweiligen Position, ``minimums`` (``{charge_key: m³}``) die
+    Mindestabnahme einer m³-Position.
     """
     from app.invoices.tariff_spec import COND_CONTACT_STATUS, TierStep
     from app import tax_service
@@ -310,6 +419,7 @@ def build_tariff(*, name, valid_from, water_price, valid_to=None, base_fee=None,
     tiers = tiers or {}
     tier_modes = tier_modes or {}
     conditions = conditions or {}
+    minimums = minimums or {}
     tariff = WaterTariff(name=name, valid_from=valid_from, valid_to=valid_to, notes=notes)
     specs = [
         (ChargeType.KEY_WATER, water_price, True),
@@ -335,6 +445,8 @@ def build_tariff(*, name, valid_from, water_price, valid_to=None, base_fee=None,
                                for a, p in tiers[key]]
         if conditions.get(key):
             comp.condition_data = {COND_CONTACT_STATUS: list(conditions[key])}
+        if minimums.get(key) is not None and ct.is_per_m3:
+            comp.min_quantity = Decimal(str(minimums[key]))
         tariff.components.append(comp)
     db.session.add(tariff)
     db.session.flush()

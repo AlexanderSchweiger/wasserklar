@@ -237,7 +237,9 @@ def _settlement_lines(prop, period, stichtag, tariff, fee_mode, recipient,
     Betraege, Texte, USt und Konten kommen aus der Tarif-Engine — inkl. der
     individuellen Gebuehren des Altbesitzers (Objekt > Kunde > Tarif) und der
     Bedingungen nach seinem Status (der Assistent stellt ihn erst danach um).
-    Eine Staffel gilt mit vollen Grenzen fuer die Menge dieser Rechnung.
+    Eine Staffel gilt mit vollen Grenzen fuer die Menge dieser Rechnung. Die
+    Mindestabnahme folgt der Grundgebuehr: bei pro rata anteilig nach Tagen,
+    sonst traegt sie allein der Nachbesitzer (Jahresrechnung).
     """
     charges = engine.resolve_charges(tariff, prop=prop, customer=recipient)
     last_day = stichtag - timedelta(days=1)
@@ -251,12 +253,14 @@ def _settlement_lines(prop, period, stichtag, tariff, fee_mode, recipient,
         # Kein abrechenbarer Verbrauch: keine m³-Positionen (auch keine Nullzeilen).
         charges = [c for c in charges if not c.is_per_m3]
     old_days, _new_days, period_days = fee_day_split(period, stichtag)
+    pro_rata = fee_mode == FEE_MODE_PRO_RATA and old_days > 0 and period_days > 0
     case = engine.BillingCase(
         vat_liable=vat_liable,
         period_name=f"{period.name} bis {stichtag.strftime('%d.%m.%Y')}",
         usage_start=period.start_date, usage_end=last_day,
         fee_start=period.start_date, fee_end=last_day, period_days=period_days,
-        include_flat=(fee_mode == FEE_MODE_PRO_RATA and old_days > 0 and period_days > 0),
+        include_flat=pro_rata,
+        min_share=(old_days, period_days) if pro_rata else (0, period_days),
         flat_span_text=(f"{period.start_date.strftime('%d.%m.%Y')} – "
                         f"{last_day.strftime('%d.%m.%Y')}"),
         meter_parts=parts,

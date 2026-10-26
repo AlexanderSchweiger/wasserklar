@@ -633,6 +633,7 @@
   aus dem Tarif). Ein Wert an der Liegenschaft hat Vorrang.
 </p>
 {% set override_rows = charge_override_rows(customer, form_data if form_data is defined and form_data else none) %}
+{% set minimum_rows = minimum_override_rows(customer, form_data if form_data is defined and form_data else none) %}
 {% set inherit_label = 'wie Tarif' %}
 {% include "_charge_overrides_fields.html" %}
 

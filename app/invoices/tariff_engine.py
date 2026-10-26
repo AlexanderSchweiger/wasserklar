@@ -29,13 +29,26 @@ Regeln (siehe auch ``ChargeOverride`` und ``app/invoices/tariff_spec.py``):
    Grenzen je Rechnung, auch bei Teilzeitraeumen); ``graduated`` = eine Zeile
    je angebrochener Stufe, ``whole`` = eine Zeile zum Preis der erreichten
    Stufe. Bei ``valid_from`` wird danach die Menge je Stufe abgegrenzt.
+8. **Mindestabnahme** (je m³-Position, ``min_quantity``; individuell je
+   Objekt > Kunde > Tarif über ``MinimumOverride``, unabhängig vom
+   individuellen Preis): abgerechnet wird ``Verbrauch + Auffüllung`` mit
+   ``Auffüllung = max(M − max(Verbrauch, 0), 0)``. Die Verbrauchszeilen
+   bleiben der echte Verbrauch, die Differenz steht in eigenen Auffüllzeilen
+   (``is_minimum_fill``, zählen nicht zum Verbrauch). Staffel: die Stufe
+   ergibt sich aus der abgerechneten Menge (``graduated``: die Auffüllung
+   belegt die Bänder über dem Verbrauch; ``whole``: Stufenpreis der
+   abgerechneten Menge für beide Zeilen). ``valid_from`` grenzt auch die
+   Auffüllung ab. ``BillingCase.min_share`` kürzt die Mindestmenge beim
+   Eigentümerwechsel nach Tagen (wie die Grundgebühr). Alle Zeilen der
+   Position tragen die effektive Mindestmenge (``min_quantity``) —
+   eingefroren für die Schätzkorrektur.
 
 Die Engine rechnet nur — sie schreibt nichts in die DB.
 """
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from app.invoices.amounts import line_tax
 from app.invoices.price_format import (
@@ -43,9 +56,9 @@ from app.invoices.price_format import (
 )
 from app.invoices.tariff_spec import (
     TIER_GRADUATED, TIER_MODES, TIER_WHOLE, conditions_as_dict, contact_statuses,
-    parse_tiers, tiers_as_list,
+    parse_min_quantity, parse_tiers, tiers_as_list,
 )
-from app.models import ChargeOverride, ChargeType
+from app.models import ChargeOverride, ChargeType, MinimumOverride
 
 CENT = Decimal("0.01")
 QTY_STEP = Decimal("0.001")          # InvoiceItem.quantity: Numeric(12, 3)
@@ -73,6 +86,8 @@ class Charge:
     tier_mode: str = TIER_GRADUATED
     statuses: frozenset = None   # Bedingung Kontaktstatus (None = alle)
     price_decimals: int = DEFAULT_PLACES   # Anzeige des m³-Preises (Gebührenart)
+    min_qty: Decimal = None      # Mindestabnahme je Zeitraum (nur m³), None = keine
+    min_source: str = SOURCE_TARIFF        # woher die Mindestmenge kommt
 
     @property
     def is_per_m3(self):
@@ -107,10 +122,11 @@ def effective_tax(rate, vat_liable):
 def make_charge(*, key, label, calc_type, amount, tax_rate=None, account_id=None,
                 is_levy=False, valid_from=None, sort_order=100, tiers=(),
                 tier_mode=TIER_GRADUATED, statuses=None, source=SOURCE_TARIFF,
-                price_decimals=None):
+                price_decimals=None, min_qty=None, min_source=SOURCE_TARIFF):
     """Baut eine ``Charge`` — die eine Stelle, die Wasser-Sonderregeln kennt
-    (kein ``valid_from``, keine Bedingung) und Staffeln auf m³-Arten begrenzt.
-    ``price_decimals`` = Nachkommastellen der Gebührenart (Default 2)."""
+    (kein ``valid_from``, keine Bedingung) und Staffeln sowie die
+    Mindestabnahme auf m³-Arten begrenzt. ``price_decimals`` =
+    Nachkommastellen der Gebührenart (Default 2)."""
     per_m3 = calc_type == ChargeType.CALC_PER_M3
     is_water = key == ChargeType.KEY_WATER
     return Charge(
@@ -128,6 +144,8 @@ def make_charge(*, key, label, calc_type, amount, tax_rate=None, account_id=None
         tier_mode=tier_mode if tier_mode in TIER_MODES else TIER_GRADUATED,
         statuses=(frozenset(statuses) if statuses and not is_water else None),
         price_decimals=clamp_places(price_decimals),
+        min_qty=parse_min_quantity(min_qty) if per_m3 else None,
+        min_source=min_source,
     )
 
 
@@ -199,6 +217,28 @@ def _overrides(owner_id, column):
     return {r.charge_type_id: r for r in rows}
 
 
+def _minimum_overrides(owner_id, column):
+    if owner_id is None:
+        return {}
+    rows = MinimumOverride.query.filter(column == owner_id).all()
+    return {r.charge_type_id: r for r in rows}
+
+
+def _resolve_minimum(comp, prop_min, cust_min):
+    """``(Mindestmenge, Quelle)`` einer m³-Position: Objekt > Kunde > Tarif.
+    Eine individuelle Zeile mit leerer Menge heisst „keine Mindestabnahme“."""
+    ct = comp.charge_type
+    if not ct.is_per_m3:
+        return None, SOURCE_TARIFF
+    row = prop_min.get(ct.id)
+    if row is not None:
+        return row.min_quantity, SOURCE_PROPERTY
+    row = cust_min.get(ct.id)
+    if row is not None:
+        return row.min_quantity, SOURCE_CUSTOMER
+    return comp.min_quantity, SOURCE_TARIFF
+
+
 def _is_overridable(ct):
     """Wasser ist nie ueberschreibbar — Verbrauch, Schaetzung und
     Plankostenrechnung haengen am Tarifpreis (Schutz auch gegen ein per DB
@@ -218,7 +258,8 @@ def resolve_charges(tariff, *, prop=None, customer=None, contact_status=None,
 
     Positionen ohne effektiven Betrag (Tarif ohne Betrag und kein Override,
     oder Override „entfällt") und Positionen mit nicht erfuellter Bedingung
-    sind nicht dabei.
+    sind nicht dabei. Die Mindestabnahme loest sich unabhaengig vom Betrag
+    auf (``MinimumOverride``: Objekt > Kunde > Tarif).
     """
     if tariff is None:
         return []
@@ -226,6 +267,8 @@ def resolve_charges(tariff, *, prop=None, customer=None, contact_status=None,
     status = _contact_status(customer, contact_status)
     prop_ov = _overrides(getattr(prop, "id", None), ChargeOverride.property_id)
     cust_ov = _overrides(getattr(customer, "id", None), ChargeOverride.customer_id)
+    prop_min = _minimum_overrides(getattr(prop, "id", None), MinimumOverride.property_id)
+    cust_min = _minimum_overrides(getattr(customer, "id", None), MinimumOverride.customer_id)
 
     charges = []
     for comp in tariff.components:
@@ -248,6 +291,7 @@ def resolve_charges(tariff, *, prop=None, customer=None, contact_status=None,
                 tiers = ()       # individueller Betrag = fester Preis
         if amount is None:
             continue
+        min_qty, min_source = _resolve_minimum(comp, prop_min, cust_min)
         charges.append(make_charge(
             key=ct.key,
             label=comp.label or ct.label,
@@ -263,6 +307,8 @@ def resolve_charges(tariff, *, prop=None, customer=None, contact_status=None,
             tier_mode=comp.tier_mode,
             statuses=statuses,
             price_decimals=ct.price_decimals,
+            min_qty=min_qty,
+            min_source=min_source,
         ))
     return _sorted(charges)
 
@@ -298,6 +344,7 @@ def charges_from_specs(specs):
             tier_mode=spec.get("tier_mode") or TIER_GRADUATED,
             statuses=contact_statuses(spec.get("conditions")),
             price_decimals=ct.price_decimals,
+            min_qty=spec.get("min_quantity"),
         ))
     return _sorted(out)
 
@@ -366,6 +413,19 @@ def ignored_override_types(tariff, *, prop=None, customer=None, wg_mode=None):
                 labels.add(f"{r.charge_type.label} (Bedingung nicht erfüllt)")
         elif r.charge_type_id not in in_tariff:
             labels.add(r.charge_type.label)
+    # Individuelle Mindestabnahme (nur eine mit Menge kann „nicht greifen“).
+    mins = []
+    if prop is not None:
+        mins += MinimumOverride.query.filter_by(property_id=prop.id).all()
+    if customer is not None:
+        mins += MinimumOverride.query.filter_by(customer_id=customer.id).all()
+    for r in mins:
+        if r.min_quantity is None:
+            continue
+        if r.charge_type_id in blocked:
+            labels.add(f"{r.charge_type.label}: Mindestabnahme (Bedingung nicht erfüllt)")
+        elif r.charge_type_id not in in_tariff:
+            labels.add(f"{r.charge_type.label}: Mindestabnahme")
     return sorted(labels)
 
 
@@ -417,6 +477,36 @@ def tier_bands(charge, qty):
         part = (min(qty, upper) if upper is not None else qty) - lower
         bands.append(Band(index, lower, upper, part, price))
     return bands
+
+
+def range_bands(charge, low, high):
+    """Teilmengen je Stufe im Mengenbereich ``(low, high]`` (``graduated``) —
+    fuer die Auffuellzeilen der Mindestabnahme, die die Baender ueber dem
+    Verbrauch belegen."""
+    out = []
+    for index, lower, upper, price in price_levels(charge):
+        a = max(low, lower)
+        b = high if upper is None else min(high, upper)
+        if b > a:
+            out.append(Band(index, lower, upper, b - a, price))
+    return out
+
+
+def fill_quantity(qty, minimum):
+    """Auffuellung bis zur Mindestmenge: ``max(M − max(qty, 0), 0)`` — ein
+    negativer Verbrauch (Korrektur einer zu hohen Vorschaetzung) zaehlt als 0,
+    die Periode zahlt trotzdem die volle Mindestmenge."""
+    if not minimum or minimum <= 0:
+        return ZERO
+    qty = Decimal(str(qty or 0))
+    fill = Decimal(str(minimum)) - max(qty, ZERO)
+    return fill if fill > 0 else ZERO
+
+
+def billed_quantity(qty, minimum):
+    """Abgerechnete Menge = Verbrauch + Auffuellung (Basis der Stufe)."""
+    qty = Decimal(str(qty or 0))
+    return qty + fill_quantity(qty, minimum)
 
 
 def band_range(lower, upper):
@@ -481,7 +571,78 @@ def _active_share(charge, start, end):
     return None
 
 
-def volume_lines(charge, qty, *, head, detail="", start=None, end=None):
+def _split_bands(charge, qty, minimum):
+    """``(Verbrauchs-Baender, Auffuell-Baender)`` fuer ``qty`` m³ bei
+    Mindestmenge ``minimum`` (siehe Regel 8 im Modul-Docstring)."""
+    fill = fill_quantity(qty, minimum)
+    if fill <= 0:
+        return tier_bands(charge, qty), []
+    if charge.is_tiered and charge.tier_mode == TIER_WHOLE:
+        top = tier_bands(charge, qty + fill)[0]
+        return ([Band(top.index, top.lower, top.upper, qty, top.price)],
+                [Band(top.index, top.lower, top.upper, fill, top.price)])
+    low = max(qty, ZERO)
+    return tier_bands(charge, qty), range_bands(charge, low, low + fill)
+
+
+def _scaled(q, share):
+    if share is None:
+        return q
+    return (q * Decimal(share[0]) / Decimal(share[1])).quantize(QTY_STEP)
+
+
+def _volume_line(charge, desc, qty, price, minimum, *, fill=False):
+    return {
+        "description": desc,
+        "quantity": qty,
+        "unit": "m³",
+        "unit_price": price,
+        "price_decimals": charge.price_decimals,
+        "amount": money(qty * price),
+        "charge_key": charge.key,
+        "is_minimum_fill": fill,
+        "min_quantity": minimum,
+    }
+
+
+def minimum_fill_lines(charge, qty, minimum, *, head, minimum_note="", bands=None,
+                       share=None, suffix=""):
+    """Auffuellzeilen der Mindestabnahme fuer den Verbrauch ``qty`` — leer,
+    wenn der Verbrauch die Mindestmenge erreicht.
+
+    Text: ``<head> – Mindestabnahme 50 m³ (verbraucht 30 m³): 20 m³ × 1,40
+    €/m³``; zeitanteilig gekuerzt mit ``minimum_note`` in der Klammer, bei
+    anteiliger Staffel ``…, Stufe 2 (über 200 bis 500 m³): …`` je Stufe, beim
+    Stufenpreis ``…, Stufenpreis über 200 bis 500 m³``.
+    """
+    qty = Decimal(str(qty or 0))
+    if bands is None:
+        bands = _split_bands(charge, qty, minimum)[1]
+    if not bands:
+        return []
+    notes = [n for n in (minimum_note, f"verbraucht {fmt_qty(qty)} m³") if n]
+    title = f"{head} – Mindestabnahme {fmt_qty(minimum)} m³"
+    whole = charge.is_tiered and charge.tier_mode == TIER_WHOLE
+    graduated = charge.is_tiered and not whole
+    lines = []
+    for i, band in enumerate(bands):
+        q = _scaled(band.qty, share)
+        calc = f"{fmt_qty(q)} m³ × {fmt_price(band.price, charge.price_decimals)} €/m³"
+        desc = title
+        if i == 0:
+            desc += f" ({'; '.join(notes)})"
+        if graduated:
+            desc += f", Stufe {band.index} ({band_range(band.lower, band.upper)})"
+        desc += f": {calc}"
+        if whole:
+            desc += f", Stufenpreis {band_range(band.lower, band.upper)}"
+        desc += suffix
+        lines.append(_volume_line(charge, desc, q, band.price, minimum, fill=True))
+    return lines
+
+
+def volume_lines(charge, qty, *, head, detail="", start=None, end=None,
+                 minimum=None, minimum_note=""):
     """Rechnungszeilen (Dicts) einer m³-Position fuer ``qty`` m³ — leer, wenn
     sie im Zeitraum [start, end] gar nicht gilt.
 
@@ -490,6 +651,10 @@ def volume_lines(charge, qty, *, head, detail="", start=None, end=None):
     Zeile zum Stufenpreis. Mit ``valid_from`` innerhalb des Zeitraums wird die
     Menge (je Stufe) linear nach Tagen abgegrenzt. ``detail`` (Kontext des
     Aufrufers, z.B. Abzug laut Schlussrechnung) haengt an der ersten Zeile.
+
+    ``minimum`` (effektive Mindestmenge, siehe ``effective_minimum``): liegt
+    der Verbrauch darunter, folgen Auffuellzeilen (``minimum_fill_lines``);
+    jede Zeile traegt ``min_quantity``.
     """
     total_qty = Decimal(str(qty or 0))
     share = _active_share(charge, start, end)
@@ -499,12 +664,12 @@ def volume_lines(charge, qty, *, head, detail="", start=None, end=None):
     if share is not None:
         suffix = (f", zeitanteilig ab {charge.valid_from.strftime('%d.%m.%Y')}: "
                   f"{share[0]}/{share[1]} Tage")
+    minimum = minimum if minimum and minimum > 0 else None
     staged = charge.is_tiered and total_qty > 0
+    used, fill_bands = _split_bands(charge, total_qty, minimum)
     lines = []
-    for i, band in enumerate(tier_bands(charge, total_qty)):
-        q = band.qty
-        if share is not None:
-            q = (q * Decimal(share[0]) / Decimal(share[1])).quantize(QTY_STEP)
+    for i, band in enumerate(used):
+        q = _scaled(band.qty, share)
         calc = f"{fmt_qty(q)} m³ × {fmt_price(band.price, charge.price_decimals)} €/m³"
         if not staged:
             desc = f"{head} ({calc}{suffix})"
@@ -516,23 +681,19 @@ def volume_lines(charge, qty, *, head, detail="", start=None, end=None):
                     f"({band_range(band.lower, band.upper)}): {calc}{suffix}")
         if i == 0 and detail:
             desc += detail
-        lines.append({
-            "description": desc,
-            "quantity": q,
-            "unit": "m³",
-            "unit_price": band.price,
-            "price_decimals": charge.price_decimals,
-            "amount": money(q * band.price),
-            "charge_key": charge.key,
-        })
+        lines.append(_volume_line(charge, desc, q, band.price, minimum))
+    lines += minimum_fill_lines(charge, total_qty, minimum, head=head,
+                                minimum_note=minimum_note, bands=fill_bands,
+                                share=share, suffix=suffix)
     return lines
 
 
-def volume_amount(charge, qty, *, start=None, end=None):
-    """Nettobetrag einer m³-Position fuer ``qty`` m³ (Summe der Zeilen) —
-    fuer Schaetzkorrektur und Plankostenrechnung."""
+def volume_amount(charge, qty, *, start=None, end=None, minimum=None):
+    """Nettobetrag einer m³-Position fuer ``qty`` m³ (Summe der Zeilen, mit
+    Auffuellung bis ``minimum``) — fuer Schaetzkorrektur und
+    Plankostenrechnung."""
     return sum((line["amount"] for line in volume_lines(
-        charge, qty, head="", start=start, end=end)), ZERO)
+        charge, qty, head="", start=start, end=end, minimum=minimum)), ZERO)
 
 
 def flat_line(charge, *, start=None, end=None, period_days=None, label_suffix="",
@@ -601,6 +762,9 @@ class BillingCase:
     meter_parts: list = field(default_factory=list)
     water_detail: str = ""       # z.B. Abzug laut Schlussrechnung
     is_estimated: bool = False   # beruht der Verbrauch (teils) auf Schaetzung?
+    # Mindestabnahme beim Eigentuemerwechsel: (Tage, Periodentage) = anteilig
+    # wie die Grundgebuehr, (0, n) = keine, None = volle Mindestmenge.
+    min_share: tuple = None
 
     @property
     def billed_m3(self):
@@ -610,6 +774,27 @@ class BillingCase:
         return Decimal(str(self.consumption or 0))
 
 
+def effective_minimum(charge, case):
+    """``(Mindestmenge, Hinweis)`` einer m³-Position fuer diesen Fall — nach
+    der anteiligen Kuerzung ueber ``case.min_share`` (auf 0,001 m³). ``(None,
+    "")`` ohne Mindestabnahme."""
+    minimum = charge.min_qty
+    if minimum is None or minimum <= 0:
+        return None, ""
+    share = case.min_share
+    if share is None:
+        return minimum, ""
+    days, total = share
+    if not total or days >= total:
+        return minimum, ""
+    if days <= 0:
+        return None, ""
+    part = (minimum * Decimal(days) / Decimal(total)).quantize(QTY_STEP, rounding=ROUND_HALF_UP)
+    if part <= 0:
+        return None, ""
+    return part, f"anteilig {days}/{total} Tage von {fmt_qty(minimum)} m³"
+
+
 def _head(charge, case):
     return f"{charge.label} {case.period_name}" if case.period_name else charge.label
 
@@ -617,22 +802,23 @@ def _head(charge, case):
 def _water_lines(water, case):
     head = _head(water, case)
     parts = case.meter_parts
+    minimum, minimum_note = effective_minimum(water, case)
     if parts and not water.is_tiered:
-        # Linearer Preis: eine Zeile je Zaehler (wie vor der Engine).
+        # Linearer Preis: eine Zeile je Zaehler (wie vor der Engine), die
+        # Mindestabnahme gilt fuer die Objektsumme (eine Auffuellzeile).
         lines = []
         for part in parts:
             qty = Decimal(str(part.qty))
             note = f"{part.note}, " if part.note else ""
-            lines.append({
-                "description": f"{head} – {part.label} ({note}{fmt_qty(qty)} m³{part.suffix})",
-                "quantity": qty,
-                "unit": "m³",
-                "unit_price": water.unit_price,
-                "price_decimals": water.price_decimals,
-                "amount": money(qty * water.unit_price),
-                "charge_key": water.key,
-                "is_estimated": bool(part.is_estimated),
-            })
+            line = _volume_line(
+                water, f"{head} – {part.label} ({note}{fmt_qty(qty)} m³{part.suffix})",
+                qty, water.unit_price, minimum)
+            line["is_estimated"] = bool(part.is_estimated)
+            lines.append(line)
+        for line in minimum_fill_lines(water, case.billed_m3, minimum, head=head,
+                                       minimum_note=minimum_note):
+            line["is_estimated"] = False
+            lines.append(line)
         return lines
     detail = case.water_detail
     if parts:
@@ -640,9 +826,10 @@ def _water_lines(water, case):
         # auf die Zaehler steht im Text.
         split = ", ".join(f"{p.label}: {fmt_qty(p.qty)} m³{p.suffix}" for p in parts)
         detail = f" — {split}{detail}"
-    lines = volume_lines(water, case.billed_m3, head=head, detail=detail)
+    lines = volume_lines(water, case.billed_m3, head=head, detail=detail,
+                         minimum=minimum, minimum_note=minimum_note)
     for line in lines:
-        line["is_estimated"] = case.is_estimated
+        line["is_estimated"] = case.is_estimated and not line["is_minimum_fill"]
     return lines
 
 
@@ -654,7 +841,8 @@ def build_lines(charges, case):
     Pauschalen (``include_flat``) ggf. anteilig. Jede Zeile ist ein Dict mit
     genau den ``InvoiceItem``-Feldern ``description, quantity, unit,
     unit_price, price_decimals, amount, charge_key, tax_rate, account_id,
-    is_estimated``.
+    is_estimated`` — m³-Zeilen zusaetzlich ``is_minimum_fill, min_quantity``
+    (Mindestabnahme, Regel 8).
     """
     lines = []
     water = water_charge(charges)
@@ -667,8 +855,10 @@ def build_lines(charges, case):
         if charge.is_water:
             continue
         if charge.is_per_m3:
+            minimum, minimum_note = effective_minimum(charge, case)
             new = volume_lines(charge, billed, head=_head(charge, case),
-                               start=case.usage_start, end=case.usage_end)
+                               start=case.usage_start, end=case.usage_end,
+                               minimum=minimum, minimum_note=minimum_note)
             estimated = case.is_estimated
         else:
             if not case.include_flat:
@@ -679,7 +869,7 @@ def build_lines(charges, case):
             estimated = False
         for line in new:
             line.update(tax_rate=charge.tax(case.vat_liable), account_id=charge.account_id,
-                        is_estimated=estimated)
+                        is_estimated=estimated and not line.get("is_minimum_fill"))
             lines.append(line)
     return lines
 
@@ -731,6 +921,8 @@ def snapshot(tariff):
             "tiers": tiers_as_list(comp.tier_steps),
             "conditions": conditions_as_dict(comp.conditions),
             "price_decimals": ct.price_decimals,
+            "min_quantity": (str(comp.min_quantity)
+                             if comp.min_quantity is not None and ct.is_per_m3 else None),
         })
     return rows
 
@@ -759,6 +951,7 @@ def charges_from_snapshot(rows):
             tier_mode=r.get("tier_mode") or TIER_GRADUATED,
             statuses=contact_statuses(r.get("conditions")),
             price_decimals=r.get("price_decimals") or LEGACY_PLACES,   # Altlaeufe: 4
+            min_qty=r.get("min_quantity"),
         ))
     return out
 

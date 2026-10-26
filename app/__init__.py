@@ -216,9 +216,12 @@ def create_app(config_name=None):
     app.jinja_env.globals["wg_function_keys_ordered"] = _wg_function_keys_ordered
 
     # Tarif-Staffel und -Bedingung als Text (Tarifliste, Laufdetail).
-    from app.invoices.tariff_spec import condition_text, levels_text
+    from app.invoices.tariff_spec import (condition_text, levels_text,
+                                          minimum_short_text, minimum_text)
     app.jinja_env.globals["tariff_levels_text"] = levels_text
     app.jinja_env.globals["tariff_condition_text"] = condition_text
+    app.jinja_env.globals["tariff_minimum_text"] = minimum_text
+    app.jinja_env.globals["tariff_minimum_short_text"] = minimum_short_text
 
     # USt-Anteil einer Buchung mit Vorzeichen (Storno-Gegenbuchung negativ).
     from app.accounting.services import signed_booking_tax
@@ -252,9 +255,11 @@ def create_app(config_name=None):
     app.jinja_env.globals["tax_rate_display"] = _tax_rate_display
 
     # Individuelle Gebuehren (Kunde/Objekt): Formularzeilen + Anzeige.
-    from app.invoices.charges import (override_form_rows as _override_rows,
+    from app.invoices.charges import (minimum_override_rows as _minimum_rows,
+                                      override_form_rows as _override_rows,
                                       overrides_display as _overrides_display)
     app.jinja_env.globals["charge_override_rows"] = _override_rows
+    app.jinja_env.globals["minimum_override_rows"] = _minimum_rows
     app.jinja_env.globals["charge_overrides_display"] = _overrides_display
 
     # Notiz-Helfer als Jinja-Globals: Detailseiten/Dashboard rendern ihr Panel

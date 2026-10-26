@@ -32,7 +32,7 @@ from app.models import (
     SchriftverkehrDocument,
     Circular, CircularRecipient, CircularDeliveryLog,
     ConsumptionYear, FundingGoal,
-    ChargeType, TariffComponent, ChargeOverride,
+    ChargeType, TariffComponent, ChargeOverride, MinimumOverride,
     IncomingInvoice, Document, DocumentLink, DocumentEvent,
     AccountingHandover, AccountingHandoverItem,
     DirectDebitRun, DirectDebitItem, DirectDebitMandateEvent,
@@ -121,8 +121,8 @@ CATEGORIES = {
         Customer, Property, PropertyOwnership, WaterMeter,
         BillingPeriod, MeterReadingAccessCode, WaterTariff,
         # Tarifpositionen: Gebuehrenarten-Katalog, Positionen je Tarif und
-        # individuelle Gebuehren an Kunde/Objekt.
-        ChargeType, TariffComponent, ChargeOverride,
+        # individuelle Gebuehren bzw. Mindestabnahmen an Kunde/Objekt.
+        ChargeType, TariffComponent, ChargeOverride, MinimumOverride,
         NetworkPlan, NetworkFeature, MaintenanceLog, SpringYield, Incident,
         WaterSample, LabResult,
         CustomerWgProfile, PropertyWgProfile, WgFunction,
@@ -186,7 +186,7 @@ INSERT_ORDER = [
     # Gebuehrenarten sind FK-frei; Overrides NACH Customer/Property.
     ChargeType,
     Customer, Property, PropertyOwnership, WaterMeter,
-    ChargeOverride,
+    ChargeOverride, MinimumOverride,
     CustomerWgProfile, PropertyWgProfile, WgFunction,
     # Consent/Opt-in: kunden-gebunden → NACH Customer.
     InvoiceEmailOptInCode, CustomerEmailConsentLog, DirectDebitMandateEvent,
@@ -297,6 +297,7 @@ NATURAL_KEYS = {
     # Je Art hoechstens ein Override pro Kunde bzw. Objekt (die jeweils andere
     # Spalte ist NULL — filter_by(x=None) rendert korrekt IS NULL).
     ChargeOverride: ("charge_type_id", "customer_id", "property_id"),
+    MinimumOverride: ("charge_type_id", "customer_id", "property_id"),
     MeterReading: ("meter_id", "billing_period_id"),
     MeterReplacement: ("old_meter_id",),  # ein alter Zaehler wird hoechstens einmal ersetzt
     MeterTour: None,                    # kein natuerlicher Schluessel — immer Insert
@@ -400,6 +401,8 @@ FOREIGN_KEYS = {
                       "account_id": Account},
     ChargeOverride: {"charge_type_id": ChargeType, "customer_id": Customer,
                      "property_id": Property},
+    MinimumOverride: {"charge_type_id": ChargeType, "customer_id": Customer,
+                      "property_id": Property},
     BillingRun: {"billing_period_id": BillingPeriod, "project_id": Project},
     Invoice: {"customer_id": Customer, "property_id": Property, "billing_run_id": BillingRun,
               "billing_period_id": BillingPeriod,

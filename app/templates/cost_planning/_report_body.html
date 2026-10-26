@@ -60,6 +60,9 @@
       {% else %}
       {{ (tariff.water_price or 0)|de_number(4) }} € je m³
       {% endif %}
+      {% if baseline.water_minimum %}
+      (mit Mindestabnahme{% if not baseline.water_tiered %}, im Mittel {{ baseline.effective_price|de_number(4) }} € je verbrauchtem m³{% endif %})
+      {% endif %}
     </td>
   </tr>
   {% endif %}

@@ -20,8 +20,14 @@ schließt 200 ein). Zwei Modi:
 **Bedingungen**: ``{"contact_status": ["member", …]}`` — die Position entsteht
 nur, wenn der Status des Rechnungsempfängers einer der genannten ist
 (Schlüssel aus ``app.wg.STATUS_LABELS``).
+
+**Mindestabnahme** (nur m³-Positionen, eigene Spalte ``min_quantity``): so
+viele m³ werden je Abrechnungszeitraum mindestens verrechnet. Prüfung über
+``parse_min_quantity``, Anzeige ``minimum_text``; gerechnet wird in der
+Tarif-Engine.
 """
 import json
+import re
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
@@ -43,6 +49,7 @@ CONDITION_KEYS = (COND_CONTACT_STATUS,)
 
 _PRICE_STEP = Decimal("0.0001")      # TariffComponent.amount: Numeric(10, 4)
 _QTY_STEP = Decimal("0.001")         # InvoiceItem.quantity: Numeric(12, 3)
+_MAX_MIN_QUANTITY = Decimal("999999999.999")   # min_quantity: Numeric(12, 3)
 
 
 @dataclass(frozen=True)
@@ -130,6 +137,59 @@ def check_tier_mode(mode):
     if mode not in TIER_MODES:
         raise ValueError("Unbekannter Staffel-Modus.")
     return mode
+
+
+def parse_min_quantity(raw, *, typed=False):
+    """Mindestabnahme (m³ je Abrechnungszeitraum) → ``Decimal`` oder ``None``
+    (leer/0 = keine). Ungültig → ``ValueError`` mit deutscher Meldung.
+
+    ``typed=True`` für Eingaben aus einem Formular: deutsches Komma, und
+    „1.000“ ohne Komma ist ein Tausenderpunkt (wie bei den Staffelgrenzen).
+    Sonst (DB, Snapshot, JSON) ist der Punkt immer das Dezimalzeichen."""
+    if raw is None:
+        return None
+    if isinstance(raw, Decimal):
+        value = raw
+    else:
+        text = str(raw).strip().replace(" ", "")
+        if not text:
+            return None
+        if typed:
+            if re.fullmatch(r"\d{1,3}(\.\d{3})+", text):
+                text = text.replace(".", "")
+            elif "," in text:
+                text = text.replace(".", "").replace(",", ".")
+        try:
+            value = Decimal(text)
+        except (InvalidOperation, ValueError):
+            raise ValueError("Mindestabnahme bitte als Zahl (m³) angeben.")
+    if not value.is_finite():
+        raise ValueError("Mindestabnahme bitte als Zahl (m³) angeben.")
+    if value < 0:
+        raise ValueError("Die Mindestabnahme darf nicht negativ sein.")
+    if value != value.quantize(_QTY_STEP):
+        raise ValueError("Mindestabnahme höchstens mit drei Nachkommastellen.")
+    if value > _MAX_MIN_QUANTITY:
+        raise ValueError("Die Mindestabnahme ist zu groß.")
+    return value if value > 0 else None
+
+
+def minimum_short_text(qty):
+    """„mind. 50 m³“ bzw. ``""`` — fuer Auswahllisten und Kennzeichen."""
+    text = minimum_text(qty)
+    return text.replace("Mindestabnahme", "mind.", 1) if text else ""
+
+
+def minimum_text(qty):
+    """„Mindestabnahme 50 m³“ bzw. ``""`` ohne Menge. Nimmt Decimal, Zahl oder
+    Snapshot-String. Jinja-Global ``tariff_minimum_text``."""
+    try:
+        value = parse_min_quantity(qty)
+    except ValueError:
+        return ""
+    if value is None:
+        return ""
+    return f"Mindestabnahme {_de_qty(value)} m³"
 
 
 def parse_conditions(raw):

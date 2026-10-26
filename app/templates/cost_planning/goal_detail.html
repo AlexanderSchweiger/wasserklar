@@ -184,6 +184,19 @@
       Ein Aufschlag je m³ gilt für jede Stufe.
     </div>
     {% endif %}
+    {% if baseline.water_minimum %}
+    <div class="small text-secondary mt-2">
+      <i class="fas fa-fill-drip me-1"></i>
+      Mindestabnahme eingerechnet: Kleinverbraucher zahlen die Mindestmenge
+      {%- if not baseline.water_tiered %}, im Mittel
+      <strong class="text-body">{{ baseline.effective_price|de_number(4) }} € je verbrauchtem m³</strong>
+      {%- endif %}.
+      {% if baseline.billed_factor and baseline.billed_factor > 1 %}
+      Abgerechnet werden {{ ((baseline.billed_factor - 1) * 100)|de_number(1) }} % mehr m³
+      als verbraucht — ein Aufschlag je m³ wirkt auf diese Menge.
+      {% endif %}
+    </div>
+    {% endif %}
   </div>
 </div>
 

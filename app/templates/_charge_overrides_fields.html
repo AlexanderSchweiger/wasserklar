@@ -1,8 +1,11 @@
 {# Abschnitt „Individuelle Gebühren" im Kunden- bzw. Objektformular.
    Erwartet: override_rows (charges.override_form_rows via Jinja-Global
-   charge_override_rows) und inherit_label („wie Tarif" / „wie Kunde bzw. Tarif").
+   charge_override_rows), minimum_rows (charges.minimum_override_rows via
+   Jinja-Global minimum_override_rows, optional) und inherit_label („wie Tarif"
+   / „wie Kunde bzw. Tarif").
    Je überschreibbarer Gebührenart: erbt · eigener Betrag · entfällt. Ein
-   eingetippter Betrag bei „erbt" gilt serverseitig als eigener Betrag. #}
+   eingetippter Betrag bei „erbt" gilt serverseitig als eigener Betrag.
+   Darunter je m³-Gebührenart die Mindestabnahme: erbt · eigene Menge · keine. #}
 {% if override_rows %}
 <div class="table-responsive">
   <table class="table table-sm table-vcenter mb-2">
@@ -42,4 +45,46 @@
 </div>
 {% else %}
 <p class="text-muted small mb-2">Keine individuell überschreibbaren Gebührenarten vorhanden.</p>
+{% endif %}
+{% if minimum_rows %}
+<div class="table-responsive">
+  <table class="table table-sm table-vcenter mb-1">
+    <thead>
+      <tr>
+        <th>Mindestabnahme</th>
+        <th style="min-width:11rem">Regel</th>
+        <th style="min-width:10rem">Menge je Zeitraum</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in minimum_rows %}
+      {% set ct = row.ct %}
+      <tr>
+        <td>
+          {{ ct.label }}
+          {% if not ct.active %}<span class="badge bg-secondary-lt ms-1">ausgeblendet</span>{% endif %}
+        </td>
+        <td>
+          <select name="min_mode_{{ ct.id }}" class="form-select form-select-sm">
+            <option value="" {{ 'selected' if row.mode == '' }}>{{ inherit_label }}</option>
+            <option value="amount" {{ 'selected' if row.mode == 'amount' }}>eigene Menge</option>
+            <option value="exempt" {{ 'selected' if row.mode == 'exempt' }}>keine Mindestabnahme</option>
+          </select>
+        </td>
+        <td>
+          <div class="input-group input-group-sm">
+            <input type="text" inputmode="decimal" name="min_qty_{{ ct.id }}" class="form-control"
+                   value="{{ row.qty }}" placeholder="z. B. 50" aria-label="Mindestabnahme in m³">
+            <span class="input-group-text">m³</span>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<div class="form-text mb-2">
+  Wer weniger verbraucht, zahlt trotzdem diese Menge (eigene Zeile auf der Rechnung).
+  „Eigene Menge“ gilt auch, wenn der Tarif selbst keine Mindestabnahme hat.
+</div>
 {% endif %}

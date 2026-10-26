@@ -177,6 +177,9 @@ def create_credit_note(original, *, reason=None, created_by_id=None,
             unit_price=item.unit_price,
             price_decimals=item.price_decimals,
             amount=-Decimal(str(item.amount or 0)),
+            # Auffuellzeile der Mindestabnahme bleibt eine (zaehlt nicht als Verbrauch).
+            is_minimum_fill=bool(item.is_minimum_fill),
+            min_quantity=item.min_quantity,
             tax_rate=item.tax_rate,
             # Kontierung spiegeln: die Rueckzahlung muss dasselbe Erloeskonto
             # entlasten, das die Originalrechnung bebucht hat.

@@ -98,6 +98,9 @@
             {% if comp.tiers %}
             <div class="small text-muted">{{ tariff_levels_text(comp.amount, comp.tiers, comp.tier_mode, comp.price_decimals or 4) }}</div>
             {% endif %}
+            {% if comp.min_quantity %}
+            <div class="small text-muted">{{ tariff_minimum_text(comp.min_quantity) }}</div>
+            {% endif %}
             {% if comp.conditions %}
             <span class="badge bg-purple-lt">{{ tariff_condition_text(comp.conditions) }}</span>
             {% endif %}
