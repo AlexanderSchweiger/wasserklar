@@ -80,6 +80,9 @@ PARAMETERS = {
     "nickel":   {"label": "Nickel",   "unit": "µg/l", "group": "chemisch", "kind": "max", "limit": 20},
     "kupfer":   {"label": "Kupfer",   "unit": "mg/l", "group": "chemisch", "kind": "max", "limit": 2},
     # --- Indikatorparameter ---
+    # Temperatur: kein Grenzwert (TWV/TrinkwV) -> "info"; erscheint trotzdem im
+    # Befund, im Trend-Diagramm und im Export (alles katalog-getrieben).
+    "temperatur":     {"label": "Temperatur",            "unit": "°C",    "group": "indikator", "kind": "info"},
     "ph":             {"label": "pH-Wert",               "unit": "",      "group": "indikator", "kind": "range", "limit_min": 6.5, "limit_max": 9.5},
     "leitfaehigkeit": {"label": "Elektr. Leitfähigkeit", "unit": "µS/cm", "group": "indikator", "kind": "max", "limit": 2500},
     "truebung":       {"label": "Trübung",               "unit": "NTU",   "group": "indikator", "kind": "max", "limit": 1.0},

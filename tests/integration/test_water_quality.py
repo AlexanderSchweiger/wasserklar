@@ -41,6 +41,14 @@ class TestAssessDefaults:
     def test_info_parameter_is_ok(self, app):
         assert wq.assess("gesamthaerte", 25) == wq.STATUS_OK
 
+    def test_temperature_is_info_parameter_in_both_countries(self, app):
+        for code in ("AT", "DE"):
+            meta = wq.parameters(code)["temperatur"]
+            assert meta["unit"] == "°C" and meta["kind"] == "info"
+        assert wq.assess("temperatur", 12.3) == wq.STATUS_OK
+        assert wq.limit_display("temperatur") == ""
+        assert wq.limit_value("temperatur") is None
+
     def test_none_is_unknown(self, app):
         assert wq.assess("nitrat", None) == wq.STATUS_UNKNOWN
 

@@ -167,6 +167,20 @@ class TestWaterQualityPage:
         assert "PNQ" in body
         assert "55" in body                  # Messwert in der Serien-JSON
 
+    def test_temperature_is_recordable_and_selectable_as_trend(self, client, admin):
+        _login(client)
+        fid = _make_point(client, name="PNT").get_json()["id"]
+        client.post(f"/network/features/{fid}/samples",
+                    data={"sample_date": "2026-06-01", "value__temperatur": "9,5"},
+                    headers=_MOD)
+        r = LabResult.query.join(WaterSample).filter(WaterSample.feature_id == fid).one()
+        assert str(r.value_num) == "9.5000"
+        assert r.unit == "°C"
+        assert r.status == "ok"              # kein Grenzwert -> nie Alarm
+        body = client.get("/network/water-quality?param=temperatur").get_data(as_text=True)
+        assert '<option value="temperatur" selected>Temperatur (°C)</option>' in body
+        assert "9.5" in body                 # Messwert in der Serien-JSON
+
 
 class TestSamplesOverview:
     def test_lists_all_samples_with_links(self, client, admin):
