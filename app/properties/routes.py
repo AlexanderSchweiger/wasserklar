@@ -3,7 +3,7 @@ import re
 from datetime import date, timedelta
 
 from flask import render_template, redirect, url_for, flash, request, make_response, session, current_app
-from flask_login import login_required
+from flask_login import current_user, login_required
 from sqlalchemy import case as sa_case, exists, func as sa_func
 
 from app.properties import bp
@@ -33,6 +33,13 @@ def index():
     shares_filter = request.args.get("shares", "all")
     if shares_filter not in ("all", "with", "without"):
         shares_filter = "all"
+    # Anteile am Mitglied: Liegenschafts-Anteile sind ausgeblendet — ein
+    # veralteter Link darf nicht nach einem unsichtbaren Feld filtern/sortieren.
+    from app.settings_service import shares_on_person
+    if shares_on_person():
+        shares_filter = "all"
+        if sort == "shares":
+            sort = _DEFAULT_SORT
 
     query = Property.query.filter_by(active=True)
     if q:
@@ -284,7 +291,17 @@ def new():
             return render_template("properties/form.html", property=None)
         prop = _property_from_form(Property())
         db.session.add(prop)
-        db.session.commit()
+        from app.wg_shares import ShareError
+        try:
+            _book_initial_shares(prop, request.form)
+            db.session.commit()
+        except ShareError as exc:
+            db.session.rollback()
+            flash(str(exc), "danger")
+            if is_modal:
+                return render_template("properties/_property_edit_form_body.html",
+                                       property=Property())
+            return render_template("properties/form.html", property=None)
         if is_modal:
             resp = make_response("", 204)
             resp.headers["HX-Trigger"] = json.dumps({
@@ -378,7 +395,171 @@ def detail(property_id):
         has_active_owner=bool(active_customer_ids),
         today=date.today(),
         network_features_display=network_features_display,
+        **_share_book_context(prop),
     )
+
+
+def _share_book_context(prop):
+    """Anteilsbuch auf der Detailseite: im Liegenschafts-Modus das Buch der
+    Liegenschaft, im Mitglied-Modus lesend die Mitglieder-Eintraege mit Bezug."""
+    from app.settings_service import is_wassergenossenschaft, shares_on_person
+    if not is_wassergenossenschaft():
+        return {}
+    if shares_on_person():
+        from app.models import WgShareEntry
+        return {"member_share_refs": (WgShareEntry.query
+                                      .filter(WgShareEntry.property_id == prop.id)
+                                      .order_by(WgShareEntry.entry_date.desc(),
+                                                WgShareEntry.id.desc())
+                                      .all())}
+    from app import property_shares as ps
+    history = ps.history(prop.id)
+    actions = {k: v for k, v in ps.ACTION_LABELS.items()
+               if k != ps.ACTION_OPENING or not history}
+    return {"prop_share_history": history, "prop_share_actions": actions,
+            "prop_share_icons": ps.ACTION_ICONS}
+
+
+def _book_initial_shares(prop, form):
+    """Neuanlage bei Anteilen an der Liegenschaft: Anteile/Flaeche aus dem
+    Formular als Anfangsbestand ins Anteilsbuch (nie direkt in den Cache)."""
+    from app.settings_service import is_wassergenossenschaft, shares_on_person
+    if not is_wassergenossenschaft() or shares_on_person():
+        return
+    if "wg_shares" not in form and "area_m2" not in form:
+        return
+    from app import property_shares as ps
+    from app.wg_shares import ShareError
+    raw_shares = (form.get("wg_shares") or "").strip()
+    raw_area = (form.get("area_m2") or "").strip()
+    try:
+        shares = int(raw_shares) if raw_shares else 0
+    except ValueError:
+        raise ShareError("Anteile: bitte eine ganze Zahl angeben.")
+    if shares <= 0 and not raw_area:
+        return
+    db.session.flush()
+    ps.record_opening(prop, shares, date.today(), area=raw_area or None,
+                      note="Neuanlage", user_id=current_user.id)
+
+
+# ---------------------------------------------------------------------------
+# Anteilsbuch der Liegenschaft (Anteile an der Liegenschaft)
+# ---------------------------------------------------------------------------
+def _require_property_book():
+    from app.settings_service import is_wassergenossenschaft, shares_on_person
+    if not is_wassergenossenschaft() or shares_on_person():
+        flash("Das Anteilsbuch der Liegenschaft gibt es nur, wenn die Anteile an der "
+              "Liegenschaft geführt werden.", "warning")
+        return redirect(url_for("properties.index"))
+    return None
+
+
+@bp.route("/<int:property_id>/shares/new", methods=["GET", "POST"])
+@login_required
+def share_entry_new(property_id):
+    """Änderung im Anteilsbuch der Liegenschaft buchen (Modal-Fragment über
+    ``X-From-Modal``; Erfolg = 204 + HX-Trigger, Fehler = Fragment mit Meldung)."""
+    blocked = _require_property_book()
+    if blocked:
+        return blocked
+    from app import property_shares as ps
+    from app.wg_shares import ShareError
+    prop = db.get_or_404(Property, property_id)
+    is_modal = bool(request.headers.get("X-From-Modal"))
+    has_book = ps.has_entries(prop.id)
+    actions = [a for a in ps.ACTION_LABELS if a != ps.ACTION_OPENING or not has_book]
+    source = request.form if request.method == "POST" else request.args
+    default = ps.REASON_EXTENSION if has_book else ps.ACTION_OPENING
+    action = source.get("action", default)
+    if action not in actions:
+        action = default
+    detail_url = url_for("properties.detail", property_id=prop.id) + "#anteilsbuch"
+
+    def _render(error=None, form=None):
+        if not is_modal:
+            if error:
+                flash(error, "danger")
+            return redirect(detail_url)
+        owners = ps.current_owner_ids(prop.id)
+        return render_template(
+            "properties/_share_entry_form_body.html", property=prop, action=action,
+            actions=actions, action_labels=ps.ACTION_LABELS,
+            reason_labels=ps.REASON_LABELS, transfer_reasons=ps.TRANSFER_REASONS,
+            increase_reasons=sorted(ps.INCREASE_REASONS),
+            decrease_reasons=sorted(ps.DECREASE_REASONS),
+            holding=prop.wg_shares, area=prop.wg_area_m2,
+            targets=(Property.query.filter(Property.active.is_(True), Property.id != prop.id)
+                     .order_by(Property.object_number, Property.id).all()),
+            payers=Customer.query.filter_by(active=True).order_by(Customer.name).all(),
+            default_payer=owners[0] if owners else None,
+            form=form, error=error, today=date.today())
+
+    if request.method == "GET":
+        return _render()
+
+    form = request.form
+    try:
+        on = date.fromisoformat((form.get("entry_date") or "").strip())
+    except ValueError:
+        on = None
+    payer = form.get("payer_customer_id", type=int) or None
+    area = (form.get("area_m2") or "").strip() or None
+    qty = (form.get("quantity") or "").strip() or 0
+    note = form.get("note", "")
+    try:
+        if on is None:
+            raise ShareError("Bitte ein gültiges Datum angeben.")
+        if action == ps.ACTION_TRANSFER:
+            target = db.session.get(Property, form.get("to_property_id", type=int) or 0)
+            ps.record_transfer(prop, target, qty, on, form.get("transfer_reason") or None,
+                               payer=payer, note=note, user_id=current_user.id)
+        elif action == ps.ACTION_CORRECTION:
+            ps.record_correction(prop, qty, on, note, area=area, payer=payer,
+                                 user_id=current_user.id)
+        elif action == ps.ACTION_OPENING:
+            ps.record_opening(prop, qty, on, area=area, payer=payer, note=note,
+                              user_id=current_user.id)
+        else:
+            ps.record_change(prop, qty, on, action, area=area, payer=payer, note=note,
+                             user_id=current_user.id)
+        db.session.commit()
+    except ShareError as exc:
+        db.session.rollback()
+        return _render(error=str(exc), form=form)
+
+    if is_modal:
+        resp = make_response("", 204)
+        resp.headers["HX-Trigger"] = json.dumps({
+            "closePropertyShareModal": True,
+            "propertyShareSaved": {"property_id": prop.id},
+        })
+        return resp
+    flash("Änderung gebucht.", "success")
+    return redirect(detail_url)
+
+
+@bp.route("/shares/<int:entry_id>/delete", methods=["POST"])
+@login_required
+def share_entry_delete(entry_id):
+    blocked = _require_property_book()
+    if blocked:
+        return blocked
+    from app import property_shares as ps
+    from app.models import PropertyShareEntry
+    from app.wg_shares import ShareError
+    entry = db.get_or_404(PropertyShareEntry, entry_id)
+    property_id = entry.property_id
+    try:
+        affected = ps.delete_entry(entry)
+        db.session.commit()
+    except ShareError as exc:
+        db.session.rollback()
+        flash(f"Nicht gelöscht: {exc}", "danger")
+    else:
+        flash("Eintrag gelöscht." if len(affected) == 1
+              else "Übertragung gelöscht (beide Liegenschaften).", "info")
+    return redirect(url_for("properties.detail", property_id=property_id) + "#anteilsbuch")
 
 
 def _mini_paginate(query, *, page_param: str, per_page: int):
@@ -685,16 +866,14 @@ def _property_from_form(prop):
     from app.invoices.charges import apply_override_form
     apply_override_form(prop, request.form)
 
-    # WG-Felder (Anteile/m2) nur im Genossenschafts-Modus — im Versorger-Modus
-    # fehlen sie im Formular, bestehende Werte bleiben unangetastet.
-    from app.settings_service import is_wassergenossenschaft
-    if is_wassergenossenschaft():
+    # Anteile und Flaeche schreibt dieses Formular nur bei Anteilen am Mitglied
+    # (dort nur die Flaeche, frei editierbar). Bei Anteilen an der Liegenschaft
+    # laufen beide ueber das Anteilsbuch: die Neuanlage bucht den Anfangsbestand
+    # in new(), Bearbeiten zeigt sie nur lesend — ein trotzdem gepostetes Feld
+    # wird ignoriert, sonst entstuende eine Aenderung ohne Historie.
+    from app.settings_service import shares_on_person
+    if shares_on_person() and "area_m2" in request.form:
         profile = prop.ensure_wg_profile()
-        raw_shares = request.form.get("wg_shares", "").strip()
-        try:
-            profile.shares = int(raw_shares) if raw_shares else 0
-        except ValueError:
-            profile.shares = 0
         raw_area = request.form.get("area_m2", "").strip()
         try:
             profile.area_m2 = int(raw_area) if raw_area else None

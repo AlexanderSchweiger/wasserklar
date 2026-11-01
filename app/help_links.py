@@ -14,6 +14,8 @@ ENDPOINT_TO_DOC = {
     "customers.detail":            "mitglieder",
     "customers.new":               "mitglieder#anlegen",
     "customers.edit":              "mitglieder",
+    "members.index":               "mitglieder#mitgliederliste",
+    "members.print_view":          "mitglieder#mitgliederliste",
     "customers.import_upload":     "csv-import#kunden",
     "customers.import_preview":    "csv-import#kunden",
     "customers.import_result":     "csv-import#kunden",
@@ -150,6 +152,7 @@ ENDPOINT_TO_DOC = {
 
     # Verwaltung
     "settings.index":              "einstellungen",
+    "settings.share_binding":      "einstellungen#anteile",
     "auth.users":                  "einstellungen#benutzer",
     "auth.user_new":               "einstellungen#benutzer",
     "auth.user_edit":              "einstellungen#benutzer",

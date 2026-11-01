@@ -116,7 +116,7 @@
             Bestimmt, ob dieser Mandant als <strong>Wassergenossenschaft</strong> oder als
             <strong>Versorger</strong> (Gemeinde, Stadt, GmbH, Dorfgemeinschaft) geführt wird.
             Im Versorger-Modus sind die genossenschafts-spezifischen Felder (Mitglieds-Status,
-            Funktionen, Anteile/m²) ausgeblendet.
+            Funktionen, Anteile/m², Mitgliederliste) ausgeblendet.
           </p>
           <div class="row g-3">
             <div class="col-md-6">
@@ -128,8 +128,8 @@
                     <div>
                       <div class="fw-bold"><i class="fas fa-hand-holding-water me-1"></i> Wassergenossenschaft</div>
                       <div class="text-muted small">
-                        Mitglieder mit Status &amp; Funktionen, Anteile und Quadratmeter je Liegenschaft.
-                        Hauptmenü heißt „Genossenschaft".
+                        Mitglieder mit Status &amp; Funktionen, Anteile je Liegenschaft oder je Mitglied,
+                        Mitgliederliste. Hauptmenü heißt „Genossenschaft".
                       </div>
                     </div>
                   </div>
@@ -156,6 +156,9 @@
           </div>
         </div>
       </div>
+      {% if org_type == 'cooperative' %}
+      {% include "settings/_share_binding_card.html" %}
+      {% endif %}
       <div class="card mt-3">
         <div class="card-header">
           <h3 class="card-title"><i class="fas fa-hashtag me-1"></i> Nummernkreise</h3>

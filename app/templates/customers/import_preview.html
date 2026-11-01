@@ -42,6 +42,10 @@
   ('col_member_until', 'Mitglied bis'),
 ] %}
 {% endif %}
+{% set share_col = shares_on_person and cfg.col_shares %}
+{% if shares_on_person %}
+{% set col_fields = col_fields + [('col_shares', 'Anteile (Anfangsbestand)')] %}
+{% endif %}
 
 <form method="post" id="preview-form">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -155,6 +159,7 @@
               <th style="min-width:140px">Mitglied seit</th>
               <th style="min-width:140px">Mitglied bis</th>
               {% endif %}
+              {% if share_col %}<th style="min-width:90px">Anteile</th>{% endif %}
               <th style="min-width:160px">Status</th>
             </tr>
           </thead>
@@ -322,11 +327,18 @@
                        value="{{ row.fields.get('member_until', '') }}">
               </td>
               {% endif %}
+              {% if share_col %}
+              <td>
+                <input type="number" min="0" step="1" name="rows[{{ row.idx }}][shares]"
+                       class="form-control form-control-sm"
+                       value="{{ row.fields.get('shares', '') }}">
+              </td>
+              {% endif %}
               <td>{{ status_cell(row) }}</td>
             </tr>
             {% else %}
             <tr>
-              <td colspan="{{ (17 if is_wg else 14) + (1 if ei_cols else 0) + (1 if pay_cols else 0) }}" class="text-center text-muted py-4">
+              <td colspan="{{ (17 if is_wg else 14) + (1 if ei_cols else 0) + (1 if pay_cols else 0) + (1 if share_col else 0) }}" class="text-center text-muted py-4">
                 Keine Zeilen — bitte mindestens eine Spalte zuordnen und auf
                 „Vorschau aktualisieren" klicken.
               </td>

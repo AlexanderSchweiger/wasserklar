@@ -77,6 +77,8 @@ _COLUMN_HINTS = {
     "member_since": ["mitglied seit", "mitglied-seit", "beitritt", "beitrittsdatum", "eintritt"],
     "member_until": ["mitglied bis", "mitglied-bis", "austritt", "austrittsdatum"],
     "property_shares": ["anteile", "anteil"],
+    # Anteile am Mitglied (Anteilsbuch) — statt property_shares, siehe mapping.html
+    "member_shares": ["anteile", "anteil", "geschäftsanteile", "genossenschaftsanteile"],
     "property_area": ["fläche", "flaeche", "quadratmeter", "m2", "fläche m2", "fläche (m2)"],
 }
 
@@ -246,18 +248,47 @@ def _apply_wg_customer(customer, row, cols, actions):
                 profile.member_until = _parse_import_date(raw_until)
 
 
-def _apply_wg_property(prop, row, cols, actions):
-    """Setzt im WG-Modus Anteile + Fläche (PropertyWgProfile)."""
+def _apply_wg_property(prop, row, cols, actions, *, book=True, warnings=None, idx=None):
+    """Setzt im WG-Modus Anteile + Fläche. Bei Anteilen an der Liegenschaft
+    (``book``) ueber das Anteilsbuch: ohne Buch ein Anfangsbestand, sonst eine
+    Korrektur um die Differenz (nie direkt in den Cache). Bei Anteilen am
+    Mitglied gibt es hier nur die Flaeche (direkt, ohne Historie)."""
     col_shares, col_area = cols
     shares = _parse_import_int(_get_cell(row, col_shares)) if col_shares else None
     area = _parse_import_int(_get_cell(row, col_area)) if col_area else None
     if shares is None and area is None:
         return
-    profile = prop.ensure_wg_profile()
-    if shares is not None:
-        profile.shares = shares
-    if area is not None:
-        profile.area_m2 = area
+    if book:
+        from datetime import date
+        from app import property_shares
+        from app.wg_shares import ShareError
+        db.session.flush()
+        try:
+            if not property_shares.has_entries(prop.id):
+                if (shares or 0) <= 0 and area is None:
+                    return
+                property_shares.record_opening(
+                    prop, max(shares or 0, 0), date.today(), area=area,
+                    note="Übernahme aus Stammdaten-Import",
+                    source=property_shares.SOURCE_IMPORT)
+            else:
+                delta = (shares - prop.wg_shares) if shares is not None else 0
+                new_area = area if area is not None and area != prop.wg_area_m2 else None
+                if delta == 0 and new_area is None:
+                    return
+                property_shares.record_correction(
+                    prop, delta, date.today(), "Stammdaten-Import", area=new_area,
+                    source=property_shares.SOURCE_IMPORT)
+        except ShareError as exc:
+            if warnings is not None:
+                warnings.append(f"Zeile {idx}: Anteile von »{prop.object_number}« nicht "
+                                f"übernommen — {exc}")
+            return
+    else:
+        profile = prop.ensure_wg_profile()
+        if area is not None:
+            profile.area_m2 = area
+        shares = None
     bits = []
     if shares is not None:
         bits.append(f"{shares} Anteil(e)")
@@ -266,8 +297,43 @@ def _apply_wg_property(prop, row, cols, actions):
     actions.append(_act("WG-Liegenschaft: " + ", ".join(bits), "update"))
 
 
+def _apply_member_shares(customer, row, col, idx, actions, results, seen):
+    """Anteile am Mitglied: Anfangsbestand ins Anteilsbuch. Kommt ein Kunde in
+    mehreren Zeilen vor, gilt der erste nicht-leere Wert (abweichende → Warnung);
+    ein vorhandenes Anteilsbuch wird nie ueberschrieben."""
+    from datetime import date
+    from app import wg_shares
+    raw = _get_cell(row, col)
+    if not raw:
+        return
+    shares = _parse_import_int(raw)
+    if shares is None or shares < 0:
+        results["warnings"].append(f"Zeile {idx}: Anteile '{raw}' ist keine ganze Zahl ≥ 0 "
+                                   "— nicht übernommen.")
+        return
+    if customer.id in seen:
+        if seen[customer.id] != shares:
+            results["warnings"].append(
+                f"Zeile {idx}: abweichende Anteile für »{customer.name}« ({shares}) — "
+                f"es gilt der erste Wert ({seen[customer.id]}).")
+        return
+    seen[customer.id] = shares
+    if shares == 0:
+        return
+    if wg_shares.customers_with_entries([customer.id]):
+        results["warnings"].append(
+            f"Zeile {idx}: »{customer.name}« hat schon ein Anteilsbuch — Anteile nicht übernommen.")
+        return
+    wg_shares.record_acquisition(
+        customer, shares, customer.member_since or date.today(),
+        kind=wg_shares.KIND_OPENING, note="Übernahme aus Stammdaten-Import",
+        source=wg_shares.SOURCE_IMPORT)
+    actions.append(_act(f"Anteilsbuch: {shares} Anteil(e) als Anfangsbestand", "update"))
+
+
 def _run_import(df, col_map: dict, duplicate_mode: str,
-                dry_run: bool = False, is_wg: bool = False) -> dict:
+                dry_run: bool = False, is_wg: bool = False,
+                shares_on_person: bool = False) -> dict:
     """
     Analysiert/importiert die CSV.
 
@@ -350,8 +416,12 @@ def _run_import(df, col_map: dict, duplicate_mode: str,
         col_map.get("member_since", ""),
         col_map.get("member_until", ""),
     )
+    # Anteile am Mitglied: die Anteile-Spalte gehoert zum Kontakt (Anteilsbuch),
+    # an der Liegenschaft wird nur noch die Flaeche uebernommen.
+    member_shares_col = col_map.get("member_shares", "") if shares_on_person else ""
+    member_shares_seen = {}
     wg_property_cols = (
-        col_map.get("property_shares", ""),
+        "" if shares_on_person else col_map.get("property_shares", ""),
         col_map.get("property_area", ""),
     )
 
@@ -542,6 +612,10 @@ def _run_import(df, col_map: dict, duplicate_mode: str,
                     actions.append(_act(
                         f"Kunde Nr. {cnum} »{raw_name}« – neu angelegt", "new"))
 
+            if member_shares_col:
+                _apply_member_shares(customer, row, member_shares_col, idx, actions,
+                                     results, member_shares_seen)
+
             # --- Property (Objekt) ---
             raw_typ = _get_cell(row, col_typ).lower()
             object_type = "Sonstiges" if raw_typ in ("stall", "garten") else "Haus"
@@ -557,13 +631,17 @@ def _run_import(df, col_map: dict, duplicate_mode: str,
                 db.session.add(prop)
                 db.session.flush()
                 if is_wg:
-                    _apply_wg_property(prop, row, wg_property_cols, actions)
+                    _apply_wg_property(prop, row, wg_property_cols, actions,
+                                       book=not shares_on_person,
+                                       warnings=results["warnings"], idx=idx)
                 results["properties_created"] += 1
                 new_count += 1
                 actions.append(_act(f"Objekt »{raw_objekt}« – neu angelegt", "new"))
             else:
                 if is_wg and duplicate_mode == "overwrite":
-                    _apply_wg_property(prop, row, wg_property_cols, actions)
+                    _apply_wg_property(prop, row, wg_property_cols, actions,
+                                       book=not shares_on_person,
+                                       warnings=results["warnings"], idx=idx)
                     db.session.flush()
                 results["properties_reused"] += 1
                 actions.append(_act(
@@ -862,13 +940,14 @@ def preview():
         return redirect(url_for("import_csv.upload"))
 
     duplicate_mode = session.get("import_duplicate_mode", "skip")
-    from app.settings_service import is_wassergenossenschaft
+    from app.settings_service import is_wassergenossenschaft, shares_on_person
     is_wg = is_wassergenossenschaft()
+    person_shares = shares_on_person()
 
     if request.method == "GET":
         # Probelauf: zeigt exakt, was der echte Import tun würde, ohne zu schreiben.
         plan = _run_import(df, col_map, duplicate_mode,
-                           dry_run=True, is_wg=is_wg)
+                           dry_run=True, is_wg=is_wg, shares_on_person=person_shares)
         return render_template(
             "import_csv/preview.html",
             results=plan,
@@ -877,7 +956,7 @@ def preview():
 
     # POST: "Jetzt importieren" – echter Import
     results = _run_import(df, col_map, duplicate_mode,
-                          dry_run=False, is_wg=is_wg)
+                          dry_run=False, is_wg=is_wg, shares_on_person=person_shares)
 
     # Aufräumen
     try:

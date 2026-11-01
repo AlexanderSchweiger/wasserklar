@@ -167,6 +167,10 @@ def fill_demo_identity(code=None) -> list[str]:
 # Demo-Glaeubiger-IDs (gueltige Pruefziffer; DE = Beispiel der Deutschen Bundesbank).
 _DEMO_CREDITOR_IDS = {"AT": "AT61ZZZ01234567890", "DE": "DE98ZZZ09999999999"}
 
+# Datum des Anfangsbestands im Anteilsbuch der Liegenschaften (vor jeder
+# Demo-Eigentuemerschaft, damit Stichtags-Listen auch rueckwirkend stimmen).
+_DEMO_SHARE_OPENING = date(2000, 1, 1)
+
 
 def _seed_direct_debit(customers, loc, signed_base) -> int:
     """Jeder dritte Kunde zahlt per Bankeinzug (SEPA-Lastschrift).
@@ -545,12 +549,21 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     # Objekttyp gestaffelt, Anteile nach der Vereins-Konvention "1 Anteil
     # je angefangene 100 m²" (siehe Hinweistext im Objekt-Formular).
     _AREA_RANGES = {"Haus": (400, 1200), "Garten": (200, 600), "Sonstiges": (100, 2000)}
+    demo_shares = []
     for prop in properties:
         lo, hi = _AREA_RANGES.get(prop.object_type, (100, 2000))
         area = rng.randint(lo, hi)
         shares = -(-area // 100)  # ceil-Division ohne math-Import
-        prop.wg_profile = PropertyWgProfile(shares=shares, area_m2=area)
+        prop.wg_profile = PropertyWgProfile(area_m2=area)
+        demo_shares.append((prop, shares, area))
     db.session.flush()
+    # Anteilsbuch der Liegenschaft: Anfangsbestand (kein RNG — die Reihenfolge
+    # oben bleibt, der AT-Datensatz bitgleich). Der Cache folgt daraus.
+    from app import property_shares
+    for prop, shares, area in demo_shares:
+        property_shares.record_opening(prop, shares, _DEMO_SHARE_OPENING, area=area,
+                                       note="Anfangsbestand",
+                                       source=property_shares.SOURCE_DEMO)
     counts["property_wg_profiles"] = len(properties)
 
     # PropertyOwnerships

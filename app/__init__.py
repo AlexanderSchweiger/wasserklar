@@ -68,6 +68,9 @@ def create_app(config_name=None):
     from app.customers import bp as customers_bp
     app.register_blueprint(customers_bp)
 
+    from app.members import bp as members_bp
+    app.register_blueprint(members_bp)
+
     from app.properties import bp as properties_bp
     app.register_blueprint(properties_bp)
 
@@ -215,6 +218,28 @@ def create_app(config_name=None):
     app.jinja_env.globals["wg_function_label"] = _wg_function_label
     app.jinja_env.globals["wg_function_keys_ordered"] = _wg_function_keys_ordered
 
+    # Anteilsbuch (Anteile am Mitglied): Beschriftung + Badge je Eintragsart.
+    from app.wg_shares import KIND_BADGE as _share_kind_badge
+    from app.wg_shares import KIND_LABELS as _share_kind_labels
+    app.jinja_env.globals["wg_share_kind_labels"] = _share_kind_labels
+    app.jinja_env.globals["wg_share_kind_badge"] = _share_kind_badge
+    # Anteilsbuch der Liegenschaft: Anlass-/Art-Beschriftung + Badge je Eintrag.
+    from app.property_shares import entry_badge as _prop_share_badge
+    from app.property_shares import entry_label as _prop_share_label
+    app.jinja_env.globals["property_share_label"] = _prop_share_label
+    app.jinja_env.globals["property_share_badge"] = _prop_share_badge
+
+    def _share_area_rule_for_templates():
+        """Regel "Flaeche je Anteil" fuer den Browser-Vorschlag (oder None)."""
+        from app.settings_service import share_area_rule
+        rule = share_area_rule()
+        if not rule:
+            return None
+        plain = format(rule["per_share"].normalize(), "f")
+        return {"per_share": plain, "per_share_text": plain.replace(".", ","),
+                "rounding": rule["rounding"]}
+    app.jinja_env.globals["share_area_rule"] = _share_area_rule_for_templates
+
     # Tarif-Staffel und -Bedingung als Text (Tarifliste, Laufdetail).
     from app.invoices.tariff_spec import (condition_text, levels_text,
                                           minimum_short_text, minimum_text)
@@ -315,14 +340,17 @@ def create_app(config_name=None):
     # True = Wassergenossenschaft, da das der Standardfall der App ist).
     @app.context_processor
     def inject_org_type():
-        from app.settings_service import org_type, is_wassergenossenschaft
+        from app.settings_service import (org_type, is_wassergenossenschaft,
+                                          shares_on_person)
         from app.wg import FUNCTION_LABELS, function_labels
         try:
             return dict(org_type=org_type(), is_wg=is_wassergenossenschaft(),
+                        shares_on_person=shares_on_person(),
                         wg_function_labels=function_labels())
         except Exception:
             from app.wg import ORG_COOPERATIVE
             return dict(org_type=ORG_COOPERATIVE, is_wg=True,
+                        shares_on_person=False,
                         wg_function_labels=FUNCTION_LABELS)
 
     # Context Processor: Länderprofil des Mandanten (app/country.py) — Defaults

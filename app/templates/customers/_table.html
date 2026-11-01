@@ -26,6 +26,9 @@
       <th>Status</th>
       <th>Funktion</th>
       <th class="text-nowrap">Mitglied (seit/bis)</th>
+      {% if shares_on_person %}
+      <th class="text-end">{{ sort_header('shares', 'Anteile') }}</th>
+      {% endif %}
       {% endif %}
       <th>{{ sort_header('address', 'Rechnungsadresse') }}</th>
       <th>{{ sort_header('object', 'Liegenschaft') }}</th>
@@ -39,7 +42,7 @@
     {% include "customers/_row.html" %}
     {% else %}
     <tr>
-      <td colspan="{{ 11 if is_wg else 8 }}" class="text-center text-muted py-3">Keine Kontakte gefunden.</td>
+      <td colspan="{{ (12 if shares_on_person else 11) if is_wg else 8 }}" class="text-center text-muted py-3">Keine Kontakte gefunden.</td>
     </tr>
     {% endfor %}
   </tbody>

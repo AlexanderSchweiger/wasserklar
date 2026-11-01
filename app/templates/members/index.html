@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Mitgliederliste{% endblock %}
+{% block page_title %}<i class="fas fa-address-book me-2"></i> Mitgliederliste{% endblock %}
+{% block page_wrapper_class %}is-fill{% endblock %}
+{% block content %}
+<div class="card table-card">
+  <div class="card-header">
+    <form class="filter-bar" id="member-filter"
+          hx-get="{{ url_for('members.index') }}" hx-target="#member-table"
+          hx-trigger="change, input changed delay:300ms from:input[name='q'], search">
+      <div class="input-group input-group-sm" style="width:240px">
+        <input type="search" name="q" value="{{ f.q }}" class="form-control"
+               placeholder="Name, Mitgliedsnummer…" data-filter-field>
+        <span class="input-group-text"><i class="fas fa-search"></i></span>
+      </div>
+      <div class="input-group input-group-sm" style="width:200px">
+        <span class="input-group-text">Stichtag</span>
+        <input type="date" name="at" value="{{ f.at.isoformat() }}" class="form-control">
+      </div>
+      <select name="scope" class="form-select form-select-sm" style="width:230px">
+        <option value="members" {{ 'selected' if f.scope == 'members' }}>Mitglieder am Stichtag</option>
+        <option value="all" {{ 'selected' if f.scope == 'all' }}>Auch ehemalige und archivierte</option>
+      </select>
+      <input type="hidden" name="sort" value="{{ f.sort }}">
+      <input type="hidden" name="dir" value="{{ f.direction }}">
+    </form>
+    <div class="card-options d-flex gap-2 align-items-center">
+      <a href="{{ url_for('members.export_csv', at=f.at.isoformat(), scope=f.scope, q=f.q or none, sort=f.sort, dir=f.direction) }}"
+         class="btn btn-outline-secondary" hx-boost="false" data-export-link>
+        <i class="fas fa-file-csv me-1"></i> CSV
+      </a>
+      <a href="{{ url_for('members.list_pdf', at=f.at.isoformat(), scope=f.scope, q=f.q or none, sort=f.sort, dir=f.direction) }}"
+         class="btn btn-outline-secondary" hx-boost="false" target="_blank" data-export-link>
+        <i class="fas fa-file-pdf me-1"></i> PDF
+      </a>
+    </div>
+  </div>
+  <div id="member-table" class="table-fill">
+    {% include "members/_table.html" %}
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Export-Links folgen dem aktuellen Filter (Stichtag, Umfang, Suche).
+(function () {
+  var form = document.getElementById('member-filter');
+  if (!form) { return; }
+  function sync() {
+    var params = new URLSearchParams(new FormData(form));
+    if (!params.get('q')) { params.delete('q'); }
+    document.querySelectorAll('[data-export-link]').forEach(function (a) {
+      a.href = a.href.split('?')[0] + '?' + params.toString();
+    });
+  }
+  form.addEventListener('change', sync);
+  form.addEventListener('input', sync);
+})();
+</script>
+{% endblock %}

@@ -16,7 +16,7 @@
           hx-include="[name='q'], [name='sort'], [name='dir'], [name='shares']">
         <span class="input-group-text"><i class="fas fa-search"></i></span>
       </div>
-      {% if is_wg %}
+      {% if is_wg and not shares_on_person %}
       <select name="shares" class="form-select form-select-sm" style="width:175px"
         data-filter-field data-filter-default="all"
         hx-get="{{ url_for('properties.index') }}"

@@ -1,0 +1,110 @@
+{# Formular-Body "Anteile buchen". Erwartet: customer, action, actions,
+   action_labels, holding, recipients, form (bei Fehler), error, today. #}
+{% include "_flash_inline.html" %}
+{% if error %}
+<div class="alert alert-danger" role="alert">{{ error }}</div>
+{% endif %}
+{% set f = form if form else {} %}
+<p class="mb-3">
+  <strong>{{ customer.name }}</strong> hält heute
+  <strong id="share-holding" data-holding="{{ holding }}">{{ holding }}</strong>
+  {{ 'Anteil' if holding == 1 else 'Anteile' }}.
+</p>
+<div class="mb-3">
+  <label class="form-label">Vorgang</label>
+  <select name="action" id="share-action" class="form-select">
+    {% for key in actions %}
+    <option value="{{ key }}" {{ 'selected' if key == (f.get('action') or action) }}>{{ action_labels[key] }}</option>
+    {% endfor %}
+  </select>
+</div>
+<div class="row">
+  <div class="col-sm-6">
+    <div class="mb-3">
+      <label class="form-label" id="share-qty-label">Anzahl Anteile</label>
+      <input type="number" name="quantity" id="share-qty" step="1" class="form-control" required
+             value="{{ f.get('quantity', '1') }}">
+      <small class="text-muted d-none" id="share-qty-hint-correction">Plus erhöht, Minus verringert den Bestand.</small>
+    </div>
+  </div>
+  <div class="col-sm-6">
+    <div class="mb-3">
+      <label class="form-label">Wirksam am</label>
+      <input type="date" name="entry_date" class="form-control" required
+             value="{{ f.get('entry_date') or today.isoformat() }}">
+    </div>
+  </div>
+</div>
+<div class="mb-3" id="share-recipient-row">
+  <label class="form-label">Empfänger</label>
+  <select name="to_customer_id" class="form-select tom-select"
+          data-create-url="{{ url_for('customers.quick_create') }}" data-create-type="customer">
+    <option value="">— Kontakt wählen oder neu anlegen —</option>
+    {% for r in recipients %}
+    <option value="{{ r.id }}" {{ 'selected' if f.get('to_customer_id') == r.id|string }}>{{ r.name }}{% if r.customer_number %} ({{ r.customer_number }}){% endif %}</option>
+    {% endfor %}
+  </select>
+  <small class="text-muted">Ein neuer Name legt den Kontakt sofort an (z. B. den Käufer des Hauses).</small>
+</div>
+<div class="mb-3">
+  <label class="form-label">Bezug zu Liegenschaft <span class="text-muted small">(optional)</span></label>
+  <select name="property_id" class="form-select tom-select">
+    <option value="">— kein Bezug —</option>
+    {% for p in properties %}
+    <option value="{{ p.id }}" {{ 'selected' if f.get('property_id') == p.id|string }}>{{ p.label() }}{% if p.id in own_property_ids %} (eigene){% endif %}</option>
+    {% endfor %}
+  </select>
+  <small class="text-muted">Z. B. „Zubau Haus 12“ — das Mitglied erwirbt die Anteile, die Liegenschaft ist der Anlass.</small>
+</div>
+<div class="mb-3">
+  <label class="form-label">Notiz <span class="text-muted small" id="share-note-required">(bei Korrektur Pflicht)</span></label>
+  <input type="text" name="note" maxlength="255" class="form-control" value="{{ f.get('note', '') }}"
+         placeholder="z. B. Beschluss vom …, Kündigungsschreiben vom …">
+</div>
+<div class="form-check">
+  <input class="form-check-input" type="checkbox" name="adjust_membership" value="1" id="share-adjust"
+         data-status="{{ customer.wg_status }}"
+         {{ 'checked' if f.get('adjust_membership') == '1' }}>
+  <label class="form-check-label" for="share-adjust">Mitgliedschaft anpassen</label>
+  <small class="d-block text-muted" id="share-adjust-hint"></small>
+</div>
+<script>
+(function () {
+  var actionSel = document.getElementById('share-action');
+  var qty = document.getElementById('share-qty');
+  var adjust = document.getElementById('share-adjust');
+  if (!actionSel || !qty || !adjust) { return; }
+  var holding = parseInt(document.getElementById('share-holding').dataset.holding, 10) || 0;
+  var status = adjust.dataset.status;
+  var recipientRow = document.getElementById('share-recipient-row');
+  var hint = document.getElementById('share-adjust-hint');
+  var corrHint = document.getElementById('share-qty-hint-correction');
+  var touched = {{ 'true' if form else 'false' }};
+  function evaluate() {
+    var a = actionSel.value;
+    var n = parseInt(qty.value, 10) || 0;
+    recipientRow.classList.toggle('d-none', a !== 'transfer');
+    corrHint.classList.toggle('d-none', a !== 'correction');
+    if (a === 'correction') { qty.removeAttribute('min'); } else { qty.setAttribute('min', '1'); }
+    var after = holding;
+    if (a === 'acquisition' || a === 'opening') { after = holding + n; }
+    else if (a === 'return' || a === 'transfer') { after = holding - n; }
+    else if (a === 'correction') { after = holding + n; }
+    var text = '', suggest = false;
+    if (after > 0 && status !== 'member') {
+      text = 'Setzt den Status auf „Mitglied“ (Mitglied seit = Datum, falls leer).';
+      suggest = true;
+    } else if (after <= 0 && holding > 0) {
+      text = 'Bestand fällt auf 0: setzt „Ausgeschieden“, Mitglied bis = Vortag.';
+      suggest = true;
+    }
+    if (a === 'transfer') { text += (text ? ' ' : '') + 'Der Empfänger wird Mitglied, falls er es noch nicht ist.'; suggest = true; }
+    hint.textContent = text;
+    if (!touched) { adjust.checked = suggest; }
+  }
+  adjust.addEventListener('change', function () { touched = true; });
+  actionSel.addEventListener('change', evaluate);
+  qty.addEventListener('input', evaluate);
+  evaluate();
+})();
+</script>

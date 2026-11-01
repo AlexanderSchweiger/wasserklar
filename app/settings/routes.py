@@ -1,4 +1,5 @@
 import json
+from datetime import date
 from decimal import Decimal, InvalidOperation
 
 from flask import (render_template, redirect, url_for, flash, request, current_app,
@@ -99,6 +100,28 @@ def _sepa_context():
         'default_text': notice.default_text(),
         'placeholders': notice.NOTICE_PLACEHOLDERS,
     }
+
+
+def _save_share_area_rule(form):
+    """Speichert die Regel "Flaeche je Anteil" (leer = keine Regel). Liefert
+    eine Fehlermeldung oder None."""
+    from decimal import Decimal, InvalidOperation
+    from app import wg
+    raw = (form.get('share_area_per_share') or '').strip().replace(',', '.')
+    if raw:
+        try:
+            value = Decimal(raw)
+        except InvalidOperation:
+            return 'Fläche je Anteil: bitte eine Zahl in m² angeben.'
+        if value <= 0:
+            return 'Fläche je Anteil muss größer als 0 sein.'
+        AppSetting.set(wg.SHARE_AREA_PER_SHARE_KEY, format(value.normalize(), 'f'))
+    else:
+        AppSetting.set(wg.SHARE_AREA_PER_SHARE_KEY, None)
+    rounding = form.get('share_area_rounding', wg.ROUND_UP)
+    AppSetting.set(wg.SHARE_AREA_ROUNDING_KEY,
+                   rounding if rounding in wg.SHARE_ROUNDINGS else wg.ROUND_UP)
+    return None
 
 
 def _save_supplier_number_start(raw):
@@ -202,6 +225,12 @@ def index():
         if invoice_layout.form_has_fields(request.form):
             for msg in invoice_layout.save_invoice_layout(request.form):
                 flash(msg, 'danger')
+
+        # Regel "Flaeche je Anteil" (Karte „Genossenschaftsanteile“) — nur mit Marker.
+        if request.form.get('share_rule_fields') == '1':
+            error = _save_share_area_rule(request.form)
+            if error:
+                flash(error, 'danger')
 
         # Mail-Versandmodus (Checkbox). Bei aktivem Plattform-Relay sind die
         # SMTP-Felder im UI disabled und werden nicht mitgesendet — der
@@ -337,6 +366,7 @@ def index():
                            sepa=_sepa_context(),
                            db_info=db_info,
                            org_type=org_type(),
+                           share_binding=_share_binding_context(),
                            number_ranges=_number_ranges(),
                            org_country=country_mod.current_code(),
                            country_choices=country_mod.COUNTRY_CHOICES,
@@ -548,6 +578,19 @@ def apply_country_defaults_route():
 
 
 
+def _share_binding_context():
+    """Anzeige der Anteils-Bindung + Regel "Flaeche je Anteil" (Einstellungen → Mandant)."""
+    from app import wg
+    from app.settings_service import share_area_rule, share_binding as current_binding
+    current = current_binding()
+    rule = share_area_rule()
+    return {"current": current, "label": wg.SHARE_BINDING_LABELS[current],
+            "per_share": format(rule["per_share"].normalize(), 'f').replace('.', ',')
+                         if rule else '',
+            "rounding": rule["rounding"] if rule else wg.ROUND_UP,
+            "rounding_labels": wg.SHARE_ROUNDING_LABELS}
+
+
 def _number_ranges():
     """Anzeige der Nummernkreise (Einstellungen → Mandant)."""
     from app.customers.numbers import supplier_numbers_in_use
@@ -559,3 +602,72 @@ def _number_ranges():
         "supplier_start": supplier_number_start(),
         "supplier_locked": supplier_numbers_in_use(),
     }
+
+
+# ---------------------------------------------------------------------------
+# Bindung der Genossenschaftsanteile (Liegenschaft ↔ Mitglied)
+# ---------------------------------------------------------------------------
+@bp.route('/share-binding', methods=['GET', 'POST'])
+@login_required
+def share_binding():
+    """Assistent zum Umstellen der Anteils-Bindung. GET ist rein lesend
+    (Vorschau); POST bucht bei Liegenschaft → Mitglied die Anfangsbestaende
+    und stellt um. In keiner Richtung wird etwas geloescht."""
+    from app import wg, wg_shares
+    from app.settings_service import is_wassergenossenschaft, share_binding as current_binding
+    if not is_wassergenossenschaft():
+        flash('Anteile gibt es nur im Mandant-Typ Wassergenossenschaft.', 'warning')
+        return redirect(url_for('settings.index'))
+    current = current_binding()
+    back = url_for('settings.index', _anchor='pane-mandant')
+
+    if request.method == 'POST':
+        target = request.form.get('target')
+        if target not in wg.SHARE_BINDINGS or target == current:
+            flash('Die Anteile werden bereits so geführt — nichts geändert.', 'info')
+            return redirect(back)
+        if target == wg.SHARES_ON_PROPERTY:
+            wg_shares.apply_switch_to_property()
+            db.session.commit()
+            flash('Anteile werden wieder an der Liegenschaft geführt. Das Anteilsbuch '
+                  'bleibt gespeichert und ist ausgeblendet.', 'success')
+            return redirect(back)
+        try:
+            on = date.fromisoformat(request.form.get('on', ''))
+        except ValueError:
+            flash('Bitte ein gültiges Übernahmedatum angeben.', 'danger')
+            return redirect(url_for('settings.share_binding'))
+        allocations = {}
+        for key, raw in request.form.items():
+            if not key.startswith('alloc_'):
+                continue
+            try:
+                _, prop_id, cust_id = key.split('_')
+                allocations[(int(prop_id), int(cust_id))] = int(raw or 0)
+            except ValueError:
+                flash('Ungültige Anzahl in der Übernahme-Tabelle.', 'danger')
+                return redirect(url_for('settings.share_binding', on=on.isoformat()))
+        try:
+            contacts, shares = wg_shares.apply_switch_to_person(
+                allocations, on, use_member_since=request.form.get('use_member_since') == '1',
+                user_id=current_user.id)
+            db.session.commit()
+        except wg_shares.ShareError as exc:
+            db.session.rollback()
+            flash(f'Nicht umgestellt: {exc}', 'danger')
+            return redirect(url_for('settings.share_binding', on=on.isoformat()))
+        flash(f'Anteile werden jetzt am Mitglied geführt. Übernommen: {shares} Anteile '
+              f'bei {contacts} Kontakt(en).', 'success')
+        return redirect(back)
+
+    ctx = dict(current=current, binding_labels=wg.SHARE_BINDING_LABELS)
+    if current == wg.SHARES_ON_PROPERTY:
+        try:
+            on = date.fromisoformat(request.args.get('on', ''))
+        except ValueError:
+            on = date.today()
+        ctx['preview'] = wg_shares.switch_preview(on)
+    else:
+        ctx['register_entries'] = db.session.query(wg_shares.WgShareEntry.id).count()
+        ctx['register_total'] = wg_shares.total_holdings()
+    return render_template('settings/share_binding.html', **ctx)

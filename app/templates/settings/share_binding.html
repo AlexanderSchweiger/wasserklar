@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% block title %}Anteile umstellen{% endblock %}
+{% block page_title %}<i class="fas fa-coins me-2"></i> Genossenschaftsanteile umstellen{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+  <a href="{{ url_for('settings.index', _anchor='pane-mandant') }}" class="btn btn-sm btn-outline-secondary">
+    <i class="fas fa-arrow-left me-1"></i> Zurück zu den Einstellungen
+  </a>
+</div>
+
+{% if current == 'property' %}
+{% set p = preview %}
+<div class="card mb-3">
+  <div class="card-body">
+    <h3 class="card-title">Von „an der Liegenschaft“ auf „am Mitglied“</h3>
+    <p class="mb-2">
+      Künftig gehören die Anteile der Person und stehen im <strong>Anteilsbuch</strong>. Die Anteile
+      der Liegenschaften werden einmalig als <strong>Anfangsbestand</strong> beim Eigentümer
+      gebucht — je Kontakt ein Eintrag. Die Anteile an den Liegenschaften bleiben gespeichert
+      (für ein späteres Zurückstellen), werden aber nicht mehr angezeigt.
+    </p>
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-auto">
+        <label class="form-label">Übernahmedatum (Eigentümer an diesem Tag)</label>
+        <input type="date" name="on" value="{{ p.on.isoformat() }}" class="form-control">
+      </div>
+      <div class="col-auto">
+        <button type="submit" class="btn btn-outline-secondary">Vorschau aktualisieren</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<form method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="target" value="person">
+  <input type="hidden" name="on" value="{{ p.on.isoformat() }}">
+  <div class="card mb-3">
+    <div class="card-header">
+      <h3 class="card-title">Übernahme ({{ p.total_shares }} Anteile aus {{ p.rows | length }} Liegenschaften)</h3>
+    </div>
+    {% if p.rows %}
+    <div class="table-responsive">
+      <table class="table table-vcenter card-table mb-0">
+        <thead>
+          <tr>
+            <th>Liegenschaft</th>
+            <th class="text-end">Anteile</th>
+            <th>Eigentümer → übernimmt</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in p.rows %}
+          <tr class="{{ 'table-warning' if r.co_owned }}" data-share-row data-shares="{{ r.shares }}">
+            <td>
+              <a href="{{ url_for('properties.detail', property_id=r.property.id) }}">{{ r.property.label() }}</a>
+              {% if r.co_owned %}<div class="small text-muted">Miteigentum — bitte die Aufteilung prüfen.</div>{% endif %}
+            </td>
+            <td class="text-end"><strong>{{ r.shares }}</strong></td>
+            <td>
+              {% for c in r.owners %}
+              <div class="d-flex align-items-center gap-2 mb-1">
+                {% if c.id in r.skipped_ids %}
+                <span class="badge bg-secondary-lt">hat schon ein Anteilsbuch</span>
+                {% else %}
+                <input type="number" min="0" step="1" class="form-control form-control-sm" style="width:6rem"
+                       name="alloc_{{ r.property.id }}_{{ c.id }}" value="{{ r.default[c.id] }}" data-alloc>
+                {% endif %}
+                <a href="{{ url_for('customers.detail', customer_id=c.id) }}">{{ c.name }}</a>
+              </div>
+              {% endfor %}
+              <div class="small text-danger d-none" data-sum-warning>Summe weicht von den Anteilen der Liegenschaft ab.</div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="card-body text-muted">Keine Liegenschaft mit Anteilen und Eigentümer zum Übernahmedatum.</div>
+    {% endif %}
+    <div class="card-body border-top">
+      <div class="form-check">
+        <input class="form-check-input" type="checkbox" name="use_member_since" value="1" id="use-member-since">
+        <label class="form-check-label" for="use-member-since">
+          Anfangsbestand mit dem Datum „Mitglied seit“ buchen (sonst mit dem Übernahmedatum)
+        </label>
+      </div>
+    </div>
+  </div>
+
+  {% if p.unowned %}
+  <div class="alert alert-warning">
+    <strong>{{ p.unowned | length }} Liegenschaft(en) mit Anteilen haben zum Übernahmedatum keinen Eigentümer</strong>
+    und werden nicht übernommen:
+    {% for u in p.unowned %}{{ u.property.label() }} ({{ u.shares }}){% if not loop.last %}, {% endif %}{% endfor %}.
+  </div>
+  {% endif %}
+  {% if p.skipped %}
+  <div class="alert alert-info">
+    <strong>{{ p.skipped | length }} Kontakt(e) haben schon ein Anteilsbuch</strong> und bekommen keinen
+    weiteren Anfangsbestand: {% for c in p.skipped %}{{ c.name }}{% if not loop.last %}, {% endif %}{% endfor %}.
+  </div>
+  {% endif %}
+  {% if p.members_without_shares %}
+  <div class="alert alert-secondary">
+    <strong>{{ p.members_without_shares | length }} Kontakt(e) mit Status „Mitglied“</strong> hätten danach keine
+    Anteile. Das ändert nichts automatisch — die Mitgliederliste markiert sie, Anteile buchen Sie auf der Kontaktseite.
+  </div>
+  {% endif %}
+
+  <button type="submit" class="btn btn-primary">
+    <i class="fas fa-check me-1"></i> Übernehmen und auf „am Mitglied“ umstellen
+  </button>
+</form>
+
+{% else %}
+<div class="card">
+  <div class="card-body">
+    <h3 class="card-title">Von „am Mitglied“ zurück auf „an der Liegenschaft“</h3>
+    <p>
+      Danach gelten wieder die Anteile, die an den Liegenschaften gespeichert sind (Stand vor dem Umstellen;
+      dazwischen gab es dort keine Änderungen). Das <strong>Anteilsbuch bleibt gespeichert</strong>
+      ({{ register_entries }} Einträge, heute {{ register_total }} Anteile) und wird nur ausgeblendet —
+      beim erneuten Umstellen ist es wieder da.
+    </p>
+    <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="target" value="property">
+      <button type="submit" class="btn btn-primary">
+        <i class="fas fa-check me-1"></i> Auf „an der Liegenschaft“ umstellen
+      </button>
+    </form>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Miteigentum: Warnung, wenn die Aufteilung nicht die Anteile der Liegenschaft ergibt.
+(function () {
+  document.querySelectorAll('[data-share-row]').forEach(function (row) {
+    var total = parseInt(row.dataset.shares, 10) || 0;
+    var inputs = row.querySelectorAll('[data-alloc]');
+    var warn = row.querySelector('[data-sum-warning]');
+    function check() {
+      if (!inputs.length) { return; }
+      var sum = 0;
+      inputs.forEach(function (i) { sum += parseInt(i.value, 10) || 0; });
+      warn.classList.toggle('d-none', sum === total);
+    }
+    inputs.forEach(function (i) { i.addEventListener('input', check); });
+    check();
+  });
+})();
+</script>
+{% endblock %}

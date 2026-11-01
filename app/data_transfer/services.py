@@ -768,14 +768,26 @@ def import_from_zip(extract_dir: Path, manifest: dict, *, mode: str = "replace",
                 _apply_deferred_updates(table_records, mode="replace", id_map=id_map, stats=stats)
                 _reset_sequences(models)
             else:  # merge
+                from app import property_shares
+                share_books_before = property_shares.book_snapshot()
                 for model in models:
                     if model not in table_records:
                         continue
                     _insert_merge(model, table_records[model], id_map, update_existing, stats)
                 _apply_deferred_updates(table_records, mode="merge", id_map=id_map, stats=stats)
+                # Liegenschaften, die im Ziel schon ein Anteilsbuch hatten, behalten
+                # es — die mitgebrachten Eintraege kaemen sonst doppelt dazu.
+                property_shares.drop_merged_duplicates(share_books_before)
 
             # Counter auf MAX nachziehen (gegen Nummern-Kollision bei spaeteren Inserts)
             _bump_counters(stats)
+
+            # Anteilsbuch der Liegenschaft: ein Export vor v1.50.0 hat Anteile,
+            # aber kein Buch → Anfangsbestand; danach Cache = Summe (faengt auch
+            # beim Zusammenfuehren doppelt eingefuegte Eintraege ab).
+            from app import property_shares
+            property_shares.ensure_openings_from_cache()
+            property_shares.resync_share_caches()
 
             db.session.commit()
     except Exception as exc:

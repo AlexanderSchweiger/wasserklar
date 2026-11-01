@@ -19,6 +19,54 @@ ORG_TYPE_LABELS = {
     ORG_UTILITY: "Versorger",
 }
 
+# Bindung der Genossenschaftsanteile (AppSetting-Key ``org.share_binding``,
+# bewusst nicht ``wg.*`` — das ist der Namensraum der Mandanten-Identitaet).
+# ``property``: Anteile haengen an der Liegenschaft (PropertyWgProfile.shares,
+# wandern beim Verkauf mit — WRG-Wassergenossenschaft, Wasser- und Bodenverband).
+# ``person``: Anteile gehoeren dem Mitglied und stehen im Anteilsbuch
+# (WgShareEntry, app/wg_shares.py — eGen/eG). Default und Rueckfall: property.
+SHARE_BINDING_KEY = "org.share_binding"
+SHARES_ON_PROPERTY = "property"
+SHARES_ON_PERSON = "person"
+SHARE_BINDINGS = (SHARES_ON_PROPERTY, SHARES_ON_PERSON)
+
+SHARE_BINDING_LABELS = {
+    SHARES_ON_PROPERTY: "An der Liegenschaft",
+    SHARES_ON_PERSON: "Am Mitglied (Anteilsbuch)",
+}
+
+# Regel "Flaeche je Anteil" (nur Vorschlag beim Buchen, ueberschreibbar).
+# Leer = kein Vorschlag. Rundung: angefangene (Standard), abgerundet, kaufmaennisch.
+SHARE_AREA_PER_SHARE_KEY = "org.share_area_per_share"
+SHARE_AREA_ROUNDING_KEY = "org.share_area_rounding"
+ROUND_UP = "up"
+ROUND_DOWN = "down"
+ROUND_NEAREST = "nearest"
+SHARE_ROUNDINGS = (ROUND_UP, ROUND_DOWN, ROUND_NEAREST)
+SHARE_ROUNDING_LABELS = {
+    ROUND_UP: "je angefangene Fläche (aufrunden)",
+    ROUND_DOWN: "je volle Fläche (abrunden)",
+    ROUND_NEAREST: "kaufmännisch gerundet",
+}
+
+
+def suggested_shares(area, per_share, rounding=ROUND_UP):
+    """Anteile laut Regel fuer eine Flaeche (m²) — ``None`` ohne Flaeche oder
+    ohne gueltige Regel. Reine Funktion; gerechnet mit Decimal (kein
+    Gleitkomma-Rand bei 300 / 100)."""
+    from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP
+    if area is None or per_share in (None, ""):
+        return None
+    try:
+        area_d, per_d = Decimal(str(area)), Decimal(str(per_share))
+    except (InvalidOperation, ValueError):
+        return None
+    if per_d <= 0 or area_d < 0:
+        return None
+    mode = {ROUND_UP: ROUND_CEILING, ROUND_DOWN: ROUND_FLOOR,
+            ROUND_NEAREST: ROUND_HALF_UP}.get(rounding, ROUND_CEILING)
+    return int((area_d / per_d).quantize(Decimal("1"), rounding=mode))
+
 # ---------------------------------------------------------------------------
 # Mitglieds-Status
 # ---------------------------------------------------------------------------

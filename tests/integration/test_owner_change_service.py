@@ -248,3 +248,77 @@ class TestEstimationRegression:
         # Es darf KEINE ReadingCorrection entstehen (die Schlussrechnung ist
         # kein 'standard'-Beleg -> _issued_invoice_for ignoriert sie).
         assert ReadingCorrection.query.count() == 0
+
+
+class TestShareMoves:
+    """Anteile am Mitglied: Bewegungen im Anteilsbuch zum Stichtag."""
+
+    @pytest.fixture
+    def person(self, setup):
+        from app import wg_shares
+        AppSetting.set("org.type", "cooperative")
+        AppSetting.set("org.share_binding", "person")
+        db.session.commit()
+        wg_shares.record_acquisition(setup["old"], 2, date(TODAY.year - 3, 1, 1))
+        db.session.commit()
+        return setup
+
+    def _run_plan(self, setup, plan, resign=None):
+        return svc.execute_owner_change(
+            prop=setup["prop"], period=setup["period"], stichtag=_stichtag(),
+            new_customer_ids=[setup["new"].id],
+            meter_inputs={setup["meter"].id: {"value": Decimal("130")}},
+            create_settlement=False, settlement_recipient_id=None,
+            tariff=None, due_days=30, fee_mode=svc.FEE_MODE_NEW_OWNER_FULL,
+            resign_customer_ids=resign or [], share_plan=plan,
+            created_by_id=setup["user"].id)
+
+    def test_keep_and_buyer_acquires(self, person):
+        from app import wg_shares
+        old, new = person["old"], person["new"]
+        oc, warnings = self._run_plan(person, {
+            "sellers": {str(old.id): {"action": "keep"}},
+            "buyers": {str(new.id): 1}})
+        assert wg_shares.holdings_map([old.id, new.id], _stichtag()) == {old.id: 2, new.id: 1}
+        entry = wg_shares.WgShareEntry.query.filter_by(customer_id=new.id).one()
+        assert entry.source == "owner_change" and entry.entry_date == _stichtag()
+        assert not warnings
+
+    def test_transfer_all_to_buyer_warns_without_resign(self, person):
+        from app import wg_shares
+        old, new = person["old"], person["new"]
+        _, warnings = self._run_plan(person, {
+            "sellers": {str(old.id): {"action": "transfer", "qty": 2, "to": new.id}},
+            "buyers": {str(new.id): 0}})
+        assert wg_shares.holdings_map([old.id, new.id], _stichtag()) == {old.id: 0, new.id: 2}
+        assert wg_shares.holding(old.id, _stichtag() - timedelta(days=1)) == 2
+        assert any("keine Anteile mehr" in w for w in warnings)
+
+    def test_return(self, person):
+        from app import wg_shares
+        old = person["old"]
+        _, warnings = self._run_plan(person, {
+            "sellers": {str(old.id): {"action": "return", "qty": 2}}, "buyers": {}},
+            resign=[old.id])
+        assert wg_shares.holding(old.id, _stichtag()) == 0
+        assert not warnings
+
+    def test_invalid_plan_writes_nothing(self, person):
+        from app import wg_shares
+        from app.models import OwnerChange
+        old, new = person["old"], person["new"]
+        with pytest.raises(svc.OwnerChangeError):
+            self._run_plan(person, {
+                "sellers": {str(old.id): {"action": "return", "qty": 5}}, "buyers": {}})
+        db.session.rollback()
+        assert OwnerChange.query.count() == 0
+        assert MeterReading.query.count() == 0
+        assert PropertyOwnership.query.filter_by(customer_id=new.id).count() == 0
+        assert wg_shares.WgShareEntry.query.count() == 1
+
+    def test_plan_ignored_in_property_mode(self, setup):
+        from app import wg_shares
+        AppSetting.set("org.type", "cooperative")
+        db.session.commit()
+        self._run_plan(setup, {"sellers": {}, "buyers": {str(setup["new"].id): 1}})
+        assert wg_shares.WgShareEntry.query.count() == 0

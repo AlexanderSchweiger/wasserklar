@@ -408,11 +408,105 @@ def _build_settlement_invoice(*, prop, period, stichtag, tariff, fee_mode,
     return inv, old_days
 
 
+SHARE_KEEP = "keep"
+SHARE_TRANSFER = "transfer"
+SHARE_RETURN = "return"
+SHARE_ACTIONS = (SHARE_KEEP, SHARE_TRANSFER, SHARE_RETURN)
+
+
+def share_plan_changes(share_plan, old_ids, new_ids):
+    """Uebersetzt den Anteils-Plan des Wizards (Anteile am Mitglied) in
+    Bewegungen ``[(art, kontakt_id, anzahl, ziel_id)]`` und prueft die Form.
+
+    ``share_plan``: ``{"sellers": {id: {"action", "qty", "to"}},
+    "buyers": {id: anzahl}}`` (Schluessel duerfen Strings sein — Session-JSON).
+    Wirft ``OwnerChangeError`` bei ungueltigen Angaben."""
+    moves = []
+    old_ids, new_ids = set(old_ids), set(new_ids)
+    for cid, spec in ((share_plan or {}).get("sellers") or {}).items():
+        cid = int(cid)
+        action = (spec or {}).get("action") or SHARE_KEEP
+        if action == SHARE_KEEP:
+            continue
+        if cid not in old_ids or action not in SHARE_ACTIONS:
+            raise OwnerChangeError("Ungültige Angabe zu den Anteilen eines Altbesitzers.")
+        qty = int((spec or {}).get("qty") or 0)
+        if qty < 1:
+            raise OwnerChangeError("Bitte die Anzahl der Anteile angeben (mindestens 1).")
+        if action == SHARE_TRANSFER:
+            to = (spec or {}).get("to")
+            to = int(to) if to else None
+            if to not in new_ids:
+                raise OwnerChangeError("Anteile können nur an einen neuen Eigentümer "
+                                       "übertragen werden.")
+            moves.append((SHARE_TRANSFER, cid, qty, to))
+        else:
+            moves.append((SHARE_RETURN, cid, qty, None))
+    for cid, qty in ((share_plan or {}).get("buyers") or {}).items():
+        cid, qty = int(cid), int(qty or 0)
+        if qty < 0:
+            raise OwnerChangeError("Die Anzahl erworbener Anteile darf nicht negativ sein.")
+        if qty == 0:
+            continue
+        if cid not in new_ids:
+            raise OwnerChangeError("Ungültige Angabe zu den Anteilen eines neuen Eigentümers.")
+        moves.append(("acquisition", cid, qty, None))
+    return moves
+
+
+def check_share_plan(share_plan, old_ids, new_ids, stichtag):
+    """Trockenpruefung ohne Schreiben: Form + kein negativer Bestand zu
+    irgendeinem Datum. Wirft ``OwnerChangeError``."""
+    from app import wg_shares
+    moves = share_plan_changes(share_plan, old_ids, new_ids)
+    changes = []
+    for kind, cid, qty, to in moves:
+        if kind == SHARE_TRANSFER:
+            changes += [(cid, stichtag, -qty), (to, stichtag, qty)]
+        elif kind == SHARE_RETURN:
+            changes.append((cid, stichtag, -qty))
+        else:
+            changes.append((cid, stichtag, qty))
+    try:
+        wg_shares.check_changes(changes)
+    except wg_shares.ShareError as exc:
+        raise OwnerChangeError(str(exc))
+    return moves
+
+
+def _book_share_moves(moves, stichtag, prop, created_by_id):
+    """Schreibt die Bewegungen zum Stichtag (Altbesitzer hielt bis zum Vortag,
+    gleiche Konvention wie ``valid_to``/``member_until``)."""
+    from app import wg_shares
+    note = f"Eigentümerwechsel {prop.label()}"
+    src = wg_shares.SOURCE_OWNER_CHANGE
+    try:
+        for kind, cid, qty, to in moves:
+            customer = db.session.get(Customer, cid)
+            if kind == SHARE_TRANSFER:
+                wg_shares.record_transfer(customer, db.session.get(Customer, to), qty,
+                                          stichtag, note=note, source=src,
+                                          user_id=created_by_id)
+            elif kind == SHARE_RETURN:
+                wg_shares.record_return(customer, qty, stichtag, note=note, source=src,
+                                        user_id=created_by_id)
+            else:
+                wg_shares.record_acquisition(customer, qty, stichtag, note=note,
+                                             source=src, user_id=created_by_id)
+    except wg_shares.ShareError as exc:
+        raise OwnerChangeError(str(exc))
+
+
 def execute_owner_change(*, prop, period, stichtag, new_customer_ids,
                          meter_inputs, create_settlement, settlement_recipient_id,
                          tariff, due_days, fee_mode, resign_customer_ids=None,
-                         new_member_updates=None, note=None, created_by_id=None):
+                         new_member_updates=None, share_plan=None, note=None,
+                         created_by_id=None):
     """Fuehrt den Eigentuemerwechsel in EINER Transaktion aus (committet selbst).
+
+    ``share_plan`` (nur bei Anteilen am Mitglied): Bewegungen im Anteilsbuch
+    zum Stichtag (siehe ``share_plan_changes``) — wird VOR jedem Schreiben
+    trocken geprueft, weil hier Ablesungen/Ownerships vor dem Commit entstehen.
 
     Rueckgabe: ``(OwnerChange, warnings)``. Wirft ``OwnerChangeError`` bei
     fachlichen Verstoessen (Aufrufer flasht + bleibt im Wizard).
@@ -452,6 +546,12 @@ def execute_owner_change(*, prop, period, stichtag, new_customer_ids,
     if set(new_customer_ids) == active_owner_ids:
         raise OwnerChangeError(
             "Die neuen Eigentümer sind identisch mit den aktuellen — kein Wechsel.")
+
+    from app.settings_service import shares_on_person
+    share_moves = []
+    if share_plan and shares_on_person():
+        share_moves = check_share_plan(share_plan, active_owner_ids,
+                                       new_customer_ids, stichtag)
 
     recipient = None
     if create_settlement:
@@ -563,6 +663,18 @@ def execute_owner_change(*, prop, period, stichtag, new_customer_ids,
             member_since = upd.get("member_since")
             if member_since is not None and cust.member_since is None:
                 cust.member_since = member_since
+
+    # --- Anteilsbuch (Anteile am Mitglied) ---------------------------------
+    if share_moves:
+        from app import wg_shares
+        _book_share_moves(share_moves, stichtag, prop, created_by_id)
+        resigned = set(resign_customer_ids or [])
+        for cid in sorted({m[1] for m in share_moves if m[0] != "acquisition"}):
+            if cid not in resigned and wg_shares.holding(cid, stichtag) == 0:
+                cust = db.session.get(Customer, cid)
+                warnings.append(
+                    f"{cust.name} hält nach dem Wechsel keine Anteile mehr, ist aber "
+                    "nicht als ausgeschieden markiert.")
 
     db.session.commit()
     return oc, warnings

@@ -87,6 +87,12 @@
             <span class="text-muted">· {{ a.open_item.customer.name }}</span>
           {% elif a.account %}{{ a.account.name }}{% endif %}
           <span class="fw-bold ms-1">{{ a.amount | de_number(decimals=2) }} €</span>
+          {% if a.open_item and a.account %}
+            <span class="text-muted">· Konto {% if a.account.code %}{{ a.account.code }} · {% endif %}{{ a.account.name }}</span>
+          {% endif %}
+          {% if a.id in alloc_missing_account %}
+            <span class="badge bg-orange-lt ms-1" title="Der Posten hat keine Kontierung — bitte die Aufteilung bearbeiten und ein Buchungskonto wählen"><i class="fas fa-exclamation-triangle me-1"></i>Konto fehlt</span>
+          {% endif %}
         </div>
       {% endfor %}
       {% if is_pending %}

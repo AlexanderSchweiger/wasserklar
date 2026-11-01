@@ -1,9 +1,10 @@
 import json
+from datetime import date
 import re
 
 from flask import (render_template, redirect, url_for, flash, request, jsonify,
                    session, make_response)
-from flask_login import login_required
+from flask_login import current_user, login_required
 from sqlalchemy import case as sa_case, func as sa_func, or_
 from sqlalchemy.exc import IntegrityError
 
@@ -31,7 +32,7 @@ _TYPE_FILTERS = {"customer", "supplier", "all"}
 
 # Erlaubte Sort-Keys der Kontaktliste (Mapping URL-Param -> ORDER-BY-Logik
 # in ``_apply_customer_sort``).
-_SORT_KEYS = {"nr", "name", "type", "address", "object", "email"}
+_SORT_KEYS = {"nr", "name", "type", "address", "object", "email", "shares"}
 _DEFAULT_SORT = "name"
 
 # Erlaubte Werte des business-Filters (E-Rechnung, nur DE).
@@ -47,10 +48,16 @@ def _list_filters(args):
         value = (args.get(key) or "").strip()
         return value if value in allowed else default
 
+    sort = _pick("sort", _SORT_KEYS, _DEFAULT_SORT)
+    if sort == "shares":
+        # Spalte "Anteile" gibt es nur bei Anteilen am Mitglied (Anteilsbuch).
+        from app.settings_service import shares_on_person
+        if not shares_on_person():
+            sort = _DEFAULT_SORT
     return {
         "q": (args.get("q") or "").strip(),
         "type": _pick("type", _TYPE_FILTERS, "all"),
-        "sort": _pick("sort", _SORT_KEYS, _DEFAULT_SORT),
+        "sort": sort,
         "dir": _pick("dir", {"asc", "desc"}, "asc"),
         "country": (args.get("country") or "").strip(),
         "status": (args.get("status") or "").strip(),
@@ -181,6 +188,7 @@ def index():
     wg_functions_map = {}
     for _f in _funcs:
         wg_functions_map.setdefault(_f.customer_id, []).append(_f.function)
+    share_map = _share_map([c.id for c in customers])
 
     # Gesperrte E-Mail-Adressen der sichtbaren Kontakte (1 Query, kein N+1) —
     # treibt das "Unzustellbar"-Badge in der Liste.
@@ -213,6 +221,7 @@ def index():
                         or payment_filter),
         wg_profile_map=wg_profile_map,
         wg_functions_map=wg_functions_map,
+        share_map=share_map,
         suppressed_emails=suppressed_emails,
     )
     # HTMX: nur Tabellen-Fragment zurueckgeben
@@ -270,12 +279,22 @@ def new():
                 return render_template(template, similar=similar, form_data=request.form)
 
         # 4) Anlage
+        initial_shares, shares_error = _initial_shares_from_form(request.form)
+        if shares_error:
+            return _fail(shares_error)
         c = Customer()
         nr_error = _apply_customer_fields(c, request.form, is_new=True)
         if nr_error:
             return _fail(nr_error)
         db.session.add(c)
         try:
+            if initial_shares and c.is_customer:
+                # Anteile am Mitglied: Erwerb beim Beitritt ins Anteilsbuch.
+                from app import wg_shares
+                db.session.flush()
+                wg_shares.record_acquisition(
+                    c, initial_shares, c.member_since or date.today(),
+                    note="Beitritt", user_id=current_user.id)
             db.session.commit()
         except IntegrityError:
             db.session.rollback()
@@ -283,6 +302,9 @@ def new():
                 "Die Kundennummer wurde gerade von einem anderen Vorgang vergeben. "
                 "Bitte erneut speichern."
             )
+        except ValueError as exc:   # wg_shares.ShareError
+            db.session.rollback()
+            return _fail(str(exc))
 
         from app.einvoice.obligation import business_warning
         if (warning := business_warning(c)):
@@ -322,12 +344,31 @@ def detail(customer_id):
     correction_balance = customer_correction_balance(customer_id)
     # Lastschrift-Mandat: Formular (nur mit Glaeubiger-ID) + Nachweise online erteilter Mandate.
     from app.direct_debit.notice import creditor_id
+    # Anteilsbuch (nur bei Anteilen am Mitglied).
+    share_ctx = {}
+    from app.settings_service import is_wassergenossenschaft, shares_on_person
+    if shares_on_person() and customer.is_customer:
+        from app import wg_shares
+        history = wg_shares.history(customer.id)
+        actions = {k: v for k, v in wg_shares.ACTION_LABELS.items()
+                   if k != wg_shares.ACTION_OPENING or not history}
+        share_ctx = dict(share_history=history,
+                         share_holding=customer.wg_share_count(),
+                         share_planned=wg_shares.planned_changes(customer.id),
+                         share_actions=actions,
+                         share_action_icons=wg_shares.ACTION_ICONS,
+                         today=date.today())
+    elif is_wassergenossenschaft():
+        # Anteile an der Liegenschaft: Buchungen, die dieser Kontakt bezahlt hat.
+        from app import property_shares
+        share_ctx = dict(prop_shares_paid=property_shares.paid_by(customer.id))
     return render_template("customers/detail.html", customer=customer,
                            invoices=invoices, suppression=suppression,
                            open_corrections=open_corrections,
                            correction_balance=correction_balance,
                            mandate_form_available=bool(creditor_id()),
-                           mandate_events=customer.mandate_events.limit(5).all())
+                           mandate_events=customer.mandate_events.limit(5).all(),
+                           **share_ctx)
 
 
 # ---------------------------------------------------------------------------
@@ -531,6 +572,7 @@ def row(customer_id):
     wg_profile_map = {customer_id: profile} if profile else {}
     funcs = WgFunction.query.filter_by(customer_id=customer_id).all()
     wg_functions_map = {customer_id: [f.function for f in funcs]} if funcs else {}
+    share_map = _share_map([customer_id])
 
     from app.email_suppression import suppressed_email_set
     suppressed_emails = suppressed_email_set([customer.email])
@@ -541,6 +583,7 @@ def row(customer_id):
         property_map=property_map,
         wg_profile_map=wg_profile_map,
         wg_functions_map=wg_functions_map,
+        share_map=share_map,
         suppressed_emails=suppressed_emails,
         type_filter=request.args.get("type", ""),
         q=request.args.get("q", ""),
@@ -581,6 +624,10 @@ def deactivate(customer_id):
     customer.active = False
     db.session.commit()
     flash(f"Kontakt '{customer.name}' archiviert.", "info")
+    from app.settings_service import shares_on_person
+    if shares_on_person() and (held := customer.wg_share_count()) > 0:
+        flash(f"'{customer.name}' hält noch {held} Anteil(e) — Rückgabe oder "
+              "Übertragung im Anteilsbuch erfassen.", "warning")
     return redirect(url_for("customers.index"))
 
 
@@ -608,6 +655,11 @@ def delete(customer_id):
         blockers.append("Offene Posten")
     if customer.documents.first() is not None:        # Belegablage (Lieferant am Beleg)
         blockers.append("Belege")
+    from app import property_shares, wg_shares
+    if wg_shares.has_entries(customer_id):            # Anteilsbuch (Inhaber oder Gegenseite)
+        blockers.append("Anteilsbuch")
+    if property_shares.is_payer(customer_id):         # Zahler im Anteilsbuch einer Liegenschaft
+        blockers.append("Anteilsbuch der Liegenschaft")
 
     if blockers:
         flash(
@@ -856,8 +908,42 @@ def _apply_customer_sort(query, sort: str, direction: str):
         )
     if sort == "email":
         return query.order_by(*order(Customer.email), Customer.name.asc())
+    if sort == "shares":
+        # Bestand im Anteilsbuch (heute); Kontakte ohne Eintrag zaehlen als 0.
+        from app import wg_shares
+        sub = wg_shares.holding_subquery()
+        shares_col = sa_func.coalesce(sub.c.shares, 0)
+        return (
+            query.outerjoin(sub, sub.c.customer_id == Customer.id)
+            .order_by(shares_col.desc() if desc else shares_col.asc(), Customer.name.asc())
+        )
     # Default und sort == "name"
     return query.order_by(Customer.name.desc() if desc else Customer.name.asc())
+
+
+def _share_map(customer_ids):
+    """Bestand im Anteilsbuch der sichtbaren Kontakte (eine Abfrage) — nur
+    bei Anteilen am Mitglied, sonst leer."""
+    from app.settings_service import shares_on_person
+    if not shares_on_person() or not customer_ids:
+        return {}
+    from app import wg_shares
+    return wg_shares.holdings_map(customer_ids)
+
+
+def _initial_shares_from_form(form):
+    """``(anzahl, fehler)`` fuer "Anteile beim Beitritt" der Neuanlage."""
+    from app.settings_service import shares_on_person
+    raw = (form.get("initial_shares") or "").strip()
+    if not raw or not shares_on_person():
+        return 0, None
+    try:
+        value = int(raw)
+    except ValueError:
+        return 0, "Anteile beim Beitritt: bitte eine ganze Zahl angeben."
+    if value < 0:
+        return 0, "Anteile beim Beitritt dürfen nicht negativ sein."
+    return value, None
 
 
 def _missing_required_fields(form) -> list[str]:
@@ -1220,8 +1306,9 @@ def import_preview():
         return _abort_to_import_upload()
 
     columns = list(df.columns)
-    from app.settings_service import is_wassergenossenschaft
+    from app.settings_service import is_wassergenossenschaft, shares_on_person
     is_wg = is_wassergenossenschaft()
+    person_shares = shares_on_person()
 
     if request.method == "POST":
         # Config immer aus dem Form übernehmen (beide Aktionen: refresh + confirm)
@@ -1229,9 +1316,11 @@ def import_preview():
         session[_CI_CFG_KEY] = cfg.to_dict()
 
         if request.form.get("action") == "confirm":
-            baseline = import_service.build_preview_rows(df, cfg, is_wg=is_wg)
+            baseline = import_service.build_preview_rows(
+                df, cfg, is_wg=is_wg, shares_on_person=person_shares)
             merged = import_service.apply_edits(request.form, baseline)
-            stats = import_service.commit(merged, cfg, is_wg=is_wg)
+            stats = import_service.commit(merged, cfg, is_wg=is_wg,
+                                          shares_on_person=person_shares)
 
             # Aufräumen
             path_to_delete = session.pop(_CI_FILE_KEY, None)
@@ -1311,8 +1400,11 @@ def import_preview():
                 cfg.col_member_since = suggested.col_member_since
             if not cfg.col_member_until:
                 cfg.col_member_until = suggested.col_member_until
+        if person_shares and not cfg.col_shares:
+            cfg.col_shares = suggested.col_shares
 
-    rows = import_service.build_preview_rows(df, cfg, is_wg=is_wg)
+    rows = import_service.build_preview_rows(df, cfg, is_wg=is_wg,
+                                             shares_on_person=person_shares)
 
     counts = {
         "count_new": sum(1 for r in rows if r.status == import_common.ROW_NEW),

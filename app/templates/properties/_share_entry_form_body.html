@@ -1,0 +1,132 @@
+{# Formular-Body "Änderung buchen" (Anteilsbuch der Liegenschaft).
+   Erwartet: property, action, actions, action_labels, reason_labels,
+   transfer_reasons, increase_reasons, decrease_reasons, holding, area,
+   targets, payers, default_payer, form (bei Fehler), error, today. #}
+{% include "_flash_inline.html" %}
+{% if error %}
+<div class="alert alert-danger" role="alert">{{ error }}</div>
+{% endif %}
+{% set f = form if form else {} %}
+{% set _rule = share_area_rule() %}
+<p class="mb-3">
+  <strong>{{ property.label() }}</strong> hat heute
+  <strong>{{ holding }}</strong> {{ 'Anteil' if holding == 1 else 'Anteile' }}{% if area is not none %} bei {{ area }} m²{% endif %}.
+</p>
+<div id="prop-share-form" data-holding="{{ holding }}"
+     data-per-share="{{ _rule.per_share if _rule else '' }}" data-rounding="{{ _rule.rounding if _rule else '' }}"
+     data-increase="{{ increase_reasons | join(',') }}" data-decrease="{{ decrease_reasons | join(',') }}">
+  <div class="mb-3">
+    <label class="form-label">Vorgang</label>
+    <select name="action" id="prop-share-action" class="form-select">
+      {% for key in actions %}
+      <option value="{{ key }}" {{ 'selected' if key == (f.get('action') or action) }}>{{ action_labels[key] }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="row">
+    <div class="col-sm-6">
+      <div class="mb-3">
+        <label class="form-label">Wirksam am</label>
+        <input type="date" name="entry_date" class="form-control" required max="{{ today.isoformat() }}"
+               value="{{ f.get('entry_date') or today.isoformat() }}">
+      </div>
+    </div>
+    <div class="col-sm-6" data-row-area>
+      <div class="mb-3">
+        <label class="form-label">Fläche danach</label>
+        <div class="input-group">
+          <input type="number" name="area_m2" min="0" step="1" class="form-control" id="prop-share-area"
+                 value="{{ f.get('area_m2', '') }}" placeholder="{{ area if area is not none else '' }}">
+          <span class="input-group-text">m²</span>
+        </div>
+        <small class="text-muted">Optional — leer, wenn sich die Fläche nicht ändert.</small>
+      </div>
+    </div>
+  </div>
+  <div class="mb-1">
+    <label class="form-label" id="prop-share-qty-label">Änderung der Anteile</label>
+    <input type="number" name="quantity" step="1" class="form-control" id="prop-share-qty"
+           value="{{ f.get('quantity', '') }}">
+    <small class="text-muted" id="prop-share-qty-help"></small>
+  </div>
+  <div class="small text-primary mb-3 d-none" id="prop-share-suggest"></div>
+  <div class="row d-none" data-row-transfer>
+    <div class="col-sm-7">
+      <div class="mb-3">
+        <label class="form-label">An Liegenschaft</label>
+        <select name="to_property_id" class="form-select tom-select">
+          <option value="">— Liegenschaft wählen —</option>
+          {% for t in targets %}
+          <option value="{{ t.id }}" {{ 'selected' if f.get('to_property_id') == t.id|string }}>{{ t.label() }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="col-sm-5">
+      <div class="mb-3">
+        <label class="form-label">Anlass</label>
+        <select name="transfer_reason" class="form-select">
+          <option value="">—</option>
+          {% for key in transfer_reasons %}
+          <option value="{{ key }}" {{ 'selected' if f.get('transfer_reason') == key }}>{{ reason_labels[key] }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+  </div>
+  <div class="mb-3">
+    <label class="form-label">Bezahlt von</label>
+    {% set _payer = (f.get('payer_customer_id') if form else (default_payer|string if default_payer else '')) %}
+    <select name="payer_customer_id" class="form-select tom-select">
+      <option value="">— nicht erfasst —</option>
+      {% for c in payers %}
+      <option value="{{ c.id }}" {{ 'selected' if _payer == c.id|string }}>{{ c.name }}{% if c.customer_number %} ({{ c.customer_number }}){% endif %}</option>
+      {% endfor %}
+    </select>
+    <small class="text-muted">Vorbelegt mit dem aktuellen Eigentümer. Ein Betrag wird nicht erfasst.</small>
+  </div>
+  <div class="mb-1">
+    <label class="form-label">Notiz <span class="text-muted small" id="prop-share-note-required">(bei Korrektur Pflicht)</span></label>
+    <input type="text" name="note" maxlength="255" class="form-control" value="{{ f.get('note', '') }}"
+           placeholder="z. B. Baubewilligung vom …, Beschluss vom …">
+  </div>
+</div>
+{% include "properties/_share_suggest_js.html" %}
+<script>
+(function () {
+  var box = document.getElementById('prop-share-form');
+  if (!box) { return; }
+  var actionSel = document.getElementById('prop-share-action');
+  var qty = document.getElementById('prop-share-qty');
+  var area = document.getElementById('prop-share-area');
+  var label = document.getElementById('prop-share-qty-label');
+  var help = document.getElementById('prop-share-qty-help');
+  var hint = document.getElementById('prop-share-suggest');
+  var holding = parseInt(box.dataset.holding, 10) || 0;
+  var inc = (box.dataset.increase || '').split(','), dec = (box.dataset.decrease || '').split(',');
+  var touched = !!qty.value;
+  qty.addEventListener('input', function () { touched = true; });
+  function evaluate() {
+    var a = actionSel.value;
+    var transfer = a === 'transfer', opening = a === 'opening';
+    box.querySelector('[data-row-transfer]').classList.toggle('d-none', !transfer);
+    box.querySelector('[data-row-area]').classList.toggle('d-none', transfer);
+    label.textContent = opening ? 'Anteile' : (transfer ? 'Anzahl Anteile' : 'Änderung der Anteile');
+    help.textContent = transfer ? 'Wird bei dieser Liegenschaft abgezogen und der Ziel-Liegenschaft gutgeschrieben.'
+      : (opening ? '' : (inc.indexOf(a) !== -1 ? 'Plus-Wert (oder 0, wenn nur die Fläche wächst).'
+      : (dec.indexOf(a) !== -1 ? 'Minus-Wert, z. B. -1 (oder 0, wenn nur die Fläche schrumpft).'
+      : 'Plus erhöht, Minus verringert die Anteile.')));
+    var s = transfer ? null : wkSuggestShares(area.value, box.dataset.perShare, box.dataset.rounding);
+    if (s === null || area.value === '') { hint.classList.add('d-none'); return; }
+    var proposal = opening ? s : s - holding;
+    hint.textContent = 'Vorschlag nach Regel (1 Anteil je ' + String(box.dataset.perShare).replace('.', ',') +
+      ' m²): ' + area.value + ' m² → ' + s + (s === 1 ? ' Anteil' : ' Anteile') +
+      (opening ? '' : ', also ' + (proposal > 0 ? '+' : '') + proposal) + '.';
+    hint.classList.remove('d-none');
+    if (!touched) { qty.value = proposal; }
+  }
+  actionSel.addEventListener('change', evaluate);
+  area.addEventListener('input', evaluate);
+  evaluate();
+})();
+</script>

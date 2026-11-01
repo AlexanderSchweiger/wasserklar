@@ -1,0 +1,43 @@
+{# Gemeinsamer Tabellenteil fuer Druckansicht und PDF der Mitgliederliste.
+   Erwartet: rows, totals, f, person_mode. Keine Links (Ausdruck). #}
+<table class="member-table table table-sm">
+  <thead>
+    <tr>
+      <th>Nr.</th>
+      <th>Name</th>
+      <th>Anschrift</th>
+      <th>Status</th>
+      <th>Mitglied seit/bis</th>
+      <th>Funktionen</th>
+      <th class="num">Anteile</th>
+      {% if not person_mode %}<th>Liegenschaften</th>{% endif %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    {% set c = r.customer %}
+    <tr>
+      <td>{{ c.customer_number if c.customer_number is not none else '—' }}</td>
+      <td>{{ c.name }}{% if 'archived' in r.flags %} <span class="muted">(archiviert)</span>{% endif %}</td>
+      <td>{{ c.address_display() or '—' }}</td>
+      <td>{% if r.state == 'former' %}ehemalig{% else %}{{ wg_status_labels.get(r.status, r.status) }}{% endif %}</td>
+      <td class="nowrap">{{ r.since.strftime('%d.%m.%Y') if r.since else '—' }}{% if r.until %} – {{ r.until.strftime('%d.%m.%Y') }}{% endif %}</td>
+      <td>{% for fk in r.functions %}{{ wg_function_label(fk) }}{% if not loop.last %}, {% endif %}{% endfor %}</td>
+      <td class="num">{{ r.shares }}</td>
+      {% if not person_mode %}
+      <td>
+        {% for prop, n in r.properties %}{{ prop.object_number or prop.address_display() }} ({{ n }}){% if not loop.last %}, {% endif %}{% endfor %}
+        {% if r.co_owners %}<div class="muted">gemeinsam mit {{ r.co_owners | join(', ') }}</div>{% endif %}
+      </td>
+      {% endif %}
+    </tr>
+    {% endfor %}
+  </tbody>
+  <tfoot>
+    <tr>
+      <th colspan="6">{{ totals.members }} {{ 'Mitglied' if totals.members == 1 else 'Mitglieder' }}{% if totals.former %}, {{ totals.former }} ehemalig{% endif %}</th>
+      <th class="num">{{ totals.shares }}</th>
+      {% if not person_mode %}<th>{% if totals.co_owned_properties %}jede Liegenschaft einmal gezählt, {{ totals.co_owned_properties }} in Miteigentum{% else %}jede Liegenschaft einmal gezählt{% endif %}</th>{% endif %}
+    </tr>
+  </tfoot>
+</table>

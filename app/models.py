@@ -336,6 +336,12 @@ class Customer(db.Model):
                                  back_populates="customer", cascade="all, delete-orphan")
     wg_functions = db.relationship("WgFunction", back_populates="customer",
                                    cascade="all, delete-orphan", order_by="WgFunction.id")
+    # Anteilsbuch (Anteile am Mitglied, siehe app/wg_shares.py). viewonly: ein
+    # Kontakt mit Eintraegen ist nicht loeschbar (Sperre in der Route) — ohne
+    # viewonly wuerde session.delete die NOT-NULL-Spalte customer_id nullen.
+    wg_share_entries = db.relationship(
+        "WgShareEntry", foreign_keys="WgShareEntry.customer_id",
+        lazy="dynamic", viewonly=True)
 
     @property
     def wants_email(self):
@@ -428,9 +434,24 @@ class Customer(db.Model):
         return {f.function for f in self.wg_functions}
 
     def has_paid_shares(self):
-        """True, wenn der Kontakt aktuell (aktive Ownership) mindestens eine
-        Liegenschaft mit >=1 Anteil besitzt — Basis fuer den Mitglied-Vorschlag
-        (hybrid). Dialekt-portabel via JOIN, kein dialektspezifisches SQL."""
+        """True, wenn der Kontakt aktuell Anteile haelt — Basis fuer den
+        Mitglied-Vorschlag (hybrid). Je nach Bindung (``org.share_binding``):
+        am Mitglied der Bestand im Anteilsbuch, sonst eine aktuell besessene
+        Liegenschaft mit >=1 Anteil."""
+        from app.settings_service import shares_on_person
+        if shares_on_person():
+            return self.wg_share_count() > 0
+        return self._has_property_shares()
+
+    def wg_share_count(self, at=None):
+        """Bestand im Anteilsbuch zum Stichtag ``at`` (Default heute, inkl.
+        Buchungen dieses Tages)."""
+        from app import wg_shares
+        return wg_shares.holding(self.id, at) if self.id else 0
+
+    def _has_property_shares(self):
+        """Aktive Ownership auf einer Liegenschaft mit >=1 Anteil.
+        Dialekt-portabel via JOIN, kein dialektspezifisches SQL."""
         return db.session.query(PropertyOwnership.id).join(
             PropertyWgProfile,
             PropertyWgProfile.property_id == PropertyOwnership.property_id,
@@ -496,6 +517,11 @@ class Property(db.Model):
     # WG-spezifisch (Mandant-Typ Wassergenossenschaft): Anteile + m2.
     wg_profile = db.relationship("PropertyWgProfile", uselist=False,
                                  back_populates="property", cascade="all, delete-orphan")
+    # Anteilsbuch der Liegenschaft (Anteile an der Liegenschaft, siehe
+    # app/property_shares.py). viewonly wie Customer.wg_share_entries.
+    share_entries = db.relationship(
+        "PropertyShareEntry", foreign_keys="PropertyShareEntry.property_id",
+        lazy="dynamic", viewonly=True)
 
     def current_owner(self):
         return (
@@ -534,7 +560,7 @@ class Property(db.Model):
     def ensure_wg_profile(self):
         """Liefert das WG-Profil; legt es bei Bedarf an (noch nicht committed)."""
         if self.wg_profile is None:
-            self.wg_profile = PropertyWgProfile(shares=0)
+            self.wg_profile = PropertyWgProfile()   # shares (Cache) defaultet auf 0
         return self.wg_profile
 
     def __repr__(self):
@@ -596,7 +622,13 @@ class WgFunction(db.Model):
 
 class PropertyWgProfile(db.Model):
     """WG-spezifisches 1:1-Profil zu einer Liegenschaft: Anteile + Quadratmeter
-    (die m2 bestimmen die Anteils-Anzahl). Nur im WG-Modus befuellt."""
+    (die m2 bestimmen die Anteils-Anzahl). Nur im WG-Modus befuellt.
+
+    ``shares`` ist seit OSS v1.50.0 ein **Cache** = Summe des Anteilsbuchs der
+    Liegenschaft (``PropertyShareEntry``) und wird nur von
+    ``app.property_shares.sync_cache`` geschrieben; das Buch kennt keine
+    Zukunftsdaten, deshalb ist die Summe immer der heutige Bestand.
+    ``area_m2`` bleibt die Wahrheit (Buchungen mit Flaeche aktualisieren sie)."""
     __tablename__ = "property_wg_profiles"
 
     property_id = db.Column(db.Integer, db.ForeignKey("properties.id"), primary_key=True)
@@ -607,6 +639,138 @@ class PropertyWgProfile(db.Model):
 
     def __repr__(self):
         return f"<PropertyWgProfile property={self.property_id} shares={self.shares}>"
+
+
+class WgShareEntry(db.Model):
+    """Bewegung im Anteilsbuch (Anteile am Mitglied, ``org.share_binding`` =
+    ``person``). Der Bestand ist immer die Summe ``quantity`` aller Eintraege
+    mit ``entry_date <= Stichtag`` — kein Cache. Eine Uebertragung besteht aus
+    zwei Eintraegen: ``transfer_out`` beim Abgebenden, ``transfer_in`` beim
+    Empfaenger mit ``pair_entry_id`` → ``transfer_out``. Regeln und Schreibwege
+    nur ueber app/wg_shares.py; Eintraege werden nie bearbeitet (Loeschen und
+    neu buchen oder Korrektur)."""
+    __tablename__ = "wg_share_entries"
+
+    id = db.Column(db.Integer, primary_key=True)
+    customer_id = db.Column(
+        db.Integer, db.ForeignKey("customers.id", name="fk_wg_share_entries_customer"),
+        nullable=False)
+    # Wirksamkeitsdatum (Zukunft erlaubt: Kuendigung zum 31.12.).
+    entry_date = db.Column(db.Date, nullable=False)
+    # Vorzeichenbehaftet, nie 0 (Pruefung in app/wg_shares.py).
+    quantity = db.Column(db.Integer, nullable=False)
+    # opening | acquisition | transfer_in | transfer_out | return | correction
+    kind = db.Column(db.String(20), nullable=False)
+    counterparty_customer_id = db.Column(
+        db.Integer,
+        db.ForeignKey("customers.id", name="fk_wg_share_entries_counterparty",
+                      ondelete="SET NULL"),
+        nullable=True, index=True)
+    pair_entry_id = db.Column(
+        db.Integer,
+        db.ForeignKey("wg_share_entries.id", name="fk_wg_share_entries_pair",
+                      ondelete="SET NULL"),
+        nullable=True, index=True)
+    # Bezug zu einer Liegenschaft (nur Information, z. B. "Zubau Haus 12" —
+    # das Mitglied erwirbt und zahlt, die Liegenschaft ist der Anlass).
+    property_id = db.Column(
+        db.Integer,
+        db.ForeignKey("properties.id", name="fk_wg_share_entries_property",
+                      ondelete="SET NULL"),
+        nullable=True, index=True)
+    # manual | owner_change | import | mode_switch
+    source = db.Column(db.String(20), nullable=False, default="manual",
+                       server_default=db.text("'manual'"))
+    note = db.Column(db.String(255), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_by_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", name="fk_wg_share_entries_created_by",
+                      ondelete="SET NULL"),
+        nullable=True)
+
+    customer = db.relationship("Customer", foreign_keys=[customer_id])
+    counterparty = db.relationship("Customer", foreign_keys=[counterparty_customer_id])
+    pair = db.relationship("WgShareEntry", remote_side=[id], foreign_keys=[pair_entry_id])
+    property = db.relationship("Property", foreign_keys=[property_id])
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+
+    __table_args__ = (
+        db.Index("ix_wg_share_entries_customer_date", "customer_id", "entry_date"),
+    )
+
+    def __repr__(self):
+        return (f"<WgShareEntry c={self.customer_id} {self.kind} {self.quantity:+d} "
+                f"{self.entry_date}>")
+
+
+class PropertyShareEntry(db.Model):
+    """Bewegung im Anteilsbuch einer Liegenschaft (Anteile an der Liegenschaft,
+    ``org.share_binding`` = ``property``): Anfangsbestand, Aenderung (Zubau,
+    Neuanschluss, Stilllegung, Abbruch), Uebertragung zwischen Liegenschaften
+    (Teilung/Zusammenlegung, zwei Eintraege wie beim Mitglied) und Korrektur.
+
+    Bestand = Summe ``quantity`` bis zum Stichtag; das Buch kennt **keine
+    Zukunftsdaten**, deshalb ist ``PropertyWgProfile.shares`` ein verlaesslicher
+    Cache der Summe. ``quantity`` darf 0 sein, wenn eine Flaeche (``area_m2`` =
+    Flaeche danach) angegeben ist. ``payer_customer_id`` haelt nur fest, wer
+    bezahlt hat (kein Betrag). Regeln und Schreibwege nur in
+    app/property_shares.py."""
+    __tablename__ = "property_share_entries"
+
+    id = db.Column(db.Integer, primary_key=True)
+    property_id = db.Column(
+        db.Integer,
+        db.ForeignKey("properties.id", name="fk_property_share_entries_property"),
+        nullable=False)
+    entry_date = db.Column(db.Date, nullable=False)
+    quantity = db.Column(db.Integer, nullable=False)
+    # opening | change | transfer_in | transfer_out | correction
+    kind = db.Column(db.String(20), nullable=False)
+    # change: extension | new_connection | decommission | demolition | other;
+    # Uebertragung: split | merge
+    reason = db.Column(db.String(30), nullable=True)
+    area_m2 = db.Column(db.Integer, nullable=True)        # Flaeche danach
+    payer_customer_id = db.Column(
+        db.Integer,
+        db.ForeignKey("customers.id", name="fk_property_share_entries_payer",
+                      ondelete="SET NULL"),
+        nullable=True, index=True)
+    counterparty_property_id = db.Column(
+        db.Integer,
+        db.ForeignKey("properties.id", name="fk_property_share_entries_counterparty",
+                      ondelete="SET NULL"),
+        nullable=True, index=True)
+    pair_entry_id = db.Column(
+        db.Integer,
+        db.ForeignKey("property_share_entries.id", name="fk_property_share_entries_pair",
+                      ondelete="SET NULL"),
+        nullable=True, index=True)
+    # manual | import | migration | demo
+    source = db.Column(db.String(20), nullable=False, default="manual",
+                       server_default=db.text("'manual'"))
+    note = db.Column(db.String(255), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_by_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", name="fk_property_share_entries_created_by",
+                      ondelete="SET NULL"),
+        nullable=True)
+
+    property = db.relationship("Property", foreign_keys=[property_id])
+    payer = db.relationship("Customer", foreign_keys=[payer_customer_id])
+    counterparty = db.relationship("Property", foreign_keys=[counterparty_property_id])
+    pair = db.relationship("PropertyShareEntry", remote_side=[id],
+                           foreign_keys=[pair_entry_id])
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+
+    __table_args__ = (
+        db.Index("ix_property_share_entries_property_date", "property_id", "entry_date"),
+    )
+
+    def __repr__(self):
+        return (f"<PropertyShareEntry p={self.property_id} {self.kind} "
+                f"{self.quantity:+d} {self.entry_date}>")
 
 
 # ---------------------------------------------------------------------------
@@ -3787,6 +3951,9 @@ class BankStatementLineAllocation(db.Model):
     Allocation, ist die Zeile im „Aufgeteilt"-Modus und die einfachen Felder
     ``matched_open_item_id`` / ``override_account_id`` werden beim Verbuchen
     ignoriert.
+
+    Mit ``open_item_id`` ist ``account_id`` das Ersatzkonto fuer einen Posten
+    ohne (vollstaendige) Kontierung; ohne Posten das Buchungsziel selbst.
     """
     __tablename__ = "bank_statement_line_allocations"
 

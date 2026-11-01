@@ -21,7 +21,7 @@ from app.extensions import db
 from app.models import (
     BillingPeriod, Customer, Property, PropertyOwnership, WaterTariff,
 )
-from app.settings_service import is_wassergenossenschaft
+from app.settings_service import is_wassergenossenschaft, shares_on_person
 from app import wg
 
 _KEY = "owner_change_wizard"
@@ -276,6 +276,7 @@ def member(property_id):
     new_customers = [db.session.get(Customer, cid) for cid in state["new_customer_ids"]]
     new_customers = [c for c in new_customers if c is not None]
 
+    person_mode = shares_on_person()
     if request.method == "POST":
         resign_ids = [int(x) for x in request.form.getlist("resign_ids") if x]
         new_updates = {}
@@ -287,11 +288,22 @@ def member(property_id):
                 "member_since": ms.strip() if ms else None,
             }
         state["wg"] = {"resign_ids": resign_ids, "new": new_updates}
+        if person_mode:
+            share_plan = _share_plan_from_form(old_customers, new_customers)
+            try:
+                svc.check_share_plan(share_plan, [c.id for c in old_customers],
+                                     [c.id for c in new_customers], stichtag)
+            except svc.OwnerChangeError as exc:
+                flash(str(exc), "danger")
+                return redirect(url_for("owner_change.member", property_id=prop.id))
+            state["wg"]["shares"] = share_plan
         session[_KEY] = state
         return redirect(_next_after_member(prop, state))
 
     # Vorschlag: Altbesitzer als "ausgeschieden", wenn er kein weiteres aktives
-    # Besitzverhaeltnis (auf anderen Objekten) behaelt.
+    # Besitzverhaeltnis (auf anderen Objekten) behaelt. Bei Anteilen am Mitglied
+    # haengt die Mitgliedschaft nicht am Haus: der Verkaeufer behaelt seine
+    # Anteile standardmaessig — ausgeschieden erst, wenn er alle abgibt (JS).
     resign_suggest = {}
     for c in old_customers:
         others = (PropertyOwnership.query
@@ -299,16 +311,64 @@ def member(property_id):
                           PropertyOwnership.valid_to.is_(None),
                           PropertyOwnership.property_id != prop.id)
                   .count())
-        resign_suggest[c.id] = (others == 0)
+        resign_suggest[c.id] = (others == 0) and not person_mode
 
+    holdings = {}
+    if person_mode:
+        from app import wg_shares
+        holdings = wg_shares.holdings_map(
+            [c.id for c in old_customers + new_customers], stichtag)
+
+    from datetime import timedelta
     return render_template(
         "owner_change/step_member.html",
         step=3, property=prop, stichtag=stichtag,
+        prev_day=stichtag - timedelta(days=1),
         old_customers=old_customers, new_customers=new_customers,
         resign_suggest=resign_suggest, state=state,
         status_labels=wg.STATUS_LABELS, wg=wg,
+        person_mode=person_mode, holdings=holdings,
+        share_plan=(state.get("wg") or {}).get("shares") or {},
         create_settlement=state.get("create_settlement"),
     )
+
+
+def _share_plan_from_form(old_customers, new_customers):
+    """Anteils-Plan aus Schritt 3 (Anteile am Mitglied): je Altbesitzer
+    behalten/uebertragen/zurueckgeben, je neuem Eigentuemer Erwerb."""
+    sellers = {}
+    for c in old_customers:
+        action = request.form.get(f"share_action_{c.id}", svc.SHARE_KEEP)
+        if action not in svc.SHARE_ACTIONS:
+            action = svc.SHARE_KEEP
+        sellers[str(c.id)] = {
+            "action": action,
+            "qty": request.form.get(f"share_qty_{c.id}", type=int) or 0,
+            "to": request.form.get(f"share_to_{c.id}", type=int),
+        }
+    buyers = {str(c.id): max(request.form.get(f"buy_qty_{c.id}", type=int) or 0, 0)
+              for c in new_customers}
+    return {"sellers": sellers, "buyers": buyers}
+
+
+def _share_summary(share_plan, old_ids, new_ids):
+    """Lesbare Zeilen fuer die Bestaetigung (leer ohne Bewegungen)."""
+    try:
+        moves = svc.share_plan_changes(share_plan, old_ids, new_ids)
+    except svc.OwnerChangeError as exc:
+        return [str(exc)]
+    names = {c.id: c.name for c in Customer.query.filter(
+        Customer.id.in_(set(old_ids) | set(new_ids))).all()}
+    lines = []
+    for kind, cid, qty, to in moves:
+        word = "Anteil" if qty == 1 else "Anteile"
+        if kind == svc.SHARE_TRANSFER:
+            lines.append(f"{names.get(cid)} überträgt {qty} {word} an {names.get(to)}")
+        elif kind == svc.SHARE_RETURN:
+            lines.append(f"{names.get(cid)} gibt {qty} {word} zurück")
+        else:
+            lines.append(f"{names.get(cid)} erwirbt {qty} {word}")
+    return lines
 
 
 def _next_after_member(prop, state):
@@ -442,10 +502,12 @@ def confirm(property_id):
                 fee_mode=state.get("fee_mode", svc.default_base_fee_mode()),
                 resign_customer_ids=wg_state.get("resign_ids") or [],
                 new_member_updates=new_updates,
+                share_plan=wg_state.get("shares"),
                 note=state.get("note"),
                 created_by_id=current_user.id,
             )
         except svc.OwnerChangeError as exc:
+            db.session.rollback()
             flash(str(exc), "danger")
             return redirect(url_for("owner_change.confirm", property_id=prop.id))
 
@@ -463,6 +525,10 @@ def confirm(property_id):
         create_settlement=create_settlement, preview=preview,
         fee_mode_labels=svc.FEE_MODE_LABELS, is_wg=is_wassergenossenschaft(),
         meter_inputs=_meter_inputs(state),
+        share_summary=(_share_summary((state.get("wg") or {}).get("shares"),
+                                      [c.id for c in old_customers],
+                                      [c.id for c in new_customers])
+                       if shares_on_person() else []),
     )
 
 

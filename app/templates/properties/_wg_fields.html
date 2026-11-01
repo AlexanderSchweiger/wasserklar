@@ -1,0 +1,76 @@
+{# Genossenschafts-Felder der Liegenschaft (Modal-Body und Vollseite).
+   Erwartet: property (None, transientes Property() oder gespeichert).
+
+   Anteile an der Liegenschaft: beim Bearbeiten nur lesend — Anteile und
+   Flaeche aendern sich ueber das Anteilsbuch (Zubau, Stilllegung, Korrektur),
+   die Felder werden deshalb gar nicht gepostet. Bei der Neuanlage bucht
+   properties.new() die Eingaben als Anfangsbestand. Anteile am Mitglied:
+   nur die Flaeche, frei editierbar. #}
+{% set _existing = property is not none and property.id %}
+{% if is_wg %}
+<hr>
+<h6 class="text-muted mb-1"><i class="fas fa-coins me-2"></i>Genossenschaft</h6>
+{% if not shares_on_person and _existing %}
+<div class="row mb-2">
+  <div class="col-md-6"><span class="text-muted">Anteile:</span> <strong>{{ property.wg_shares }}</strong></div>
+  <div class="col-md-6"><span class="text-muted">Fläche:</span>
+    <strong>{{ property.wg_area_m2 if property.wg_area_m2 is not none else '—' }}</strong>{% if property.wg_area_m2 is not none %} m²{% endif %}</div>
+</div>
+<p class="small mb-3">
+  <a href="{{ url_for('properties.detail', property_id=property.id) }}#anteilsbuch" hx-boost="false">
+    <i class="fas fa-book me-1"></i>Im Anteilsbuch ändern</a>
+  <span class="text-muted">— Zubau, Stilllegung, Teilung oder Korrektur mit Datum und Zahler.</span>
+</p>
+{% else %}
+{% set _rule = share_area_rule() if not shares_on_person else none %}
+<div class="row" data-share-suggest
+     data-per-share="{{ _rule.per_share if _rule else '' }}" data-rounding="{{ _rule.rounding if _rule else '' }}">
+  {% if not shares_on_person %}
+  <div class="col-md-6">
+    <div class="mb-3">
+      <label class="form-label">Anteile</label>
+      <input type="number" name="wg_shares" min="0" step="1" class="form-control" data-share-qty
+        value="{{ property.wg_shares if property and property.wg_shares else '' }}">
+      <small class="text-muted">Wird als Anfangsbestand ins Anteilsbuch gebucht.</small>
+    </div>
+  </div>
+  {% endif %}
+  <div class="col-md-6">
+    <div class="mb-3">
+      <label class="form-label">Fläche (m²)</label>
+      <div class="input-group">
+        <input type="number" name="area_m2" min="0" step="1" class="form-control" data-share-area
+          value="{{ property.wg_area_m2 if property and property.wg_area_m2 is not none else '' }}">
+        <span class="input-group-text">m²</span>
+      </div>
+      {% if shares_on_person %}
+      <small class="text-muted">Nur zur Information — die Anteile werden am Mitglied geführt (Anteilsbuch).</small>
+      {% elif _rule %}
+      <small class="text-muted" data-share-hint>Regel: 1 Anteil je {{ _rule.per_share_text }} m² — die Anteile werden vorgeschlagen.</small>
+      {% else %}
+      <small class="text-muted">Bestimmt die Anzahl der Anteile.</small>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% if _rule %}
+{% include "properties/_share_suggest_js.html" %}
+<script>
+(function () {
+  var box = document.querySelector('[data-share-suggest]');
+  if (!box || !window.wkSuggestShares) { return; }
+  var area = box.querySelector('[data-share-area]');
+  var qty = box.querySelector('[data-share-qty]');
+  if (!area || !qty) { return; }
+  var touched = !!qty.value;
+  qty.addEventListener('input', function () { touched = true; });
+  area.addEventListener('input', function () {
+    if (touched) { return; }
+    var s = wkSuggestShares(area.value, box.dataset.perShare, box.dataset.rounding);
+    qty.value = (s === null) ? '' : s;
+  });
+})();
+</script>
+{% endif %}
+{% endif %}
+{% endif %}

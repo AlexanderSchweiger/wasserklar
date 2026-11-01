@@ -1,0 +1,53 @@
+{# Einstellungen → Mandant: woran die Genossenschaftsanteile haengen. Die
+   Bindung ist bewusst kein Feld des grossen Formulars — umgestellt wird nur
+   ueber den Assistenten (settings.share_binding), der die Uebernahme vorher
+   zeigt. Die Regel "Flaeche je Anteil" (nur Anteile an der Liegenschaft)
+   speichert das grosse Formular, aber nur mit Marker share_rule_fields. #}
+<div class="card mt-3" id="anteile">
+  <div class="card-header">
+    <h3 class="card-title"><i class="fas fa-coins me-1"></i> Genossenschaftsanteile</h3>
+  </div>
+  <div class="card-body">
+    <p class="mb-2">Anteile werden geführt: <strong>{{ share_binding.label }}</strong></p>
+    <p class="text-muted small mb-3">
+      <strong>An der Liegenschaft</strong> — die Anteile gehören zum Haus (z. B. nach Wohnfläche) und
+      gehen beim Verkauf auf den neuen Eigentümer über; Zubau, Stilllegung oder Teilung stehen
+      im Anteilsbuch der Liegenschaft.
+      <strong>Am Mitglied</strong> — die Anteile gehören der Person und stehen im Anteilsbuch
+      des Mitglieds (Erwerb, Übertragung, Rückgabe mit Datum); ein Mitglied kann so auch ohne
+      Liegenschaft Mitglied bleiben. Was gilt, regelt Ihre Satzung.
+    </p>
+    <a href="{{ url_for('settings.share_binding') }}" class="btn btn-outline-primary">
+      <i class="fas fa-exchange-alt me-1"></i> Umstellen …
+    </a>
+
+    {% if share_binding.current == 'property' %}
+    <hr>
+    <input type="hidden" name="share_rule_fields" value="1">
+    <h4 class="mb-1">Anteile aus der Wohnfläche vorschlagen</h4>
+    <p class="text-muted small mb-2">
+      Beim Buchen eines Zubaus oder einer neuen Liegenschaft schlägt die App aus der Fläche die Anteile
+      vor — der Wert lässt sich immer überschreiben. Leer lassen, wenn es keine feste Regel gibt.
+    </p>
+    <div class="row g-2 align-items-end">
+      <div class="col-sm-4">
+        <label class="form-label">Fläche je Anteil</label>
+        <div class="input-group">
+          <span class="input-group-text">1 Anteil je</span>
+          <input type="text" inputmode="decimal" name="share_area_per_share" class="form-control"
+                 value="{{ share_binding.per_share }}" placeholder="z. B. 100">
+          <span class="input-group-text">m²</span>
+        </div>
+      </div>
+      <div class="col-sm-5">
+        <label class="form-label">Rundung</label>
+        <select name="share_area_rounding" class="form-select">
+          {% for key, label in share_binding.rounding_labels.items() %}
+          <option value="{{ key }}" {{ 'selected' if key == share_binding.rounding }}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>

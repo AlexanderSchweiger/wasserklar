@@ -1,0 +1,84 @@
+{# Karte "Anteilsbuch" der Liegenschaft (nur Anteile an der Liegenschaft).
+   Erwartet: property, prop_share_history [(entry, saldo)], prop_share_actions,
+   prop_share_icons, today. #}
+<div class="card mb-3" id="anteilsbuch">
+  <div class="card-header">
+    <h3 class="card-title"><i class="fas fa-coins me-2"></i>Anteilsbuch</h3>
+    <div class="card-actions">
+      <div class="dropdown">
+        <button class="btn btn-sm btn-primary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+          <i class="fas fa-plus me-1"></i> Änderung buchen
+        </button>
+        <div class="dropdown-menu dropdown-menu-end">
+          {% for key, label in prop_share_actions.items() %}
+          <button type="button" class="dropdown-item"
+                  data-url="{{ url_for('properties.share_entry_new', property_id=property.id, action=key) }}"
+                  data-modal-title="{{ label }}"
+                  onclick="openPropertyShareModal(this)">
+            <i class="fas {{ prop_share_icons[key] }} me-2"></i>{{ label }}
+          </button>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="d-flex align-items-baseline gap-3 flex-wrap">
+      <span><span class="h2 mb-0">{{ property.wg_shares }}</span>
+        <span class="text-muted">{{ 'Anteil' if property.wg_shares == 1 else 'Anteile' }}</span></span>
+      {% if property.wg_area_m2 is not none %}
+      <span class="text-muted">{{ property.wg_area_m2 }} m²</span>
+      {% endif %}
+    </div>
+  </div>
+  {% if prop_share_history %}
+  <div class="table-responsive">
+    <table class="table table-sm table-vcenter card-table mb-0">
+      <thead>
+        <tr>
+          <th>Datum</th>
+          <th>Vorgang</th>
+          <th class="text-end">Anteile</th>
+          <th class="text-end">Bestand</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e, balance in prop_share_history | reverse %}
+        <tr>
+          <td class="text-nowrap">{{ e.entry_date.strftime('%d.%m.%Y') }}</td>
+          <td>
+            <span class="badge {{ property_share_badge(e) }}">{{ property_share_label(e) }}</span>
+            {% if e.counterparty %}
+              <a href="{{ url_for('properties.detail', property_id=e.counterparty.id) }}">{{ e.counterparty.label() }}</a>
+            {% endif %}
+            <div class="small text-muted">
+              {% if e.area_m2 is not none %}Fläche danach {{ e.area_m2 }} m²{% endif %}
+              {% if e.payer %}{% if e.area_m2 is not none %} · {% endif %}bezahlt von
+                <a href="{{ url_for('customers.detail', customer_id=e.payer.id) }}">{{ e.payer.name }}</a>{% endif %}
+            </div>
+            {% if e.note %}<div class="small text-muted">{{ e.note }}</div>{% endif %}
+          </td>
+          <td class="text-end text-nowrap {{ 'text-success' if e.quantity > 0 else ('text-danger' if e.quantity < 0 else 'text-muted') }}">
+            {{ '%+d' | format(e.quantity) if e.quantity else '±0' }}
+          </td>
+          <td class="text-end">{{ balance }}</td>
+          <td class="text-end">
+            <form method="post" action="{{ url_for('properties.share_entry_delete', entry_id=e.id) }}"
+                  class="d-inline"
+                  onsubmit="return confirm('{{ 'Übertragung bei beiden Liegenschaften löschen?' if e.kind in ('transfer_in', 'transfer_out') else 'Eintrag löschen?' }}');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-sm btn-ghost-danger" title="Eintrag löschen">
+                <i class="fas fa-trash-alt"></i>
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="card-body pt-0 text-muted small">Noch keine Einträge — mit „Anfangsbestand“ beginnen.</div>
+  {% endif %}
+</div>

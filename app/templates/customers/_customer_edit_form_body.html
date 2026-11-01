@@ -523,6 +523,27 @@
   </div>
   <div id="wg-func-warning" class="alert alert-warning py-2 px-3 mt-2 mb-0 small d-none" role="alert"></div>
 </div>
+{% if shares_on_person %}
+{# Anteile am Mitglied: gebucht wird im Anteilsbuch auf der Kontaktseite,
+   hier nur der Bestand (bzw. bei Neuanlage die Anteile beim Beitritt). #}
+<div class="mb-2">
+  {% if customer and customer.id %}
+    {% set _share_count = customer.wg_share_count() %}
+    <label class="form-label d-block">Anteile</label>
+    <span class="fw-bold">{{ _share_count }}</span>
+    <a href="{{ url_for('customers.detail', customer_id=customer.id) }}#anteilsbuch"
+       class="ms-2 small" hx-boost="false">Anteilsbuch öffnen</a>
+    {% if _share_count == 0 and cur_status == 'member' %}
+    <small class="d-block text-warning"><i class="fas fa-exclamation-triangle me-1"></i>Als Mitglied geführt, hält aber keine Anteile.</small>
+    {% endif %}
+  {% else %}
+    <label class="form-label">Anteile beim Beitritt</label>
+    <input type="number" name="initial_shares" min="0" step="1" class="form-control" style="max-width:10rem"
+      value="{{ form_data.get('initial_shares', '') if form_data is defined and form_data else '' }}">
+    <small class="text-muted">Wird als Erwerb zum Datum „Mitglied seit“ (sonst heute) ins Anteilsbuch gebucht.</small>
+  {% endif %}
+</div>
+{% endif %}
 </div>
 {% endif %}
 

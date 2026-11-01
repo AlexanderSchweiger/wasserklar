@@ -78,6 +78,26 @@
       </div>
     </div>
 
+    {% if is_wg and not shares_on_person %}
+    {% include "properties/_share_register_card.html" %}
+    {% elif is_wg and member_share_refs %}
+    <!-- Anteile am Mitglied: Einträge mit Bezug zu dieser Liegenschaft (lesend) -->
+    <div class="card mb-3">
+      <div class="card-header"><h3 class="card-title"><i class="fas fa-coins me-2"></i>Anteile mit Bezug</h3></div>
+      <ul class="list-group list-group-flush">
+        {% for e in member_share_refs %}
+        <li class="list-group-item small">
+          {{ e.entry_date.strftime('%d.%m.%Y') }} ·
+          <span class="badge {{ wg_share_kind_badge.get(e.kind, 'bg-secondary-lt') }}">{{ wg_share_kind_labels.get(e.kind, e.kind) }}</span>
+          <strong>{{ '%+d' | format(e.quantity) }}</strong>
+          <a href="{{ url_for('customers.detail', customer_id=e.customer_id) }}#anteilsbuch">{{ e.customer.name }}</a>
+          {% if e.note %}<div class="text-muted">{{ e.note }}</div>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
     <!-- Wasserzähler -->
     <div class="card mb-3">
       <div class="card-header">
@@ -554,6 +574,9 @@
 
 {% block modals %}
 {% include "properties/_property_edit_modal.html" %}
+{% if is_wg and not shares_on_person %}
+{% include "properties/_share_entry_modal.html" %}
+{% endif %}
 {% include "properties/_ownership_edit_modal.html" %}
 {# Drei Meter-Modale — wiederverwendet aus meters/. Alle per HTMX lazy-loaded;
    Submit fired HX-Trigger-Event, Default-Handler in _modal_scripts.html ruft
@@ -605,6 +628,19 @@
 
 {% block scripts %}
 {% include "properties/_property_modal_scripts.html" %}
+{% if is_wg and not shares_on_person %}
+<script>
+// Anteilsbuch der Liegenschaft: nach dem Buchen neu laden (Bestand, Verlauf, Fläche).
+setupEditModal({
+  formId: 'propertyShareForm',
+  bodyId: 'propertyShareModalBody',
+  modalId: 'propertyShareModal',
+  openFn: 'openPropertyShareModal',
+  closeEvent: 'closePropertyShareModal',
+  savedEvent: 'propertyShareSaved',
+});
+</script>
+{% endif %}
 {% include "properties/_ownership_modal_scripts.html" %}
 {% include "meters/_modal_scripts.html" %}
 {% include "_map_config.html" %}

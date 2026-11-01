@@ -1,0 +1,14 @@
+{# Vorschlag "Anteile aus der Flaeche" im Browser — dieselbe Regel wie
+   app/wg.py:suggested_shares (up = angefangene, down, nearest). Nur ein
+   Vorschlag; gespeichert wird, was im Feld steht. #}
+<script>
+window.wkSuggestShares = function (area, perShare, rounding) {
+  var a = parseFloat(String(area || '').replace(',', '.'));
+  var p = parseFloat(String(perShare || '').replace(',', '.'));
+  if (!(a >= 0) || !(p > 0)) { return null; }
+  var r = a / p, eps = 1e-9;
+  if (rounding === 'down') { return Math.floor(r + eps); }
+  if (rounding === 'nearest') { return Math.floor(r + 0.5 + eps); }
+  return Math.ceil(r - eps);
+};
+</script>

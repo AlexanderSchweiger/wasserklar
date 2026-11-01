@@ -107,6 +107,43 @@ def is_wassergenossenschaft():
     return org_type() == ORG_COOPERATIVE
 
 
+def share_binding():
+    """Woran die Genossenschaftsanteile haengen: 'property' (Liegenschaft,
+    Default) oder 'person' (Mitglied, Anteilsbuch). AppSetting
+    ``org.share_binding``; unbekannte/leere Werte fallen auf 'property'."""
+    from app.models import AppSetting
+    from app.wg import SHARE_BINDING_KEY, SHARE_BINDINGS, SHARES_ON_PROPERTY
+    val = AppSetting.get(SHARE_BINDING_KEY, SHARES_ON_PROPERTY)
+    return val if val in SHARE_BINDINGS else SHARES_ON_PROPERTY
+
+
+def shares_on_person():
+    """True, wenn die Anteile am Mitglied gefuehrt werden. Enthaelt den
+    WG-Check: im Versorger-Modus immer False (die Daten bleiben, sind aber
+    unsichtbar)."""
+    from app.wg import SHARES_ON_PERSON
+    return is_wassergenossenschaft() and share_binding() == SHARES_ON_PERSON
+
+
+def share_area_rule():
+    """Regel "Flaeche je Anteil" fuer den Anteils-Vorschlag:
+    ``{"per_share": Decimal, "rounding": str}`` oder ``None`` (keine Regel)."""
+    from decimal import Decimal, InvalidOperation
+    from app.models import AppSetting
+    from app.wg import (ROUND_UP, SHARE_AREA_PER_SHARE_KEY, SHARE_AREA_ROUNDING_KEY,
+                        SHARE_ROUNDINGS)
+    raw = (AppSetting.get(SHARE_AREA_PER_SHARE_KEY) or "").strip().replace(",", ".")
+    try:
+        per_share = Decimal(raw) if raw else None
+    except InvalidOperation:
+        per_share = None
+    if per_share is None or per_share <= 0:
+        return None
+    rounding = AppSetting.get(SHARE_AREA_ROUNDING_KEY, ROUND_UP)
+    return {"per_share": per_share,
+            "rounding": rounding if rounding in SHARE_ROUNDINGS else ROUND_UP}
+
+
 def _fernet():
     """Liefert eine MultiFernet-/Fernet-Instanz aus WASSERKLAR_MAIL_KEY.
 

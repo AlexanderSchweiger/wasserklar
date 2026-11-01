@@ -13,25 +13,74 @@
     <div class="card-header"><h3 class="card-title">Schritt 3: Mitgliedschaft</h3></div>
     <div class="card-body">
 
+      {% if not person_mode and property.wg_shares %}
+      <div class="alert alert-info py-2">
+        <i class="fas fa-coins me-1"></i> Die {{ property.wg_shares }} Anteile bleiben bei der Liegenschaft
+        und gehen mit ihr auf die neuen Eigentümer über.
+      </div>
+      {% endif %}
+
       <div class="mb-3">
         <div class="fw-bold mb-2">Altbesitzer</div>
+        {% set sellers = share_plan.get('sellers', {}) %}
         {% for c in old_customers %}
-        <label class="form-check">
-          <input type="checkbox" class="form-check-input" name="resign_ids" value="{{ c.id }}"
-                 {% if resign_suggest.get(c.id) %}checked{% endif %}>
-          <span class="form-check-label">
-            {{ c.name }} als <strong>ausgeschieden</strong> markieren
-            (Mitglied bis {{ (stichtag).strftime('%d.%m.%Y') }})
-            {% if not resign_suggest.get(c.id) %}<span class="text-secondary small">– besitzt noch andere Objekte</span>{% endif %}
-          </span>
-        </label>
+        {% set held = holdings.get(c.id, 0) %}
+        {% set spec = sellers.get(c.id|string, {}) %}
+        <div class="border rounded p-2 mb-2" data-seller data-holding="{{ held }}">
+          {% if person_mode %}
+          <div class="mb-2">
+            <strong>{{ c.name }}</strong> hält zum Stichtag <strong>{{ held }}</strong> {{ 'Anteil' if held == 1 else 'Anteile' }}.
+          </div>
+          {% if held > 0 %}
+          <div class="row g-2 align-items-end mb-2">
+            <div class="col-md-4">
+              <label class="form-label">Anteile</label>
+              <select name="share_action_{{ c.id }}" class="form-select" data-seller-action>
+                <option value="keep" {{ 'selected' if spec.get('action', 'keep') == 'keep' }}>behält sie (bleibt Mitglied)</option>
+                <option value="transfer" {{ 'selected' if spec.get('action') == 'transfer' }}>überträgt an neuen Eigentümer</option>
+                <option value="return" {{ 'selected' if spec.get('action') == 'return' }}>gibt zurück (Kündigung)</option>
+              </select>
+            </div>
+            <div class="col-md-2" data-seller-qty-col>
+              <label class="form-label">Anzahl</label>
+              <input type="number" min="1" max="{{ held }}" step="1" class="form-control"
+                     name="share_qty_{{ c.id }}" value="{{ spec.get('qty') or held }}" data-seller-qty>
+            </div>
+            <div class="col-md-6" data-seller-to-col>
+              <label class="form-label">an</label>
+              <select name="share_to_{{ c.id }}" class="form-select" data-seller-to>
+                {% for n in new_customers %}
+                <option value="{{ n.id }}" {{ 'selected' if spec.get('to') == n.id }}>{{ n.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+          {% endif %}
+          {% endif %}
+          <label class="form-check mb-0">
+            <input type="checkbox" class="form-check-input" name="resign_ids" value="{{ c.id }}" data-resign
+                   {% if resign_suggest.get(c.id) or c.id in (state.get('wg') or {}).get('resign_ids', []) %}checked{% endif %}>
+            <span class="form-check-label">
+              {{ c.name }} als <strong>ausgeschieden</strong> markieren
+              (Mitglied bis {{ prev_day.strftime('%d.%m.%Y') }})
+              {% if person_mode %}
+              {% if held > 0 %}<span class="text-secondary small">– nur, wenn alle Anteile abgegeben werden</span>{% endif %}
+              {% elif not resign_suggest.get(c.id) %}<span class="text-secondary small">– besitzt noch andere Objekte</span>{% endif %}
+            </span>
+          </label>
+        </div>
         {% endfor %}
       </div>
 
       <div class="fw-bold mb-2">Neue Eigentümer</div>
+      {% set buyers = share_plan.get('buyers', {}) %}
       {% for c in new_customers %}
+      {% set held = holdings.get(c.id, 0) %}
       <div class="row g-3 align-items-end mb-2">
-        <div class="col-md-5"><div>{{ c.name }}</div></div>
+        <div class="col-md-{{ 3 if person_mode else 5 }}">
+          <div>{{ c.name }}</div>
+          {% if person_mode %}<small class="text-muted">hält {{ held }} {{ 'Anteil' if held == 1 else 'Anteile' }}</small>{% endif %}
+        </div>
         <div class="col-md-4">
           <label class="form-label">Status</label>
           <select name="new_status_{{ c.id }}" class="form-select">
@@ -45,8 +94,20 @@
           <input type="date" name="new_member_since_{{ c.id }}" class="form-control"
                  value="{{ c.member_since.isoformat() if c.member_since else stichtag.isoformat() }}">
         </div>
+        {% if person_mode %}
+        <div class="col-md-2">
+          <label class="form-label">Erwirbt Anteile</label>
+          <input type="number" min="0" step="1" class="form-control" name="buy_qty_{{ c.id }}"
+                 data-buyer-qty="{{ c.id }}"
+                 value="{{ buyers.get(c.id|string, 1 if held == 0 else 0) }}">
+        </div>
+        {% endif %}
       </div>
       {% endfor %}
+      {% if person_mode %}
+      <small class="text-muted">Alle Buchungen im Anteilsbuch erfolgen zum Stichtag {{ stichtag.strftime('%d.%m.%Y') }}.
+        Übernimmt ein neuer Eigentümer Anteile des Altbesitzers, braucht er in der Regel keine eigenen zu erwerben.</small>
+      {% endif %}
     </div>
   </div>
 
@@ -55,4 +116,51 @@
     <button type="submit" class="btn btn-primary ms-auto">Weiter</button>
   </div>
 </form>
+{% endblock %}
+
+{% block scripts %}
+{% if person_mode %}
+<script>
+// Anteile am Mitglied: Felder je Vorgang ein-/ausblenden, „ausgeschieden"
+// vorschlagen, wenn alle Anteile abgegeben werden, und beim Übertragen an einen
+// neuen Eigentümer dessen eigenen Erwerb auf 0 setzen (solange unberührt).
+(function () {
+  var buyerTouched = {};
+  document.querySelectorAll('[data-buyer-qty]').forEach(function (inp) {
+    inp.addEventListener('input', function () { buyerTouched[inp.dataset.buyerQty] = true; });
+  });
+  function update(box) {
+    var action = box.querySelector('[data-seller-action]');
+    if (!action) { return; }
+    var held = parseInt(box.dataset.holding, 10) || 0;
+    var qty = box.querySelector('[data-seller-qty]');
+    var to = box.querySelector('[data-seller-to]');
+    var resign = box.querySelector('[data-resign]');
+    var a = action.value;
+    box.querySelector('[data-seller-qty-col]').classList.toggle('d-none', a === 'keep');
+    box.querySelector('[data-seller-to-col]').classList.toggle('d-none', a !== 'transfer');
+    var n = parseInt(qty.value, 10) || 0;
+    if (!resign.dataset.touched) { resign.checked = (a !== 'keep' && n >= held); }
+    if (a === 'transfer' && to && !buyerTouched[to.value]) {
+      var b = document.querySelector('[data-buyer-qty="' + to.value + '"]');
+      if (b) { b.value = 0; }
+    }
+  }
+  document.querySelectorAll('[data-seller]').forEach(function (box) {
+    var resign = box.querySelector('[data-resign]');
+    resign.addEventListener('change', function () { resign.dataset.touched = '1'; });
+    box.querySelectorAll('select, input[type=number]').forEach(function (el) {
+      el.addEventListener('change', function () { update(box); });
+      el.addEventListener('input', function () { update(box); });
+    });
+    var action = box.querySelector('[data-seller-action]');
+    if (action) {
+      var a = action.value;
+      box.querySelector('[data-seller-qty-col]').classList.toggle('d-none', a === 'keep');
+      box.querySelector('[data-seller-to-col]').classList.toggle('d-none', a !== 'transfer');
+    }
+  });
+})();
+</script>
+{% endif %}
 {% endblock %}

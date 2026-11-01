@@ -12,7 +12,9 @@ from flask import (
 )
 from flask_login import current_user, login_required
 from sqlalchemy import case as sa_case, or_
+from sqlalchemy.orm import selectinload
 
+from app.accounting import services as acc_svc
 from app.country import term
 from app.extensions import db
 from app.models import (
@@ -54,6 +56,18 @@ def _parse_amount(raw):
         return Decimal(s).quantize(_CENT, rounding=ROUND_HALF_UP)
     except (ArithmeticError, ValueError):
         return None
+
+
+def _op_needs_account(op):
+    """True, wenn beim Verbuchen gegen diesen Posten ein Konto fehlen wuerde.
+
+    Gleiche Regel wie ``accounting.routes._open_item_needs_account``: ein
+    Rechnungs-Posten braucht eines, wenn mindestens eine Position unkontiert
+    ist, ein manueller Posten, wenn er selbst keines traegt.
+    """
+    if op.invoice_id and op.invoice is not None:
+        return acc_svc.invoice_missing_account(op.invoice)
+    return op.account_id is None
 
 
 def _line_render_context(lines):
@@ -110,10 +124,22 @@ def _line_render_context(lines):
                 kind = "under"
             payment_status[l.id] = (kind, abs(diff), bal)
 
+    # Aufteilungs-Positionen, die beim Verbuchen an einem fehlenden Konto
+    # scheitern wuerden (z.B. automatisch aufgeteilte Lastschrift-Gutschrift
+    # auf unkontierte Rechnungen) -> Hinweis in der Zeile.
+    alloc_missing_account = {
+        a.id
+        for l in lines
+        if l.line_status == BankStatementLine.STATUS_PENDING and l.is_split
+        for a in l.allocations
+        if a.open_item is not None and not a.account_id and _op_needs_account(a.open_item)
+    }
+
     return {
         "accounts": accounts,
         "open_items_by_customer": open_items_by_customer,
         "payment_status": payment_status,
+        "alloc_missing_account": alloc_missing_account,
     }
 
 
@@ -360,23 +386,30 @@ def update_line(statement_id, line_id):
 def _apply_split(line):
     """Allocations aus dem Split-Formular uebernehmen (ersetzt bestehende).
 
-    Form-Felder: wiederholte ``alloc_op_id`` + ``alloc_amount`` (paarweise).
-    Validiert Summe == Buchungsbetrag und setzt die Zeile in den Split-Modus
-    (einfache 1:1-Felder werden geleert).
+    Form-Felder: wiederholte ``alloc_op_id`` + ``alloc_amount`` +
+    ``alloc_account_id`` (je Position eines, auch leer). Das Konto wird nur
+    uebernommen, wenn der Posten selbst keine vollstaendige Kontierung hat
+    (``_op_needs_account``) — dann ist es Pflicht und dient beim Verbuchen als
+    Ersatzkonto. Validiert Summe == Buchungsbetrag und setzt die Zeile in den
+    Split-Modus (einfache 1:1-Felder werden geleert).
     """
     op_ids = request.form.getlist("alloc_op_id")
     amounts = request.form.getlist("alloc_amount")
+    account_ids = request.form.getlist("alloc_account_id")
+    account_ids += [""] * (len(op_ids) - len(account_ids))
 
     rows = []
     total = Decimal("0")
-    for raw_op, raw_amt in zip(op_ids, amounts):
+    for raw_op, raw_amt, raw_acc in zip(op_ids, amounts, account_ids):
         raw_op = (raw_op or "").strip()
         raw_amt = (raw_amt or "").strip().replace(",", ".")
+        raw_acc = (raw_acc or "").strip()
         if not raw_op or not raw_amt:
             continue
         try:
             op_id = int(raw_op)
             amt = Decimal(raw_amt).quantize(_CENT, rounding=ROUND_HALF_UP)
+            acc_id = int(raw_acc) if raw_acc else None
         except (ValueError, ArithmeticError):
             abort(400, "Ungültige Aufteilungs-Position.")
         if amt <= 0:
@@ -384,7 +417,12 @@ def _apply_split(line):
         op = OpenItem.query.get(op_id)
         if op is None:
             abort(400, f"Offener Posten #{op_id} nicht gefunden.")
-        rows.append((op, amt))
+        if _op_needs_account(op):
+            if acc_id is None or db.session.get(Account, acc_id) is None:
+                abort(400, f"Für Posten #{op.id} fehlt das Buchungskonto.")
+        else:
+            acc_id = None   # Kontierung kommt aus Posten/Rechnung
+        rows.append((op, amt, acc_id))
         total += amt
 
     if len(rows) < 2:
@@ -394,10 +432,10 @@ def _apply_split(line):
 
     line.allocations.clear()
     db.session.flush()
-    for op, amt in rows:
+    for op, amt, acc_id in rows:
         line.allocations.append(
             BankStatementLineAllocation(
-                open_item_id=op.id, amount=amt,
+                open_item_id=op.id, account_id=acc_id, amount=amt,
             )
         )
     # In Split-Modus wechseln: 1:1-Zuordnung aufloesen, Kunde als Info behalten.
@@ -495,7 +533,7 @@ def split_form(statement_id, line_id):
     prefill = []
     if line.allocations:
         for a in line.allocations:
-            prefill.append((a.open_item, _round2(a.amount)))
+            prefill.append((a.open_item, _round2(a.amount), a.account_id))
     elif line.matched_customer_id:
         remaining = _round2(line.amount)
         cust_ops = (
@@ -511,7 +549,7 @@ def split_form(statement_id, line_id):
                 break
             take = min(_round2(op.open_balance), remaining)
             if take > 0:
-                prefill.append((op, take))
+                prefill.append((op, take, None))
                 remaining -= take
 
     all_open_items = (
@@ -519,9 +557,13 @@ def split_form(statement_id, line_id):
             OpenItem.status.in_([OpenItem.STATUS_OPEN, OpenItem.STATUS_PARTIAL]),
         )
         .join(OpenItem.customer)
+        .options(selectinload(OpenItem.invoice).selectinload(Invoice.items))
         .order_by(OpenItem.date.desc())
         .all()
     )
+    # Posten ohne (vollstaendige) Kontierung: dort fragt das Modal je Position
+    # ein Buchungskonto ab, sonst liesse sich die Aufteilung nicht verbuchen.
+    needs_account_ids = {op.id for op in all_open_items if _op_needs_account(op)}
 
     return render_template(
         "bank_import/_split_modal.html",
@@ -529,6 +571,8 @@ def split_form(statement_id, line_id):
         statement_id=statement_id,
         prefill=prefill,
         all_open_items=all_open_items,
+        needs_account_ids=needs_account_ids,
+        accounts=Account.query.filter_by(active=True).order_by(Account.name).all(),
     )
 
 

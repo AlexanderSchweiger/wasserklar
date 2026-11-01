@@ -304,6 +304,9 @@ class TestSplit:
     def test_set_split_creates_allocations_and_closes_modal(self, client, statement):
         stmt, line = statement
         cust, ops = self._two_ops()
+        acc = Account.query.filter_by(code="W01").one()
+        for op in ops:
+            op.account_id = acc.id          # kontierte Posten -> kein Konto im Formular noetig
         db.session.commit()
         _login(client)
         r = client.post(
@@ -312,6 +315,7 @@ class TestSplit:
                 "action": "set_split",
                 "alloc_op_id": [str(ops[0].id), str(ops[1].id)],
                 "alloc_amount": ["13.75", "100.00"],
+                "alloc_account_id": [str(acc.id), ""],   # wird ignoriert: Posten hat ein Konto
             },
             headers={"HX-Request": "true"},
         )
@@ -320,8 +324,74 @@ class TestSplit:
         assert "Aufgeteilt auf 2 Posten".encode() in r.data
         db.session.refresh(line)
         assert len(line.allocations) == 2
+        assert all(a.account_id is None for a in line.allocations)
         assert line.matched_open_item_id is None
         assert line.match_type == BankStatementLine.MATCH_SPLIT
+
+    def test_split_form_asks_account_for_unassigned_op(self, client, statement):
+        stmt, line = statement
+        cust, ops = self._two_ops()                 # beide ohne Konto
+        line.matched_customer_id = cust.id
+        db.session.commit()
+        _login(client)
+        r = client.get(f"/bank-import/statements/{stmt.id}/lines/{line.id}/split")
+        assert r.status_code == 200
+        assert b'name="alloc_account_id"' in r.data
+        assert b'data-needs-account="1"' in r.data
+        assert "Ohne Kontierung".encode() in r.data
+
+    def test_set_split_requires_account_for_unassigned_op(self, client, statement):
+        stmt, line = statement
+        cust, ops = self._two_ops()                 # beide ohne Konto
+        db.session.commit()
+        _login(client)
+        r = client.post(
+            f"/bank-import/statements/{stmt.id}/lines/{line.id}",
+            data={
+                "action": "set_split",
+                "alloc_op_id": [str(ops[0].id), str(ops[1].id)],
+                "alloc_amount": ["13.75", "100.00"],
+                "alloc_account_id": ["", ""],
+            },
+            headers={"HX-Request": "true"},
+        )
+        assert r.status_code == 400
+        db.session.refresh(line)
+        assert len(line.allocations) == 0
+
+    def test_set_split_stores_account_for_unassigned_op(self, client, statement):
+        stmt, line = statement
+        cust, ops = self._two_ops()
+        acc = Account.query.filter_by(code="W01").one()
+        db.session.commit()
+        _login(client)
+        r = client.post(
+            f"/bank-import/statements/{stmt.id}/lines/{line.id}",
+            data={
+                "action": "set_split",
+                "alloc_op_id": [str(ops[0].id), str(ops[1].id)],
+                "alloc_amount": ["13.75", "100.00"],
+                "alloc_account_id": [str(acc.id), str(acc.id)],
+            },
+            headers={"HX-Request": "true"},
+        )
+        assert r.status_code == 200
+        assert "Konto W01".encode() in r.data
+        assert "Konto fehlt".encode() not in r.data
+        db.session.refresh(line)
+        assert [a.account_id for a in line.allocations] == [acc.id, acc.id]
+
+    def test_row_flags_allocation_without_account(self, client, statement):
+        stmt, line = statement
+        cust, ops = self._two_ops()
+        line.allocations.append(BankStatementLineAllocation(open_item_id=ops[0].id, amount=Decimal("13.75")))
+        line.allocations.append(BankStatementLineAllocation(open_item_id=ops[1].id, amount=Decimal("100.00")))
+        line.match_type = BankStatementLine.MATCH_SPLIT
+        db.session.commit()
+        _login(client)
+        r = client.get(f"/bank-import/statements/{stmt.id}")
+        assert r.status_code == 200
+        assert "Konto fehlt".encode() in r.data
 
     def test_set_split_sum_mismatch_rejected(self, client, statement):
         stmt, line = statement

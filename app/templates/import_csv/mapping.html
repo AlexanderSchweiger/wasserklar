@@ -93,7 +93,11 @@
               {{ col_select("property_name", "Liegenschaft (Bezeichnung / Adresse)", required=True) }}
               {{ col_select("property_type", "Typ (Stall → Sonstiges)") }}
               {% if is_wg %}
+              {% if shares_on_person %}
+              {{ col_select("member_shares", "Anteile (je Mitglied, Anfangsbestand)") }}
+              {% else %}
               {{ col_select("property_shares", "Anteile") }}
+              {% endif %}
               {{ col_select("property_area", "Fläche (m²)") }}
               {% endif %}
 

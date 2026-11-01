@@ -8,7 +8,7 @@
 {% set owner = prop.current_owner() %}
 {% set _wgp = wg_property_map.get(prop.id) if wg_property_map is defined else none %}
 {% set _shares = _wgp.shares if _wgp else 0 %}
-<tr id="property-row-{{ prop.id }}"{% if is_wg and _shares <= 0 %} class="table-warning"{% endif %}>
+<tr id="property-row-{{ prop.id }}"{% if is_wg and not shares_on_person and _shares <= 0 %} class="table-warning"{% endif %}>
   <td>
     {% if prop.object_number %}
       <a href="{{ url_for('properties.detail', property_id=prop.id) }}">{{ prop.object_number }}</a>
@@ -30,8 +30,10 @@
       <span class="text-muted">—</span>
     {% endif %}
   </td>
-  {% if is_wg %}
+  {% if is_wg and not shares_on_person %}
   <td class="text-end">{% if _shares > 0 %}<strong>{{ _shares }}</strong>{% else %}<span class="text-muted">0</span>{% endif %}</td>
+  {% endif %}
+  {% if is_wg %}
   <td class="text-end">{% if _wgp and _wgp.area_m2 is not none %}{{ _wgp.area_m2 }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
   {% endif %}
   <td class="text-end col-actions">

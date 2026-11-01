@@ -1,0 +1,85 @@
+{# Karte "Anteilsbuch" auf der Kontaktseite (nur bei Anteilen am Mitglied).
+   Erwartet: customer, share_history [(entry, saldo)], share_holding,
+   share_planned [(datum, bestand)], share_actions (Vorgang → Label). #}
+<div class="card mt-3" id="anteilsbuch">
+  <div class="card-header">
+    <h3 class="card-title"><i class="fas fa-coins me-2"></i>Anteilsbuch</h3>
+    <div class="card-actions">
+      <div class="dropdown">
+        <button class="btn btn-sm btn-primary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+          <i class="fas fa-plus me-1"></i> Anteile buchen
+        </button>
+        <div class="dropdown-menu dropdown-menu-end">
+          {% for key, label in share_actions.items() %}
+          <button type="button" class="dropdown-item"
+                  data-url="{{ url_for('members.share_entry_new', customer_id=customer.id, action=key) }}"
+                  data-modal-title="{{ label }}"
+                  onclick="openShareEntryModal(this)">
+            <i class="fas {{ share_action_icons[key] }} me-2"></i>{{ label }}
+          </button>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="d-flex align-items-baseline gap-2">
+      <span class="h2 mb-0">{{ share_holding }}</span>
+      <span class="text-muted">{{ 'Anteil' if share_holding == 1 else 'Anteile' }} heute</span>
+    </div>
+    {% for d, n in share_planned %}
+    <div class="small text-muted"><i class="fas fa-clock me-1"></i>ab {{ d.strftime('%d.%m.%Y') }}: {{ n }}</div>
+    {% endfor %}
+    {% if share_holding == 0 and customer.wg_status == 'member' %}
+    <div class="small text-warning mt-1"><i class="fas fa-exclamation-triangle me-1"></i>Als Mitglied geführt, hält aber keine Anteile.</div>
+    {% endif %}
+  </div>
+  {% if share_history %}
+  <div class="table-responsive">
+    <table class="table table-sm table-vcenter card-table mb-0">
+      <thead>
+        <tr>
+          <th>Datum</th>
+          <th>Vorgang</th>
+          <th class="text-end">Anteile</th>
+          <th class="text-end">Bestand</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e, balance in share_history | reverse %}
+        <tr>
+          <td class="text-nowrap">
+            {{ e.entry_date.strftime('%d.%m.%Y') }}
+            {% if e.entry_date > today %}<span class="badge bg-yellow-lt ms-1">geplant</span>{% endif %}
+          </td>
+          <td>
+            <span class="badge {{ wg_share_kind_badge.get(e.kind, 'bg-secondary-lt') }}">{{ wg_share_kind_labels.get(e.kind, e.kind) }}</span>
+            {% if e.counterparty %}
+              <a href="{{ url_for('customers.detail', customer_id=e.counterparty.id) }}">{{ e.counterparty.name }}</a>
+            {% endif %}
+            {% if e.property %}<div class="small text-muted">Bezug:
+              <a href="{{ url_for('properties.detail', property_id=e.property.id) }}">{{ e.property.label() }}</a></div>{% endif %}
+            {% if e.note %}<div class="small text-muted">{{ e.note }}</div>{% endif %}
+          </td>
+          <td class="text-end text-nowrap {{ 'text-success' if e.quantity > 0 else 'text-danger' }}">{{ '%+d' | format(e.quantity) }}</td>
+          <td class="text-end">{{ balance }}</td>
+          <td class="text-end">
+            <form method="post" action="{{ url_for('members.share_entry_delete', entry_id=e.id) }}"
+                  class="d-inline"
+                  onsubmit="return confirm('{{ 'Übertragung auf beiden Seiten löschen?' if e.kind in ('transfer_in', 'transfer_out') else 'Eintrag löschen?' }}');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-sm btn-ghost-danger" title="Eintrag löschen">
+                <i class="fas fa-trash-alt"></i>
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="card-body pt-0 text-muted small">Noch keine Einträge.</div>
+  {% endif %}
+</div>

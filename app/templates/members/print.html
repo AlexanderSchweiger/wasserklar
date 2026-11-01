@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Mitgliederliste{% endblock %}
+{% block page_title %}<i class="fas fa-address-book me-2"></i> Mitgliederliste zum {{ f.at.strftime('%d.%m.%Y') }}{% endblock %}
+
+{% block content %}
+<div class="mb-3 d-flex gap-2 d-print-none">
+  <a href="{{ url_for('members.index', at=f.at.isoformat(), scope=f.scope) }}" class="btn btn-sm btn-outline-secondary">
+    <i class="fas fa-arrow-left me-1"></i> Zurück
+  </a>
+  <button type="button" class="btn btn-sm btn-primary" onclick="window.print()">
+    <i class="fas fa-print me-1"></i> Drucken / als PDF speichern
+  </button>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-start mb-3">
+      <div>
+        <h2 class="mb-0">Mitgliederliste</h2>
+        <div class="text-muted">{{ wg.name }} · Stichtag {{ f.at.strftime('%d.%m.%Y') }}{% if f.scope == 'all' %} · inkl. ehemaliger Mitglieder{% endif %}</div>
+      </div>
+      <div class="text-muted">Erstellt am {{ today_de }}</div>
+    </div>
+    <div class="table-responsive">
+      {% include "members/_print_table.html" %}
+    </div>
+  </div>
+</div>
+{% endblock %}

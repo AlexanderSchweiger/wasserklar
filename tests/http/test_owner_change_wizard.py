@@ -169,3 +169,60 @@ class TestFullFlow:
         r = client.get(f"/owner-change/{pid}/result/{oc.id}")
         assert r.status_code == 200
         assert "durchgeführt" in r.get_data(as_text=True)
+
+
+class TestSharesStep:
+    """Schritt 3 bei Anteilen am Mitglied (Anteilsbuch)."""
+
+    def _to_member_step(self, client, scenario):
+        pid = scenario["prop"].id
+        client.post(f"/owner-change/{pid}/start", data={
+            "stichtag": STICHTAG.isoformat(),
+            "period_id": str(scenario["period"].id),
+            "new_customer_ids": str(scenario["new"].id)})
+        client.post(f"/owner-change/{pid}/meters",
+                    data={f"value_{scenario['meter'].id}": "130"})
+        return pid
+
+    def test_person_mode_controls_and_execution(self, client, scenario):
+        from app import wg_shares
+        from app.models import AppSetting
+        AppSetting.set("org.type", "cooperative")
+        AppSetting.set("org.share_binding", "person")
+        db.session.commit()
+        old, new = scenario["old"], scenario["new"]
+        wg_shares.record_acquisition(old, 2, date(TODAY.year - 2, 1, 1))
+        db.session.commit()
+        _login(client)
+        pid = self._to_member_step(client, scenario)
+        html = client.get(f"/owner-change/{pid}/member").get_data(as_text=True)
+        assert f'name="share_action_{old.id}"' in html
+        assert f'name="buy_qty_{new.id}"' in html
+        r = client.post(f"/owner-change/{pid}/member", data={
+            f"share_action_{old.id}": "keep", f"buy_qty_{new.id}": "1",
+            f"new_status_{new.id}": "member"})
+        assert r.status_code == 302
+        confirm = client.get(f"/owner-change/{pid}/confirm").get_data(as_text=True)
+        assert "Neu erwirbt 1 Anteil" in confirm
+        client.post(f"/owner-change/{pid}/confirm", data={})
+        assert wg_shares.holdings_map([old.id, new.id], STICHTAG) == {old.id: 2, new.id: 1}
+
+    def test_invalid_plan_stays_on_step(self, client, scenario):
+        from app.models import AppSetting
+        AppSetting.set("org.type", "cooperative")
+        AppSetting.set("org.share_binding", "person")
+        db.session.commit()
+        _login(client)
+        pid = self._to_member_step(client, scenario)
+        old = scenario["old"]
+        r = client.post(f"/owner-change/{pid}/member", data={
+            f"share_action_{old.id}": "return", f"share_qty_{old.id}": "3"})
+        assert r.status_code == 302
+        assert r.headers["Location"].endswith(f"/owner-change/{pid}/member")
+
+    def test_property_mode_step_unchanged(self, client, scenario):
+        _login(client)
+        pid = self._to_member_step(client, scenario)
+        html = client.get(f"/owner-change/{pid}/member").get_data(as_text=True)
+        assert "share_action_" not in html
+        assert "resign_ids" in html

@@ -33,10 +33,11 @@
     <div class="text-muted small mb-1">
       Verteilen Sie den Betrag auf die offenen Posten, die mit dieser Zahlung
       beglichen werden. Die Summe muss dem Buchungsbetrag entsprechen.
+      Für Posten ohne Kontierung wählen Sie zusätzlich ein Buchungskonto.
     </div>
 
     <div id="allocRows" class="vstack gap-2">
-      {% for op, amt in prefill %}
+      {% for op, amt, acc_id in prefill %}
         {% include "bank_import/_split_row.html" with context %}
       {% endfor %}
     </div>
@@ -67,7 +68,7 @@
 
 {# Vorlage fuer eine neue Zeile (ohne Vorauswahl). #}
 <template id="allocRowTemplate">
-  {% set op = None %}{% set amt = None %}
+  {% set op = None %}{% set amt = None %}{% set acc_id = None %}
   {% include "bank_import/_split_row.html" with context %}
 </template>
 
@@ -86,23 +87,37 @@
     return (n || 0).toLocaleString('de-DE', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' €';
   }
   function recalc() {
-    var sum = 0, filledRows = 0;
+    var sum = 0, filledRows = 0, missingAccount = false;
     rowsEl.querySelectorAll('.alloc-row').forEach(function (row) {
-      var op = row.querySelector('.alloc-op').value;
+      var opSel = row.querySelector('.alloc-op');
       var amt = parseFloat((row.querySelector('.alloc-amount').value || '').replace(',', '.')) || 0;
       sum += amt;
-      if (op && amt > 0) filledRows++;
+      if (opSel.value && amt > 0) filledRows++;
+      var accSel = row.querySelector('.alloc-account');
+      var accInvalid = needsAccount(opSel) && !accSel.value;
+      accSel.classList.toggle('is-invalid', accInvalid);
+      if (accInvalid) missingAccount = true;
     });
     var rest = Math.round((total - sum) * 100) / 100;
     sumEl.textContent = fmt(sum);
     remEl.textContent = fmt(rest);
     remEl.className = 'fw-bold ' + (Math.abs(rest) < 0.005 ? 'text-success' : 'text-danger');
-    saveBtn.disabled = !(Math.abs(rest) < 0.005 && filledRows >= 2);
+    saveBtn.disabled = !(Math.abs(rest) < 0.005 && filledRows >= 2 && !missingAccount);
+  }
+  function needsAccount(opSel) {
+    var opt = opSel.selectedOptions[0];
+    return !!(opSel.value && opt && opt.dataset.needsAccount);
   }
   function onOpChange(e) {
-    // Beim Waehlen eines Postens den offenen Betrag vorschlagen, falls leer.
-    if (!e.target.classList.contains('alloc-op')) return;
+    if (!e.target.classList.contains('alloc-op')) { recalc(); return; }
     var row = e.target.closest('.alloc-row');
+    // Konto nur bei Posten ohne Kontierung abfragen; sonst leeren, damit kein
+    // verstecktes Konto mitgeschickt wird.
+    var wrap = row.querySelector('.alloc-account-wrap');
+    var show = needsAccount(e.target);
+    wrap.classList.toggle('d-none', !show);
+    if (!show) row.querySelector('.alloc-account').value = '';
+    // Beim Waehlen eines Postens den offenen Betrag vorschlagen, falls leer.
     var amtInput = row.querySelector('.alloc-amount');
     var opt = e.target.selectedOptions[0];
     if (opt && opt.dataset.balance && !amtInput.value) {

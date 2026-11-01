@@ -1,0 +1,78 @@
+{# Tabelle der Mitgliederliste. Erwartet: rows, totals, f, person_mode, is_today. #}
+{% macro sort_header(key, label) %}
+  {% set active = f.sort == key %}
+  {% set new_dir = 'desc' if (active and f.direction == 'asc') else 'asc' %}
+  <a href="{{ url_for('members.index', at=f.at.isoformat(), scope=f.scope, q=f.q or none, sort=key, dir=new_dir) }}"
+     class="text-reset text-decoration-none d-inline-flex align-items-center gap-1">
+    {{ label }}
+    {% if active %}<i class="fas fa-sort-{{ 'down' if f.direction == 'desc' else 'up' }}"></i>
+    {% else %}<i class="fas fa-sort text-muted"></i>{% endif %}
+  </a>
+{% endmacro %}
+<div class="card-body py-2 border-bottom small d-flex flex-wrap gap-3 align-items-center">
+  <span><strong>{{ totals.members }}</strong> {{ 'Mitglied' if totals.members == 1 else 'Mitglieder' }}{% if not is_today %} am {{ f.at.strftime('%d.%m.%Y') }}{% endif %}</span>
+  <span><strong>{{ totals.shares }}</strong> Anteile{% if not person_mode %} (jede Liegenschaft einmal){% endif %}</span>
+  {% if totals.co_owned_properties %}<span class="text-muted">davon {{ totals.co_owned_properties }} Liegenschaft(en) in Miteigentum</span>{% endif %}
+  {% if totals.former %}<span class="text-muted">{{ totals.former }} ehemalig</span>{% endif %}
+  {% if totals.without_shares %}<span class="text-warning"><i class="fas fa-exclamation-triangle me-1"></i>{{ totals.without_shares }} ohne Anteile</span>{% endif %}
+  <span class="text-muted ms-auto">
+    {% if person_mode %}Anteile laut Anteilsbuch zum Stichtag.{% else %}Anteile der am Stichtag besessenen Liegenschaften laut ihrem Anteilsbuch.{% endif %}
+    Der Status selbst ist nicht historisiert — maßgeblich sind „Mitglied seit/bis“.
+  </span>
+</div>
+<div class="card-body p-0 table-scroll">
+<table class="table table-hover table-striped mb-0">
+  <thead>
+    <tr>
+      <th style="width:80px">{{ sort_header('nr', 'Nr.') }}</th>
+      <th>{{ sort_header('name', 'Name') }}</th>
+      <th>Anschrift</th>
+      <th>Status</th>
+      <th class="text-nowrap">{{ sort_header('since', 'Mitglied seit/bis') }}</th>
+      <th>Funktionen</th>
+      <th class="text-end">{{ sort_header('shares', 'Anteile') }}</th>
+      {% if not person_mode %}<th>Liegenschaften</th>{% endif %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    {% set c = r.customer %}
+    <tr{% if 'no_shares' in r.flags %} class="table-warning"{% endif %}>
+      <td>{{ c.customer_number if c.customer_number is not none else '—' }}</td>
+      <td>
+        <a href="{{ url_for('customers.detail', customer_id=c.id) }}">{{ c.name }}</a>
+        {% if 'archived' in r.flags %}<span class="badge bg-secondary-lt ms-1">archiviert</span>{% endif %}
+      </td>
+      <td>{{ c.address_display() or '—' }}</td>
+      <td>
+        {% if r.state == 'former' %}
+        <span class="badge bg-secondary-lt">ehemalig</span>
+        {% else %}
+        <span class="badge {{ wg_status_badge.get(r.status, 'bg-secondary-lt') }}">{{ wg_status_labels.get(r.status, r.status) }}</span>
+        {% endif %}
+      </td>
+      <td class="text-nowrap small">
+        {{ r.since.strftime('%d.%m.%Y') if r.since else '—' }}{% if r.until %} <span class="text-muted">– {{ r.until.strftime('%d.%m.%Y') }}</span>{% endif %}
+      </td>
+      <td class="small">{% for fk in r.functions %}{{ wg_function_label(fk) }}{% if not loop.last %}, {% endif %}{% else %}<span class="text-muted">—</span>{% endfor %}</td>
+      <td class="text-end">
+        {% if r.shares > 0 %}<strong>{{ r.shares }}</strong>{% else %}<span class="text-muted">0</span>{% endif %}
+        {% if 'payout_open' in r.flags %}
+        <i class="fas fa-info-circle text-azure ms-1" title="Ausgeschieden, hält aber noch Anteile (Auszahlung/Rückgabe offen)"></i>
+        {% endif %}
+      </td>
+      {% if not person_mode %}
+      <td class="small">
+        {% for prop, n in r.properties %}
+          <a href="{{ url_for('properties.detail', property_id=prop.id) }}">{{ prop.object_number or prop.address_display() }}</a> ({{ n }}){% if not loop.last %}, {% endif %}
+        {% else %}<span class="text-muted">—</span>{% endfor %}
+        {% if r.co_owners %}<div class="text-muted">gemeinsam mit {{ r.co_owners | join(', ') }}</div>{% endif %}
+      </td>
+      {% endif %}
+    </tr>
+    {% else %}
+    <tr><td colspan="{{ 7 if person_mode else 8 }}" class="text-center text-muted py-3">Keine Mitglieder zum Stichtag gefunden.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>

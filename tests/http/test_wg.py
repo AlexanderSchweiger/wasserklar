@@ -194,11 +194,15 @@ class TestPropertyList:
 
 
 class TestPropertyEditModal:
-    def test_post_persists_shares_and_area(self, client, admin):
+    def test_edit_never_writes_shares_or_area_in_property_mode(self, client, admin):
+        """Anteile an der Liegenschaft: Anteile und Flaeche aendern sich nur
+        ueber das Anteilsbuch — ein trotzdem gepostetes Feld wird ignoriert."""
         _login(client)
-        p = Property(object_number="P1", object_type="Haus")
-        db.session.add(p)
-        db.session.commit()
+        p = _prop("P1", 2)
+        form = client.get(f"/properties/{p.id}/edit", headers={"X-From-Modal": "1"})
+        assert b'name="wg_shares"' not in form.data
+        assert b'name="area_m2"' not in form.data
+        assert b"#anteilsbuch" in form.data
         r = client.post(
             f"/properties/{p.id}/edit",
             headers={"X-From-Modal": "1"},
@@ -208,8 +212,22 @@ class TestPropertyEditModal:
         assert r.status_code == 204
         db.session.expire_all()
         saved = db.session.get(Property, p.id)
-        assert saved.wg_shares == 4
-        assert saved.wg_area_m2 == 950
+        assert saved.wg_shares == 2
+        assert saved.wg_area_m2 is None
+
+    def test_new_books_opening_entry(self, client, admin):
+        from app.models import PropertyShareEntry
+        _login(client)
+        r = client.post(
+            "/properties/new", headers={"X-From-Modal": "1"},
+            data={"object_type": "Haus", "object_number": "NEU-1",
+                  "wg_shares": "3", "area_m2": "280"},
+        )
+        assert r.status_code == 204
+        p = Property.query.filter_by(object_number="NEU-1").one()
+        assert (p.wg_shares, p.wg_area_m2) == (3, 280)
+        entry = PropertyShareEntry.query.filter_by(property_id=p.id).one()
+        assert (entry.kind, entry.quantity, entry.area_m2) == ("opening", 3, 280)
 
     def test_row_returns_single_row_fragment(self, client, admin):
         _login(client)

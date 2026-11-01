@@ -23,8 +23,10 @@
       <th>{{ sort_header('type', 'Typ') }}</th>
       <th>{{ sort_header('address', 'Adresse') }}</th>
       <th>{{ sort_header('owner', 'Aktueller Besitzer') }}</th>
-      {% if is_wg %}
+      {% if is_wg and not shares_on_person %}
       <th class="text-end">{{ sort_header('shares', 'Anteile') }}</th>
+      {% endif %}
+      {% if is_wg %}
       <th class="text-end">m²</th>
       {% endif %}
       <th class="col-actions"></th>
@@ -34,7 +36,7 @@
     {% for prop in properties %}
     {% include "properties/_row.html" %}
     {% else %}
-    <tr><td colspan="{{ 7 if is_wg else 5 }}" class="text-center text-muted py-3">Keine Liegenschaften gefunden.</td></tr>
+    <tr><td colspan="{{ 5 + (1 if is_wg else 0) + (1 if is_wg and not shares_on_person else 0) }}" class="text-center text-muted py-3">Keine Liegenschaften gefunden.</td></tr>
     {% endfor %}
   </tbody>
 </table>

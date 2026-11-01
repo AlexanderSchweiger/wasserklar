@@ -132,7 +132,11 @@ def _commit_split(line: BankStatementLine, stmt: BankStatement, user_id: int) ->
             op = OpenItem.query.get(a.open_item_id)
             if op is None:
                 raise ValueError(f"Offener Posten #{a.open_item_id} nicht gefunden")
-            group_id, booking_id = _book_against_op(op, amt, line, stmt, user_id)
+            # a.account_id = im Aufteilen-Modal gewaehltes Ersatzkonto fuer
+            # Posten ohne (vollstaendige) Kontierung.
+            group_id, booking_id = _book_against_op(
+                op, amt, line, stmt, user_id, account_override=a.account_id
+            )
             created.append((booking_id, group_id))
         elif a.account_id:
             description = (line.purpose or line.counterparty_name or "Bankauszug-Import").strip()[:500]

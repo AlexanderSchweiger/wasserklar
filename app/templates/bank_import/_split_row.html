@@ -1,21 +1,39 @@
-{# Eine Aufteilungs-Position: offener Posten + Teilbetrag. Genutzt fuer die
-   vorbelegten Zeilen UND als <template> fuer neu hinzugefuegte (op/amt = None). #}
-<div class="alloc-row d-flex gap-2 align-items-center">
-  <select name="alloc_op_id" class="alloc-op form-select form-select-sm">
-    <option value="">– offenen Posten wählen –</option>
-    {% for o in all_open_items %}
-      <option value="{{ o.id }}" data-balance="{{ o.open_balance }}"
-              {% if op and o.id == op.id %}selected{% endif %}>
-        {{ o.customer.name }} · {{ o.description }} · {{ o.amount | de_number(decimals=2) }} €
-        (offen {{ o.open_balance | de_number(decimals=2) }} €)
-      </option>
-    {% endfor %}
-  </select>
-  <input type="number" step="0.01" min="0" name="alloc_amount"
-         class="alloc-amount form-control form-control-sm" style="max-width: 130px;"
-         placeholder="0,00"
-         value="{% if amt is not none %}{{ '%.2f'|format(amt) }}{% endif %}">
-  <button type="button" class="alloc-remove btn btn-sm btn-link text-danger p-1" title="Position entfernen">
-    <i class="fas fa-times"></i>
-  </button>
+{# Eine Aufteilungs-Position: offener Posten + Teilbetrag (+ Buchungskonto, nur
+   wenn der Posten selbst keine vollstaendige Kontierung hat). Genutzt fuer die
+   vorbelegten Zeilen UND als <template> fuer neu hinzugefuegte (op/amt/acc_id = None).
+   Das Konto-Feld wird immer gerendert (versteckt, falls nicht noetig), damit die
+   wiederholten alloc_*-Listen im POST paarweise zusammenpassen. #}
+{% set _needs_acc = op and op.id in needs_account_ids %}
+<div class="alloc-row">
+  <div class="d-flex gap-2 align-items-center">
+    <select name="alloc_op_id" class="alloc-op form-select form-select-sm">
+      <option value="">– offenen Posten wählen –</option>
+      {% for o in all_open_items %}
+        <option value="{{ o.id }}" data-balance="{{ o.open_balance }}"
+                {% if o.id in needs_account_ids %}data-needs-account="1"{% endif %}
+                {% if op and o.id == op.id %}selected{% endif %}>
+          {{ o.customer.name }} · {{ o.description }} · {{ o.amount | de_number(decimals=2) }} €
+          (offen {{ o.open_balance | de_number(decimals=2) }} €)
+        </option>
+      {% endfor %}
+    </select>
+    <input type="number" step="0.01" min="0" name="alloc_amount"
+           class="alloc-amount form-control form-control-sm" style="max-width: 130px;"
+           placeholder="0,00"
+           value="{% if amt is not none %}{{ '%.2f'|format(amt) }}{% endif %}">
+    <button type="button" class="alloc-remove btn btn-sm btn-link text-danger p-1" title="Position entfernen">
+      <i class="fas fa-times"></i>
+    </button>
+  </div>
+  <div class="alloc-account-wrap d-flex gap-2 align-items-center mt-1{% if not _needs_acc %} d-none{% endif %}">
+    <span class="small text-muted text-nowrap"><i class="fas fa-exclamation-circle text-warning me-1"></i>Ohne Kontierung — Buchungskonto:</span>
+    <select name="alloc_account_id" class="alloc-account form-select form-select-sm" style="max-width: 260px;">
+      <option value="">– Buchungskonto wählen –</option>
+      {% for acc in accounts %}
+        <option value="{{ acc.id }}" {% if _needs_acc and acc_id == acc.id %}selected{% endif %}>
+          {% if acc.code %}{{ acc.code }} · {% endif %}{{ acc.name }}
+        </option>
+      {% endfor %}
+    </select>
+  </div>
 </div>

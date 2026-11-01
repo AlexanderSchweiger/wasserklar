@@ -127,3 +127,91 @@ class TestCommitSplit:
         db.session.refresh(op1)
         assert op1.status == OpenItem.STATUS_PARTIAL
         assert op1.open_balance == Decimal("40.00")
+
+
+class TestSplitAccountFallback:
+    """Posten ohne Kontierung: das in der Aufteilung gewaehlte Konto
+    (``allocation.account_id``) ist das Ersatzkonto beim Verbuchen."""
+
+    def _line(self, stmt, amount):
+        line = BankStatementLine(
+            statement_id=stmt.id, line_index=0, booking_date=date(2026, 6, 19),
+            amount=Decimal(amount), counterparty_name="X",
+            line_status="pending", selected=True,
+        )
+        db.session.add(line)
+        return line
+
+    def test_manual_op_without_account_uses_allocation_account(
+            self, app, user, real_account, account, customer, fiscal_year):
+        op1 = OpenItem(customer_id=customer.id, description="Ohne Konto",
+                       amount=Decimal("50.00"), status=OpenItem.STATUS_OPEN)
+        db.session.add(op1)
+        db.session.flush()
+        op2 = _op(customer, account, "25.00")
+        stmt = _statement(real_account, user)
+        line = self._line(stmt, "75.00")
+        line.allocations.append(BankStatementLineAllocation(
+            open_item_id=op1.id, account_id=account.id, amount=Decimal("50.00")))
+        line.allocations.append(BankStatementLineAllocation(open_item_id=op2.id, amount=Decimal("25.00")))
+        db.session.commit()
+
+        stats = services.commit_statement(stmt.id, user.id)
+
+        assert not stats["errors"]
+        assert stats["committed"] == 1
+        b = Booking.query.filter_by(open_item_id=op1.id).one()
+        assert b.account_id == account.id
+        db.session.refresh(op1)
+        assert op1.status == OpenItem.STATUS_PAID
+
+    def test_manual_op_without_account_and_no_fallback_fails(
+            self, app, user, real_account, account, customer, fiscal_year):
+        op1 = OpenItem(customer_id=customer.id, description="Ohne Konto",
+                       amount=Decimal("50.00"), status=OpenItem.STATUS_OPEN)
+        db.session.add(op1)
+        db.session.flush()
+        op2 = _op(customer, account, "25.00")
+        stmt = _statement(real_account, user)
+        line = self._line(stmt, "75.00")
+        line.allocations.append(BankStatementLineAllocation(open_item_id=op1.id, amount=Decimal("50.00")))
+        line.allocations.append(BankStatementLineAllocation(open_item_id=op2.id, amount=Decimal("25.00")))
+        db.session.commit()
+
+        stats = services.commit_statement(stmt.id, user.id)
+
+        assert stats["committed"] == 0
+        assert stats["errors"]
+        assert Booking.query.filter_by(open_item_id=op2.id).count() == 0
+
+    def test_invoice_op_with_unassigned_items_uses_allocation_account(
+            self, app, user, real_account, account, customer, fiscal_year):
+        from app.models import Invoice, InvoiceItem
+
+        inv = Invoice(invoice_number="2026-00901", customer_id=customer.id,
+                      status=Invoice.STATUS_SENT, date=date(2026, 1, 1),
+                      total_amount=Decimal("40.00"))
+        db.session.add(inv)
+        db.session.flush()
+        db.session.add(InvoiceItem(invoice_id=inv.id, description="Wasser",
+                                   quantity=Decimal("1"), unit_price=Decimal("40.00"),
+                                   amount=Decimal("40.00"), tax_rate=Decimal("0")))
+        op1 = OpenItem(customer_id=customer.id, description="Rechnung", invoice_id=inv.id,
+                       amount=Decimal("40.00"), status=OpenItem.STATUS_OPEN)
+        db.session.add(op1)
+        db.session.flush()
+        op2 = _op(customer, account, "10.00")
+        stmt = _statement(real_account, user)
+        line = self._line(stmt, "50.00")
+        line.allocations.append(BankStatementLineAllocation(
+            open_item_id=op1.id, account_id=account.id, amount=Decimal("40.00")))
+        line.allocations.append(BankStatementLineAllocation(open_item_id=op2.id, amount=Decimal("10.00")))
+        db.session.commit()
+
+        stats = services.commit_statement(stmt.id, user.id)
+
+        assert not stats["errors"]
+        b = Booking.query.filter_by(open_item_id=op1.id).one()
+        assert b.account_id == account.id
+        db.session.refresh(inv)
+        assert inv.status == Invoice.STATUS_PAID

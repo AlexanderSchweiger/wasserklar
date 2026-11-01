@@ -54,6 +54,14 @@
       {% if c.member_since %}{{ c.member_since.strftime('%d.%m.%Y') }}{% else %}—{% endif %}{% if _until %} <span class="text-muted">– {{ _until.strftime('%d.%m.%Y') }}</span>{% endif %}
     {% else %}<span class="text-muted">—</span>{% endif %}
   </td>
+  {% if shares_on_person %}
+  {% set _held = share_map.get(c.id, 0) if share_map is defined else 0 %}
+  <td class="text-end">
+    {% if not c.is_customer %}<span class="text-muted">—</span>
+    {% elif _held > 0 %}<strong>{{ _held }}</strong>
+    {% else %}<span class="text-muted">0</span>{% endif %}
+  </td>
+  {% endif %}
   {% endif %}
   <td>{{ c.address_display() or '—' }}</td>
   <td>

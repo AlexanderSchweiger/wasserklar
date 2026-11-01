@@ -147,6 +147,25 @@
         </ul>
       </div>
     </div>
+    {% if shares_on_person %}
+    {% include "members/_share_register_card.html" %}
+    {% elif is_wg and prop_shares_paid %}
+    <!-- Anteile an der Liegenschaft: Buchungen, die dieser Kontakt bezahlt hat -->
+    <div class="card mt-3">
+      <div class="card-header"><h3 class="card-title"><i class="fas fa-coins me-2"></i>Bezahlte Anteile</h3></div>
+      <ul class="list-group list-group-flush">
+        {% for e in prop_shares_paid %}
+        <li class="list-group-item small">
+          {{ e.entry_date.strftime('%d.%m.%Y') }} ·
+          <span class="badge {{ property_share_badge(e) }}">{{ property_share_label(e) }}</span>
+          <strong>{{ '%+d' | format(e.quantity) if e.quantity else '±0' }}</strong>
+          <a href="{{ url_for('properties.detail', property_id=e.property_id) }}#anteilsbuch">{{ e.property.label() }}</a>
+          {% if e.area_m2 is not none %}<span class="text-muted">· {{ e.area_m2 }} m²</span>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
     {% endif %}
   </div>
 
@@ -226,6 +245,9 @@
 
 {% block modals %}
 {% include "customers/_customer_edit_modal.html" %}
+{% if shares_on_person and customer.is_customer %}
+{% include "members/_share_entry_modal.html" %}
+{% endif %}
 {% endblock %}
 
 {% block scripts %}
@@ -241,6 +263,15 @@ setupEditModal({
   openFn: 'openCustomerEditModal',
   closeEvent: 'closeCustomerEditModal',
   savedEvent: 'customerEdited',
+});
+// Anteilsbuch: nach dem Buchen neu laden (Bestand, Verlauf, Status).
+setupEditModal({
+  formId: 'shareEntryForm',
+  bodyId: 'shareEntryModalBody',
+  modalId: 'shareEntryModal',
+  openFn: 'openShareEntryModal',
+  closeEvent: 'closeShareEntryModal',
+  savedEvent: 'shareEntrySaved',
 });
 </script>
 {% endblock %}

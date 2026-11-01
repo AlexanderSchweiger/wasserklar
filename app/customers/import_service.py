@@ -91,6 +91,8 @@ HINTS: dict[str, list[str]] = {
         "mitglied bis", "mitglied-bis", "austritt", "austrittsdatum",
         "ausgeschieden am",
     ],
+    # Nur bei Anteilen am Mitglied (Anteilsbuch, org.share_binding = person).
+    "shares": ["anteile", "anteil", "geschäftsanteile", "genossenschaftsanteile"],
 }
 
 
@@ -133,6 +135,7 @@ class CustomerImportConfig:
     col_wg_status: str = ""
     col_member_since: str = ""
     col_member_until: str = ""
+    col_shares: str = ""          # nur bei Anteilen am Mitglied
     duplicate_mode: str = "skip"  # Default: Überspringen
 
     # --- serialisation helpers -----------------------------------------------
@@ -167,6 +170,7 @@ class CustomerImportConfig:
             "col_wg_status": self.col_wg_status,
             "col_member_since": self.col_member_since,
             "col_member_until": self.col_member_until,
+            "col_shares": self.col_shares,
             "duplicate_mode": self.duplicate_mode,
         }
 
@@ -207,6 +211,7 @@ class CustomerImportConfig:
             col_wg_status=d.get("col_wg_status", ""),
             col_member_since=d.get("col_member_since", ""),
             col_member_until=d.get("col_member_until", ""),
+            col_shares=d.get("col_shares", ""),
             duplicate_mode=dup,
         )
 
@@ -245,6 +250,7 @@ class CustomerImportConfig:
             col_wg_status=form.get("col_wg_status", ""),
             col_member_since=form.get("col_member_since", ""),
             col_member_until=form.get("col_member_until", ""),
+            col_shares=form.get("col_shares", ""),
             duplicate_mode=dup,
         )
 
@@ -284,6 +290,7 @@ def suggest_config(columns: list[str]) -> CustomerImportConfig:
         col_wg_status=suggest_column(columns, HINTS["wg_status"]),
         col_member_since=suggest_column(columns, HINTS["member_since"]),
         col_member_until=suggest_column(columns, HINTS["member_until"]),
+        col_shares=suggest_column(columns, HINTS["shares"]),
     )
 
 
@@ -321,8 +328,24 @@ def _parse_import_date(raw: str):
     return d.isoformat() if d else ""
 
 
+def parse_shares_cell(raw: str):
+    """``(anzahl, warnung)`` fuer eine Anteile-Zelle: leer → 0, ganze Zahl
+    >= 0 (auch "2,0"/"2.0" aus Excel), sonst 0 mit Warnung."""
+    raw = (raw or "").strip()
+    if not raw:
+        return 0, None
+    try:
+        value = float(raw.replace(",", "."))
+    except ValueError:
+        return 0, f"Anteile '{raw}' ist keine Zahl — nicht übernommen."
+    if value < 0 or value != int(value):
+        return 0, f"Anteile '{raw}' ist keine ganze Zahl ≥ 0 — nicht übernommen."
+    return int(value), None
+
+
 def build_preview_rows(df, cfg: CustomerImportConfig,
-                       is_wg: bool = False) -> list[PreviewRow]:
+                       is_wg: bool = False,
+                       shares_on_person: bool = False) -> list[PreviewRow]:
     """Build a list of PreviewRow from the DataFrame and config.
 
     Im Genossenschafts-Modus (``is_wg``) werden zusaetzlich Status, Mitglied-seit
@@ -429,6 +452,16 @@ def build_preview_rows(df, cfg: CustomerImportConfig,
             fields["wg_status"] = parse_status(_cell(raw_row, cfg.col_wg_status)) or ""
             fields["member_since"] = _parse_import_date(_cell(raw_row, cfg.col_member_since))
             fields["member_until"] = _parse_import_date(_cell(raw_row, cfg.col_member_until))
+        if shares_on_person and cfg.col_shares:
+            shares, shares_warning = parse_shares_cell(_cell(raw_row, cfg.col_shares))
+            fields["shares"] = str(shares) if shares else ""
+            if shares_warning:
+                ei_warnings.append(shares_warning)
+            elif shares and existing is not None:
+                from app import wg_shares
+                if wg_shares.customers_with_entries([existing.id]):
+                    ei_warnings.append("Anteilsbuch vorhanden — die Anteile werden "
+                                       "nicht übernommen.")
 
         rows.append(PreviewRow(
             idx=idx,
@@ -470,7 +503,7 @@ def apply_edits(form, rows: list[PreviewRow]) -> list[PreviewRow]:
             "is_business", "vat_id", "buyer_reference", "einvoice_format",
             "payment_method", "iban", "bic", "account_holder",
             "mandate_reference", "mandate_signed_on",
-            "wg_status", "member_since", "member_until",
+            "wg_status", "member_since", "member_until", "shares",
         ):
             if field_name in row_edits:
                 row.fields[field_name] = row_edits[field_name]
@@ -534,8 +567,29 @@ def _apply_wg_to_customer(target, fields: dict, cfg: CustomerImportConfig,
             profile.member_until = _iso(fields.get("member_until", ""))
 
 
+def _book_import_shares(customer, fields: dict) -> bool:
+    """Anteile am Mitglied: Anfangsbestand ins Anteilsbuch (Datum = Mitglied
+    seit, sonst heute) — nur, solange der Kontakt noch kein Anteilsbuch hat
+    (ein Import ueberschreibt nie gebuchte Bewegungen). Liefert True, wenn
+    gebucht wurde."""
+    from datetime import date
+    from app import wg_shares
+    from app.extensions import db
+    shares, _warning = parse_shares_cell(fields.get("shares", ""))
+    if shares <= 0:
+        return False
+    db.session.flush()
+    if wg_shares.customers_with_entries([customer.id]):
+        return False
+    wg_shares.record_acquisition(
+        customer, shares, customer.member_since or date.today(),
+        kind=wg_shares.KIND_OPENING, note="Übernahme aus Kontakt-Import",
+        source=wg_shares.SOURCE_IMPORT)
+    return True
+
+
 def commit(rows: list[PreviewRow], cfg: CustomerImportConfig,
-           is_wg: bool = False) -> ImportStats:
+           is_wg: bool = False, shares_on_person: bool = False) -> ImportStats:
     """Write the (non-skipped, non-error) rows to the database.
 
     Uses ``db.session.begin_nested()`` savepoints so a single bad row does
@@ -623,6 +677,8 @@ def commit(rows: list[PreviewRow], cfg: CustomerImportConfig,
                     ei_warned = bool(apply_payment_columns(existing, row.fields, pay_mapped)) or ei_warned
                 if is_wg:
                     _apply_wg_to_customer(existing, row.fields, cfg, is_new=False)
+                if shares_on_person and cfg.col_shares:
+                    _book_import_shares(existing, row.fields)
                 stats.updated += 1
 
             else:
@@ -663,6 +719,8 @@ def commit(rows: list[PreviewRow], cfg: CustomerImportConfig,
                     ei_warned = bool(apply_payment_columns(customer, row.fields, pay_mapped)) or ei_warned
                 if is_wg:
                     _apply_wg_to_customer(customer, row.fields, cfg, is_new=True)
+                if shares_on_person and cfg.col_shares:
+                    _book_import_shares(customer, row.fields)
                 stats.created += 1
 
             if row.warnings or ei_warned:

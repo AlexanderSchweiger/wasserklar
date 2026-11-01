@@ -22,7 +22,7 @@ from app.models import (
     AppSetting, InvoiceCounter, CustomerCounter, SupplierCounter,
     NetworkPlan, NetworkFeature, MaintenanceLog, SpringYield, Incident,
     WaterSample, LabResult,
-    CustomerWgProfile, PropertyWgProfile, WgFunction,
+    CustomerWgProfile, PropertyWgProfile, WgFunction, WgShareEntry, PropertyShareEntry,
     Note, ReadingCorrection,
     Role, RolePermission,
     BankStatement, BankStatementLine, BankStatementLineAllocation,
@@ -78,6 +78,8 @@ NULL_ON_IMPORT_COLS = {
     CircularDeliveryLog: ["user_id"],
     ConsumptionYear: ["created_by_id"],
     FundingGoal: ["created_by_id"],
+    WgShareEntry: ["created_by_id"],
+    PropertyShareEntry: ["created_by_id"],
 }
 
 
@@ -125,7 +127,7 @@ CATEGORIES = {
         ChargeType, TariffComponent, ChargeOverride, MinimumOverride,
         NetworkPlan, NetworkFeature, MaintenanceLog, SpringYield, Incident,
         WaterSample, LabResult,
-        CustomerWgProfile, PropertyWgProfile, WgFunction,
+        CustomerWgProfile, PropertyWgProfile, WgFunction, WgShareEntry, PropertyShareEntry,
         InvoiceEmailOptInCode, CustomerEmailConsentLog,
         # Nachweis online erteilter Lastschrift-Mandate: gehoert zum Kontakt.
         DirectDebitMandateEvent,
@@ -187,7 +189,7 @@ INSERT_ORDER = [
     ChargeType,
     Customer, Property, PropertyOwnership, WaterMeter,
     ChargeOverride, MinimumOverride,
-    CustomerWgProfile, PropertyWgProfile, WgFunction,
+    CustomerWgProfile, PropertyWgProfile, WgFunction, WgShareEntry, PropertyShareEntry,
     # Consent/Opt-in: kunden-gebunden → NACH Customer.
     InvoiceEmailOptInCode, CustomerEmailConsentLog, DirectDebitMandateEvent,
     BillingPeriod, MeterReadingAccessCode, WaterTariff, TariffComponent, MeterReading,
@@ -288,6 +290,11 @@ NATURAL_KEYS = {
     CustomerWgProfile: ("customer_id",),   # 1:1, PK=FK
     PropertyWgProfile: ("property_id",),   # 1:1, PK=FK
     WgFunction: ("customer_id", "function"),
+    # Anteilsbuch = Journal (wie Booking): kein natuerlicher Schluessel, Merge
+    # fuegt immer neu ein — denselben Export zweimal zusammenfuehren doppelt
+    # die Bestaende (Vollersatz ist der normale Weg).
+    WgShareEntry: None,
+    PropertyShareEntry: None,           # Journal wie WgShareEntry
     WaterMeter: ("meter_number",),
     BillingPeriod: ("name",),
     MeterReadingAccessCode: ("customer_id", "billing_period_id"),
@@ -385,6 +392,12 @@ FOREIGN_KEYS = {
     CustomerWgProfile: {"customer_id": Customer},
     PropertyWgProfile: {"property_id": Property},
     WgFunction: {"customer_id": Customer},
+    WgShareEntry: {"customer_id": Customer, "counterparty_customer_id": Customer,
+                   "property_id": Property,
+                   "pair_entry_id": WgShareEntry},  # Self-FK, zweiter Pass
+    PropertyShareEntry: {"property_id": Property, "payer_customer_id": Customer,
+                         "counterparty_property_id": Property,
+                         "pair_entry_id": PropertyShareEntry},  # Self-FK, zweiter Pass
     WaterMeter: {"property_id": Property},
     MeterReadingAccessCode: {"customer_id": Customer, "billing_period_id": BillingPeriod},
     MeterReading: {"meter_id": WaterMeter, "self_service_code_id": MeterReadingAccessCode,
@@ -480,6 +493,8 @@ DEFERRED_FK_UPDATES = {
     NetworkPlan: ["source_plan_id"],         # Self-FK
     NetworkFeature: ["source_feature_id"],   # Self-FK
     Circular: ["predecessor_id"],            # Self-FK (Entwarnung → Abkochempfehlung)
+    WgShareEntry: ["pair_entry_id"],         # Self-FK (Uebertragung: in → out)
+    PropertyShareEntry: ["pair_entry_id"],   # Self-FK (Uebertragung: in → out)
 }
 
 
