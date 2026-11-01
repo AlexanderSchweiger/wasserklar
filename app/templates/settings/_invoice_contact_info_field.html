@@ -1,0 +1,27 @@
+{# Kontaktinfo im Rechnungskopf (Rich-Text). Eingebunden auf der Einstellungs-
+   seite und der SaaS-Seite „Rechnungsdesign“; das Skript steht in
+   _invoice_contact_info_js.html. #}
+{% from "settings/_rich_text_macros.html" import rich_text_field %}
+<div class="form-text mb-2">
+  Erscheint auf der Rechnung im Adressblock rechts – z.&nbsp;B. Ansprechpartner
+  ({{ term('chairman') }}, {{ term('treasurer') }}) mit Telefonnummer. Text kann <strong>fett</strong> und
+  <em>kursiv</em> formatiert werden. Die Schriftgröße gilt für den markierten
+  Text – z.&nbsp;B. eine ganze Zeile markieren, um sie größer oder kleiner zu machen.
+  Ohne Markierung gilt sie für den ganzen Text.
+</div>
+{% call rich_text_field('contactInfoEditor', 'contactInfoInput', 'contactInfoFontSize',
+                        'invoice_contact_info', invoice_contact_info, invoice_contact_info_font_size,
+                        data={'data-wg-name': wg.name, 'data-wg-address': wg.address,
+                              'data-wg-email': wg.email, 'data-wg-phone': wg.phone}) %}
+  <button type="button" class="btn btn-outline-secondary btn-sm" id="contactInfoAdopt">
+    <i class="fas fa-download me-1"></i> Felder übernehmen
+  </button>
+{% endcall %}
+{# Nur fuer Designs mit festem Kopf (``header_contact_box``); gemessen im Skript. #}
+<div id="contactInfoLineWarning" class="alert alert-warning mt-2 py-2 small mb-0" style="display:none"
+     data-boxes='{{ (invoice_contact_boxes or {}) | tojson }}'>
+  <i class="fas fa-exclamation-triangle me-1"></i>
+  <strong>Zu hoch für den Briefkopf:</strong> Der Text braucht ca. <span data-need></span>&nbsp;mm,
+  Platz ist für ca. <span data-room></span>&nbsp;mm. Was darüber hinausgeht, wird in diesem Design
+  abgeschnitten – Schrift verkleinern oder Zeilen kürzen.
+</div>

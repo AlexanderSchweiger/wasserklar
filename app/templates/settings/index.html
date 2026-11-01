@@ -29,7 +29,7 @@
     </li>
     <li class="nav-item" role="presentation">
       <a class="nav-link" id="tab-rechnung" data-bs-toggle="tab" href="#pane-rechnung" role="tab">
-        <i class="fas fa-file-alt me-1"></i> Dokumentformat
+        {% block settings_tab_document_label %}<i class="fas fa-file-alt me-1"></i> Dokumentformat{% endblock %}
       </a>
     </li>
     <li class="nav-item" role="presentation">
@@ -226,6 +226,7 @@
             <input type="text" name="wg_phone" class="form-control"
                    value="{{ wg.phone }}" placeholder="+43 1234 5678">
           </div>
+          {% block settings_sender_address %}
           <div class="mb-3">
             <label class="form-label">Absenderadresse <small class="text-muted">(einzeilig, über der Empfängeradresse)</small></label>
             <input type="text" name="invoice_sender_address" class="form-control"
@@ -236,51 +237,13 @@
               z.&nbsp;B. Name und Adresse der Genossenschaft im DIN-Fensterbrief-Format.
             </div>
           </div>
+          {% endblock %}
 
+          {% block settings_logo %}
           <hr class="my-3">
 
-          {# ── Logo ─────────────────────────────────────────────────────── #}
-          <div class="mb-2">
-            <label class="form-label">Logo</label>
-            <p class="text-muted small mb-2">
-              Erscheint auf der Rechnung und – wenn aktiviert – links im Menü.
-              Querformat (länglich) empfohlen. Beim Hochladen lässt sich ein
-              Ausschnitt wählen.
-            </p>
-            <div id="logoPreviewWrap" class="mb-2 {% if not wg.logo %}d-none{% endif %}">
-              <img id="logoPreview" src="{{ wg.logo }}" alt="Logo-Vorschau"
-                   style="max-height:64px;max-width:240px;border:1px solid var(--tblr-border-color);border-radius:4px;padding:4px;background:#fff;">
-            </div>
-            <input type="file" id="logoFileInput" class="form-control"
-                   accept="image/png,image/jpeg,image/webp">
-            <div class="form-text">PNG, JPEG oder WebP – wird automatisch verkleinert (max. 256 KB).</div>
-
-            <label class="form-check mt-3 {% if not wg.logo %}d-none{% endif %}" id="logoRemoveWrap">
-              <input type="checkbox" class="form-check-input" name="wg_logo_remove" value="1">
-              <span class="form-check-label text-danger">Logo entfernen</span>
-            </label>
-
-            <input type="hidden" name="wg_logo_data" id="logoDataInput">
-          </div>
-
-          <hr class="my-3">
-
-          {# ── Logo-Text (Alternative zum Logo-Bild) ─────────────────────── #}
-          <div class="mb-2">
-            <label class="form-label">Logo-Text <small class="text-muted">(Alternative zum Logo-Bild)</small></label>
-            <p class="text-muted small mb-2">
-              Wird auf der Rechnung links oben als Wortmarke angezeigt –
-              <strong>nur wenn kein Logo-Bild gesetzt ist</strong>. Bleiben Bild
-              und Text leer, bleibt der Kopf frei.
-            </p>
-            <input type="text" name="wg_logo_text" class="form-control mb-2"
-                   value="{{ wg.logo_text }}" placeholder="z. B. Wassergenossenschaft Almtal">
-            <input type="text" name="wg_logo_subtitle" class="form-control"
-                   value="{{ wg.logo_subtitle }}" placeholder="Untertitel, z. B. Trinkwasserversorgung">
-            <div class="form-text">
-              Der Untertitel ist optional und erscheint klein unter dem Logo-Text.
-            </div>
-          </div>
+          {% include "settings/_logo_fields.html" %}
+          {% endblock %}
         </div>
       </div>
 
@@ -444,48 +407,16 @@
       </div>
 
       {# ── Kontaktinfo auf Rechnung ───────────────────────────────────── #}
+      {% block settings_invoice_contact_card %}
       <div class="card mt-3">
         <div class="card-header">
           <h3 class="card-title"><i class="fas fa-envelope-open-text me-1"></i> Kontaktinfo auf Rechnung</h3>
         </div>
         <div class="card-body">
-          <div class="form-text mb-2">
-            Erscheint auf der Rechnung im Adressblock rechts – z.&nbsp;B. Ansprechpartner
-            ({{ term('chairman') }}, {{ term('treasurer') }}) mit Telefonnummer. Text kann <strong>fett</strong> und
-            <em>kursiv</em> formatiert werden. Die Schriftgröße gilt für den markierten
-            Text – z.&nbsp;B. eine ganze Zeile markieren, um sie größer oder kleiner zu machen.
-          </div>
-          <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
-            <div class="btn-group btn-group-sm" role="group" aria-label="Formatierung">
-              <button type="button" class="btn btn-outline-secondary" data-rt-cmd="bold"
-                      title="Fett"><strong>F</strong></button>
-              <button type="button" class="btn btn-outline-secondary" data-rt-cmd="italic"
-                      title="Kursiv"><em>K</em></button>
-              <button type="button" class="btn btn-outline-secondary" data-rt-cmd="underline"
-                      title="Unterstrichen"><u>U</u></button>
-            </div>
-            <select id="contactInfoFontSize"
-                    class="form-select form-select-sm" style="width:auto"
-                    title="Schriftgröße auf den markierten Text anwenden">
-              <option value="" disabled selected>Schriftgröße …</option>
-              {% for pt in range(6, 25) %}
-              <option value="{{ pt }}">{{ pt }} pt</option>
-              {% endfor %}
-            </select>
-            <button type="button" class="btn btn-outline-secondary btn-sm" id="contactInfoAdopt">
-              <i class="fas fa-download me-1"></i> Felder übernehmen
-            </button>
-          </div>
-          <div id="contactInfoEditor" class="form-control" contenteditable="true"
-               style="min-height:8rem;line-height:1.15;font-size:{{ invoice_contact_info_font_size }}pt">{{ invoice_contact_info | safe }}</div>
-          <input type="hidden" name="invoice_contact_info" id="contactInfoInput">
-          <div id="contactInfoLineWarning" class="alert alert-warning mt-2 py-2 small mb-0" style="display:none">
-            <i class="fas fa-exclamation-triangle me-1"></i>
-            <strong>Zu viele Zeilen:</strong> Der Text überläuft den fixen Rechnungskopf (max. ca. 4 Zeilen bei 10&nbsp;pt).
-            Überschüssige Zeilen werden abgeschnitten.
-          </div>
+          {% include "settings/_invoice_contact_info_field.html" %}
         </div>
       </div>
+      {% endblock %}
     </div>
 
     {# ── Tab 2: E-Mail-Server ────────────────────────────────────────── #}
@@ -572,11 +503,17 @@
 
     {# ── Tab 3: Rechnungsformat ──────────────────────────────────────── #}
     <div class="tab-pane fade" id="pane-rechnung" role="tabpanel">
+      {# Erweiterungspunkt: die SaaS verlegt diese Karte (und Logo, Absenderzeile,
+         Kontaktinfo) auf die Seite „Rechnungsdesign“ und ersetzt den Block durch
+         einen Hinweis. Der Marker sorgt dafuer, dass nur ein Formular mit diesen
+         Feldern sie speichert (app/settings/invoice_layout.py). #}
+      {% block settings_document_format %}
       <div class="card">
         <div class="card-header">
           <h3 class="card-title"><i class="fas fa-file-alt me-1"></i> Dokumentformat</h3>
         </div>
         <div class="card-body">
+          <input type="hidden" name="invoice_layout_fields" value="1">
           <div class="mb-3">
             <label class="form-label">Verfügbare Formate für erzeugte Dokumente</label>
             <select name="invoice_document_format" class="form-select">
@@ -655,6 +592,7 @@
           {% block invoice_design_extra %}{% endblock %}
         </div>
       </div>
+      {% endblock %}
 
       {# ── E-Rechnung (ZUGFeRD/Factur-X) ──────────────────────────────── #}
       <div class="card mt-3" id="einvoice-card">
@@ -963,124 +901,9 @@ document.querySelector('[name=invoice_document_format]')?.addEventListener('chan
   document.getElementById('docx-warning').style.display = show ? 'block' : 'none';
 });
 
-// ── Kontaktinformation Rich-Text-Editor ─────────────────────────────────
-(function () {
-  const editor = document.getElementById('contactInfoEditor');
-  const input = document.getElementById('contactInfoInput');
-  if (!editor || !input) return;
-  // Editor-Inhalt LIVE ins versteckte Feld spiegeln — NICHT erst beim Submit:
-  // hx-boost (auf <body>) serialisiert das Formular im Submit-Handler von htmx,
-  // BEVOR ein eigener submit-Listener den Wert nachziehen koennte. Verifiziert:
-  // ein submit-Listener feuert hier gar nicht mehr, der Kontakttext kam leer am
-  // Server an und wurde als None gespeichert. Daher bei jeder Aenderung syncen.
-  function syncContactInfo() { input.value = editor.innerHTML; }
-  const _lineWarning = document.getElementById('contactInfoLineWarning');
-  function checkContactLines() {
-    if (!_lineWarning) return;
-    const lines = (editor.innerHTML.match(/<br\s*\/?>/gi) || []).length + 1;
-    _lineWarning.style.display = lines > 4 ? 'block' : 'none';
-  }
-  syncContactInfo();
-  checkContactLines();
-  editor.addEventListener('input', function () { syncContactInfo(); checkContactLines(); });
-  editor.addEventListener('blur', function () { syncContactInfo(); checkContactLines(); });
-  try { document.execCommand('styleWithCSS', false, false); } catch (e) { /* ignore */ }
-  document.querySelectorAll('[data-rt-cmd]').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      editor.focus();
-      document.execCommand(btn.getAttribute('data-rt-cmd'), false, null);
-      syncContactInfo();  // execCommand-Aenderung sofort uebernehmen
-    });
-  });
-
-  // „Felder übernehmen" — WG-Name, Adresse, E-Mail und Telefon aus den
-  // Kontaktdaten-Feldern in den Editor schreiben (vorhandener Inhalt wird ersetzt).
-  const adoptBtn = document.getElementById('contactInfoAdopt');
-  if (adoptBtn) {
-    const esc = function (s) {
-      const d = document.createElement('div');
-      d.textContent = s;
-      return d.innerHTML;
-    };
-    adoptBtn.addEventListener('click', function () {
-      const val = function (name) {
-        const el = document.querySelector('[name="' + name + '"]');
-        return el ? el.value.trim() : '';
-      };
-      const lines = [];
-      if (val('wg_name')) lines.push('<b>' + esc(val('wg_name')) + '</b>');
-      // Adresse ist ein Textarea — Zeilenumbrueche zu <br> wandeln.
-      if (val('wg_address')) {
-        lines.push(esc(val('wg_address')).replace(/\r?\n/g, '<br>'));
-      }
-      if (val('wg_email')) lines.push(esc(val('wg_email')));
-      if (val('wg_phone')) lines.push('Tel.: ' + esc(val('wg_phone')));
-      editor.innerHTML = lines.join('<br>');
-      syncContactInfo();
-    });
-  }
-
-  // Schriftgröße auf den MARKIERTEN Text anwenden (wie Fett/Kursiv). Nutzt
-  // document.execCommand('fontSize') — das teilt die Selektion sauber über
-  // Zeilen-/Tag-Grenzen hinweg auf (robust cross-browser, egal ob der Browser
-  // Zeilen als <div> oder <br> ablegt) — und ersetzt das dabei erzeugte
-  // <font size="7"> durch unser <span style="font-size:Xpt">, das Sanitizer,
-  // DOCX-Parser und PDF gemeinsam verstehen. Eine ganze Zeile markieren wirkt
-  // damit auf die ganze Zeile, einzelne Wörter markieren nur auf diese.
-  const fontSel = document.getElementById('contactInfoFontSize');
-  if (fontSel) {
-    // Selektion merken — beim Klick aufs Dropdown verliert der Editor den Fokus,
-    // und window.getSelection() käme sonst leer/zusammengeklappt zurück.
-    let _savedRange = null;
-    function _saveRange() {
-      const sel = window.getSelection();
-      if (sel && sel.rangeCount && editor.contains(sel.anchorNode) && editor.contains(sel.focusNode)) {
-        _savedRange = sel.getRangeAt(0).cloneRange();
-      }
-    }
-    editor.addEventListener('mouseup', _saveRange);
-    editor.addEventListener('keyup', _saveRange);
-
-    // Verschachtelte Größen-<span> im Knoten durch ihren Inhalt ersetzen, damit
-    // die neue (äußere) Größe gilt und nichts verschachtelt anwächst.
-    function _unwrapInnerSpans(root) {
-      Array.prototype.slice.call(root.querySelectorAll('span')).forEach(function (span) {
-        const parent = span.parentNode;
-        while (span.firstChild) parent.insertBefore(span.firstChild, span);
-        parent.removeChild(span);
-      });
-    }
-
-    fontSel.addEventListener('change', function () {
-      const pt = this.value;
-      this.selectedIndex = 0;                 // Dropdown zurück auf Platzhalter
-      if (!pt) return;
-      editor.focus();
-      const sel = window.getSelection();
-      if (_savedRange) { sel.removeAllRanges(); sel.addRange(_savedRange); }
-      if (!sel.rangeCount || sel.getRangeAt(0).collapsed) return;  // nichts markiert
-
-      // styleWithCSS=false => fontSize erzeugt <font size="7"> (kein span),
-      // dadurch eindeutig wiederfindbar (<font> kommt sonst nicht vor).
-      document.execCommand('styleWithCSS', false, false);
-      document.execCommand('fontSize', false, '7');
-
-      Array.prototype.slice.call(editor.querySelectorAll('font[size="7"]')).forEach(function (font) {
-        const span = document.createElement('span');
-        span.style.fontSize = pt + 'pt';
-        while (font.firstChild) span.appendChild(font.firstChild);
-        font.parentNode.replaceChild(span, font);
-        _unwrapInnerSpans(span);              // alte, jetzt innenliegende Größen entfernen
-      });
-      _savedRange = null;
-      syncContactInfo();
-    });
-  }
-
-  // Backup, falls doch einmal nativ (ohne htmx) abgesendet wird.
-  const form = editor.closest('form');
-  if (form) form.addEventListener('submit', syncContactInfo);
-})();
+</script>
+{% include "settings/_invoice_contact_info_js.html" %}
+<script>
 
 // ── Test-Mail ─────────────────────────────────────────────────────────────
 // btnTestMail fehlt z.B. bei aktivem Custom-Postmark (SaaS) — dann nichts tun,
@@ -1126,31 +949,7 @@ document.getElementById('btnTestMail')?.addEventListener('click', function () {
 {# Crop-Modal gehoert in block modals (direkt vor </body>), sonst landet der
    Bootstrap-Backdrop wegen des Content-Stacking-Contexts ueber dem Modal. #}
 {% block modals %}
-<div class="modal modal-blur fade" id="logoCropModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title"><i class="fas fa-crop-alt me-2"></i>Logo zuschneiden</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
-      </div>
-      <div class="modal-body">
-        <p class="text-muted small">
-          Ziehe den Rahmen, um den Ausschnitt zu wählen. Für ein längliches
-          Logo den Rahmen breit ziehen.
-        </p>
-        <div style="max-height:60vh;overflow:hidden;">
-          <img id="logoCropImage" style="max-width:100%;display:block;">
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">Abbrechen</button>
-        <button type="button" class="btn btn-primary" id="logoCropApply">
-          <i class="fas fa-check me-1"></i> Übernehmen
-        </button>
-      </div>
-    </div>
-  </div>
-</div>
+{% include "settings/_logo_crop_modal.html" %}
 
 {# ── Mandant zurücksetzen — Bestätigung mit Passwort (nur Admin) ─────────
    Eigenes Formular mit eigenem Endpunkt; bewusst hx-boost="false", damit eine
@@ -1269,103 +1068,9 @@ setupEditModal({
   savedHandler: 'onTaxRateSaved',
 });
 
-// ── Logo-Upload + Cropper ────────────────────────────────────────────────
-// Cropper.js wird erst bei Bedarf vom CDN nachgeladen (nicht global, um andere
-// Seiten nicht zu belasten). Zuschnitt + Verkleinerung passieren client-seitig;
-// das Ergebnis landet als Data-URI im versteckten Feld wg_logo_data.
-(function () {
-  const fileInput = document.getElementById('logoFileInput');
-  if (!fileInput) return;
-
-  const CROPPER_CSS = 'https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.css';
-  const CROPPER_JS  = 'https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.js';
-  const MAX_WIDTH = 600;            // Export-Breite (Verkleinerung)
-  const MAX_BYTES = 256 * 1024;     // muss zum Server-Cap passen
-
-  let cropper = null;
-  let cropperLoading = null;
-  function ensureCropper() {
-    if (window.Cropper) return Promise.resolve();
-    if (cropperLoading) return cropperLoading;
-    cropperLoading = new Promise(function (resolve, reject) {
-      if (!document.querySelector('link[data-cropper]')) {
-        const link = document.createElement('link');
-        link.rel = 'stylesheet';
-        link.href = CROPPER_CSS;
-        link.setAttribute('data-cropper', '1');
-        document.head.appendChild(link);
-      }
-      const s = document.createElement('script');
-      s.src = CROPPER_JS;
-      s.onload = resolve;
-      s.onerror = reject;
-      document.head.appendChild(s);
-    });
-    return cropperLoading;
-  }
-
-  const modalEl = document.getElementById('logoCropModal');
-  const cropImg = document.getElementById('logoCropImage');
-  // bootstrap erst bei Bedarf referenzieren — bei einem harten Reload laeuft
-  // dieses Inline-Skript ggf. vor dem deferred Tabler/Bootstrap-Bundle.
-  function getModal() {
-    return modalEl ? bootstrap.Modal.getOrCreateInstance(modalEl) : null;
-  }
-
-  fileInput.addEventListener('change', function () {
-    const file = this.files && this.files[0];
-    if (!file) return;
-    if (!/^image\/(png|jpe?g|webp)$/.test(file.type)) {
-      alert('Bitte ein PNG-, JPEG- oder WebP-Bild wählen.');
-      this.value = '';
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = function (e) {
-      ensureCropper().then(function () {
-        cropImg.src = e.target.result;
-        getModal().show();
-      }).catch(function () {
-        alert('Bildbearbeitung konnte nicht geladen werden (keine Internetverbindung?).');
-      });
-    };
-    reader.readAsDataURL(file);
-  });
-
-  if (modalEl) {
-    // Cropper erst initialisieren, wenn das Modal sichtbar ist (Container braucht
-    // Dimensionen, sonst startet Cropper mit 0×0).
-    modalEl.addEventListener('shown.bs.modal', function () {
-      if (cropper) { cropper.destroy(); cropper = null; }
-      cropper = new Cropper(cropImg, { viewMode: 1, autoCropArea: 1, background: false });
-    });
-    modalEl.addEventListener('hidden.bs.modal', function () {
-      if (cropper) { cropper.destroy(); cropper = null; }
-      fileInput.value = '';
-    });
-  }
-
-  const applyBtn = document.getElementById('logoCropApply');
-  if (applyBtn) {
-    applyBtn.addEventListener('click', function () {
-      if (!cropper) return;
-      const canvas = cropper.getCroppedCanvas({ maxWidth: MAX_WIDTH, imageSmoothingQuality: 'high' });
-      if (!canvas) return;
-      // PNG bevorzugen; bei zu grossem Resultat (fotografische Logos) auf JPEG ausweichen.
-      let dataUrl = canvas.toDataURL('image/png');
-      if (dataUrl.length * 0.75 > MAX_BYTES) {
-        dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-      }
-      document.getElementById('logoDataInput').value = dataUrl;
-      document.getElementById('logoPreview').src = dataUrl;
-      document.getElementById('logoPreviewWrap').classList.remove('d-none');
-      // Neues Logo gewinnt: ein evtl. gesetztes "entfernen" zuruecksetzen.
-      const rm = document.querySelector('[name=wg_logo_remove]');
-      if (rm) rm.checked = false;
-      getModal().hide();
-    });
-  }
-})();
+</script>
+{% include "settings/_logo_cropper_js.html" %}
+<script>
 
 // ── Mandant zurücksetzen: Submit erst aktiv mit Häkchen + Passwort ───────
 // Liegt bewusst im scripts-Block (NACH block modals), damit das Modal beim

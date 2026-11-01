@@ -13,67 +13,18 @@ from app.extensions import db
 from app.models import AppSetting, TaxRate
 from app.settings_service import (_WG_MAP, _MAIL_MAP, send_mail, encrypt_password,
                                   apply_mail_settings, platform_relay_active, get_wg,
-                                  sanitize_rich_text, meter_replacement_interval,
-                                  validate_logo_data_uri, get_contact_info_font_size,
-                                  CONTACT_INFO_FONT_MIN, CONTACT_INFO_FONT_MAX,
-                                  CONTACT_INFO_FONT_DEFAULT,
-                                  get_invoice_sender_address, org_type)
-from app.invoices.design import INVOICE_DESIGNS, available_designs
+                                  meter_replacement_interval, org_type)
+from app.invoices import render_cache
+from app.settings import invoice_layout
 from app.wg import ORG_TYPES
 
 
-# AppSetting-Keys, die das gerenderte Rechnungs-Dokument optisch beeinflussen.
-# Aendert sich einer davon, ist der gecachte PDF-/DOCX-Stand gesperrter
-# Rechnungen veraltet (z.B. neu aktivierter GiroCode, Designwechsel, geaenderte
-# IBAN/Kontaktdaten) und muss beim naechsten Abruf neu gerendert werden.
-_INVOICE_RENDER_KEYS = (
-    'invoice.design', 'invoice.show_payment_qr', 'invoice.show_email_signup',
-    'invoice.print_meter_swap', 'invoice.contact_info',
-    'invoice.contact_info_font_size', 'invoice.sender_address',
-    'wg.name', 'wg.address', 'wg.email', 'wg.phone',
-    'wg.iban', 'wg.bic', 'wg.account_holder', 'wg.vat_id', 'wg.tax_number',
-    'invoice.small_business_note',
-    'wg.logo', 'wg.logo_text', 'wg.logo_subtitle',
-    # SEPA-Lastschrift: Hinweis + Glaeubiger-ID stehen auf Rechnungen an Bankeinzugs-Kunden
-    'sepa.creditor_id', 'sepa.notice_title', 'sepa.notice_text',
-    # Verbrauchsnachweis (Zaehlerstaende) auf der Rechnung
-    'invoice.show_meter_readings',
-)
-
-# Spaeter dazugekommene Keys mit Standardwert: steht der Key auf dem Standard,
-# zaehlt er nicht zur Signatur — sonst verwuerfe das erste Speichern nach dem
-# Update ohne jede Aenderung alle gecachten Rechnungen.
-_INVOICE_RENDER_DEFAULTS = {
-    'invoice.show_meter_readings': 'true',
-}
-
-
-def _invoice_render_signature():
-    """Stabiler Hash aller render-relevanten Einstellungen als Vergleichsschluessel."""
-    import hashlib
-    parts = []
-    for key in _INVOICE_RENDER_KEYS:
-        value = AppSetting.get(key) or ""
-        if key in _INVOICE_RENDER_DEFAULTS and value in ("", _INVOICE_RENDER_DEFAULTS[key]):
-            continue
-        parts.append(value)
-    raw = "\x1f".join(parts)
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
-
-def _invalidate_cached_invoice_documents():
-    """Loescht den PDF-/DOCX-Cache-Zeiger aller gesperrten Rechnungen.
-
-    Nur der DB-Zeiger (``pdf_path``/``doc_path``) wird geleert — die Dateien auf
-    der Platte bleiben liegen (Versionspfade _V2/_V3 erhalten den Audit-Verlauf).
-    Beim naechsten Abruf rendert die Rechnung mit dem aktuellen Design/den
-    aktuellen Einstellungen neu und cached wieder. Entwuerfe cachen ohnehin nie.
-    """
-    from app.models import Invoice
-    Invoice.query.filter(Invoice.status != Invoice.STATUS_DRAFT).update(
-        {Invoice.pdf_path: None, Invoice.doc_path: None},
-        synchronize_session=False,
-    )
+# Render-Cache gesperrter Rechnungen: Regeln in app/invoices/render_cache.py.
+# Die alten Namen bleiben fuer bestehende Aufrufer erhalten.
+_INVOICE_RENDER_KEYS = render_cache.RENDER_KEYS
+_INVOICE_RENDER_DEFAULTS = render_cache.RENDER_DEFAULTS
+_invoice_render_signature = render_cache.signature
+_invalidate_cached_invoice_documents = render_cache.invalidate_cached_documents
 
 
 def _save_sepa_settings(form):
@@ -98,21 +49,15 @@ def _save_sepa_settings(form):
     else:
         AppSetting.set(notice.MANDATE_PREFIX_KEY, prefix or None)
 
-    title = (form.get('sepa_notice_title') or '').strip()[:100]
-    AppSetting.set(notice.NOTICE_TITLE_KEY, title or None)
-
     _save_mandate_form_settings(form)
 
-    text = (form.get('sepa_notice_text') or '').strip()[:1000]
-    if text:
-        sample = {key: f'[{key}]' for key, _label in notice.NOTICE_PLACEHOLDERS}
-        try:
-            notice.render_notice_text(text, sample)
-        except Exception:
-            flash('Der Lastschrift-Hinweistext enthält einen Platzhalter-Fehler (z. B. eine nicht '
-                  'geschlossene {{ … }}) — nicht übernommen.', 'warning')
-            return
-    AppSetting.set(notice.NOTICE_TEXT_KEY, text or None)
+    # Titel + Text des Lastschrift-Hinweises (gleiche Regeln wie die SaaS-Seite
+    # „Rechnungsdesign“).
+    values, errors = invoice_layout.sepa_notice_values(form)
+    for msg in errors:
+        flash(msg, 'warning')
+    for key, value in values.items():
+        AppSetting.set(key, value)
 
 
 def _save_mandate_form_settings(form):
@@ -239,8 +184,10 @@ def index():
         if vat_period in tax_service.VAT_RETURN_PERIODS:
             AppSetting.set(tax_service.VAT_RETURN_PERIOD_KEY, vat_period)
 
-        # WG-Kontaktdaten
+        # WG-Kontaktdaten — nur gesendete Felder (ein ausgeblendetes Feld leert nichts).
         for attr in _WG_MAP:
+            if f'wg_{attr}' not in request.form:
+                continue
             val = request.form.get(f'wg_{attr}', '').strip()
             AppSetting.set(f'wg.{attr}', val if val else None)
 
@@ -248,21 +195,13 @@ def index():
         if request.form.get('sepa_fields') == '1':
             _save_sepa_settings(request.form)
 
-        # Logo-Text/-Untertitel (Wortmarke als Alternative zum Logo-Bild).
-        for attr in ('logo_text', 'logo_subtitle'):
-            val = request.form.get(f'wg_{attr}', '').strip()
-            AppSetting.set(f'wg.{attr}', val if val else None)
-
-        # WG-Logo (Data-URI aus dem Cropper). "Entfernen" hat Vorrang vor einem
-        # neu hochgeladenen Bild.
-        if request.form.get('wg_logo_remove'):
-            AppSetting.set('wg.logo', None)
-        else:
-            data_uri, logo_err = validate_logo_data_uri(request.form.get('wg_logo_data', ''))
-            if logo_err:
-                flash(logo_err, 'danger')
-            elif data_uri:
-                AppSetting.set('wg.logo', data_uri)
+        # Darstellung der Rechnung (Logo, Kontaktinfo, Absenderzeile, Dokumentformat,
+        # Design, Schalter) — nur mit Marker im Formular. Eine Erweiterung kann die
+        # Karten von dieser Seite nehmen (SaaS: eigene Seite „Rechnungsdesign“),
+        # ohne dass ein Speichern hier die Werte leert.
+        if invoice_layout.form_has_fields(request.form):
+            for msg in invoice_layout.save_invoice_layout(request.form):
+                flash(msg, 'danger')
 
         # Mail-Versandmodus (Checkbox). Bei aktivem Plattform-Relay sind die
         # SMTP-Felder im UI disabled und werden nicht mitgesendet — der
@@ -285,58 +224,6 @@ def index():
                 else:
                     val = request.form.get(f'mail_{attr}', '').strip()
                     AppSetting.set(db_key, val if val else None)
-
-        # Rechnungsformat
-        fmt = request.form.get('invoice_document_format', 'pdf')
-        AppSetting.set('invoice.document_format', fmt if fmt in ('pdf', 'docx', 'both') else 'pdf')
-
-        # Rechnungsdesign (nur gültige Keys akzeptieren)
-        design_key = request.form.get('invoice_design', 'classic')
-        if design_key not in INVOICE_DESIGNS:
-            design_key = 'classic'
-        AppSetting.set('invoice.design', design_key)
-
-        # Zählerwechsel-Detail auf Rechnungen (Checkbox)
-        print_swap = 'true' if request.form.get('invoice_print_meter_swap') else 'false'
-        AppSetting.set('invoice.print_meter_swap', print_swap)
-        # Zaehlerstaende (Verbrauchsnachweis) auf Rechnungen (Checkbox, Standard an)
-        AppSetting.set('invoice.show_meter_readings',
-                       'true' if request.form.get('invoice_show_meter_readings') else 'false')
-
-        # „Rechnung per E-Mail?"-Block auf gedruckten Rechnungen (Checkbox).
-        # Nur relevant im SaaS-Kontext (Selbstregistrierung) + wenn das Design
-        # diesen Block unterstützt; der Block erscheint nie auf per Mail
-        # versendeten Rechnungen.
-        show_email_signup = 'true' if request.form.get('invoice_show_email_signup') else 'false'
-        AppSetting.set('invoice.show_email_signup', show_email_signup)
-
-        # EPC-QR-Code (GiroCode) im Zahlungsblock (Checkbox).
-        # Nur relevant im SaaS-Kontext mit wasserklar-Design.
-        show_payment_qr = 'true' if request.form.get('invoice_show_payment_qr') else 'false'
-        AppSetting.set('invoice.show_payment_qr', show_payment_qr)
-
-        # Rechnungs-Kontakttext (Rich-Text, auf <b>/<i>/<u>/<br> normalisiert)
-        contact_info = sanitize_rich_text(request.form.get('invoice_contact_info', ''))
-        AppSetting.set('invoice.contact_info', contact_info if contact_info else None)
-
-        # Schriftgroesse des Kontakttexts (Pt) — ausserhalb der Grenzen = Default
-        try:
-            font_size = int(request.form.get('invoice_contact_info_font_size',
-                                             CONTACT_INFO_FONT_DEFAULT))
-        except (TypeError, ValueError):
-            font_size = CONTACT_INFO_FONT_DEFAULT
-        if font_size < CONTACT_INFO_FONT_MIN or font_size > CONTACT_INFO_FONT_MAX:
-            font_size = CONTACT_INFO_FONT_DEFAULT
-        AppSetting.set('invoice.contact_info_font_size', str(font_size))
-
-        # Kleinunternehmer-Hinweis (opt-in; gedruckt nur in nicht
-        # USt-pflichtigen Jahren, siehe invoices.services.invoice_legal_context)
-        sb_note = (request.form.get('invoice_small_business_note') or '').strip()
-        AppSetting.set('invoice.small_business_note', sb_note[:300] or None)
-
-        # Absenderadresse (einzeilig, Klartext)
-        sender_address = request.form.get('invoice_sender_address', '').strip()
-        AppSetting.set('invoice.sender_address', sender_address if sender_address else None)
 
         # E-Rechnung (ZUGFeRD in Rechnungs-PDFs). Die strukturierten wg.*-Felder
         # speichert oben schon die _WG_MAP-Schleife.
@@ -370,18 +257,9 @@ def index():
             country_summary = summary_message(result)
 
         db.session.commit()
-        # Hat sich das Rechnungs-Layout gegenueber dem Stand geaendert, mit dem
-        # die aktuellen Caches erzeugt wurden (z.B. GiroCode aktiviert,
-        # Design/IBAN gewechselt), den Cache gesperrter Rechnungen verwerfen,
-        # damit sie beim naechsten Abruf neu rendern statt den alten Stand
-        # auszuliefern. Die Signatur wird mitgespeichert, sodass auch bereits
-        # vor diesem Feature veraltete Caches beim naechsten Speichern einmalig
-        # aufgefrischt werden (gespeicherte Signatur fehlt dann → Mismatch).
-        current_sig = _invoice_render_signature()
-        if AppSetting.get('invoice.render_cache_signature') != current_sig:
-            _invalidate_cached_invoice_documents()
-            AppSetting.set('invoice.render_cache_signature', current_sig)
-            db.session.commit()
+        # Hat sich das Rechnungs-Layout geaendert (z.B. GiroCode aktiviert,
+        # Design/IBAN gewechselt), den Cache gesperrter Rechnungen verwerfen.
+        render_cache.refresh()
         apply_mail_settings()
         flash('Einstellungen gespeichert.', 'success')
         if country_changed:
@@ -453,16 +331,6 @@ def index():
         db_info = {'engine': '–', 'driver': '–', 'host': '–', 'port': '–',
                    'database': raw_url or '–', 'username': '–', 'url_masked': raw_url}
 
-    doc_format = AppSetting.get('invoice.document_format', 'pdf')
-    invoice_design = AppSetting.get('invoice.design', 'classic')
-    if invoice_design not in INVOICE_DESIGNS:
-        invoice_design = 'classic'
-    contact_info = AppSetting.get('invoice.contact_info') or ''
-    print_meter_swap = AppSetting.get('invoice.print_meter_swap') == 'true'
-    from app.invoices import meter_statement
-    show_meter_readings = meter_statement.enabled()
-    show_email_signup = AppSetting.get('invoice.show_email_signup') == 'true'
-    show_payment_qr = AppSetting.get('invoice.show_payment_qr') == 'true'
     from app.einvoice.service import settings_context as einvoice_settings_context
     return render_template('settings/index.html', wg=wg, mail=mail_cfg, mail_raw=mail_raw,
                            einvoice=einvoice_settings_context(),
@@ -478,17 +346,7 @@ def index():
                                'attribution': AppSetting.get('map.ortho_attribution') or '',
                            },
                            **_tax_card_context(),
-                           doc_format=doc_format,
-                           invoice_design=invoice_design,
-                           invoice_designs=available_designs(),
-                           invoice_contact_info=contact_info,
-                           invoice_contact_info_font_size=get_contact_info_font_size(),
-                           invoice_sender_address=get_invoice_sender_address(),
-                           invoice_small_business_note=AppSetting.get('invoice.small_business_note') or '',
-                           invoice_print_meter_swap=print_meter_swap,
-                           invoice_show_meter_readings=show_meter_readings,
-                           invoice_show_email_signup=show_email_signup,
-                           invoice_show_payment_qr=show_payment_qr,
+                           **invoice_layout.form_context(),
                            meter_replacement_interval=meter_replacement_interval())
 
 

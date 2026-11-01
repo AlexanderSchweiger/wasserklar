@@ -166,6 +166,7 @@ ENDPOINT_TO_DOC = {
     "getting_started.index":       "erste-schritte",
     "datev.index":                 "datev-export",
     "datev.setup":                 "datev-export#einrichten",
+    "invoice_layout.index":        "rechnungsdesign",
     "bank_import.index":           "buchhaltung",
 }
 

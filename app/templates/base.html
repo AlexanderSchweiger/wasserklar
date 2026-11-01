@@ -169,6 +169,7 @@
             {% set _nav_abonnement     = is_saas is defined and is_saas and request.blueprint == 'billing' %}
             {% set _nav_selbsterfassung = is_saas is defined and is_saas and request.blueprint == 'self_service_admin' %}
             {% set _nav_api_keys       = is_saas is defined and is_saas and request.blueprint == 'api_admin' %}
+            {% set _nav_invoice_layout = is_saas is defined and is_saas and request.blueprint == 'invoice_layout' %}
 
             {# Eltern-Aktiv aus Kinder-OR ableiten #}
             {% set accounting_active   = _nav_buchungen or _nav_eingang or _nav_umbuchungen or _nav_bankkonten or _nav_kontenplan or _nav_projekte or _nav_bankimport or _nav_handover %}
@@ -176,7 +177,7 @@
             {% set auswertungen_active = _nav_jahresbericht or _nav_ust or _nav_kundenauswertung or _nav_verbrauch or _nav_plankosten %}
             {% set zaehler_active      = _nav_zaehler or _nav_ablesungen or _nav_ablesungen_import or _nav_zaehlertausch or _nav_zaehlertausch_hist or _nav_meter_tours or _nav_selbsterfassung %}
             {% set stammdaten_active   = _nav_kunden or _nav_objekte or _nav_import or _nav_buchungsjahre or _nav_perioden %}
-            {% set verwaltung_active   = _nav_benutzer or _nav_einstellungen or _nav_data_transfer or _nav_dokumente or _nav_backups or _nav_support or _nav_abonnement or _nav_api_keys %}
+            {% set verwaltung_active   = _nav_benutzer or _nav_einstellungen or _nav_data_transfer or _nav_dokumente or _nav_backups or _nav_support or _nav_abonnement or _nav_api_keys or _nav_invoice_layout %}
 
             {# ── „weitere"-Untergruppen: aufgeklappt, sobald ein verstecktes
                Kind aktiv ist (sonst landet man auf einer Seite, die im Menü

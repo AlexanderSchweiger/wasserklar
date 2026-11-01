@@ -9,11 +9,12 @@ Keys = MultiFernet fuer Key-Rotation; erster Key = primary (encrypt), weitere
 = Decrypt-Fallback.
 """
 import re
+from contextlib import contextmanager
 from html import escape
 from html.parser import HTMLParser
 from smtplib import SMTPRecipientsRefused
 
-from flask import current_app
+from flask import current_app, g
 
 
 # Mapping: Attributname → Flask-Config-Key
@@ -59,6 +60,31 @@ _MAIL_RESET = [
     ('password',       'MAIL_PASSWORD'),
     ('default_sender', 'MAIL_DEFAULT_SENDER'),
 ]
+
+
+# ---------------------------------------------------------------------------
+# Vorschau ungespeicherter Einstellungen
+# ---------------------------------------------------------------------------
+@contextmanager
+def setting_overrides(mapping):
+    """Laesst ``AppSetting.get`` fuer die Dauer des Blocks ``mapping`` sehen.
+
+    Fuer Vorschauen (z. B. Rechnungsdesign): die unveraenderte Render-Pipeline
+    liest die Formularwerte, ohne dass etwas in die DB geschrieben wird. Ein
+    Wert ``None`` wirkt wie eine gespeicherte leere Zeile. Verschachtelbar; der
+    Vorzustand wird immer wiederhergestellt. Nur innerhalb eines App-Kontexts.
+    """
+    previous = g.get('_appsetting_overrides')
+    merged = dict(previous or {})
+    merged.update(mapping or {})
+    g._appsetting_overrides = merged
+    try:
+        yield
+    finally:
+        if previous is None:
+            g.pop('_appsetting_overrides', None)
+        else:
+            g._appsetting_overrides = previous
 
 
 # ---------------------------------------------------------------------------
@@ -267,6 +293,10 @@ class _RichTextSanitizer(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.parts = []
         self._open = []  # Stack offener (normalisierter) Inline-Tags
+        # Je offenem <span>: True = mit Groesse uebernommen, False = verworfen.
+        # Sonst schloesse das </span> eines verworfenen Spans (z. B. eingefuegt
+        # mit style="color:…") den aeusseren Groessen-Span vorzeitig.
+        self._spans = []
 
     def _line_break(self):
         if self.parts and not self.parts[-1].endswith('<br>'):
@@ -289,6 +319,7 @@ class _RichTextSanitizer(HTMLParser):
             self._open.append(norm)
         elif tag == 'span':
             pt = _span_font_size(attrs)
+            self._spans.append(pt is not None)
             if pt is not None:
                 self.parts.append(f'<span style="font-size:{pt}pt">')
                 self._open.append('span')
@@ -303,7 +334,8 @@ class _RichTextSanitizer(HTMLParser):
         if tag in _RT_INLINE:
             self._close_to(_RT_INLINE[tag])
         elif tag == 'span':
-            self._close_to('span')
+            if self._spans and self._spans.pop():
+                self._close_to('span')
 
     def handle_data(self, data):
         self.parts.append(escape(data))

@@ -1,0 +1,31 @@
+{# Rich-Text-Feld (fett/kursiv/unterstrichen + Schriftgröße), wie die Kontaktinfo
+   im Rechnungskopf. Gespeichert wird das HTML aus dem versteckten Feld — der
+   Server muss es mit ``settings_service.sanitize_rich_text`` säubern (beim
+   Speichern UND beim Ausgeben). Das Skript steht in _rich_text_editor_js.html
+   (``wkRichText(editor)``); ``caller`` ergänzt die Werkzeugleiste. #}
+{% macro rich_text_field(editor_id, input_id, size_id, name, value, base_pt,
+                         min_height='8rem', line_height='1.15', data={}) %}
+<div class="d-flex flex-wrap align-items-center gap-2 mb-2" data-rt-toolbar="{{ editor_id }}">
+  <div class="btn-group btn-group-sm" role="group" aria-label="Formatierung">
+    <button type="button" class="btn btn-outline-secondary" data-rt-cmd="bold"
+            title="Fett"><strong>F</strong></button>
+    <button type="button" class="btn btn-outline-secondary" data-rt-cmd="italic"
+            title="Kursiv"><em>K</em></button>
+    <button type="button" class="btn btn-outline-secondary" data-rt-cmd="underline"
+            title="Unterstrichen"><u>U</u></button>
+  </div>
+  <select id="{{ size_id }}" data-rt-size
+          class="form-select form-select-sm" style="width:auto"
+          title="Schriftgröße des markierten Texts (ohne Markierung: ganzer Text)">
+    <option value="" disabled selected>Schriftgröße …</option>
+    {% for pt in range(6, 25) %}
+    <option value="{{ pt }}">{{ pt }} pt</option>
+    {% endfor %}
+  </select>
+  {% if caller is defined %}{{ caller() }}{% endif %}
+</div>
+<div id="{{ editor_id }}" class="form-control" contenteditable="true"
+     data-rt-editor data-rt-input="{{ input_id }}"{{ data | xmlattr }}
+     style="min-height:{{ min_height }};line-height:{{ line_height }};font-size:{{ base_pt }}pt">{{ value | safe }}</div>
+<input type="hidden" name="{{ name }}" id="{{ input_id }}">
+{% endmacro %}

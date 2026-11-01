@@ -3519,6 +3519,14 @@ class DirectDebitMandateEvent(db.Model):
 # Anwendungseinstellungen (Key-Value-Speicher)
 # ---------------------------------------------------------------------------
 
+def _setting_overrides():
+    """Request-lokale Overrides fuer ``AppSetting.get`` (nur mit App-Kontext)."""
+    from flask import g, has_app_context
+    if not has_app_context():
+        return None
+    return g.get("_appsetting_overrides")
+
+
 class AppSetting(db.Model):
     __tablename__ = "app_settings"
 
@@ -3527,6 +3535,11 @@ class AppSetting(db.Model):
 
     @classmethod
     def get(cls, key, default=None):
+        # Vorschau ungespeicherter Werte (settings_service.setting_overrides):
+        # ein Override verhaelt sich wie eine Zeile mit genau diesem Wert.
+        overrides = _setting_overrides()
+        if overrides is not None and key in overrides:
+            return overrides[key]
         row = cls.query.filter_by(key=key).first()
         return row.value if row else default
 

@@ -1,0 +1,172 @@
+<script>
+// ── Rich-Text-Editor (Markup aus _rich_text_macros.html) ────────────────
+// wkRichText(editor, {onChange}) verdrahtet ein Feld: Werkzeugleiste,
+// Schriftgröße, Spiegeln ins versteckte Feld. Mehrere Felder je Seite möglich
+// (Kontaktinfo im Kopf, SaaS: Gruß). Gibt {sync} zurück.
+window.wkRichText = function (editor, opts) {
+  if (!editor) return null;
+  if (editor._wkRichText) return editor._wkRichText;
+  opts = opts || {};
+  const input = document.getElementById(editor.dataset.rtInput);
+  const toolbar = document.querySelector('[data-rt-toolbar="' + editor.id + '"]');
+  const fontSel = toolbar && toolbar.querySelector('[data-rt-size]');
+  const onChange = opts.onChange || function () {};
+
+  // Editor-Inhalt LIVE ins versteckte Feld spiegeln — NICHT erst beim Submit:
+  // hx-boost (auf <body>) serialisiert das Formular im Submit-Handler von htmx,
+  // BEVOR ein eigener submit-Listener den Wert nachziehen koennte. Verifiziert:
+  // ein submit-Listener feuert hier gar nicht mehr, der Text kam leer am
+  // Server an und wurde als None gespeichert. Daher bei jeder Aenderung syncen.
+  function sync() { if (input) input.value = editor.innerHTML; }
+
+  try { document.execCommand('styleWithCSS', false, false); } catch (e) { /* ignore */ }
+  if (toolbar) {
+    toolbar.querySelectorAll('[data-rt-cmd]').forEach(function (btn) {
+      // Fokus und Auswahl im Editor lassen (sonst trifft der Befehl ggf. nichts).
+      btn.addEventListener('mousedown', function (e) { e.preventDefault(); });
+      btn.addEventListener('click', function () {
+        editor.focus();
+        document.execCommand(btn.getAttribute('data-rt-cmd'), false, null);
+        sync();  // execCommand-Aenderung sofort uebernehmen
+        onChange();
+      });
+    });
+  }
+
+  // Schriftgröße auf den MARKIERTEN Text anwenden (wie Fett/Kursiv), ohne
+  // Markierung auf den ganzen Text. Nutzt document.execCommand('fontSize') —
+  // das teilt die Selektion sauber über Zeilen-/Tag-Grenzen hinweg auf (robust
+  // cross-browser, egal ob der Browser Zeilen als <div> oder <br> ablegt) — und
+  // ersetzt das dabei erzeugte <font size="7"> durch unser
+  // <span style="font-size:Xpt">, das Sanitizer, DOCX-Parser und PDF gemeinsam
+  // verstehen. Danach bleibt der Text markiert, damit eine zweite Änderung
+  // dieselbe Stelle trifft (das Umhängen der Knoten klappt die Auswahl sonst
+  // zusammen, und die nächste Größe lief ins Leere). Das Dropdown zeigt die
+  // Größe der Markierung (gemischt = Platzhalter).
+  // Selektion merken — beim Klick aufs Dropdown verliert der Editor den Fokus,
+  // und window.getSelection() käme sonst leer/zusammengeklappt zurück.
+  // null = nichts markiert (die Größe gilt dann für den ganzen Text).
+  let _savedRange = null;
+
+  function _wholeRange() {
+    const r = document.createRange();
+    r.selectNodeContents(editor);
+    return r;
+  }
+
+  // Einheitliche Größe (pt) der Textstücke im Bereich, sonst null.
+  function _rangeSize(range) {
+    let size = null;
+    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+      if (!node.data.trim() || !range.intersectsNode(node)) continue;
+      // Grenzen ohne ausgewähltes Zeichen (Dreifachklick endet am Anfang der Folgezeile).
+      if (node === range.endContainer && range.endOffset === 0) continue;
+      if (node === range.startContainer && range.startOffset >= node.length) continue;
+      const pt = Math.round(parseFloat(getComputedStyle(node.parentElement).fontSize) * 7.5) / 10;
+      if (size === null) size = pt;
+      else if (size !== pt) return null;
+    }
+    return size;
+  }
+
+  function _showSize() {
+    if (!fontSel) return;
+    const pt = _rangeSize(_savedRange || _wholeRange());
+    const opt = pt !== null && Number.isInteger(pt)
+      ? fontSel.querySelector('option[value="' + pt + '"]') : null;
+    if (opt) fontSel.value = String(pt);
+    else fontSel.selectedIndex = 0;         // gemischt/unbekannt → Platzhalter
+  }
+
+  function _trackSelection() {
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount || !editor.contains(sel.anchorNode) || !editor.contains(sel.focusNode)) return;
+    const range = sel.getRangeAt(0);
+    _savedRange = range.collapsed ? null : range.cloneRange();
+    _showSize();
+  }
+  editor.addEventListener('mouseup', _trackSelection);
+  editor.addEventListener('keyup', _trackSelection);
+  // Auch Auswahlen, deren Maus-Loslassen außerhalb des Editors liegt. Nur bei
+  // fokussiertem Editor: der Klick aufs Dropdown darf die Auswahl nicht leeren.
+  function _onSelectionChange() {
+    if (!editor.isConnected) { document.removeEventListener('selectionchange', _onSelectionChange); return; }
+    if (document.activeElement === editor) _trackSelection();
+  }
+  document.addEventListener('selectionchange', _onSelectionChange);
+
+  // Verschachtelte Größen-<span> im Knoten durch ihren Inhalt ersetzen, damit
+  // die neue (äußere) Größe gilt und nichts verschachtelt anwächst.
+  function _unwrapInnerSpans(root) {
+    Array.prototype.slice.call(root.querySelectorAll('span')).forEach(function (span) {
+      const parent = span.parentNode;
+      while (span.firstChild) parent.insertBefore(span.firstChild, span);
+      parent.removeChild(span);
+    });
+  }
+
+  if (fontSel) fontSel.addEventListener('change', function () {
+    const pt = this.value;
+    if (!pt) return;
+    let range = _savedRange;
+    if (!range || range.collapsed || !editor.contains(range.commonAncestorContainer)) {
+      range = _wholeRange();                // nichts markiert → ganzer Text
+    }
+    if (!editor.textContent.trim()) { _showSize(); return; }
+    editor.focus();
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+
+    // styleWithCSS=false => fontSize erzeugt <font size="7"> (kein span),
+    // dadurch eindeutig wiederfindbar (<font> kommt sonst nicht vor).
+    document.execCommand('styleWithCSS', false, false);
+    document.execCommand('fontSize', false, '7');
+
+    const spans = [];
+    Array.prototype.slice.call(editor.querySelectorAll('font[size="7"]')).forEach(function (font) {
+      const span = document.createElement('span');
+      span.style.fontSize = pt + 'pt';
+      while (font.firstChild) span.appendChild(font.firstChild);
+      font.parentNode.replaceChild(span, font);
+      _unwrapInnerSpans(span);              // alte, jetzt innenliegende Größen entfernen
+      spans.push(span);
+    });
+
+    // Geänderten Text wieder markieren (vom ersten bis zum letzten äußeren Span).
+    const live = spans.filter(function (s) { return s.isConnected; });
+    if (live.length) {
+      let last = live[live.length - 1];
+      while (live.some(function (s) { return s !== last && s.contains(last); })) {
+        last = live.find(function (s) { return s !== last && s.contains(last); });
+      }
+      const again = document.createRange();
+      again.setStart(live[0], 0);
+      again.setEnd(last, last.childNodes.length);
+      sel.removeAllRanges();
+      sel.addRange(again);
+      _savedRange = again.cloneRange();
+    } else {
+      _savedRange = null;
+    }
+    sync();
+    onChange();
+    _showSize();
+  });
+
+  editor.addEventListener('input', function () { sync(); _showSize(); onChange(); });
+  editor.addEventListener('blur', function () { sync(); onChange(); });
+  // Backup, falls doch einmal nativ (ohne htmx) abgesendet wird.
+  const form = editor.closest('form');
+  if (form) form.addEventListener('submit', sync);
+  sync();
+  _showSize();
+
+  // Wer innerHTML von außen setzt (Vorbelegen, „Felder übernehmen“), schickt
+  // danach ein 'input'-Ereignis — das spiegelt, misst und meldet die Änderung.
+  editor._wkRichText = { sync: sync };
+  return editor._wkRichText;
+};
+</script>

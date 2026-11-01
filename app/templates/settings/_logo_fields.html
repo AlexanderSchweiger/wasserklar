@@ -1,0 +1,45 @@
+{# Logo-Bild (Cropper) + Wortmarke. Eingebunden auf der Einstellungsseite und
+   der SaaS-Seite „Rechnungsdesign“; braucht _logo_crop_modal.html im
+   modals-Block und _logo_cropper_js.html im scripts-Block. Erwartet ``wg``. #}
+{# ── Logo ─────────────────────────────────────────────────────── #}
+<div class="mb-2">
+  <label class="form-label">Logo</label>
+  <p class="text-muted small mb-2">
+    Erscheint auf der Rechnung und – wenn aktiviert – links im Menü.
+    Querformat (länglich) empfohlen. Beim Hochladen lässt sich ein
+    Ausschnitt wählen.
+  </p>
+  <div id="logoPreviewWrap" class="mb-2 {% if not wg.logo %}d-none{% endif %}">
+    <img id="logoPreview" src="{{ wg.logo }}" alt="Logo-Vorschau"
+         style="max-height:64px;max-width:240px;border:1px solid var(--tblr-border-color);border-radius:4px;padding:4px;background:#fff;">
+  </div>
+  <input type="file" id="logoFileInput" class="form-control"
+         accept="image/png,image/jpeg,image/webp">
+  <div class="form-text">PNG, JPEG oder WebP – wird automatisch verkleinert (max. 256 KB).</div>
+
+  <label class="form-check mt-3 {% if not wg.logo %}d-none{% endif %}" id="logoRemoveWrap">
+    <input type="checkbox" class="form-check-input" name="wg_logo_remove" value="1">
+    <span class="form-check-label text-danger">Logo entfernen</span>
+  </label>
+
+  <input type="hidden" name="wg_logo_data" id="logoDataInput">
+</div>
+
+<hr class="my-3">
+
+{# ── Logo-Text (Alternative zum Logo-Bild) ─────────────────────── #}
+<div class="mb-2">
+  <label class="form-label">Logo-Text <small class="text-muted">(Alternative zum Logo-Bild)</small></label>
+  <p class="text-muted small mb-2">
+    Wird auf der Rechnung links oben als Wortmarke angezeigt –
+    <strong>nur wenn kein Logo-Bild gesetzt ist</strong>. Bleiben Bild
+    und Text leer, bleibt der Kopf frei.
+  </p>
+  <input type="text" name="wg_logo_text" class="form-control mb-2"
+         value="{{ wg.logo_text }}" placeholder="z. B. Wassergenossenschaft Almtal">
+  <input type="text" name="wg_logo_subtitle" class="form-control"
+         value="{{ wg.logo_subtitle }}" placeholder="Untertitel, z. B. Trinkwasserversorgung">
+  <div class="form-text">
+    Der Untertitel ist optional und erscheint klein unter dem Logo-Text.
+  </div>
+</div>

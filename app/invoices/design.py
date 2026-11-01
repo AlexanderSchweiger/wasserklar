@@ -9,6 +9,11 @@ Die SaaS-Variante kann zusätzliche Designs registrieren, indem sie
 
 Farben als Hex mit führendem '#'; die DOCX-Schicht schneidet das '#'
 bei Bedarf selbst ab.
+
+Optional ``header_contact_box`` = ``{"width_mm", "height_mm"}``: Platz für die
+Kontaktinfo rechts im Kopf, wenn die Vorlage den Kopf fest begrenzt (Überlauf
+wird abgeschnitten). Der Editor warnt dann, sobald der Text höher wird. Designs
+ohne den Schlüssel (classic/blue, Word) wachsen mit und warnen nie.
 """
 
 INVOICE_DESIGNS: dict[str, dict] = {
@@ -59,3 +64,11 @@ def get_design(key: str | None) -> dict:
 def available_designs() -> list[tuple[str, str]]:
     """Liste (key, label) für Dropdown-Darstellung — stabile Reihenfolge."""
     return [(k, d["label"]) for k, d in INVOICE_DESIGNS.items()]
+
+
+def contact_boxes() -> dict[str, dict]:
+    """Platz der Kopf-Kontaktinfo je Design mit festem Kopf (für die Warnung im Editor)."""
+    return {
+        key: {**d["header_contact_box"], "font_family": d.get("font_family", "")}
+        for key, d in INVOICE_DESIGNS.items() if d.get("header_contact_box")
+    }

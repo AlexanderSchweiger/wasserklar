@@ -1,0 +1,25 @@
+<div class="modal modal-blur fade" id="logoCropModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="fas fa-crop-alt me-2"></i>Logo zuschneiden</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small">
+          Ziehe den Rahmen, um den Ausschnitt zu wählen. Für ein längliches
+          Logo den Rahmen breit ziehen.
+        </p>
+        <div style="max-height:60vh;overflow:hidden;">
+          <img id="logoCropImage" style="max-width:100%;display:block;">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-link link-secondary" data-bs-dismiss="modal">Abbrechen</button>
+        <button type="button" class="btn btn-primary" id="logoCropApply">
+          <i class="fas fa-check me-1"></i> Übernehmen
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

@@ -47,6 +47,8 @@ def _settings_form(*, show_payment_qr):
     """Minimales, gueltiges Einstellungs-Formular; nur der QR-Toggle variiert."""
     data = {
         "org_type": "cooperative",
+        # Marker: das Formular enthaelt die Darstellungsfelder (app/settings/invoice_layout.py)
+        "invoice_layout_fields": "1",
         "invoice_document_format": "pdf",
         "invoice_design": "classic",
     }

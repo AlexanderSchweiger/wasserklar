@@ -1,0 +1,90 @@
+{% include "settings/_rich_text_editor_js.html" %}
+<script>
+// ── Kontaktinformation im Rechnungskopf ─────────────────────────────────
+// Editor, Werkzeugleiste und Schriftgröße: wkRichText (_rich_text_editor_js.html).
+// Hier nur, was den Kopf betrifft: Höhen-Warnung und „Felder übernehmen“.
+(function () {
+  const editor = document.getElementById('contactInfoEditor');
+  if (!editor || !window.wkRichText) return;
+
+  // Warnung, wenn der Text höher wird als der feste Briefkopf des gewählten
+  // Designs (nur Designs mit ``header_contact_box``; die anderen wachsen mit).
+  // Gemessen wird eine unsichtbare Kopie in Breite, Schrift und Zeilenhöhe des
+  // PDF-Kopfs. Zeilen zu zählen reicht nicht: jede Zeile ist mindestens
+  // 1,15 × Grundgröße hoch, kleinere Schrift spart also weniger als gedacht,
+  // größere kostet mehr.
+  const _lineWarning = document.getElementById('contactInfoLineWarning');
+  let _boxes = {};
+  try { _boxes = JSON.parse((_lineWarning && _lineWarning.dataset.boxes) || '{}'); } catch (e) { _boxes = {}; }
+  const _mm = function (v) { return v.toLocaleString('de-DE', { maximumFractionDigits: 1 }); };
+  function _designKey() {
+    const form = editor.closest('form');
+    const field = form && form.elements.namedItem('invoice_design');
+    return field ? field.value : '';      // Radiogruppe (Rechnungsdesign) oder Select (Einstellungen)
+  }
+  function checkContactLines() {
+    if (!_lineWarning) return;
+    const box = _boxes[_designKey()];
+    let need = 0;
+    if (box && editor.textContent.trim()) {
+      const probe = document.createElement('div');
+      probe.style.cssText = 'position:absolute;left:-10000px;top:0;visibility:hidden;'
+        + 'text-align:right;line-height:1.15;overflow-wrap:break-word';
+      probe.style.width = box.width_mm + 'mm';
+      probe.style.fontSize = editor.style.fontSize;
+      if (box.font_family) probe.style.fontFamily = box.font_family;
+      probe.innerHTML = editor.innerHTML;
+      document.body.appendChild(probe);
+      need = probe.getBoundingClientRect().height * 25.4 / 96;
+      document.body.removeChild(probe);
+    }
+    const over = !!box && need > box.height_mm + 0.3;
+    if (over) {
+      _lineWarning.querySelector('[data-need]').textContent = _mm(need);
+      _lineWarning.querySelector('[data-room]').textContent = _mm(box.height_mm);
+    }
+    _lineWarning.style.display = over ? 'block' : 'none';
+  }
+
+  window.wkRichText(editor, { onChange: checkContactLines });
+  checkContactLines();
+
+  // „Felder übernehmen" — WG-Name, Adresse, E-Mail und Telefon aus den
+  // Kontaktdaten-Feldern in den Editor schreiben (vorhandener Inhalt wird ersetzt).
+  const adoptBtn = document.getElementById('contactInfoAdopt');
+  if (adoptBtn) {
+    const esc = function (s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    };
+    adoptBtn.addEventListener('click', function () {
+      // Formularfeld der Seite, sonst der gespeicherte Wert am Editor (die
+      // SaaS-Seite „Rechnungsdesign“ zeigt nicht alle Kontaktfelder).
+      const val = function (name) {
+        const el = document.querySelector('[name="' + name + '"]');
+        if (el) return el.value.trim();
+        return (editor.dataset[name.replace('wg_', 'wg-').replace(/-([a-z])/g, function (_m, c) { return c.toUpperCase(); })] || '').trim();
+      };
+      const lines = [];
+      if (val('wg_name')) lines.push('<b>' + esc(val('wg_name')) + '</b>');
+      // Adresse ist ein Textarea — Zeilenumbrueche zu <br> wandeln.
+      if (val('wg_address')) {
+        lines.push(esc(val('wg_address')).replace(/\r?\n/g, '<br>'));
+      }
+      if (val('wg_email')) lines.push(esc(val('wg_email')));
+      if (val('wg_phone')) lines.push('Tel.: ' + esc(val('wg_phone')));
+      editor.innerHTML = lines.join('<br>');
+      // Wie eine Eingabe behandeln (Spiegeln, Vorschau, „ungespeichert“, Größenanzeige).
+      editor.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  }
+
+  // Anderes Design = anderer Kopf; Schriften laden ggf. erst nach dem ersten Messen.
+  const form = editor.closest('form');
+  if (form) form.addEventListener('change', function (e) {
+    if (e.target.name === 'invoice_design') checkContactLines();
+  });
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(checkContactLines);
+})();
+</script>
