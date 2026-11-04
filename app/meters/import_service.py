@@ -52,6 +52,7 @@ from app.imports.common import (  # noqa: F401 — re-exported on purpose
     _cell,
     parse_number,
     parse_date,
+    parse_customer_number,
     format_value_de,
     load_dataframe,
     delete_dataframe,
@@ -254,9 +255,8 @@ def resolve_meter(lookup_value: str, mode: str) -> ResolveResult:
                              f"Zähler '{lv}' nicht gefunden")
 
     if mode == "customer_number":
-        try:
-            cnum = int(float(lv))
-        except (TypeError, ValueError):
+        cnum = parse_customer_number(lv)
+        if cnum is None:
             return ResolveResult(STATUS_NOT_FOUND, [], None,
                                  f"Kunden-Nr. '{lv}' ungültig")
         c = Customer.query.filter_by(customer_number=cnum, active=True).first()

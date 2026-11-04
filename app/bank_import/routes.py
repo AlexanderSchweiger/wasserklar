@@ -17,6 +17,7 @@ from sqlalchemy.orm import selectinload
 from app.accounting import services as acc_svc
 from app.country import term
 from app.extensions import db
+from app.imports.common import parse_customer_number
 from app.models import (
     Account,
     BankStatement,
@@ -485,9 +486,11 @@ def open_item_picker(statement_id, line_id):
             OpenItem.description.ilike(like),
             Invoice.invoice_number.ilike(like),
         ]
-        if q.isdigit():
-            conds.append(Customer.customer_number == int(q))
-            conds.append(Customer.creditor_number == int(q))
+        # Both are INTEGER columns: only a number in range may reach the query.
+        number = parse_customer_number(q)
+        if number is not None:
+            conds.append(Customer.customer_number == number)
+            conds.append(Customer.creditor_number == number)
         amount = _parse_amount(q)
         if amount is not None:
             conds.append(OpenItem.amount == amount)

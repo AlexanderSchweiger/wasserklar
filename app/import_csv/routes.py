@@ -16,6 +16,7 @@ from app.extensions import db
 from app.imports.common import (
     apply_einvoice_columns, resolve_contact_name, split_street_number,
     PAYMENT_KEYS, apply_payment_columns, preview_payment_fields,
+    parse_customer_number,
 )
 from app.imports.relations import OwnerConflictTracker, MeterObjectTracker
 from app.models import (
@@ -462,9 +463,8 @@ def _run_import(df, col_map: dict, duplicate_mode: str,
                 sp.rollback()
                 continue
 
-            try:
-                cnum = int(float(raw_cnum))
-            except (ValueError, TypeError):
+            cnum = parse_customer_number(raw_cnum)
+            if cnum is None:
                 results["errors"].append(f"Zeile {idx}: Ungültige Kunden-Nr. '{raw_cnum}'")
                 results["rows_skipped"] += 1
                 results["plan"].append(_plan_entry(

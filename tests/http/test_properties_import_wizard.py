@@ -200,6 +200,26 @@ class TestPreviewStep:
         assert "Refresh Stadt" in body
         _cleanup_pickles(client)
 
+    def test_name_mapped_as_owner_number_renders_hint(self, client, admin):
+        """Prod 500 (Postgres DataError): names mapped into the owner
+        customer-number field.  The preview renders with a hint per row."""
+        client.get("/auth/logout")
+        _login(client)
+        _upload(client, _csv(
+            "Objekt-Nr.;Ort;Besitzer\n1;Linz;Huber Maria\n2;Wels;Gruber Franz\n"))
+        r = client.post("/properties/import/preview", data={
+            "action": "refresh",
+            "col_object_number": "Objekt-Nr.",
+            "col_ort": "Ort",
+            "col_owner_customer_number": "Besitzer",
+            "duplicate_mode": "skip",
+        })
+        assert r.status_code == 200
+        body = r.get_data(as_text=True)
+        assert "Linz" in body and "Wels" in body
+        assert body.count("muss eine Zahl sein") >= 2
+        _cleanup_pickles(client)
+
 
 # ---------------------------------------------------------------------------
 # Bestätigen (POST mit action=confirm)

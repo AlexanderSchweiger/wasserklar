@@ -307,6 +307,34 @@ def _cell(row: dict, col: str) -> str:
     return s
 
 
+# Largest value of a 32-bit INTEGER column (Postgres and MariaDB/MySQL INT).
+# Larger numbers make the database reject the whole query.
+INT_COLUMN_MAX = 2_147_483_647
+
+# Whole number, optionally with a zero fraction as Excel exports it ("123.0", "123,0").
+_CUSTOMER_NUMBER_RE = re.compile(r"\d+(?:[.,]0+)?")
+
+
+def parse_customer_number(raw: Any) -> int | None:
+    """Parse a cell meant for ``Customer.customer_number`` (INTEGER column).
+
+    Returns ``None`` for anything that is not a whole number between 1 and
+    ``INT_COLUMN_MAX`` — names, fractions ("12.7" would otherwise silently
+    become customer 12), "inf"/"nan", exponents, signs, zero.  Callers must
+    never pass the raw string to a query: SQLite compares it silently, but
+    Postgres raises ``invalid input syntax for type integer``.
+    """
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s or not _CUSTOMER_NUMBER_RE.fullmatch(s):
+        return None
+    value = int(re.split(r"[.,]", s, maxsplit=1)[0])
+    if value < 1 or value > INT_COLUMN_MAX:
+        return None
+    return value
+
+
 def parse_number(raw: str, fmt: str) -> Decimal | None:
     """Parse a single number string according to ``fmt``.
 

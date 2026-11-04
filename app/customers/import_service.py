@@ -299,13 +299,10 @@ def suggest_config(columns: list[str]) -> CustomerImportConfig:
 # ---------------------------------------------------------------------------
 
 def _parse_customer_number(raw: str) -> int | None:
-    """Parse a customer number string to int.  Returns None if not parseable."""
-    if not raw:
-        return None
-    try:
-        return int(float(raw))
-    except (ValueError, TypeError):
-        return None
+    """Parse a customer number string to int.  Returns None if not parseable
+    (see ``app.imports.common.parse_customer_number``)."""
+    from app.imports.common import parse_customer_number
+    return parse_customer_number(raw)
 
 
 def _resolve_customer(cnum: int | None, ext_key: str) -> "Customer | None":

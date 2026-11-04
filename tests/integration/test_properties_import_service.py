@@ -38,6 +38,32 @@ def _df(*rows, columns=("Objekt-Nr.", "Typ", "Straße", "Ort")):
     return pd.DataFrame(list(rows), columns=list(columns))
 
 
+@pytest.fixture
+def sql_params(app):
+    """Collects every parameter value sent to the database.
+
+    SQLite compares a string with an INTEGER column silently; Postgres raises
+    ``invalid input syntax for type integer``.  Asserting on the parameters
+    makes that prod-only failure visible in the SQLite test run.
+    """
+    from sqlalchemy import event
+
+    seen: list = []
+
+    def _record(conn, cursor, statement, parameters, context, executemany):
+        batches = parameters if executemany else [parameters]
+        for params in batches:
+            if isinstance(params, dict):
+                seen.extend(params.values())
+            elif params:
+                seen.extend(params)
+
+    engine = db.engine
+    event.listen(engine, "before_cursor_execute", _record)
+    yield seen
+    event.remove(engine, "before_cursor_execute", _record)
+
+
 def _cfg(**kwargs) -> PropertyImportConfig:
     """Build a PropertyImportConfig with common column names."""
     defaults = {
@@ -264,6 +290,41 @@ class TestOwnerWarnings:
         # No conflict — same customer
         assert not any("mehrere aktive Eigentümer" in w for w in rows[0].warnings)
 
+    def test_name_in_customer_number_column_is_flagged(self, app, sql_params):
+        """Prod 500: a name mapped as owner customer number hit the INTEGER
+        column (Postgres DataError).  The row is flagged, the preview builds."""
+        db.session.add(Customer(name="Huber Maria", customer_number=7))
+        db.session.commit()
+        sql_params.clear()  # the setup insert carries the name legitimately
+        df = pd.DataFrame([
+            {"Objekt-Nr.": "N1", "Besitzer": "Huber Maria"},
+            {"Objekt-Nr.": "N2", "Besitzer": "7"},
+        ])
+        cfg = PropertyImportConfig(
+            col_object_number="Objekt-Nr.",
+            col_owner_customer_number="Besitzer",
+        )
+        rows = build_preview_rows(df, cfg)
+
+        assert "Huber Maria" not in sql_params
+        assert rows[0].status == ROW_NEW
+        assert any("muss eine Zahl sein" in w for w in rows[0].warnings)
+        assert rows[0].fields["owner_customer_number"] == "Huber Maria"
+        # the valid row next to it is resolved normally
+        assert rows[1].status == ROW_NEW
+        assert not rows[1].warnings
+
+    @pytest.mark.parametrize("raw", ["12.7", "inf", "99999999999"])
+    def test_unparsable_numbers_are_flagged(self, app, sql_params, raw):
+        df = pd.DataFrame([{"Objekt-Nr.": "N3", "Besitzer": raw}])
+        cfg = PropertyImportConfig(
+            col_object_number="Objekt-Nr.",
+            col_owner_customer_number="Besitzer",
+        )
+        rows = build_preview_rows(df, cfg)
+        assert raw not in sql_params
+        assert any("muss eine Zahl sein" in w for w in rows[0].warnings)
+
 
 # ---------------------------------------------------------------------------
 # commit — Anlegen und Aktualisieren
@@ -452,6 +513,24 @@ class TestCommitOwner:
             property_id=prop.id, customer_id=c.id, valid_to=None
         ).all()
         assert len(active) == 1  # still just one, no duplicate
+
+    def test_name_as_owner_imports_property_without_owner(self, app, sql_params):
+        """Commit re-reads the (possibly edited) cell — it must not query it raw."""
+        db.session.add(Customer(name="Huber Maria", customer_number=8))
+        db.session.commit()
+        sql_params.clear()  # the setup insert carries the name legitimately
+        df = pd.DataFrame([{"Objekt-Nr.": "O4", "Besitzer": "Huber Maria"}])
+        cfg = PropertyImportConfig(
+            col_object_number="Objekt-Nr.",
+            col_owner_customer_number="Besitzer",
+        )
+        rows = build_preview_rows(df, cfg)
+        stats = commit(rows, cfg)
+
+        assert "Huber Maria" not in sql_params
+        assert stats.created == 1
+        prop = Property.query.filter_by(object_number="O4").one()
+        assert PropertyOwnership.query.filter_by(property_id=prop.id).count() == 0
 
 
 # ---------------------------------------------------------------------------

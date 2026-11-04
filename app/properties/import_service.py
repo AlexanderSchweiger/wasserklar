@@ -25,6 +25,7 @@ from app.imports.common import (
     ROW_EXISTS,
     ROW_ERROR,
     _cell,
+    parse_customer_number,
     parse_row_edits,
     suggest_column,
 )
@@ -219,10 +220,24 @@ def _find_property_by_address(strasse: str, hausnummer: str, plz: str, ort: str)
     )
 
 
+def _find_owner(raw: str):
+    """``(customer, valid)`` for an owner customer-number cell.
+
+    ``Customer.customer_number`` is an INTEGER column: the raw cell (often a
+    name when the wrong column was mapped) must never reach the query —
+    Postgres rejects it with ``invalid input syntax for type integer``.
+    """
+    from app.models import Customer
+    cnum = parse_customer_number(raw)
+    if cnum is None:
+        return None, False
+    return Customer.query.filter_by(customer_number=cnum).first(), True
+
+
 def build_preview_rows(df, cfg: PropertyImportConfig) -> list[PreviewRow]:
     """Build a list of PreviewRow from the DataFrame and config."""
     from app.imports.relations import OwnerConflictTracker
-    from app.models import Customer, PropertyOwnership
+    from app.models import PropertyOwnership
 
     tracker = OwnerConflictTracker()
     rows: list[PreviewRow] = []
@@ -274,20 +289,13 @@ def build_preview_rows(df, cfg: PropertyImportConfig) -> list[PreviewRow]:
 
         # --- owner integrity check -------------------------------------------
         if cfg.col_owner_customer_number and owner_cnum_raw:
-            customer = Customer.query.filter_by(
-                customer_number=owner_cnum_raw
-            ).first()
-            if customer is None:
-                # Try numeric lookup in case owner_cnum_raw is a number string
-                try:
-                    cnum_int = int(float(owner_cnum_raw))
-                    customer = Customer.query.filter_by(
-                        customer_number=cnum_int
-                    ).first()
-                except (ValueError, TypeError):
-                    customer = None
-
-            if customer is None:
+            customer, valid = _find_owner(owner_cnum_raw)
+            if not valid:
+                warnings.append(
+                    f"Besitzer-Kundennummer „{owner_cnum_raw}“ muss eine Zahl "
+                    "sein — keine Zuordnung"
+                )
+            elif customer is None:
                 warnings.append(
                     f"Besitzer Kunden-Nr. {owner_cnum_raw} nicht gefunden — "
                     "keine Zuordnung"
@@ -403,7 +411,7 @@ def commit(rows: list[PreviewRow], cfg: PropertyImportConfig) -> ImportStats:
     from datetime import date
 
     from app.extensions import db
-    from app.models import Customer, Property, PropertyOwnership
+    from app.models import Property, PropertyOwnership
     from app.imports.relations import OwnerConflictTracker
 
     stats = ImportStats()
@@ -488,19 +496,8 @@ def commit(rows: list[PreviewRow], cfg: PropertyImportConfig) -> ImportStats:
 
             # --- Owner assignment -------------------------------------------
             if cfg.col_owner_customer_number and owner_cnum_raw:
-                owner_customer = None
-                # Try direct string match first (customer_number may be string)
-                owner_customer = Customer.query.filter_by(
-                    customer_number=owner_cnum_raw
-                ).first()
-                if owner_customer is None:
-                    try:
-                        cnum_int = int(float(owner_cnum_raw))
-                        owner_customer = Customer.query.filter_by(
-                            customer_number=cnum_int
-                        ).first()
-                    except (ValueError, TypeError):
-                        owner_customer = None
+                # The value may have been edited in the preview — never query raw.
+                owner_customer, _valid = _find_owner(owner_cnum_raw)
 
                 if owner_customer is not None:
                     # Check if this ownership already exists (active)
