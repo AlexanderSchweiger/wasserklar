@@ -48,6 +48,9 @@ from app.temp_files import send_pdf_writer  # noqa: E402
 from app.invoices.services import (  # noqa: E402
     invoice_period_year as _invoice_period_year,
     create_or_update_open_item as _create_or_update_open_item,
+    apply_service_dates as _apply_service_dates,
+    parse_service_dates as _parse_service_dates,
+    service_form_values as _service_form_values,
 )
 
 
@@ -256,9 +259,11 @@ def index():
     sort = request.args.get("sort", _DEFAULT_SORT)
     if sort not in _SORT_KEYS:
         sort = _DEFAULT_SORT
-    sort_dir = request.args.get("dir", "asc")
+    # Ohne explizite Sortierung: nach Rechnungsnummer absteigend (neueste zuerst).
+    default_dir = "desc" if "sort" not in request.args else "asc"
+    sort_dir = request.args.get("dir", default_dir)
     if sort_dir not in ("asc", "desc"):
-        sort_dir = "asc"
+        sort_dir = default_dir
 
     query = (
         Invoice.query
@@ -841,11 +846,25 @@ def new():
             or BillingPeriod.current()
         )
 
+        # Immer eine eigene Angabe: die Periode sagt nur, wo die Rechnung in der
+        # Uebersicht steht, nicht wann ein Zaehler verkauft wurde.
+        service_start, service_end = inv_date, inv_date
+        service_kind = Invoice.SERVICE_TYPE_DELIVERY
+        if request.form.get("service_fields") == "1":
+            try:
+                service_start, service_end, service_kind = _parse_service_dates(request.form)
+            except ValueError as exc:
+                flash(str(exc), "danger")
+                return redirect(url_for("invoices.new"))
+
         inv = Invoice(
             invoice_number=_next_invoice_number(inv_date.year),
             customer_id=customer.id,
             billing_period_id=inv_period.id if inv_period else None,
             date=inv_date,
+            service_date_from=service_start,
+            service_date_to=service_end,
+            service_type=service_kind,
             due_date=due_date,
             status=Invoice.STATUS_DRAFT,
             notes=notes,
@@ -876,6 +895,7 @@ def new():
         customers=customers,
         tariffs=tariffs,
         today=date.today(),
+        service_form=_service_form_values(default=date.today()),
         editor_accounts=editor_accounts,
         editor_projects=editor_projects,
         editor_tax_rates=tax_service.tax_rates(),
@@ -1128,6 +1148,12 @@ def edit(invoice_id):
             flash("Der Kunde zahlt per Bankeinzug — bitte ein Fälligkeitsdatum angeben "
                   "(es steht als Abbuchungstag auf der Rechnung).", "danger")
             return redirect(url_for("invoices.edit", invoice_id=invoice.id))
+        if request.form.get("service_fields") == "1":
+            try:
+                _apply_service_dates(invoice, *_parse_service_dates(request.form))
+            except ValueError as exc:
+                flash(str(exc), "danger")
+                return redirect(url_for("invoices.edit", invoice_id=invoice.id))
         invoice.date = date.fromisoformat(request.form["date"])
         invoice.due_date = date.fromisoformat(request.form["due_date"]) if request.form.get("due_date") else None
         invoice.notes = request.form.get("notes", "")
@@ -1136,7 +1162,8 @@ def edit(invoice_id):
         if invoice.date > date.today():
             flash("Achtung: Das Rechnungsdatum liegt in der Zukunft.", "warning")
         return redirect(url_for("invoices.detail", invoice_id=invoice.id))
-    return render_template("invoices/edit.html", invoice=invoice, customers=customers)
+    return render_template("invoices/edit.html", invoice=invoice, customers=customers,
+                           service_form=_service_form_values(invoice))
 
 
 @bp.route("/<int:invoice_id>/items/save", methods=["POST"])

@@ -31,6 +31,8 @@
               </div>
             </div>
           </div>
+          {% set service_narrow = true %}
+          {% include "invoices/_service_date_fields.html" %}
           <div class="mb-3">
             <label class="form-label">Notizen</label>
             <textarea name="notes" class="form-control" rows="3">{{ invoice.notes or '' }}</textarea>

@@ -152,7 +152,8 @@ _ust_berechnen = acc_svc.ust_compute
 # Massen-Bearbeiten-Modal (damit der Tabellen-Refresh die aktiven Filter behaelt).
 _BOOKINGS_FILTER_INCLUDE = (
     "[name='year'],[name='month'],[name='quarter'],[name='real_account_id'],"
-    "[name='kind'],[name='tax'],[name='account_id'],[name='project_id']"
+    "[name='kind'],[name='tax'],[name='account_id'],[name='project_id'],"
+    "#bookings-filter-bar [name='customer_id'],#bookings-filter-bar [name='q']"
 )
 
 # Wie _BOOKINGS_FILTER_INCLUDE, aber auf die Filter-Leiste eingeschraenkt
@@ -163,8 +164,21 @@ _BOOKINGS_FILTER_INCLUDE = (
 _BOOKINGS_REFRESH_INCLUDE = ", ".join(
     "#bookings-filter-bar [name='%s']" % _n
     for _n in ("year", "month", "quarter", "real_account_id",
-               "kind", "tax", "account_id", "project_id")
+               "kind", "tax", "account_id", "project_id", "customer_id", "q")
 )
+
+
+def _apply_project_contact_search(query, project_id, customer_id, q):
+    """Projekt- (inkl. ``none`` = ohne Projekt), Kontakt- und Beschreibungsfilter."""
+    if project_id == "none":
+        query = query.filter(Booking.project_id.is_(None))
+    elif project_id.isdigit():
+        query = query.filter(Booking.project_id == int(project_id))
+    if customer_id.isdigit():
+        query = query.filter(Booking.customer_id == int(customer_id))
+    if q:
+        query = query.filter(Booking.description.ilike(f"%{q}%"))
+    return query
 
 
 def _bookings_table_ctx(params, bulk_done_count=None, bulk_handed_over_skipped=0):
@@ -179,6 +193,8 @@ def _bookings_table_ctx(params, bulk_done_count=None, bulk_handed_over_skipped=0
     year = params.get("year", date.today().year, type=int)
     account_id = params.get("account_id", "", type=str)
     project_id = params.get("project_id", "", type=str)
+    customer_id = params.get("customer_id", "", type=str)
+    q = params.get("q", "", type=str).strip()
     real_account_id = params.get("real_account_id", "", type=str)
     # kind: "" / "income" / "expense" — schränkt auf Einnahmen oder Ausgaben ein
     kind = params.get("kind", "", type=str)
@@ -214,8 +230,7 @@ def _bookings_table_ctx(params, bulk_done_count=None, bulk_handed_over_skipped=0
     )
     if account_id:
         query = query.filter(Booking.account_id == int(account_id))
-    if project_id:
-        query = query.filter(Booking.project_id == int(project_id))
+    query = _apply_project_contact_search(query, project_id, customer_id, q)
     if real_account_id:
         query = query.filter(Booking.real_account_id == int(real_account_id))
     if month:
@@ -264,13 +279,15 @@ def _bookings_table_ctx(params, bulk_done_count=None, bulk_handed_over_skipped=0
     # Umbuchungen. Bei aktivem Einnahmen-/Ausgaben- oder Steuerfilter werden
     # Umbuchungen ebenfalls ausgeblendet, da sie weder echte Einnahmen noch
     # Ausgaben sind und keinen Steuersatz tragen.
-    transfers = [] if (account_id or project_id or kind or tax) else transfer_query.all()
+    transfers = [] if (account_id or project_id or customer_id or q or kind or tax) \
+        else transfer_query.all()
 
     # Grouping-Modus: Sammelbuchungen werden nur im ungefilterten Jahresview
     # gruppiert. Sobald Konto-/Projekt-/Bankkonto-Filter aktiv sind, fällt die
     # Ansicht auf eine flache Zeilenliste zurück (ADR-002), damit Filter
     # innerhalb einer Sammelbuchung konsistent wirken.
-    group_mode = not (account_id or project_id or real_account_id or kind or tax)
+    group_mode = not (account_id or project_id or customer_id or q
+                      or real_account_id or kind or tax)
 
     rows = []
     seen_groups = OrderedDict()  # group_id → row-dict (für In-Place-Update)
@@ -378,6 +395,7 @@ def _bookings_table_ctx(params, bulk_done_count=None, bulk_handed_over_skipped=0
     )
     filters = dict(
         account_id=account_id, project_id=project_id,
+        customer_id=customer_id, q=q,
         real_account_id=real_account_id,
         kind=kind, month=month, quarter=quarter, tax=tax,
     )
@@ -407,6 +425,7 @@ def bookings():
         accounts=accounts, projects=projects,
         real_accounts=real_accounts,
         customers=customers, assignable_projects=assignable_projects,
+        filter_customers=Customer.query.order_by(Customer.name).all(),
         tax_rates=tax_service.tax_rates(include_inactive=True),
         filter_include=_BOOKINGS_FILTER_INCLUDE,
         refresh_include=_BOOKINGS_REFRESH_INCLUDE,
@@ -2820,6 +2839,8 @@ def export_csv():
     real_account_id = request.args.get("real_account_id", "", type=str)
     account_id = request.args.get("account_id", "", type=str)
     project_id = request.args.get("project_id", "", type=str)
+    customer_id = request.args.get("customer_id", "", type=str)
+    q = request.args.get("q", "", type=str).strip()
     kind = request.args.get("kind", "", type=str)
     month = request.args.get("month", 0, type=int)
     quarter = request.args.get("quarter", 0, type=int)
@@ -2830,8 +2851,7 @@ def export_csv():
         query = query.filter(Booking.real_account_id == int(real_account_id))
     if account_id:
         query = query.filter(Booking.account_id == int(account_id))
-    if project_id:
-        query = query.filter(Booking.project_id == int(project_id))
+    query = _apply_project_contact_search(query, project_id, customer_id, q)
     if month in range(1, 13):
         query = query.filter(extract("month", Booking.date) == month)
     if quarter in range(1, 5):

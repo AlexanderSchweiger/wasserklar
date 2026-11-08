@@ -353,8 +353,9 @@ def build_einvoice(invoice, profile=PROFILE_EN16931):
         due_date=invoice.due_date,
         payment_terms=_payment_terms(invoice),
         notes=[invoice.notes.strip()] if invoice.notes and invoice.notes.strip() else [],
-        period_start=period[0] if period else None,
-        period_end=period[1] if period else None,
+        # Ein einzelner Tag steht nur als Lieferdatum (BT-72, ``_delivery``).
+        period_start=period[0] if period and period[0] != period[1] else None,
+        period_end=period[1] if period and period[0] != period[1] else None,
         delivery=_delivery(invoice, period, profile),
         payment=_payment(invoice, profile),
         preceding_number=original.invoice_number if original else None,

@@ -145,7 +145,7 @@
   <strong>{{ 'Gutschriftsnummer' if is_credit else 'Rechnungsnummer' }}:</strong> {{ invoice.invoice_number }}<br>
   <strong>{{ 'Gutschriftsdatum' if is_credit else 'Rechnungsdatum' }}:</strong> {{ invoice.date.strftime('%d.%m.%Y') }}<br>
   {% if not is_credit %}
-  {% if legal and legal.service_period %}<strong>Leistungszeitraum:</strong> {{ legal.service_period[0].strftime('%d.%m.%Y') }} – {{ legal.service_period[1].strftime('%d.%m.%Y') }}<br>
+  {% if legal and legal.service_text %}<strong>{{ legal.service_label }}:</strong> {{ legal.service_text }}<br>
   {% else %}<strong>Lieferdatum:</strong> {{ invoice.date.strftime('%d.%m.%Y') }}<br>{% endif %}
   {% endif %}
   {% if invoice.customer.customer_number %}<strong>Kundennummer:</strong> {{ invoice.customer.customer_number }}<br>{% endif %}

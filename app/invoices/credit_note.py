@@ -150,6 +150,10 @@ def create_credit_note(original, *, reason=None, created_by_id=None,
         billing_run_id=None,
         billing_period_id=original.billing_period_id,
         date=credit_date,
+        # Die Gutschrift nimmt dieselbe Leistung zurueck.
+        service_date_from=original.service_date_from,
+        service_date_to=original.service_date_to,
+        service_type=original.service_type,
         # Kein Zahlungsziel — das Geld fliesst in die andere Richtung; die
         # Rueckzahlung ist sofort faellig.
         due_date=credit_date,

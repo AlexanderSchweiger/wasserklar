@@ -133,12 +133,20 @@ SMALL_BUSINESS_NOTE_KEY = "invoice.small_business_note"
 
 
 def service_period(invoice):
-    """Leistungszeitraum der Rechnung als ``(start, end)`` oder ``None``.
+    """Tag oder Zeitraum der Leistung als ``(start, end)`` oder ``None``.
 
-    Pflichtangabe (AT § 11 UStG, DE § 14 Abs. 4 UStG). Bei periodischer
-    Wasserabrechnung ist das die Abrechnungsperiode; die Schlussrechnung beim
-    Eigentuemerwechsel endet am Tag vor dem Stichtag.
+    Pflichtangabe (AT § 11 UStG, DE § 14 Abs. 4 UStG). Eine von Hand angegebene
+    Angabe (Einzelrechnung, z. B. Zaehlerverkauf) geht vor, ein einzelner Tag ist
+    ``start == end``. Sonst gilt ``billing_service_period``.
     """
+    if invoice.service_date_from:
+        return invoice.service_date_from, invoice.service_date_to or invoice.service_date_from
+    return billing_service_period(invoice)
+
+
+def billing_service_period(invoice):
+    """Aus der Abrechnung abgeleiteter Zeitraum: die Abrechnungsperiode; die
+    Schlussrechnung beim Eigentuemerwechsel endet am Tag vor dem Stichtag."""
     period = invoice.billing_period
     if period is None:
         return None
@@ -149,6 +157,84 @@ def service_period(invoice):
         if oc is not None and oc.change_date:
             end = oc.change_date - timedelta(days=1)
     return start, end
+
+
+_SERVICE_LABELS = {
+    (Invoice.SERVICE_TYPE_DELIVERY, False): "Lieferdatum",
+    (Invoice.SERVICE_TYPE_DELIVERY, True): "Lieferzeitraum",
+    (Invoice.SERVICE_TYPE_SERVICE, False): "Leistungsdatum",
+    (Invoice.SERVICE_TYPE_SERVICE, True): "Leistungszeitraum",
+}
+
+
+def service_display(invoice):
+    """``(Beschriftung, Text)`` der Liefer-/Leistungsangabe fuer alle Belege.
+
+    Ohne Angabe und ohne Periode ist das Rechnungsdatum der Liefertag; ohne
+    gewaehlte Art heisst ein Zeitraum Leistungszeitraum, ein Tag Lieferdatum.
+    """
+    period = service_period(invoice)
+    if period is None:
+        if not invoice.date:
+            return None, None
+        period = (invoice.date, invoice.date)
+    start, end = period
+    is_range = start != end
+    kind = invoice.service_type or (
+        Invoice.SERVICE_TYPE_SERVICE if is_range else Invoice.SERVICE_TYPE_DELIVERY)
+    text = start.strftime("%d.%m.%Y")
+    if is_range:
+        text = f"{text} – {end.strftime('%d.%m.%Y')}"
+    return _SERVICE_LABELS[(kind, is_range)], text
+
+
+def parse_service_dates(form):
+    """Liest die Felder aus ``invoices/_service_date_fields.html``.
+
+    Liefert ``(von, bis, art)``, wirft ``ValueError`` mit deutscher Meldung.
+    """
+    try:
+        start = date.fromisoformat(form.get("service_date_from", ""))
+    except ValueError:
+        raise ValueError("Bitte ein gültiges Liefer-/Leistungsdatum angeben.") from None
+    end = start
+    if form.get("service_mode") == "range":
+        try:
+            end = date.fromisoformat(form.get("service_date_to", ""))
+        except ValueError:
+            raise ValueError("Bitte das Ende des Zeitraums angeben.") from None
+        if end < start:
+            raise ValueError("Das Ende des Zeitraums liegt vor dem Beginn.")
+    kind = form.get("service_type")
+    if kind not in (Invoice.SERVICE_TYPE_DELIVERY, Invoice.SERVICE_TYPE_SERVICE):
+        kind = Invoice.SERVICE_TYPE_SERVICE if end != start else Invoice.SERVICE_TYPE_DELIVERY
+    return start, end, kind
+
+
+def service_form_values(invoice=None, default=None):
+    """Startwerte der Formularfelder: aus der Rechnung, sonst Einzeltag ``default``."""
+    period = service_period(invoice) if invoice is not None else None
+    if period is None:
+        day = default or (invoice.date if invoice is not None else None)
+        period = (day, day)
+    start, end = period
+    is_range = start != end
+    kind = invoice.service_type if invoice is not None else None
+    return {
+        "mode": "range" if is_range else "day",
+        "start": start.isoformat() if start else "",
+        "end": end.isoformat() if is_range else "",
+        "type": kind or (Invoice.SERVICE_TYPE_SERVICE if is_range
+                         else Invoice.SERVICE_TYPE_DELIVERY),
+    }
+
+
+def apply_service_dates(invoice, start, end, kind):
+    """Speichert die Angabe; entspricht sie der Ableitung, bleibt die Rechnung
+    ohne eigene Angabe und folgt weiter der Abrechnungsperiode."""
+    if (start, end) == billing_service_period(invoice) and kind == Invoice.SERVICE_TYPE_SERVICE:
+        start, end, kind = None, None, None
+    invoice.service_date_from, invoice.service_date_to, invoice.service_type = start, end, kind
 
 
 def invoice_legal_context(invoice):
@@ -168,11 +254,14 @@ def invoice_legal_context(invoice):
         configured = ""
     if configured and invoice.date and not is_year_vat_liable(invoice.date.year):
         note = configured
+    service_label, service_text = service_display(invoice)
     return {
         "vat_id_label": prof.vat_id_label,
         "vat_id": (get_wg("vat_id") or "").strip(),
         "tax_number": (get_wg("tax_number") or "").strip(),
         "service_period": service_period(invoice),
+        "service_label": service_label,
+        "service_text": service_text,
         "small_business_note": note,
     }
 

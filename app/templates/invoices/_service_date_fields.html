@@ -1,0 +1,83 @@
+{# Liefer-/Leistungsdatum: einzelner Tag oder Zeitraum. Erwartet ``service_form``
+   (app.invoices.services.service_form_values); ``service_sync_from`` = id eines
+   Datumsfelds, dem der Tag folgt, solange er nicht von Hand geaendert wurde. #}
+<input type="hidden" name="service_fields" value="1">
+<div class="row g-2" id="service-date-fields" data-sync-from="{{ service_sync_from|default('') }}">
+  <div class="col-md-{{ '4' if service_narrow is not defined else '7' }}">
+    <div class="mb-3">
+      <label class="form-label">Lieferung / Leistung</label>
+      <div class="btn-group w-100" role="group">
+        <input type="radio" class="btn-check" name="service_mode" id="service-mode-day" value="day"
+               {{ 'checked' if service_form.mode != 'range' }}>
+        <label class="btn btn-outline-secondary" for="service-mode-day">Einzelner Tag</label>
+        <input type="radio" class="btn-check" name="service_mode" id="service-mode-range" value="range"
+               {{ 'checked' if service_form.mode == 'range' }}>
+        <label class="btn btn-outline-secondary" for="service-mode-range">Zeitraum</label>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-{{ '3' if service_narrow is not defined else '5' }}">
+    <div class="mb-3">
+      <label class="form-label">Bezeichnung auf dem Beleg</label>
+      <select name="service_type" class="form-select">
+        <option value="delivery" {{ 'selected' if service_form.type == 'delivery' }}>Lieferung</option>
+        <option value="service" {{ 'selected' if service_form.type == 'service' }}>Leistung</option>
+      </select>
+    </div>
+  </div>
+  <div class="col-md-{{ '2' if service_narrow is not defined else '6' }}">
+    <div class="mb-3">
+      <label class="form-label" id="service-from-label">{{ 'Von' if service_form.mode == 'range' else 'Datum' }}</label>
+      <input type="date" name="service_date_from" class="form-control" required
+             value="{{ service_form.start }}">
+    </div>
+  </div>
+  <div class="col-md-{{ '2' if service_narrow is not defined else '6' }} {{ 'd-none' if service_form.mode != 'range' }}" id="service-to-col">
+    <div class="mb-3">
+      <label class="form-label">Bis</label>
+      <input type="date" name="service_date_to" class="form-control"
+             value="{{ service_form.end }}" {{ 'required' if service_form.mode == 'range' }}>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  var box = document.getElementById('service-date-fields');
+  if (!box) return;
+  var from = box.querySelector('[name="service_date_from"]');
+  var to = box.querySelector('[name="service_date_to"]');
+  var type = box.querySelector('[name="service_type"]');
+  var toCol = document.getElementById('service-to-col');
+  var fromLabel = document.getElementById('service-from-label');
+  var source = box.dataset.syncFrom ? document.getElementById(box.dataset.syncFrom) : null;
+  var fromTouched = false, typeTouched = false;
+
+  function isRange() {
+    return box.querySelector('[name="service_mode"]:checked').value === 'range';
+  }
+  function refresh() {
+    var range = isRange();
+    toCol.classList.toggle('d-none', !range);
+    // Verstecktes Bis-Feld abschalten: sonst blockiert ein alter Wert vor dem
+    // neuen Von-Datum das Absenden, ohne dass eine Meldung sichtbar wird.
+    to.disabled = !range;
+    to.required = range;
+    to.min = from.value || '';
+    fromLabel.textContent = range ? 'Von' : 'Datum';
+  }
+  box.querySelectorAll('[name="service_mode"]').forEach(function (radio) {
+    radio.addEventListener('change', function () {
+      if (source && !typeTouched) type.value = isRange() ? 'service' : 'delivery';
+      refresh();
+    });
+  });
+  from.addEventListener('input', function () { fromTouched = true; refresh(); });
+  type.addEventListener('change', function () { typeTouched = true; });
+  if (source) {
+    source.addEventListener('input', function () {
+      if (!fromTouched) { from.value = source.value; refresh(); }
+    });
+  }
+  refresh();
+})();
+</script>

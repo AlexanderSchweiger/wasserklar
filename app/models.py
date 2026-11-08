@@ -2276,6 +2276,9 @@ class Invoice(EmailTrackableMixin, db.Model):
     KIND_FINAL_SETTLEMENT = "final_settlement"
     KIND_CREDIT_NOTE = "credit_note"
 
+    SERVICE_TYPE_DELIVERY = "delivery"
+    SERVICE_TYPE_SERVICE = "service"
+
     # Erlaubte manuelle Statuswechsel (Dropdown auf der Detailseite via
     # ``invoices.set_status``). Steuert den Lebenszyklus einer Rechnung:
     #   Entwurf  → Versendet            (Entwurf wird sonst gelöscht, nicht storniert)
@@ -2305,6 +2308,14 @@ class Invoice(EmailTrackableMixin, db.Model):
     billing_period_id = db.Column(db.Integer, db.ForeignKey("billing_periods.id"), nullable=True)
     date = db.Column(db.Date, default=date.today)
     due_date = db.Column(db.Date)
+    # Tag oder Zeitraum der Lieferung/Leistung, wenn er von Hand angegeben ist
+    # (Pflichtangabe AT § 11 / DE § 14 UStG). NULL = abgeleitet, siehe
+    # ``app.invoices.services.service_period``. Einzelner Tag: von == bis.
+    service_date_from = db.Column(db.Date, nullable=True)
+    service_date_to = db.Column(db.Date, nullable=True)
+    # Nur die Beschriftung auf dem Beleg: 'delivery' (Lieferdatum) oder
+    # 'service' (Leistungsdatum). NULL = Standard je nach Tag/Zeitraum.
+    service_type = db.Column(db.String(10), nullable=True)
     status = db.Column(db.String(20), default=STATUS_DRAFT)
     invoice_kind = db.Column(
         db.String(20), nullable=False, default=KIND_STANDARD,

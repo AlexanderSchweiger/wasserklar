@@ -248,6 +248,10 @@ def create_app(config_name=None):
     app.jinja_env.globals["tariff_minimum_text"] = minimum_text
     app.jinja_env.globals["tariff_minimum_short_text"] = minimum_short_text
 
+    # Liefer-/Leistungsangabe einer Rechnung (Beschriftung, Text).
+    from app.invoices.services import service_display
+    app.jinja_env.globals["invoice_service_display"] = service_display
+
     # USt-Anteil einer Buchung mit Vorzeichen (Storno-Gegenbuchung negativ).
     from app.accounting.services import signed_booking_tax
     app.jinja_env.globals["signed_booking_tax"] = signed_booking_tax

@@ -294,13 +294,10 @@ def generate_docx(invoice, wg: dict, design: dict | None = None,
                 f"{original.invoice_number} vom {original.date.strftime('%d.%m.%Y')}",
             ))
     else:
-        sp = legal["service_period"]
         meta_lines = [
             ("Rechnungsnummer", invoice.invoice_number),
             ("Rechnungsdatum", invoice_date_str),
-            (("Leistungszeitraum",
-              f"{sp[0].strftime('%d.%m.%Y')} – {sp[1].strftime('%d.%m.%Y')}")
-             if sp else ("Lieferdatum", invoice_date_str)),
+            (legal["service_label"], legal["service_text"]),
         ]
         if invoice.customer.customer_number:
             meta_lines.append(("Kundennummer", str(invoice.customer.customer_number)))

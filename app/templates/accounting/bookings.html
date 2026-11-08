@@ -30,7 +30,7 @@
 <div class="card table-card">
   <div class="card-header">
     {% set months = [(1,term('january')),(2,'Februar'),(3,'März'),(4,'April'),(5,'Mai'),(6,'Juni'),(7,'Juli'),(8,'August'),(9,'September'),(10,'Oktober'),(11,'November'),(12,'Dezember')] %}
-    {% set has_filter = account_id or project_id or real_account_id or kind or month or quarter or tax or (year != now_year) %}
+    {% set has_filter = account_id or project_id or customer_id or q or real_account_id or kind or month or quarter or tax or (year != now_year) %}
     <div class="filter-bar" id="bookings-filter-bar">
       <div class="mb-3">
         <label class="form-label mb-0 me-1">Jahr</label>
@@ -137,12 +137,37 @@
           hx-target="#bookings-table"
           hx-include="{{ filter_include }}">
           <option value="">Alle Projekte</option>
+          <option value="none" {{ 'selected' if project_id == 'none' }}>Ohne Projekt</option>
           {% for p in projects %}
           <option value="{{ p.id }}" {{ 'selected' if project_id|string == p.id|string }}>
             {% if p.code %}{{ p.code }} – {% endif %}{{ p.name }}{% if p.closed %} (abgeschlossen){% endif %}
           </option>
           {% endfor %}
         </select>
+      </div>
+      <div class="mb-3">
+        <label class="form-label mb-0 me-1">Kontakt</label>
+        <select name="customer_id" class="form-select form-select-sm tom-select"
+          data-filter-field
+          hx-get="{{ url_for('accounting.bookings') }}"
+          hx-trigger="change"
+          hx-target="#bookings-table"
+          hx-include="{{ filter_include }}">
+          <option value="">Alle Kontakte</option>
+          {% for c in filter_customers %}
+          <option value="{{ c.id }}" {{ 'selected' if customer_id|string == c.id|string }}>{{ c.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="mb-3">
+        <label class="form-label mb-0 me-1">Beschreibung</label>
+        <input type="search" name="q" value="{{ q }}" placeholder="Suchen…"
+          class="form-control form-control-sm" style="width:180px"
+          data-filter-field
+          hx-get="{{ url_for('accounting.bookings') }}"
+          hx-trigger="input changed delay:400ms, search"
+          hx-target="#bookings-table"
+          hx-include="{{ filter_include }}">
       </div>
       <div class="mb-3 d-flex gap-2">
         <a href="{{ url_for('accounting.bookings') }}" class="btn btn-sm btn-outline-secondary{{ '' if has_filter else ' d-none' }}"
@@ -249,7 +274,7 @@ setupEditModal({
   var bar      = document.querySelector('.filter-bar');
   if (!link || !bar) return;
   var base = "{{ url_for('accounting.export_csv') }}";
-  var fields = ['month', 'quarter', 'real_account_id', 'kind', 'tax', 'account_id', 'project_id'];
+  var fields = ['month', 'quarter', 'real_account_id', 'kind', 'tax', 'account_id', 'project_id', 'customer_id', 'q'];
 
   function sync() {
     var params = new URLSearchParams();
