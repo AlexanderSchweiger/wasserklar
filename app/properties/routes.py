@@ -282,7 +282,7 @@ def new():
 
     if request.method == "POST":
         from app.invoices.charges import validate_override_form
-        err = validate_override_form(request.form)
+        err = validate_override_form(request.form) or _property_form_error()
         if err:
             flash(err, "danger")
             if is_modal:
@@ -604,7 +604,7 @@ def edit(property_id):
 
     if request.method == "POST":
         from app.invoices.charges import validate_override_form
-        err = validate_override_form(request.form)
+        err = validate_override_form(request.form) or _property_form_error(prop.id)
         if err:
             flash(err, "danger")
             if is_modal:
@@ -848,6 +848,45 @@ def _apply_property_sort(query, sort: str, direction: str):
         )
     # Default und sort == "nr"
     return query.order_by(*order(Property.object_number), Property.ort.asc())
+
+
+_PROPERTY_TEXT_FIELDS = (
+    ("object_number", "Objektnummer"),
+    ("strasse", "Straße"),
+    ("hausnummer", "Hausnummer"),
+    ("plz", "PLZ"),
+    ("ort", "Ort"),
+    ("land", "Land"),
+)
+
+
+def _property_form_error(current_id=None):
+    """Deutsche Fehlermeldung oder ``None`` — ohne Seiteneffekte, vor dem Schreiben.
+
+    Faengt ab, was sonst erst beim Commit als HTTP 500 scheitert: zu lange Texte
+    (Postgres/MariaDB pruefen die Laenge, SQLite nicht) und eine schon vergebene
+    Objektnummer. Die Eindeutigkeit gilt auch gegen archivierte Liegenschaften —
+    das sagt die Meldung, weil Archivieren der anderen Liegenschaft nicht hilft.
+    """
+    for field, label in _PROPERTY_TEXT_FIELDS:
+        limit = Property.__table__.c[field].type.length
+        if len((request.form.get(field) or "").strip()) > limit:
+            return f"{label}: höchstens {limit} Zeichen."
+
+    number = (request.form.get("object_number") or "").strip()
+    if not number:
+        return None
+    query = Property.query.filter(Property.object_number == number)
+    if current_id is not None:
+        query = query.filter(Property.id != current_id)
+    other = query.first()
+    if other is None:
+        return None
+    if other.active:
+        return f"Die Objektnummer „{number}“ ist bereits bei {other.address_display()} vergeben."
+    return (f"Die Objektnummer „{number}“ ist bereits bei der archivierten Liegenschaft "
+            f"{other.address_display()} vergeben. Bitte eine andere Nummer wählen "
+            "oder die Nummer dort entfernen.")
 
 
 def _property_from_form(prop):
