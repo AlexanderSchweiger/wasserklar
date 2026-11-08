@@ -214,6 +214,12 @@ def index():
             val = request.form.get(f'wg_{attr}', '').strip()
             AppSetting.set(f'wg.{attr}', val if val else None)
 
+        # Teilrechnungen (Karte im Tab „Rechnung“) — nur mit Marker.
+        if request.form.get('installment_fields') == '1':
+            from app.installments.terms import save_from_form as _save_installments
+            for msg in _save_installments(request.form):
+                flash(msg, 'danger')
+
         # SEPA-Lastschrift (Karte unter „Bankdaten“) — nur, wenn sie im Formular steht.
         if request.form.get('sepa_fields') == '1':
             _save_sepa_settings(request.form)
@@ -361,7 +367,8 @@ def index():
                    'database': raw_url or '–', 'username': '–', 'url_masked': raw_url}
 
     from app.einvoice.service import settings_context as einvoice_settings_context
-    return render_template('settings/index.html', wg=wg, mail=mail_cfg, mail_raw=mail_raw,
+    from app.installments.terms import form_values as _installment_form_values
+    return render_template('settings/index.html', installment_settings=_installment_form_values(), wg=wg, mail=mail_cfg, mail_raw=mail_raw,
                            einvoice=einvoice_settings_context(),
                            sepa=_sepa_context(),
                            db_info=db_info,

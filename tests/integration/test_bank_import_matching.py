@@ -318,3 +318,43 @@ class TestIbanNoMatch:
         match_line(line)
         assert line.matched_open_item_id == op.id
         assert line.match_type == BankStatementLine.MATCH_NAME
+
+
+class TestEqualInstallmentsSameCustomer:
+    """Vier gleich hohe Teilbetraege desselben Kontakts: der aelteste faellige
+    bekommt die Zahlung (IBAN- und Namensschritt)."""
+
+    IBAN = "AT611904300234573201"
+
+    def _items(self, cust):
+        ops = []
+        for month in (11, 5, 8, 2):
+            op = _open_item(cust, "66.00")
+            op.due_date = date(2026, month, 15)
+            ops.append(op)
+        db.session.commit()
+        return {op.due_date.month: op for op in ops}
+
+    def test_iban_picks_oldest_due(self, app):
+        cust = _customer("Huber Franz", iban=self.IBAN)
+        ops = self._items(cust)
+        line = _line("FRANZ HUBER", "66.00", iban=self.IBAN)
+        match_line(line)
+        assert line.matched_open_item_id == ops[2].id
+        assert line.match_type == BankStatementLine.MATCH_IBAN
+
+    def test_name_picks_oldest_due(self, app):
+        cust = _customer("Huber Franz")
+        ops = self._items(cust)
+        line = _line("Franz Huber", "66.00")
+        match_line(line)
+        assert line.matched_open_item_id == ops[2].id
+
+    def test_two_customers_stay_ambiguous(self, app):
+        a = _customer("Huber Franz", iban=self.IBAN)
+        b = _customer("Huber Maria", iban=self.IBAN)
+        _open_item(a, "66.00")
+        _open_item(b, "66.00")
+        line = _line("HUBER", "66.00", iban=self.IBAN)
+        match_line(line)
+        assert line.matched_open_item_id is None

@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}{{ words }} berechnen{% endblock %}
+{% block page_title %}<i class="fas fa-calculator me-2"></i> {{ words }} {{ period.name }} – Vorschau{% endblock %}
+{% block content %}
+<div class="card mb-3">
+  <div class="card-body">
+    <div class="d-flex flex-wrap gap-3 align-items-center">
+      <div><strong>Tarif:</strong> {{ tariff.name }}</div>
+      <div><strong>{{ summary.write }}</strong> Pläne werden angelegt bzw. aktualisiert</div>
+      <div>Summe aller {{ words }}: <strong>{{ summary.total|de_number(2) }} €</strong></div>
+      {% for status, count in summary.counts.items() if status not in ('new', 'update') %}
+      <span class="badge bg-secondary-lt">{{ labels[status] }}: {{ count }}</span>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="card-footer d-flex gap-2">
+    <form method="post" action="{{ url_for('installments.calculate', period_id=period.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="tariff_id" value="{{ tariff.id }}">
+      {% if source_run_id %}<input type="hidden" name="source_run_id" value="{{ source_run_id }}">{% endif %}
+      <button type="submit" class="btn btn-primary" {{ 'disabled' if not summary.write }}>
+        <i class="fas fa-save me-1"></i> Pläne speichern
+      </button>
+    </form>
+    <a href="{{ url_for('installments.period', period_id=period.id, source_run_id=source_run_id) }}" class="btn btn-secondary">Zurück</a>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm table-hover table-vcenter mb-0">
+        <thead>
+          <tr>
+            <th>Liegenschaft</th>
+            <th>Rechnungsempfänger</th>
+            <th>Grundlage</th>
+            <th class="text-end">Jahresbetrag</th>
+            <th class="text-end">{{ word }}</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in proposals %}
+          <tr class="{{ 'text-secondary' if not p.will_write and p.status != 'keep' }}">
+            <td>{{ p.prop.label() }}</td>
+            <td>{{ p.customer.name }}</td>
+            <td class="small">
+              {% if p.basis_consumption is not none %}{{ p.basis_consumption|de_number(0) }} m³{% endif %}
+              {% if p.basis_period %}<span class="text-secondary">({{ p.basis_period.name }})</span>{% endif %}
+              {% if p.note %}<div class="text-warning">{{ p.note }}</div>{% endif %}
+            </td>
+            <td class="text-end">{{ p.annual_amount|de_number(2) }} €</td>
+            <td class="text-end fw-semibold">{% if p.installment_amount %}{{ p.due_dates|length }} × {{ p.installment_amount|de_number(2) }} €{% else %}–{% endif %}</td>
+            <td><span class="badge {{ 'bg-green-lt' if p.status == 'new' else ('bg-blue-lt' if p.status == 'update' else 'bg-secondary-lt') }}">{{ p.status_label }}</span></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="text-center text-secondary py-4">Keine Liegenschaft mit aktivem Zähler und Eigentümer.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

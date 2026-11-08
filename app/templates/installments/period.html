@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+{% block title %}{{ words }} {{ period.name }}{% endblock %}
+{% block page_title %}<i class="fas fa-calendar-alt me-2"></i> {{ words }} {{ period.name }}{% endblock %}
+{% block content %}
+<form method="get" action="{{ url_for('installments.index') }}" class="d-flex gap-2 mb-3" style="max-width:20rem">
+  <select name="period_id" class="form-select form-select-sm" onchange="this.form.submit()">
+    {% for p in periods %}
+    <option value="{{ p.id }}" {{ 'selected' if p.id == period.id }}>{{ p.name }}{{ ' — aktiv' if p.active }}</option>
+    {% endfor %}
+  </select>
+</form>
+
+{% if not enabled %}
+<div class="alert alert-warning">
+  Teilrechnungen sind ausgeschaltet.
+  {% if current_user.has_permission('verwaltung') %}
+  <a href="{{ url_for('settings.index') }}#card-installments" class="alert-link">In den Einstellungen (Tab „Rechnung“) einschalten</a>.
+  {% else %}Bitte die Verwaltung, sie in den Einstellungen einzuschalten.{% endif %}
+</div>
+{% endif %}
+
+{% if source_run %}
+<div class="alert alert-info">
+  Die {{ title }}en werden mit dem Rechnungslauf
+  <a href="{{ url_for('invoices.billing_run_detail', run_id=source_run.id) }}" class="alert-link">vom {{ source_run.created_at.strftime('%d.%m.%Y') }} ({{ source_run.billing_period.name }})</a>
+  verknüpft und dort gemeinsam versendet – eine E-Mail je Mitglied.
+</div>
+{% endif %}
+
+<div class="row row-cards mb-3">
+  {# 1. Teilbeträge berechnen #}
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header"><h3 class="card-title">1. {{ words }} berechnen</h3></div>
+      <form method="get" action="{{ url_for('installments.calculate', period_id=period.id) }}">
+        {% if source_run %}<input type="hidden" name="source_run_id" value="{{ source_run.id }}">{% endif %}
+        <div class="card-body">
+          <p class="text-secondary small mb-2">
+            Grundlage ist der Verbrauch jeder Liegenschaft in der Vorperiode
+            {%- if previous %} ({{ previous[0].name }}){% endif %}, bewertet mit dem gewählten Tarif
+            (inkl. individueller Gebühren, Staffeln, Mindestabnahme). Ohne Vorjahresverbrauch gilt
+            der Durchschnitt gleichartiger Objekte. Von Hand geänderte Pläne und Pläne mit
+            bereits ausgestellten {{ title }}en bleiben unverändert.
+          </p>
+          <label class="form-label">Tarif für {{ period.name }}</label>
+          <select name="tariff_id" class="form-select tom-select" required>
+            {% for t in tariffs %}
+            <option value="{{ t.id }}" {{ 'selected' if tariff and t.id == tariff.id }}>
+              {{ t.name }} ({{ t.valid_from }}{% if t.valid_to %}–{{ t.valid_to }}{% endif %})
+            </option>
+            {% endfor %}
+          </select>
+          <div class="small text-secondary mt-2">
+            Fälligkeiten: {% for d in due_dates %}{{ d.strftime('%d.%m.%Y') }}{{ ', ' if not loop.last }}{% else %}<span class="text-danger">keine in dieser Periode</span>{% endfor %}
+            · Rundung: {{ 'auf ' ~ (rounding|int) ~ ' €' if rounding else 'auf Cent' }}
+            {% if min_annual %}· Mindest-Jahresbetrag {{ min_annual|de_number(2) }} €{% endif %}
+            {% if current_user.has_permission('verwaltung') %}
+            · <a href="{{ url_for('settings.index') }}#card-installments">ändern</a>
+            {% endif %}
+          </div>
+        </div>
+        <div class="card-footer">
+          <button type="submit" class="btn btn-primary" {{ 'disabled' if not enabled or not tariffs or not due_dates }}>
+            <i class="fas fa-calculator me-1"></i> Vorschau berechnen
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  {# 2. Teilrechnungen erstellen #}
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header"><h3 class="card-title">2. {{ title }}en erstellen</h3></div>
+      <form method="post" action="{{ url_for('installments.create_invoices', period_id=period.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        {% if source_run %}<input type="hidden" name="source_run_id" value="{{ source_run.id }}">{% endif %}
+        <div class="card-body">
+          {% if open_seqs %}
+          <p class="text-secondary small mb-2">
+            Alle auf einmal (z. B. zusammen mit der Jahresabrechnung) oder je Fälligkeit.
+            Es entstehen Entwürfe in einem eigenen Rechnungslauf; versendet wird dort.
+          </p>
+          {% for seq in open_seqs %}
+          {% set ents = open_by_seq[seq] %}
+          <label class="form-check">
+            <input class="form-check-input" type="checkbox" name="seq" value="{{ seq }}" checked>
+            <span class="form-check-label">{{ seq }}. {{ word }} – fällig {{ ents[0].due_date.strftime('%d.%m.%Y') }}
+              <span class="text-secondary">({{ ents|length }} offen)</span></span>
+          </label>
+          {% endfor %}
+          <div class="row g-2 mt-1">
+            <div class="col-md-6">
+              <label class="form-label">Sortierreihenfolge</label>
+              <select name="sort_order" class="form-select form-select-sm">
+                {% for value, label in sort_order_choices %}
+                <option value="{{ value }}" {{ 'selected' if source_run and source_run.sort_order == value }}>{{ label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Projekt <small class="text-muted">(optional)</small></label>
+              <select name="project_id" class="form-select form-select-sm">
+                <option value="">– kein Projekt –</option>
+                {% for p in projects %}
+                <option value="{{ p.id }}" {{ 'selected' if source_run and source_run.project_id == p.id }}>{% if p.code %}{{ p.code }} – {% endif %}{{ p.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+          {% else %}
+          <div class="text-secondary">
+            {% if rows %}Alle Fälligkeiten sind ausgestellt oder ausgelassen.{% else %}Noch keine Teilbetragspläne – zuerst berechnen.{% endif %}
+          </div>
+          {% endif %}
+        </div>
+        <div class="card-footer">
+          <button type="submit" class="btn btn-success" {{ 'disabled' if not open_seqs }}>
+            <i class="fas fa-file-invoice me-1"></i> {{ title }}en erstellen
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% if stats %}
+<div class="row row-cards mb-3">
+  {% for st in stats %}
+  <div class="col-sm-6 col-lg-3">
+    <div class="card card-sm">
+      <div class="card-body">
+        <div class="font-weight-medium">{{ st.seq }}. {{ word }} · {{ st.due.strftime('%d.%m.%Y') if st.due }}</div>
+        <div class="text-secondary small">
+          {{ st.issued }} ausgestellt{% if st.paid %}, {{ st.paid }} bezahlt{% endif %}
+          {% if st.planned %} · {{ st.planned }} geplant{% endif %}
+          {% if st.skipped %} · {{ st.skipped }} ausgelassen{% endif %}
+        </div>
+        <div class="small">Summe {{ st.amount|de_number(2) }} €{% if st.open %} · offen {{ st.open|de_number(2) }} €{% endif %}</div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-header">
+    <h3 class="card-title">Teilbetragspläne {{ period.name }} <span class="text-secondary">({{ rows|length }})</span></h3>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover table-vcenter mb-0">
+        <thead>
+          <tr>
+            <th>Liegenschaft</th>
+            <th>Rechnungsempfänger</th>
+            <th>Grundlage</th>
+            <th class="text-end">Jahresbetrag</th>
+            <th class="text-end">{{ word }}</th>
+            <th>Fälligkeiten</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for plan in rows %}
+          {% include "installments/_plan_row.html" %}
+          {% else %}
+          <tr><td colspan="7" class="text-center text-secondary py-4">Noch keine Pläne für {{ period.name }}.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block modals %}
+<div class="modal fade" id="installmentPlanModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="fas fa-calendar-alt me-2"></i> Teilbetragsplan</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <form id="installmentPlanForm" method="post" hx-headers='{"X-From-Modal": "1"}'>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-body" id="installmentPlanModalBody"></div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+          <button type="submit" class="btn btn-primary"><i class="fas fa-save me-1"></i> Speichern</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{% include "_modal_edit_helpers.html" %}
+<script>
+window.wkInstallmentPlanSaved = function (e) {
+  var id = e && e.detail && e.detail.id;
+  var row = id && document.getElementById('plan-row-' + id);
+  if (!row || !window.htmx) { window.location.reload(); return; }
+  htmx.ajax('GET', '{{ url_for("installments.plan_row", plan_id=0) }}'.replace('/0/', '/' + id + '/'),
+            {target: '#plan-row-' + id, swap: 'outerHTML'});
+};
+setupEditModal({
+  formId: 'installmentPlanForm',
+  bodyId: 'installmentPlanModalBody',
+  modalId: 'installmentPlanModal',
+  openFn: 'openInstallmentPlanModal',
+  closeEvent: 'closeInstallmentPlanModal',
+  savedEvent: 'installmentPlanSaved',
+  savedHandler: 'wkInstallmentPlanSaved',
+});
+</script>
+{% endblock %}

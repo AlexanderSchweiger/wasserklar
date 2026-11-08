@@ -37,7 +37,9 @@
             <code>{% raw %}{{ iban }}{% endraw %}</code>,
             <code>{% raw %}{{ wg_name }}{% endraw %}</code>,
             <code>{% raw %}{{ zahlungshinweis }}{% endraw %}</code> (Überweisung bzw. Lastschrift-Hinweis),
-            <code>{% raw %}{{ abbuchungsdatum }}{% endraw %}</code>.
+            <code>{% raw %}{{ abbuchungsdatum }}{% endraw %}</code>,
+            <code>{% raw %}{{ belegart }}{% endraw %}</code> (Rechnung, Teilrechnung, Jahresabrechnung …),
+            <code>{% raw %}{{ guthaben }}{% endraw %}</code> (Guthaben aus der Jahresabrechnung, sonst leer).
             Für Kunden mit Bankeinzug:
             <code>{% raw %}{% if bankeinzug %}…{% else %}…{% endif %}{% endraw %}</code> —
             der Standardtext macht das schon; eine eigene Vorlage mit fester IBAN-Zeile
@@ -67,7 +69,7 @@
         <ul class="ps-3 mb-0">
           <li>Platzhalter mit doppelten geschwungenen Klammern angeben, z.B. <code>{% raw %}{{ name }}{% endraw %}</code></li>
           <li>Betreff und Text gelten für Einzel- und Massenversand.</li>
-          <li>Leerer Betreff fällt auf den Standard <code>{% raw %}{{ wg_name }} - Rechnung {{ rechnungsnummer }}{% endraw %}</code> zurück.</li>
+          <li>Leerer Betreff fällt auf den Standard <code>{% raw %}{{ wg_name }} - {{ belegart }} {{ rechnungsnummer }}{% endraw %}</code> zurück.</li>
           <li>Ist keine Text-Vorlage gespeichert, wird der Standardtext verwendet.</li>
           <li>Der Text wird als Plain-Text gesendet (keine HTML-Formatierung).</li>
         </ul>

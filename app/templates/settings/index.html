@@ -506,6 +506,7 @@
 
     {# ── Tab 3: Rechnungsformat ──────────────────────────────────────── #}
     <div class="tab-pane fade" id="pane-rechnung" role="tabpanel">
+      {% include "settings/_installments_card.html" %}
       {# Erweiterungspunkt: die SaaS verlegt diese Karte (und Logo, Absenderzeile,
          Kontaktinfo) auf die Seite „Rechnungsdesign“ und ersetzt den Block durch
          einen Hinweis. Der Marker sorgt dafuer, dass nur ein Formular mit diesen

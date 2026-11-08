@@ -32,6 +32,12 @@
           {% if invoice.invoice_kind == invoice.KIND_FINAL_SETTLEMENT %}
           <dt class="col-sm-5">Art</dt>
           <dd class="col-sm-7"><span class="badge bg-purple-lt">Schlussrechnung (Eigentümerwechsel)</span></dd>
+          {% elif invoice.is_installment %}
+          <dt class="col-sm-5">Art</dt>
+          <dd class="col-sm-7"><span class="badge bg-cyan-lt">{{ invoice.document_title }}</span></dd>
+          {% elif invoice.has_deductions %}
+          <dt class="col-sm-5">Art</dt>
+          <dd class="col-sm-7"><span class="badge bg-teal-lt">{{ invoice.document_title }}</span></dd>
           {% elif invoice.is_credit_note %}
           <dt class="col-sm-5">Art</dt>
           <dd class="col-sm-7"><span class="badge bg-orange-lt">Storno-Rechnung (Gutschrift)</span></dd>
@@ -81,7 +87,7 @@
           {% if invoice.last_email_status %}
           <dt class="col-sm-5">E-Mail-Status</dt>
           <dd class="col-sm-7">
-            {% with subject = invoice %}{% include "invoices/_email_status_badge.html" %}{% endwith %}
+            {% with subject = invoice.mail_status_invoice %}{% include "invoices/_email_status_badge.html" %}{% endwith %}{% if invoice.mailed_with_invoice_id and invoice.mailed_with %} <small class="text-muted">mit {{ invoice.mailed_with.invoice_number }} versendet</small>{% endif %}
             <a href="{{ url_for('invoices.email_events', invoice_id=invoice.id) }}"
                class="ms-1 text-muted small" title="Versand-Verlauf anzeigen">
               <i class="fa fa-history"></i>
@@ -494,6 +500,7 @@
 
   <!-- Positionen -->
   <div class="col-md-8">
+    {% include "invoices/_installment_card.html" %}
     {% if invoice.status == 'Entwurf' %}
     {# --- Entwurf: Inline-Editor mit Batch-Speichern --- #}
     <div class="card">
@@ -508,7 +515,7 @@
             werden alle Positionen übernommen; der zugeordnete Offene Posten wird
             automatisch aktualisiert.
           </p>
-          {% with tariffs=tariffs, existing_items=invoice.items, can_delete_items=True %}
+          {% with tariffs=tariffs, existing_items=editable_items(invoice), can_delete_items=True %}
           {% include "invoices/_items_editor.html" %}
           {% endwith %}
         </div>

@@ -1,0 +1,42 @@
+{# Eine Zeile der Plantabelle (auch Row-Swap nach dem Bearbeiten). Erwartet ``plan``, ``billed``. #}
+<tr id="plan-row-{{ plan.id }}">
+  <td>
+    {% if current_user.has_permission('stammdaten') %}
+    <a href="{{ url_for('properties.detail', property_id=plan.property_id) }}">{{ plan.property.label() }}</a>
+    {% else %}{{ plan.property.label() }}{% endif %}
+    {% if plan.property_id in billed %}<span class="badge bg-green-lt ms-1">abgerechnet</span>{% endif %}
+  </td>
+  <td>{{ plan.customer.name }}
+    {% if plan.customer.installment_opt_out %}<span class="badge bg-yellow-lt ms-1">ausgenommen</span>{% endif %}
+  </td>
+  <td class="small">
+    {% if plan.manual %}<span class="badge bg-blue-lt">von Hand</span>
+    {% elif plan.basis_source == 'average' %}<span class="badge bg-yellow-lt" title="kein Vorjahresverbrauch">Ø {{ plan.basis_consumption|de_number(0) }} m³</span>
+    {% elif plan.basis_source == 'none' %}<span class="badge bg-secondary-lt">nur Pauschalen</span>
+    {% else %}{{ plan.basis_consumption|de_number(0) }} m³{% endif %}
+    {% if plan.basis_period %}<span class="text-secondary">({{ plan.basis_period.name }})</span>{% endif %}
+  </td>
+  <td class="text-end">{{ plan.annual_amount|de_number(2) }} €</td>
+  <td class="text-end fw-semibold">{{ plan.installment_amount|de_number(2) }} €</td>
+  <td>
+    {% for e in plan.entries %}
+    {% set inv = e.active_invoice %}
+    {% if inv %}
+    <a href="{{ url_for('invoices.detail', invoice_id=inv.id) }}"
+       class="badge {{ 'bg-green text-white' if inv.status == 'Bezahlt' else ('bg-secondary-lt' if inv.status == 'Entwurf' else 'bg-blue-lt') }}"
+       title="{{ inv.invoice_number }} · {{ inv.status }} · {{ inv.total_amount|de_number(2) }} €">{{ e.seq }}</a>
+    {% elif e.skipped %}
+    <span class="badge bg-secondary-lt text-decoration-line-through" title="ausgelassen">{{ e.seq }}</span>
+    {% else %}
+    <span class="badge bg-light text-dark border" title="geplant · fällig {{ e.due_date.strftime('%d.%m.%Y') }} · {{ e.amount|de_number(2) }} €">{{ e.seq }}</span>
+    {% endif %}
+    {% endfor %}
+  </td>
+  <td class="text-end text-nowrap">
+    <button type="button" class="btn btn-sm btn-outline-secondary"
+            data-url="{{ url_for('installments.plan_edit', plan_id=plan.id) }}"
+            onclick="openInstallmentPlanModal(this)">
+      <i class="fas fa-edit"></i>
+    </button>
+  </td>
+</tr>

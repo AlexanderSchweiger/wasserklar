@@ -473,6 +473,9 @@ def confirm(property_id):
     tariff = db.session.get(WaterTariff, state.get("tariff_id")) if state.get("tariff_id") else None
 
     create_settlement = bool(state.get("create_settlement")) and _can_bill()
+    from app.installments import owner_change as inst_oc
+    installment_preview = inst_oc.preview(prop, period, stichtag,
+                                          {o.customer_id for o in active})
     preview = None
     if create_settlement and tariff is not None and recipient is not None:
         preview = svc.build_settlement_preview(
@@ -505,6 +508,8 @@ def confirm(property_id):
                 share_plan=wg_state.get("shares"),
                 note=state.get("note"),
                 created_by_id=current_user.id,
+                transfer_installments=(request.form.get("transfer_installments") == "1"
+                                       or not installment_preview["plan"]),
             )
         except svc.OwnerChangeError as exc:
             db.session.rollback()
@@ -523,6 +528,7 @@ def confirm(property_id):
         old_customers=old_customers, new_customers=new_customers,
         recipient=recipient, tariff=tariff, state=state,
         create_settlement=create_settlement, preview=preview,
+        installment_preview=installment_preview,
         fee_mode_labels=svc.FEE_MODE_LABELS, is_wg=is_wassergenossenschaft(),
         meter_inputs=_meter_inputs(state),
         share_summary=(_share_summary((state.get("wg") or {}).get("shares"),

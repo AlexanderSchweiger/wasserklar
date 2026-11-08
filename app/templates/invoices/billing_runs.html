@@ -48,7 +48,7 @@
             {% else %}<strong>—</strong>{% endif %}
           </td>
           <td>
-            {{ run.tariff_name }}
+            {% if run.is_installment_run %}<span class="badge bg-cyan-lt me-1">{{ installment_title() }}en</span>{% endif %}{{ run.tariff_name }}
             <small class="text-muted">
               ({{ run.tariff_valid_from }}{% if run.tariff_valid_to %}–{{ run.tariff_valid_to }}{% else %} aktuell{% endif %})
             </small>
@@ -58,7 +58,7 @@
             <span class="badge bg-blue-lt">{% if run.project.code %}{{ run.project.code }} – {% endif %}{{ run.project.name }}</span>
             {% else %}<span class="text-muted">—</span>{% endif %}
           </td>
-          <td class="text-end">{{ run.tariff_price_per_m3 | de_number(4) }} €</td>
+          <td class="text-end">{% if run.tariff_price_per_m3 is not none %}{{ run.tariff_price_per_m3 | de_number(4) }} €{% else %}—{% endif %}</td>
           <td class="text-end">
             <span class="badge bg-success text-white">{{ run.invoices_created }}</span>
           </td>

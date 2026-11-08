@@ -17,6 +17,7 @@ from app.models import (
     FiscalYear, MeterReadingAccessCode, MeterReading, MeterReplacement,
     MeterTour, MeterTourStop, OwnerChange, OwnerChangeMeterValue,
     Invoice, InvoiceItem, InvoiceMeterReading, BillingRun, BillingPeriod, OpenItem,
+    InstallmentPlan, InstallmentPlanEntry,
     BookingGroup, Booking, Transfer, RealAccountYearBalance,
     DunningPolicy, DunningStage, DunningNotice,
     AppSetting, InvoiceCounter, CustomerCounter, SupplierCounter,
@@ -48,6 +49,7 @@ NULL_ON_IMPORT_COLS = {
     MeterReadingAccessCode: ["created_by_id"],
     ReadingCorrection: ["created_by_id"],
     BillingRun: ["created_by_id"],
+    InstallmentPlan: ["created_by_id"],
     Invoice: ["created_by_id"],
     Transfer: ["created_by_id"],
     AccountingHandover: ["created_by_id", "withdrawn_by_id"],
@@ -145,6 +147,9 @@ CATEGORIES = {
     "buchungen": [
         MeterReading, MeterReplacement, BillingRun, Invoice, InvoiceItem, InvoiceMeterReading,
         OpenItem,
+        # Teilbetragsplaene: ohne Jahresfilter (klein, und Teilrechnungen jedes Jahres
+        # verweisen auf ihre Faelligkeit).
+        InstallmentPlan, InstallmentPlanEntry,
         MeterTour, MeterTourStop,
         OwnerChange, OwnerChangeMeterValue,
         ReadingCorrection,
@@ -194,6 +199,9 @@ INSERT_ORDER = [
     InvoiceEmailOptInCode, CustomerEmailConsentLog, DirectDebitMandateEvent,
     BillingPeriod, MeterReadingAccessCode, WaterTariff, TariffComponent, MeterReading,
     MeterReplacement,
+    # Teilbetragsplaene NACH Periode/Liegenschaft/Kontakt/Tarif und VOR Invoice
+    # (Invoice.installment_entry_id → Eintrag).
+    InstallmentPlan, InstallmentPlanEntry,
     BillingRun, Invoice, InvoiceItem, InvoiceMeterReading, OpenItem, ReadingCorrection,
     # Lastschrift NACH Customer/Invoice/OpenItem; Kopf VOR Positionen.
     DirectDebitRun, DirectDebitItem,
@@ -312,6 +320,8 @@ NATURAL_KEYS = {
     OwnerChange: None,                  # Event ohne stabilen natuerlichen Schluessel — immer Insert
     OwnerChangeMeterValue: None,        # Kind eines OwnerChange — immer Insert
     BillingRun: None,                   # kein natuerlicher Schluessel
+    InstallmentPlan: ("billing_period_id", "property_id", "customer_id"),
+    InstallmentPlanEntry: ("plan_id", "seq"),
     Invoice: ("invoice_number",),
     InvoiceItem: None,
     InvoiceMeterReading: None,         # Kind einer Rechnung — immer Insert
@@ -416,11 +426,19 @@ FOREIGN_KEYS = {
                      "property_id": Property},
     MinimumOverride: {"charge_type_id": ChargeType, "customer_id": Customer,
                       "property_id": Property},
-    BillingRun: {"billing_period_id": BillingPeriod, "project_id": Project},
+    BillingRun: {"billing_period_id": BillingPeriod, "project_id": Project,
+                 "source_run_id": BillingRun},  # Self-FK, zweiter Pass
+    InstallmentPlan: {"billing_period_id": BillingPeriod, "property_id": Property,
+                      "customer_id": Customer, "tariff_id": WaterTariff,
+                      "basis_period_id": BillingPeriod},
+    InstallmentPlanEntry: {"plan_id": InstallmentPlan},
     Invoice: {"customer_id": Customer, "property_id": Property, "billing_run_id": BillingRun,
               "billing_period_id": BillingPeriod,
+              "installment_entry_id": InstallmentPlanEntry,
+              "mailed_with_invoice_id": Invoice,  # Self-FK (Sammelversand), zweiter Pass
               "cancels_invoice_id": Invoice},  # Self-FK (Storno), zweiter Pass
     InvoiceItem: {"invoice_id": Invoice, "account_id": Account, "project_id": Project,
+                  "deducts_invoice_id": Invoice,  # alle Rechnungen stehen vor den Positionen
                   "dunning_notice_id": DunningNotice,        # zweiter Pass
                   "reading_correction_id": ReadingCorrection},  # zweiter Pass
     InvoiceMeterReading: {"invoice_id": Invoice, "meter_id": WaterMeter},
@@ -488,7 +506,9 @@ FOREIGN_KEYS = {
 # erst spaeter inserted wird (zirkulaere oder Self-FKs).
 DEFERRED_FK_UPDATES = {
     Booking: ["storno_of_id"],
-    Invoice: ["cancels_invoice_id"],         # Self-FK (Storno-Rechnung -> Original)
+    Invoice: ["cancels_invoice_id",          # Self-FK (Storno-Rechnung -> Original)
+              "mailed_with_invoice_id"],     # Self-FK (Sammelversand -> Hauptbeleg)
+    BillingRun: ["source_run_id"],           # Self-FK (Teilrechnungslauf -> Jahreslauf)
     InvoiceItem: ["dunning_notice_id", "reading_correction_id"],
     NetworkPlan: ["source_plan_id"],         # Self-FK
     NetworkFeature: ["source_feature_id"],   # Self-FK

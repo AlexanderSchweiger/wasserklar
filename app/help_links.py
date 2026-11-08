@@ -73,6 +73,9 @@ ENDPOINT_TO_DOC = {
     "invoices.tariff_new":         "rechnungen#tarife",
     "invoices.tariff_edit":        "rechnungen#tarife",
     "invoices.email_settings":     "einstellungen#mail",
+    "installments.index":          "teilrechnungen",
+    "installments.period":         "teilrechnungen#berechnen",
+    "installments.calculate":      "teilrechnungen#berechnen",
 
     # Buchhaltung
     "accounting.bookings":           "buchhaltung#buchungen",

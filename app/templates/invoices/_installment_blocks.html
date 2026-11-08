@@ -1,0 +1,125 @@
+{# Bausteine der Teilrechnungen fuer alle Rechnungsvorlagen (OSS-PDF, SaaS-Designs).
+   Daten nur aus ``installment_summary(invoice)`` (app/installments/settlement.py).
+   Import: {% from "invoices/_installment_blocks.html" import ... with context %} #}
+
+{% macro inst_styles() %}
+<style>
+  .inst-block { margin-top: 0.35cm; break-inside: avoid; page-break-inside: avoid; }
+  .inst-block table { width: 100%; border-collapse: collapse; font-size: 9pt; }
+  .inst-block th, .inst-block td { padding: 2px 4px; border-bottom: 0.5px solid #ddd; text-align: left; }
+  .inst-block .r { text-align: right; white-space: nowrap; }
+  .inst-block .sum td { font-weight: bold; border-top: 1px solid #555; border-bottom: none; }
+  .inst-block .muted { color: #666; }
+  .inst-head { font-weight: bold; margin-bottom: 2px; }
+  .inst-note { font-size: 9pt; margin-top: 3px; }
+</style>
+{% endmacro %}
+
+{# Kopfzeile (Meta-Block) einer Teilrechnung: „1. Teilbetrag von 4“. #}
+{% macro inst_meta(s) -%}
+{%- if s and s.kind == 'installment' and s.seq -%}
+<strong>{{ s.word }}:</strong> {{ s.seq }}{% if s.count %} von {{ s.count }}{% endif %}<br>
+{%- endif -%}
+{%- endmacro %}
+
+{# Einleitungssatz. ``place`` = „für die Liegenschaft „…““ oder leer. #}
+{% macro inst_intro(s, invoice) -%}
+{%- set place = invoice.property.address_display() or invoice.property.label() if invoice.property else '' -%}
+{%- if s.kind == 'installment' -%}
+Wir schreiben Ihnen {% if place %}für die Liegenschaft <strong>„{{ place }}“</strong> {% endif %}den
+{{ s.seq }}. {{ s.word }} für den Abrechnungszeitraum {{ s.period.name if s.period }} als Vorauszahlung
+auf die Jahresabrechnung vor:
+{%- else -%}
+Wir rechnen {% if place %}für die Liegenschaft <strong>„{{ place }}“</strong> {% endif %}den
+Abrechnungszeitraum {{ invoice.billing_period.name if invoice.billing_period }} ab und verrechnen die
+vorgeschriebenen {{ s.words }}:
+{%- endif -%}
+{%- endmacro %}
+
+{# Summenzeilen der Positionstabelle bei einer Jahresabrechnung: nur die
+   Jahreswerte (die Gegenverrechnung folgt im eigenen Block). #}
+{% macro inst_regular_rows(s, colspan=4) %}
+{% set r = s.regular %}
+{% if r.taxes %}
+<tr><td colspan="{{ colspan }}" class="text-right">Nettobetrag</td><td class="text-right">{{ r.net|de_number(2) }} €</td></tr>
+{% for t in r.taxes %}
+<tr><td colspan="{{ colspan }}" class="text-right">zzgl. USt. {{ t.rate|de_number(0) }} %</td><td class="text-right">{{ t.tax|de_number(2) }} €</td></tr>
+{% endfor %}
+{% endif %}
+<tr class="total-row"><td colspan="{{ colspan }}" class="text-right">Summe Jahresabrechnung</td><td class="text-right">{{ r.gross|de_number(2) }} €</td></tr>
+{% endmacro %}
+
+{# Block „Gegenverrechnung“ der Jahres-/Schlussrechnung. #}
+{% macro inst_settlement(s, invoice) %}
+<div class="inst-block">
+  <div class="inst-head">Gegenverrechnung der vorgeschriebenen {{ s.words }}</div>
+  <table>
+    <thead>
+      <tr><th>Beleg</th><th>vom</th><th>fällig</th>
+        <th class="r">netto</th><th class="r">USt</th><th class="r">brutto</th></tr>
+    </thead>
+    <tbody>
+      <tr><td colspan="3">Summe Jahresabrechnung</td>
+        <td class="r">{{ s.regular.net|de_number(2) }} €</td>
+        <td class="r">{{ s.regular.tax|de_number(2) }} €</td>
+        <td class="r">{{ s.regular.gross|de_number(2) }} €</td></tr>
+      {% for d in s.deductions %}
+      <tr><td>abzüglich {{ d.invoice.document_title if d.invoice }} {{ d.invoice.invoice_number if d.invoice }}</td>
+        <td>{{ d.invoice.date.strftime('%d.%m.%Y') if d.invoice and d.invoice.date }}</td>
+        <td>{{ d.invoice.due_date.strftime('%d.%m.%Y') if d.invoice and d.invoice.due_date }}</td>
+        <td class="r">−{{ d.net|de_number(2) }} €</td>
+        <td class="r">−{{ d.tax|de_number(2) }} €</td>
+        <td class="r">−{{ d.gross|de_number(2) }} €</td></tr>
+      {% endfor %}
+      <tr class="sum"><td colspan="3">{{ 'Guthaben' if s.is_credit else 'Nachzahlung' }}</td>
+        <td class="r">{{ (s.regular.net - s.deducted.net)|de_number(2) }} €</td>
+        <td class="r">{{ (s.regular.tax - s.deducted.tax)|de_number(2) }} €</td>
+        <td class="r">{{ s.balance|de_number(2) }} €</td></tr>
+    </tbody>
+  </table>
+  {% if s.open_installments %}
+  <div class="inst-note">
+    Noch nicht bezahlt:
+    {% for d in s.open_installments %}{{ d.invoice.invoice_number }} ({{ d.open|de_number(2) }} €){{ ', ' if not loop.last }}{% endfor %}.
+    Diese {{ s.words }} bleiben offen; insgesamt sind daher <strong>{{ s.due_overall|de_number(2) }} €</strong> zu zahlen.
+  </div>
+  {% endif %}
+</div>
+{% endmacro %}
+
+{# Zahlungsblock-Text bei Guthaben (statt Zahlungsaufforderung). #}
+{% macro inst_credit_text(s, invoice) -%}
+{%- if s.credit_mode == 'offset' -%}
+Ihr Guthaben von <strong>{{ s.credit|de_number(2) }} €</strong> verrechnen wir mit
+Ihrem nächsten {{ s.word }}{% if s.next_plan %}
+(fällig am {{ s.next_plan.entries[0].due.strftime('%d.%m.%Y') }}){% endif %}. Sie brauchen nichts zu überweisen.
+{%- else -%}
+Ihr Guthaben von <strong>{{ s.credit|de_number(2) }} €</strong> überweisen wir auf
+{% if invoice.customer.iban %}Ihr Konto {{ invoice.customer.iban }}{% else %}das uns bekannte Konto – bitte teilen Sie uns
+Ihre Bankverbindung mit, falls sie sich geändert hat{% endif %}.
+{%- endif -%}
+{%- endmacro %}
+
+{# Neuer Teilbetragsplan (Jahresabrechnung) bzw. weitere Faelligkeiten (Teilrechnung). #}
+{% macro inst_schedule(s) %}
+{% if s.kind == 'settlement' and s.next_plan %}
+{% set np = s.next_plan %}
+<div class="inst-block">
+  <div class="inst-head">Ihre {{ s.words }} {{ np.period.name }}</div>
+  <table>
+    <tbody>
+      {% for e in np.entries %}
+      <tr><td>{{ e.seq }}. {{ s.word }}</td><td>fällig am {{ e.due.strftime('%d.%m.%Y') }}</td>
+        <td class="r">{{ e.amount|de_number(2) }} €</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <div class="inst-note muted">Berechnet aus Ihrem Verbrauch und dem Tarif {{ np.plan.tariff.name if np.plan.tariff }}.</div>
+</div>
+{% elif s.kind == 'installment' and s.others %}
+<div class="inst-note">
+  Weitere {{ s.words }}: {% for e in s.others %}{{ e.due.strftime('%d.%m.%Y') }} ({{ e.amount|de_number(2) }} €){{ ', ' if not loop.last }}{% endfor %}.
+  Die Jahresabrechnung rechnet den tatsächlichen Verbrauch ab und zieht die {{ s.words }} ab.
+</div>
+{% endif %}
+{% endmacro %}

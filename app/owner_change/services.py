@@ -399,6 +399,18 @@ def _build_settlement_invoice(*, prop, period, stichtag, tariff, fee_mode,
             inv, customer_id=recipient.id, meter_id=billed_meter_ids[0],
             period_id=period.id, tax_rate=water_tax, created_by_id=created_by_id)
 
+    # Teilrechnungen des Altbesitzers, die vor dem Stichtag faellig sind,
+    # gegenverrechnen. Ein Guthaben wird ausbezahlt (er hat danach keine
+    # Teilrechnungen mehr, mit denen es sich verrechnen liesse).
+    from app.installments import settlement as inst_settlement
+    from app.installments.terms import CREDIT_REFUND
+    installments = inst_settlement.deductible_installments(
+        period.id, prop.id, recipient.id, due_before=stichtag)
+    if installments:
+        inst_settlement.deduct_into(inv, installments)
+        inst_settlement.handle_credit(inv, CREDIT_REFUND, meter_id=None,
+                                      period_id=period.id, created_by_id=created_by_id)
+
     old_days = None
     if fee_mode == FEE_MODE_PRO_RATA:
         od, _nd, pd = fee_day_split(period, stichtag)
@@ -501,7 +513,7 @@ def execute_owner_change(*, prop, period, stichtag, new_customer_ids,
                          meter_inputs, create_settlement, settlement_recipient_id,
                          tariff, due_days, fee_mode, resign_customer_ids=None,
                          new_member_updates=None, share_plan=None, note=None,
-                         created_by_id=None):
+                         created_by_id=None, transfer_installments=True):
     """Fuehrt den Eigentuemerwechsel in EINER Transaktion aus (committet selbst).
 
     ``share_plan`` (nur bei Anteilen am Mitglied): Bewegungen im Anteilsbuch
@@ -633,6 +645,16 @@ def execute_owner_change(*, prop, period, stichtag, new_customer_ids,
             due_days=due_days, created_by_id=created_by_id)
         oc.settlement_invoice_id = inv.id
         oc.fee_days_billed = old_days
+
+    # --- Teilrechnungen (app/installments/owner_change.py) ------------------
+    from app.installments import owner_change as inst_oc
+    try:
+        warnings.extend(inst_oc.apply(
+            prop=prop, period=period, stichtag=stichtag, seller_ids=active_owner_ids,
+            buyers=new_customers, settlement_invoice=inv if create_settlement else None,
+            transfer=transfer_installments, created_by_id=created_by_id))
+    except ValueError as exc:
+        raise OwnerChangeError(f"Teilrechnungen: {exc}")
 
     # --- Ownership umschreiben --------------------------------------------
     prev_day = stichtag - timedelta(days=1)

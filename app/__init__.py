@@ -1,5 +1,5 @@
 import os
-from flask import Flask
+from flask import Flask, current_app
 from config import config
 
 
@@ -133,6 +133,13 @@ def create_app(config_name=None):
 
     from app.direct_debit import bp as direct_debit_bp
     app.register_blueprint(direct_debit_bp)
+
+    from app.installments.routes import bp as installments_bp
+    app.register_blueprint(installments_bp)
+    # Belegtitel der Teilrechnung beeinflusst gesperrte Belege (Render-Cache).
+    from app.invoices.render_cache import register_render_keys
+    from app.installments.terms import RENDER_KEYS as _installment_render_keys
+    register_render_keys(app, *_installment_render_keys)
 
     # hx-boost-Navigationen (base.html: <body hx-boost="true">) senden
     # sowohl "HX-Request: true" als auch "HX-Boosted: true". Unsere Routen
@@ -389,6 +396,52 @@ def create_app(config_name=None):
             return False
 
     app.jinja_env.globals["direct_debit_nav_visible"] = direct_debit_nav_visible
+
+    # Teilrechnungen (app/installments/): Menuepunkt + Beschriftungen.
+    def installments_enabled():
+        from app.installments.terms import is_enabled
+        try:
+            return is_enabled()
+        except Exception:
+            return False
+
+    def _installment_word():
+        from app.installments.terms import installment_word
+        return installment_word()
+
+    def _installment_title():
+        from app.installments.terms import installment_title
+        return installment_title()
+
+    def installment_summary(invoice):
+        from app.installments.settlement import summary
+        try:
+            return summary(invoice)
+        except Exception:
+            current_app.logger.exception("Teilrechnungs-Zusammenfassung fehlgeschlagen")
+            return None
+
+    def invoice_display_items(invoice):
+        from app.installments.settlement import display_items
+        return display_items(invoice)
+
+    app.jinja_env.globals["installments_enabled"] = installments_enabled
+    app.jinja_env.globals["installment_word"] = _installment_word
+
+    def _installment_words():
+        from app.installments.terms import installment_words
+        return installment_words()
+
+    app.jinja_env.globals["installment_words"] = _installment_words
+    app.jinja_env.globals["installment_title"] = _installment_title
+    app.jinja_env.globals["installment_summary"] = installment_summary
+    app.jinja_env.globals["invoice_display_items"] = invoice_display_items
+
+    def editable_items(invoice):
+        from app.invoices.routes import editable_items as _editable
+        return _editable(invoice)
+
+    app.jinja_env.globals["editable_items"] = editable_items
 
     def mandate_reference_hint(customer):
         from app.direct_debit.notice import mandate_reference_hint as _hint

@@ -119,6 +119,10 @@ _AT = CountryProfile(
             "SEPA-Lastschriftverfahren von Ihrem Konto {{ iban }} abgebucht. Bitte achten "
             "Sie auf ausreichende Kontodeckung."
         ),
+        # Teilrechnungen (app/installments/): Belegtitel + Wort fuer den Teilbetrag.
+        "installment_title": "Teilrechnung", "installment_word": "Teilbetrag",
+        "installment_words": "Teilbeträge",
+        "annual_settlement_title": "Jahresabrechnung",
     },
     einvoice_default=False,
     document_retention_years=7,
@@ -183,6 +187,9 @@ _DE = CountryProfile(
             "SEPA-Lastschrift von Ihrem Konto {{ iban }} ein. Bitte sorgen Sie für "
             "ausreichende Deckung."
         ),
+        "installment_title": "Abschlagsrechnung", "installment_word": "Abschlag",
+        "installment_words": "Abschläge",
+        "annual_settlement_title": "Jahresabrechnung",
     },
     document_retention_years=8,
     document_retention_hint=(

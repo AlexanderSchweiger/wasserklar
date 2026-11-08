@@ -10,6 +10,31 @@
 <!-- Zusammenfassung (ganz oben, volle Breite) -->
 {% include "invoices/_overview_summary.html" %}
 
+{% if run.is_installment_run %}
+<div class="alert alert-info">
+  <i class="fas fa-calendar-alt me-1"></i> {{ inst_title }}en {{ run.billing_period.name if run.billing_period }}
+  aus den Teilbetragsplänen ·
+  <a href="{{ url_for('installments.period', period_id=run.billing_period_id) }}" class="alert-link">Teilbetragspläne</a>
+  {% if run.source_run %}· gehört zum Rechnungslauf
+  <a href="{{ url_for('invoices.billing_run_detail', run_id=run.source_run_id) }}" class="alert-link">vom {{ run.source_run.created_at.strftime('%d.%m.%Y') }}</a>{% endif %}
+</div>
+{% elif next_period %}
+<div class="alert alert-info d-flex flex-wrap align-items-center gap-2">
+  <div class="me-auto">
+    <i class="fas fa-calendar-alt me-1"></i>
+    {{ inst_words }} {{ next_period.name }}:
+    {% if next_plan_count %}{{ next_plan_count }} Pläne vorhanden.{% else %}noch nicht berechnet.{% endif %}
+    {% if run.linked_runs %}Verknüpft:
+      {% for lr in run.linked_runs %}<a href="{{ url_for('invoices.billing_run_detail', run_id=lr.id) }}" class="alert-link">{{ inst_title }}en vom {{ lr.created_at.strftime('%d.%m.%Y') }}</a>{{ ', ' if not loop.last }}{% endfor %}
+      – sie werden mit diesem Lauf versendet (eine E-Mail je Mitglied).
+    {% endif %}
+  </div>
+  <a href="{{ url_for('installments.period', period_id=next_period.id, source_run_id=run.id) }}" class="btn btn-sm btn-primary">
+    {{ inst_words }} {{ next_period.name }} {{ 'berechnen' if not next_plan_count else 'erstellen' }}
+  </a>
+</div>
+{% endif %}
+
 <!-- Metadaten / Tarif / Löschen -->
 <div class="row">
   <!-- Lauf-Metadaten -->
@@ -276,7 +301,7 @@
             <td class="text-end">{{ amt.ust | de_number }} €</td>
             {% endif %}
             <td class="text-end fw-semibold">{{ amt.gross | de_number }} €</td>
-            <td>{% with subject = inv %}{% include "invoices/_email_status_badge.html" %}{% endwith %}</td>
+            <td>{% with subject = inv.mail_status_invoice %}{% include "invoices/_email_status_badge.html" %}{% endwith %}</td>
             <td>
               {% if inv.status == 'Entwurf' %}
                 <span class="badge bg-secondary text-white">{{ inv.status }}</span>
@@ -377,9 +402,42 @@
         <!-- Per E-Mail -->
         <h6 class="mb-2">
           <i class="fas fa-envelope me-1"></i> Per E-Mail versenden
-          <span class="badge bg-azure-lt ms-1">{{ mailable | length }}</span>
+          <span class="badge bg-azure-lt ms-1">{{ mail_bundles | length if mail_bundles else mailable | length }}</span>
         </h6>
-        {% if mailable %}
+        {% if mail_bundles %}
+        <p class="text-muted small mb-2">
+          <strong>Eine E-Mail je Kontakt:</strong> alle versandbereiten Entwürfe eines Kontakts
+          {%- if run.linked_runs %} (auch die verknüpften {{ inst_title }}en){% endif %} gehen als
+          Anhänge in einer E-Mail. Danach stehen sie auf „Versendet“, die Dokumente sind gespeichert.
+        </p>
+        <div class="d-flex align-items-center flex-wrap gap-3 mb-2">
+          <button type="button" class="btn btn-primary btn-sm" id="br-bundle-start">
+            <i class="fas fa-paper-plane me-1"></i> {{ mail_bundles | length }} E-Mails versenden
+          </button>
+          <div class="form-check mb-0">
+            <input type="checkbox" class="form-check-input" id="br-bundle-testmode">
+            <label class="form-check-label text-warning small" for="br-bundle-testmode">
+              <i class="fas fa-flask me-1"></i> Testmodus (an Admin-Adresse, max. 3 Mails)
+            </label>
+          </div>
+        </div>
+        <div class="table-responsive" style="max-height:240px;overflow:auto">
+          <table class="table table-sm mb-0">
+            <thead><tr><th>Kontakt</th><th>Belege</th><th>E-Mail</th><th style="width:60px">Status</th></tr></thead>
+            <tbody>
+              {% for b in mail_bundles %}
+              <tr id="br-mb-{{ b.customer.id }}" data-id="{{ b.customer.id }}"
+                  data-ids="{{ b.invoices | map(attribute='id') | join(',') }}">
+                <td>{{ b.customer.name }}</td>
+                <td class="small">{% for inv in b.invoices %}<code>{{ inv.invoice_number }}</code>{{ ', ' if not loop.last }}{% endfor %}</td>
+                <td>{{ b.customer.email }}</td>
+                <td><i class="fas fa-clock text-muted" id="br-mb-icon-{{ b.customer.id }}"></i></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% elif mailable %}
         <p class="text-muted small mb-2">
           Versendet alle versandbereiten Entwürfe, deren Kunde „Schriftverkehr per E-Mail" aktiviert hat.
           Nach dem Versand wird die Rechnung auf „Versendet" gesetzt und das Dokument gespeichert.
@@ -582,6 +640,26 @@
   }
   const mailStartBtn = document.getElementById('br-mail-start');
   if (mailStartBtn) mailStartBtn.addEventListener('click', brStartMail);
+
+  // ---------- Versenden: eine E-Mail je Kontakt (Sammelversand) ----------
+  async function brStartBundle() {
+    const btn = document.getElementById('br-bundle-start');
+    if (!btn) return;
+    btn.disabled = true;
+    const rows = Array.from(document.querySelectorAll('#versendenModal tr[id^="br-mb-"]'));
+    const ids = {};
+    rows.forEach(tr => { ids[tr.dataset.id] = tr.dataset.ids; });
+    const res = await wkSerialSend({
+      rows: rows.map(tr => ({ id: tr.dataset.id, icon: document.getElementById('br-mb-icon-' + tr.dataset.id) })),
+      url: id => '{{ url_for("invoices.send_email_bundle") }}',
+      params: id => ({ invoice_ids: ids[id] }),
+      csrf: BR_CSRF,
+      testMode: document.getElementById('br-bundle-testmode').checked,
+    });
+    if (res.sent) brVersandDirty = true;
+  }
+  const bundleStartBtn = document.getElementById('br-bundle-start');
+  if (bundleStartBtn) bundleStartBtn.addEventListener('click', brStartBundle);
 
   // ---------- Versenden: Post-Download in 100er-Gruppen ----------
   function brBuildPostList() {

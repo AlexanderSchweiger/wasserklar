@@ -1,0 +1,43 @@
+{# Modal-Body: Teilbetragsplan bearbeiten. #}
+{% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+<div class="mb-2">
+  <div class="fw-semibold">{{ plan.property.label() }}</div>
+  <div class="text-secondary small">{{ plan.customer.name }} · {{ plan.billing_period.name }}
+    · Jahresbetrag laut Grundlage {{ plan.annual_amount|de_number(2) }} €</div>
+</div>
+<div class="mb-3">
+  <label class="form-label">{{ word }} (brutto)</label>
+  <div class="input-group">
+    <input type="text" name="installment_amount" class="form-control" inputmode="decimal"
+           value="{{ plan.installment_amount|de_number(2) }}">
+    <span class="input-group-text">€</span>
+  </div>
+  <div class="form-hint">Gilt für alle noch nicht ausgestellten Fälligkeiten. Ein geänderter
+    Betrag bleibt beim Neuberechnen erhalten (z. B. wenn das Mitglied einen geringeren
+    Verbrauch glaubhaft macht).</div>
+  {% if plan.manual %}
+  <label class="form-check mt-2">
+    <input class="form-check-input" type="checkbox" name="reset_manual" value="1">
+    <span class="form-check-label">Beim nächsten Berechnen wieder automatisch ermitteln</span>
+  </label>
+  {% endif %}
+</div>
+<div class="mb-3">
+  <label class="form-label">Fälligkeiten</label>
+  {% for e in plan.entries %}
+  {% set inv = e.active_invoice %}
+  <label class="form-check">
+    <input class="form-check-input" type="checkbox" name="skip_seq" value="{{ e.seq }}"
+           {{ 'checked' if e.skipped }} {{ 'disabled' if inv }}>
+    <span class="form-check-label">
+      {{ e.seq }}. am {{ e.due_date.strftime('%d.%m.%Y') }} – {{ e.amount|de_number(2) }} €
+      {% if inv %}<span class="text-secondary">(ausgestellt: {{ inv.invoice_number }})</span>
+      {% else %}<span class="text-secondary">auslassen</span>{% endif %}
+    </span>
+  </label>
+  {% endfor %}
+</div>
+<div class="mb-1">
+  <label class="form-label">Notiz</label>
+  <textarea name="notes" class="form-control" rows="2">{{ plan.notes or '' }}</textarea>
+</div>

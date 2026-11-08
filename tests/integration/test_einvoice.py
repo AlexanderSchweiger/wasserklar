@@ -374,3 +374,59 @@ class TestRulesAndService:
             assert einvoice_xml(inv) is None
             status = invoice_status(inv)
         assert not status.enabled and not status.ok
+
+
+class TestInstallments:
+    """G13–G15: Teilrechnung (386), Jahresabrechnung mit Gegenverrechnung
+    (negative Zeilen), Jahresabrechnung mit Guthaben (negativer Betrag)."""
+
+    def _installment(self, number="2026-00101"):
+        from app.installments.terms import KEY_INSTALLMENT
+        return _invoice([
+            _item("1. Teilbetrag 2025/26 – Wasserverbrauch", "1", "Pauschal", "60.00", "7",
+                  charge_key=KEY_INSTALLMENT),
+            _item("1. Teilbetrag 2025/26 – Grundgebühr", "1", "Pauschal", "15.00", "7",
+                  charge_key=KEY_INSTALLMENT),
+        ], number=number, kind=Invoice.KIND_INSTALLMENT)
+
+    def test_g13_installment_type_386(self, app):
+        _seller(DE_SELLER)
+        e, tree = _xml(self._installment(), "G13_teilrechnung")
+        assert e.type_code == "386"
+        assert _text(tree, "//rsm:ExchangedDocument/ram:TypeCode") == "386"
+
+    def test_g13_xrechnung_partial_326(self, app):
+        from app.einvoice.model import PROFILE_XRECHNUNG
+        _seller(DE_SELLER)
+        e = build_einvoice(self._installment(), profile=PROFILE_XRECHNUNG)
+        assert e.type_code == "326"
+
+    def _settlement(self, regular, number):
+        from app.installments.settlement import deduct_into
+        inst = self._installment(number="2026-00101")
+        inv = _invoice(regular, number=number, customer=inst.customer)
+        deduct_into(inv, [inst])
+        db.session.commit()
+        return inv
+
+    def test_g14_settlement_negative_lines(self, app):
+        _seller(DE_SELLER)
+        inv = self._settlement([
+            _item("Wasserverbrauch 2025/26", "40", "m³", "2.00", "7"),
+            _item("Grundgebühr", "1", "Pauschal", "20.00", "7"),
+        ], "2026-00142")
+        e, tree = _xml(inv, "G14_jahresabrechnung_nachzahlung")
+        assert e.type_code == "380"
+        assert e.grand_total == inv.total_amount == Decimal("26.75")
+        assert any(line.quantity < 0 for line in e.lines)
+
+    def test_g15_settlement_credit(self, app):
+        _seller(DE_SELLER)
+        inv = self._settlement([
+            _item("Wasserverbrauch 2025/26", "20", "m³", "2.00", "7"),
+            _item("Grundgebühr", "1", "Pauschal", "20.00", "7"),
+        ], "2026-00143")
+        assert inv.total_amount < 0
+        e, tree = _xml(inv, "G15_jahresabrechnung_guthaben")
+        assert e.grand_total == inv.total_amount
+        assert "Guthaben" in e.payment_terms

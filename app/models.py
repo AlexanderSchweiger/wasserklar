@@ -312,6 +312,10 @@ class Customer(db.Model):
     account_holder = db.Column(db.String(70), nullable=True)
     mandate_reference = db.Column(db.String(35), unique=True, nullable=True)
     mandate_signed_on = db.Column(db.Date, nullable=True)
+    # Teilrechnungen (app/installments/): True = der Kontakt zahlt nur mit der
+    # Jahresabrechnung und bekommt keinen Teilbetragsplan.
+    installment_opt_out = db.Column(db.Boolean, nullable=False, default=False,
+                                    server_default=sa.false())
     phone = db.Column(db.String(50))
     member_since = db.Column(db.Date)
     notes = db.Column(db.Text)
@@ -1137,6 +1141,12 @@ class ReadingCorrection(db.Model):
     STATUS_APPLIED = "Verrechnet"
     ALL_STATUSES = [STATUS_OPEN, STATUS_PARTIAL, STATUS_APPLIED]
 
+    # ``estimate`` = Schaetz-Korrektur bzw. Kappungs-Uebertrag (Bestand),
+    # ``credit_carry`` = Guthaben einer Jahresabrechnung, das mit den naechsten
+    # Teilrechnungen verrechnet wird (app/installments/settlement.py).
+    KIND_ESTIMATE = "estimate"
+    KIND_CREDIT_CARRY = "credit_carry"
+
     id = db.Column(db.Integer, primary_key=True)
     customer_id = db.Column(
         db.Integer, db.ForeignKey("customers.id"), nullable=False, index=True)
@@ -1169,6 +1179,8 @@ class ReadingCorrection(db.Model):
     label = db.Column(db.String(100), nullable=True)                     # Positionstext-Snapshot
     # Mindestabnahme, die den Korrekturbetrag veraendert hat (NULL = keine Wirkung).
     min_quantity = db.Column(db.Numeric(12, 3), nullable=True)
+    kind = db.Column(db.String(20), nullable=False, default=KIND_ESTIMATE,
+                     server_default=db.text("'estimate'"))
     amount = db.Column(db.Numeric(10, 2), nullable=False)                # signed netto
     remaining_amount = db.Column(db.Numeric(10, 2), nullable=False)      # signed netto, noch offen
     status = db.Column(
@@ -2171,7 +2183,8 @@ class BillingRun(db.Model):
     tariff_base_fee_label = db.Column(db.String(100), nullable=True)
     tariff_additional_fee = db.Column(db.Numeric(10, 2), nullable=True)
     tariff_additional_fee_label = db.Column(db.String(100), nullable=True)
-    tariff_price_per_m3 = db.Column(db.Numeric(10, 4), nullable=False)
+    # NULL bei Teilrechnungslaeufen (kein Verbrauchspreis im Spiel).
+    tariff_price_per_m3 = db.Column(db.Numeric(10, 4), nullable=True)
     tariff_notes = db.Column(db.Text, nullable=True)
     # Snapshot ALLER Tarifpositionen als JSON (Liste von Dicts: key, label,
     # calc_type, amount, tax_rate, account_id, is_levy). Laeufe vor den
@@ -2188,6 +2201,20 @@ class BillingRun(db.Model):
     # hier nur als Metadatum fuer die Lauf-Uebersicht gehalten.
     project_id = db.Column(db.Integer, db.ForeignKey("projects.id"), nullable=True)
 
+    # Art des Laufs: ``annual`` = Verbrauchsabrechnung (Jahresrechnung bzw.
+    # Jahresabrechnung mit Gegenverrechnung), ``installment`` = Teilrechnungen
+    # aus den Teilbetragsplaenen (app/installments/). Wer Tarifdaten aus Laeufen
+    # liest, nimmt nur ``annual``.
+    KIND_ANNUAL = "annual"
+    KIND_INSTALLMENT = "installment"
+    run_kind = db.Column(db.String(20), nullable=False, default=KIND_ANNUAL,
+                         server_default=db.text("'annual'"))
+    # „Gemeinsam versenden mit“: ein Teilrechnungslauf, der zu einem
+    # Jahresabrechnungslauf gehoert (eine E-Mail je Kontakt fuer beide).
+    source_run_id = db.Column(
+        db.Integer, db.ForeignKey("billing_runs.id", ondelete="SET NULL"),
+        nullable=True, index=True)
+
     SORT_ORDER_CHOICES = [
         ("customer_name",   "Kundenname"),
         ("customer_number", "Kundennummer"),
@@ -2199,6 +2226,13 @@ class BillingRun(db.Model):
     invoices = db.relationship("Invoice", backref="billing_run", lazy="dynamic")
     billing_period = db.relationship("BillingPeriod")
     project = db.relationship("Project", foreign_keys=[project_id])
+    source_run = db.relationship(
+        "BillingRun", remote_side=[id], foreign_keys=[source_run_id],
+        backref=db.backref("linked_runs", lazy="select"))
+
+    @property
+    def is_installment_run(self):
+        return self.run_kind == self.KIND_INSTALLMENT
 
     @property
     def tariff_components_snapshot(self):
@@ -2244,6 +2278,137 @@ class BillingRun(db.Model):
         return f"<BillingRun {self.billing_period_id} {self.created_at}>"
 
 
+class InstallmentPlan(db.Model):
+    """Teilbetragsplan einer Liegenschaft fuer eine Abrechnungsperiode
+    (Akonto/Abschlag, app/installments/). Je (Periode, Liegenschaft,
+    Rechnungsempfaenger) hoechstens einer.
+
+    ``annual_amount`` = erwarteter Jahresbetrag (brutto) laut Grundlage,
+    ``installment_amount`` = gerundeter Teilbetrag. ``composition`` (JSON-Text)
+    haelt die Anteile je Gebuehrenart/USt-Satz — bewusst ueber ``charge_key``
+    statt Konto-ID, damit der Datenexport keine FKs im JSON umschreiben muss;
+    das Konto kommt beim Erstellen aus ``tariff``.
+    """
+    __tablename__ = "installment_plans"
+
+    BASIS_READING = "reading"     # Verbrauch der Vorperiode (Ablesung)
+    BASIS_AVERAGE = "average"     # Durchschnitt vergleichbarer Objekte
+    BASIS_NONE = "none"           # kein Verbrauch bekannt (nur Pauschalen)
+    BASIS_MANUAL = "manual"       # Betrag von Hand
+
+    id = db.Column(db.Integer, primary_key=True)
+    billing_period_id = db.Column(db.Integer, db.ForeignKey("billing_periods.id"),
+                                  nullable=False, index=True)
+    property_id = db.Column(db.Integer, db.ForeignKey("properties.id"),
+                            nullable=False, index=True)
+    customer_id = db.Column(db.Integer, db.ForeignKey("customers.id"),
+                            nullable=False, index=True)
+    tariff_id = db.Column(db.Integer, db.ForeignKey("water_tariffs.id", ondelete="SET NULL"),
+                          nullable=True)
+    basis_period_id = db.Column(
+        db.Integer, db.ForeignKey("billing_periods.id", ondelete="SET NULL"), nullable=True)
+    basis_consumption = db.Column(db.Numeric(12, 3), nullable=True)
+    basis_source = db.Column(db.String(20), nullable=False, default=BASIS_READING,
+                             server_default=db.text("'reading'"))
+    annual_amount = db.Column(db.Numeric(10, 2), nullable=False, default=0)
+    installment_amount = db.Column(db.Numeric(10, 2), nullable=False, default=0)
+    composition = db.Column(db.Text, nullable=True)
+    manual = db.Column(db.Boolean, nullable=False, default=False,
+                       server_default=sa.false())
+    notes = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"),
+                              nullable=True)
+
+    __table_args__ = (
+        db.UniqueConstraint("billing_period_id", "property_id", "customer_id",
+                            name="uq_installment_plans_period_property_customer"),
+    )
+
+    @property
+    def composition_rows(self):
+        """Zusammensetzung als Liste von Dicts (``share``/``tax_rate`` Decimal)."""
+        import json
+        if not self.composition:
+            return []
+        try:
+            rows = json.loads(self.composition)
+        except (TypeError, ValueError):
+            return []
+        out = []
+        for r in rows:
+            r = dict(r)
+            for f in ("share", "tax_rate"):
+                if r.get(f) is not None:
+                    r[f] = Decimal(str(r[f]))
+            out.append(r)
+        return out
+
+    @property
+    def active_entries(self):
+        return [e for e in self.entries if not e.skipped]
+
+    @property
+    def has_issued(self):
+        return any(e.active_invoice is not None for e in self.entries)
+
+    def __repr__(self):
+        return f"<InstallmentPlan p={self.billing_period_id} prop={self.property_id}>"
+
+    # Beziehungen am Ende: ``property`` wuerde sonst den Dekorator ueberdecken.
+    billing_period = db.relationship("BillingPeriod", foreign_keys=[billing_period_id])
+    basis_period = db.relationship("BillingPeriod", foreign_keys=[basis_period_id])
+    property = db.relationship("Property")
+    customer = db.relationship("Customer")
+    tariff = db.relationship("WaterTariff")
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+    entries = db.relationship(
+        "InstallmentPlanEntry", back_populates="plan", cascade="all, delete-orphan",
+        order_by="InstallmentPlanEntry.seq")
+
+
+class InstallmentPlanEntry(db.Model):
+    """Eine Faelligkeit eines Teilbetragsplans. Die Teilrechnung zeigt per
+    ``Invoice.installment_entry_id`` hierher; der Status ist abgeleitet."""
+    __tablename__ = "installment_plan_entries"
+
+    STATE_PLANNED = "planned"
+    STATE_ISSUED = "issued"
+    STATE_SKIPPED = "skipped"
+
+    id = db.Column(db.Integer, primary_key=True)
+    plan_id = db.Column(db.Integer, db.ForeignKey("installment_plans.id", ondelete="CASCADE"),
+                        nullable=False, index=True)
+    seq = db.Column(db.SmallInteger, nullable=False)
+    due_date = db.Column(db.Date, nullable=False)
+    amount = db.Column(db.Numeric(10, 2), nullable=False)
+    skipped = db.Column(db.Boolean, nullable=False, default=False,
+                        server_default=sa.false())
+
+    plan = db.relationship("InstallmentPlan", back_populates="entries")
+    invoices = db.relationship("Invoice", back_populates="installment_entry",
+                               foreign_keys="Invoice.installment_entry_id")
+
+    @property
+    def active_invoice(self):
+        """Die gueltige (nicht stornierte) Teilrechnung dieser Faelligkeit."""
+        for inv in self.invoices:
+            if inv.status != Invoice.STATUS_CANCELLED:
+                return inv
+        return None
+
+    @property
+    def state(self):
+        if self.active_invoice is not None:
+            return self.STATE_ISSUED
+        if self.skipped:
+            return self.STATE_SKIPPED
+        return self.STATE_PLANNED
+
+    def __repr__(self):
+        return f"<InstallmentPlanEntry plan={self.plan_id} #{self.seq}>"
+
+
 # ---------------------------------------------------------------------------
 # Rechnungen
 # ---------------------------------------------------------------------------
@@ -2275,6 +2440,10 @@ class Invoice(EmailTrackableMixin, db.Model):
     KIND_STANDARD = "standard"
     KIND_FINAL_SETTLEMENT = "final_settlement"
     KIND_CREDIT_NOTE = "credit_note"
+    # 'installment' = Teilrechnung (Akonto/Abschlag) aus einem Teilbetragsplan
+    # (app/installments/). Die Jahresabrechnung (``standard``) verrechnet sie
+    # ueber Gegenverrechnungs-Zeilen (``InvoiceItem.deducts_invoice_id``).
+    KIND_INSTALLMENT = "installment"
 
     SERVICE_TYPE_DELIVERY = "delivery"
     SERVICE_TYPE_SERVICE = "service"
@@ -2343,6 +2512,15 @@ class Invoice(EmailTrackableMixin, db.Model):
     payment_method = db.Column(db.String(20), nullable=True)
     debit_mandate_reference = db.Column(db.String(35), nullable=True)
     debit_iban = db.Column(db.String(34), nullable=True)
+    # Teilrechnung: die Faelligkeit des Teilbetragsplans, aus der sie entstand.
+    installment_entry_id = db.Column(
+        db.Integer, db.ForeignKey("installment_plan_entries.id", ondelete="SET NULL"),
+        nullable=True, index=True)
+    # Sammelversand: dieser Beleg ging als Anhang in der E-Mail des Hauptbelegs
+    # (der Zustellstatus steht dort, siehe ``mail_status_invoice``).
+    mailed_with_invoice_id = db.Column(
+        db.Integer, db.ForeignKey("invoices.id", ondelete="SET NULL"),
+        nullable=True, index=True)
     notes = db.Column(db.Text)
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -2352,6 +2530,7 @@ class Invoice(EmailTrackableMixin, db.Model):
     # order_by: Postgres liefert ohne ORDER BY keine feste Reihenfolge — die
     # Positionen erscheinen auf Rechnung, Word und E-Rechnung in Anlage-Reihenfolge.
     items = db.relationship("InvoiceItem", backref="invoice", lazy="select",
+                            foreign_keys="InvoiceItem.invoice_id",
                             cascade="all, delete-orphan", order_by="InvoiceItem.id")
     # Verbrauchsnachweis: die beim Entstehen eingefrorenen Zaehlerstaende
     # (app/invoices/meter_statement.py).
@@ -2366,9 +2545,15 @@ class Invoice(EmailTrackableMixin, db.Model):
     # selbst wieder storniert werden kann (dann folgt ggf. eine zweite) —
     # ``active_credit_note`` liefert die eine gueltige.
     cancels_invoice = db.relationship(
-        "Invoice", remote_side=[id],
-        backref=db.backref("credit_notes", lazy="select"),
+        "Invoice", remote_side=[id], foreign_keys=[cancels_invoice_id],
+        backref=db.backref("credit_notes", lazy="select",
+                           foreign_keys="Invoice.cancels_invoice_id"),
     )
+    installment_entry = db.relationship(
+        "InstallmentPlanEntry", back_populates="invoices",
+        foreign_keys=[installment_entry_id])
+    mailed_with = db.relationship(
+        "Invoice", remote_side=[id], foreign_keys=[mailed_with_invoice_id])
     # Polymorphe E-Mail-Events (kein FK mehr → viewonly, Aufraeumen explizit).
     # Tiebreaker auf id desc — siehe Kommentar in invoices.email_events-Route.
     email_events = db.relationship(
@@ -2522,12 +2707,40 @@ class Invoice(EmailTrackableMixin, db.Model):
         return refund_amount_for(self)
 
     @property
+    def is_installment(self):
+        """True fuer Teilrechnungen (Akonto/Abschlag)."""
+        return self.invoice_kind == self.KIND_INSTALLMENT
+
+    @property
+    def deduction_items(self):
+        """Gegenverrechnungs-Zeilen (abgezogene Teilrechnungen)."""
+        return [i for i in self.items if i.deducts_invoice_id]
+
+    @property
+    def has_deductions(self):
+        return any(i.deducts_invoice_id for i in self.items)
+
+    @property
+    def mail_status_invoice(self):
+        """Beleg, dessen Zustellstatus fuer diesen gilt: der Hauptbeleg einer
+        Sammel-E-Mail, sonst der Beleg selbst."""
+        if self.mailed_with_invoice_id and self.mailed_with is not None:
+            return self.mailed_with
+        return self
+
+    @property
     def document_title(self):
         """Beleg-Bezeichnung fuer PDF/Word/E-Mail („Rechnung"/„Gutschrift"/…)."""
         if self.invoice_kind == self.KIND_CREDIT_NOTE:
             return "Gutschrift"
         if self.invoice_kind == self.KIND_FINAL_SETTLEMENT:
             return "Schlussrechnung"
+        if self.invoice_kind == self.KIND_INSTALLMENT:
+            from app.installments.terms import installment_title
+            return installment_title()
+        if self.has_deductions:
+            from app.installments.terms import annual_settlement_title
+            return annual_settlement_title()
         return "Rechnung"
 
     def __repr__(self):
@@ -2708,6 +2921,13 @@ class InvoiceItem(db.Model):
     is_dunning_fee = db.Column(db.Integer, default=0, nullable=False)
     dunning_notice_id = db.Column(db.Integer, db.ForeignKey("dunning_notices.id"), nullable=True)
 
+    # Gegenverrechnung (app/installments/settlement.py): diese Zeile zieht die
+    # genannte Teilrechnung von der Jahres-/Schlussrechnung ab (negativer
+    # Spiegel ihrer Teilbetrags-Zeilen: gleiches Konto, Projekt, USt-Satz).
+    deducts_invoice_id = db.Column(
+        db.Integer, db.ForeignKey("invoices.id", ondelete="SET NULL"),
+        nullable=True, index=True)
+
     # Nachkommastellen des Einzelpreises — eingefroren beim Entstehen der
     # Zeile (Gebührenart bzw. wie im Positions-Editor eingetippt), damit eine
     # spaetere Umstellung den Beleg nicht veraendert. NULL = Altbeleg.
@@ -2726,6 +2946,7 @@ class InvoiceItem(db.Model):
 
     account = db.relationship("Account", foreign_keys=[account_id])
     project = db.relationship("Project", foreign_keys=[project_id])
+    deducts_invoice = db.relationship("Invoice", foreign_keys=[deducts_invoice_id])
 
     @property
     def price_places(self):

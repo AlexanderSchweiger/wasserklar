@@ -363,8 +363,35 @@ def generate_docx(invoice, wg: dict, design: dict | None = None,
     heading.runs[0].font.color.rgb = heading_rgb
     heading.runs[0].font.name = font_name
 
+    # ── Teilrechnungen (app/installments/settlement.summary) ──────────────
+    from app.installments.settlement import display_items, summary as _inst_summary
+    inst = _inst_summary(invoice)
+
     # ── Einleitungstext ───────────────────────────────────────────────────
-    if is_credit:
+    if inst is not None:
+        p_intro = doc.add_paragraph()
+        place = (invoice.property.address_display() or invoice.property.label()
+                 if invoice.property else "")
+        period_name = invoice.billing_period.name if invoice.billing_period else ""
+        if inst["kind"] == "installment":
+            p_intro.add_run("Wir schreiben Ihnen ")
+            if place:
+                p_intro.add_run("für das Objekt ")
+                p_intro.add_run(f"„{place}”").bold = True
+                p_intro.add_run(" ")
+            p_intro.add_run(f"den {inst['seq']}. {inst['word']}"
+                            + (f" von {inst['count']}" if inst.get("count") else "")
+                            + f" für den Abrechnungszeitraum {period_name} als Vorauszahlung "
+                              "auf die Jahresabrechnung vor:")
+        else:
+            p_intro.add_run("Wir rechnen ")
+            if place:
+                p_intro.add_run("für das Objekt ")
+                p_intro.add_run(f"„{place}”").bold = True
+                p_intro.add_run(" ")
+            p_intro.add_run(f"den Abrechnungszeitraum {period_name} ab und verrechnen die "
+                            f"vorgeschriebenen {inst['words']}:")
+    elif is_credit:
         p_intro = doc.add_paragraph()
         p_intro.add_run("Wir stornieren ")
         if original is not None:
@@ -389,9 +416,10 @@ def generate_docx(invoice, wg: dict, design: dict | None = None,
 
     # ── Positionen-Tabelle ────────────────────────────────────────────────
     # Mahngebuehren sind Positionen, gehoeren aber nicht zur Rechnung (Summen ohne sie).
-    items = [item for item in invoice.items if not item.is_dunning_fee]
+    items = display_items(invoice)
     tax_summary = invoice.tax_breakdown  # {rate: {"net", "tax"}}
     has_tax = bool(tax_summary)
+    settlement_view = inst is not None and inst["kind"] == "settlement"
     col_count = 5  # Beschreibung / Menge / Einheit / Einzelpreis / Betrag
 
     tbl = doc.add_table(rows=1, cols=col_count)
@@ -430,7 +458,21 @@ def generate_docx(invoice, wg: dict, design: dict | None = None,
             run.font.size = Pt(10)
 
     # Summenzeilen
-    if has_tax:
+    if settlement_view:
+        reg = inst["regular"]
+        if reg["taxes"]:
+            row_net = tbl.add_row().cells
+            row_net[0].merge(row_net[col_count - 2])
+            _right_align_cell(row_net[0], "Nettobetrag")
+            _right_align_cell(row_net[col_count - 1], f"{_de_fmt(reg['net'], 2)} €")
+            for t in reg["taxes"]:
+                row_tax = tbl.add_row().cells
+                row_tax[0].merge(row_tax[col_count - 2])
+                _right_align_cell(row_tax[0], f"zzgl. USt. {_de_fmt(t['rate'], 0)} %")
+                _right_align_cell(row_tax[col_count - 1], f"{_de_fmt(t['tax'], 2)} €")
+        _add_total_row(tbl, col_count, reg["gross"], "Summe Jahresabrechnung", heading_rgb)
+        _add_installment_settlement(doc, inst, font_name=font_name, heading_rgb=heading_rgb)
+    elif has_tax:
         # Nettosumme
         row_net = tbl.add_row().cells
         row_net[0].merge(row_net[col_count - 2])
@@ -486,8 +528,15 @@ def generate_docx(invoice, wg: dict, design: dict | None = None,
     sepa_debit = None if is_credit else debit_notice(invoice)
 
     p_pay = payment_cell.paragraphs[0]
+    credit_view = settlement_view and inst["is_credit"]
+    nothing_due = (inst is not None and not credit_view
+                   and Decimal(str(invoice.total_amount or 0)) <= 0)
     if is_credit:
         pay_label = "Rückzahlung"
+    elif credit_view:
+        pay_label = "Guthaben"
+    elif nothing_due:
+        pay_label = "Zahlung"
     elif sepa_debit:
         pay_label = sepa_debit["title"]
     else:
@@ -514,6 +563,10 @@ def generate_docx(invoice, wg: dict, design: dict | None = None,
                 "Es ergibt sich kein Rückzahlungsbetrag — die stornierte Rechnung "
                 "war noch nicht bezahlt. Bitte betrachten Sie die ursprüngliche "
                 "Zahlungsaufforderung als gegenstandslos.")
+    elif credit_view:
+        payment_cell.add_paragraph(_installment_credit_text(inst, invoice))
+    elif nothing_due:
+        payment_cell.add_paragraph("Es ist nichts zu zahlen.")
     elif sepa_debit:
         payment_cell.add_paragraph(sepa_debit["text"])
         ids = []
@@ -540,6 +593,9 @@ def generate_docx(invoice, wg: dict, design: dict | None = None,
             f"Empfänger: {wg.get('account_holder') or wg.get('name', '')}")
         p_ref = payment_cell.add_paragraph("Verwendungszweck: ")
         p_ref.add_run(invoice.invoice_number).bold = True
+
+    if inst is not None:
+        _add_installment_schedule(doc, inst)
 
     doc.add_paragraph()  # Abstand
 
@@ -687,3 +743,69 @@ def merge_docx_files(sources: list) -> bytes:
     buf = io.BytesIO()
     merged.save(buf)
     return buf.getvalue()
+
+
+def _installment_credit_text(inst, invoice):
+    """Guthaben-Satz wie im PDF (``_installment_blocks.inst_credit_text``)."""
+    amount = f"{_de_fmt(inst['credit'], 2)} €"
+    if inst["credit_mode"] == "offset":
+        text = f"Ihr Guthaben von {amount} verrechnen wir mit Ihrem nächsten {inst['word']}"
+        if inst.get("next_plan"):
+            text += f" (fällig am {inst['next_plan']['entries'][0]['due'].strftime('%d.%m.%Y')})"
+        return text + ". Sie brauchen nichts zu überweisen."
+    if invoice.customer.iban:
+        return f"Ihr Guthaben von {amount} überweisen wir auf Ihr Konto {invoice.customer.iban}."
+    return (f"Ihr Guthaben von {amount} überweisen wir auf das uns bekannte Konto – bitte "
+            "teilen Sie uns Ihre Bankverbindung mit, falls sie sich geändert hat.")
+
+
+def _add_installment_settlement(doc, inst, *, font_name, heading_rgb):
+    """Block „Gegenverrechnung“ (wie im PDF)."""
+    p = doc.add_paragraph()
+    run = p.add_run(f"Gegenverrechnung der vorgeschriebenen {inst['words']}")
+    run.bold = True
+    run.font.color.rgb = heading_rgb
+    tbl = doc.add_table(rows=1, cols=5)
+    tbl.style = "Table Grid"
+    for i, hdr in enumerate(["Beleg", "fällig", "netto", "USt", "brutto"]):
+        tbl.rows[0].cells[i].text = hdr
+    reg = inst["regular"]
+    rows = [("Summe Jahresabrechnung", "", reg["net"], reg["tax"], reg["gross"])]
+    for d in inst["deductions"]:
+        inv = d["invoice"]
+        rows.append((f"abzüglich {inv.document_title} {inv.invoice_number}" if inv else "abzüglich",
+                     inv.due_date.strftime("%d.%m.%Y") if inv and inv.due_date else "",
+                     -d["net"], -d["tax"], -d["gross"]))
+    rows.append(("Guthaben" if inst["is_credit"] else "Nachzahlung", "",
+                 reg["net"] - inst["deducted"]["net"], reg["tax"] - inst["deducted"]["tax"],
+                 inst["balance"]))
+    for label, due, net, tax, gross in rows:
+        cells = tbl.add_row().cells
+        cells[0].text = label
+        cells[1].text = due
+        _right_align_cell(cells[2], f"{_de_fmt(net, 2)} €")
+        _right_align_cell(cells[3], f"{_de_fmt(tax, 2)} €")
+        _right_align_cell(cells[4], f"{_de_fmt(gross, 2)} €")
+    if inst["open_installments"]:
+        nums = ", ".join(f"{d['invoice'].invoice_number} ({_de_fmt(d['open'], 2)} €)"
+                         for d in inst["open_installments"])
+        doc.add_paragraph(
+            f"Noch nicht bezahlt: {nums}. Diese {inst['words']} bleiben offen; insgesamt sind "
+            f"daher {_de_fmt(inst['due_overall'], 2)} € zu zahlen.")
+
+
+def _add_installment_schedule(doc, inst):
+    """Neuer Teilbetragsplan bzw. weitere Faelligkeiten (wie im PDF)."""
+    if inst["kind"] == "settlement" and inst.get("next_plan"):
+        np_ = inst["next_plan"]
+        p = doc.add_paragraph()
+        p.add_run(f"Ihre {inst['words']} {np_['period'].name}: ").bold = True
+        p.add_run("; ".join(f"{e['seq']}. am {e['due'].strftime('%d.%m.%Y')} "
+                            f"{_de_fmt(e['amount'], 2)} €" for e in np_["entries"]))
+    elif inst["kind"] == "installment" and inst.get("others"):
+        doc.add_paragraph(
+            f"Weitere {inst['words']}: "
+            + ", ".join(f"{e['due'].strftime('%d.%m.%Y')} ({_de_fmt(e['amount'], 2)} €)"
+                        for e in inst["others"])
+            + f". Die Jahresabrechnung rechnet den tatsächlichen Verbrauch ab und zieht die "
+              f"{inst['words']} ab.")

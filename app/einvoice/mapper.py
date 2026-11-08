@@ -46,6 +46,11 @@ DEFAULT_EXEMPT_REASON = "Nicht steuerbarer bzw. steuerfreier Umsatz"
 
 TYPE_INVOICE = "380"
 TYPE_CREDIT_NOTE = "381"
+# Teilrechnung (Akonto/Abschlag): UNTDID 1001 „Prepayment invoice“ — wird von der
+# Jahresabrechnung abgezogen. XRechnung (BR-DE-17) kennt 386 nicht, dort 326
+# „Partial invoice“ (Teilrechnung).
+TYPE_PREPAYMENT = "386"
+TYPE_PARTIAL = "326"
 PAYMENT_MEANS_SEPA_TRANSFER = "58"
 PAYMENT_MEANS_SEPA_DIRECT_DEBIT = "59"
 
@@ -275,6 +280,8 @@ def _exemption_reason(vat_liable, legal):
 
 
 def _payment_terms(invoice):
+    if not invoice.is_credit_note and Decimal(str(invoice.total_amount or 0)) < 0:
+        return "Guthaben aus der Abrechnung. Der Betrag wird erstattet bzw. verrechnet."
     if invoice.is_credit_note:
         original = invoice.cancels_invoice
         ref = f" zur Rechnung {original.invoice_number}" if original else ""
@@ -286,6 +293,16 @@ def _payment_terms(invoice):
     if invoice.due_date:
         return f"Zahlbar bis {invoice.due_date.strftime('%d.%m.%Y')} ohne Abzug."
     return "Zahlbar sofort ohne Abzug."
+
+
+def _type_code(invoice, profile):
+    """BT-3: Gutschrift 381, Teilrechnung 386 (XRechnung 326), sonst 380."""
+    if invoice.is_credit_note:
+        return TYPE_CREDIT_NOTE
+    if invoice.is_installment:
+        from app.einvoice.model import PROFILE_XRECHNUNG
+        return TYPE_PARTIAL if profile == PROFILE_XRECHNUNG else TYPE_PREPAYMENT
+    return TYPE_INVOICE
 
 
 def build_einvoice(invoice, profile=PROFILE_EN16931):
@@ -339,7 +356,7 @@ def build_einvoice(invoice, profile=PROFILE_EN16931):
     return EInvoice(
         number=invoice.invoice_number,
         issue_date=invoice.date,
-        type_code=TYPE_CREDIT_NOTE if credit else TYPE_INVOICE,
+        type_code=_type_code(invoice, profile),
         currency="EUR",
         seller=(_seller(invoice.customer.supplier_number, peppol=True)
                 if profile == PROFILE_PEPPOL_UBL else _seller()),

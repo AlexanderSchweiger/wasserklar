@@ -1,0 +1,64 @@
+{# Teilrechnungen (Akonto/Abschlag) — gespeichert von app/installments/terms.save_from_form,
+   nur mit dem Marker unten. #}
+{% set inst = installment_settings %}
+<div class="card mb-3" id="card-installments">
+  <div class="card-header">
+    <h3 class="card-title"><i class="fas fa-calendar-alt me-1"></i> Teilrechnungen (Akonto)</h3>
+  </div>
+  <div class="card-body">
+    <input type="hidden" name="installment_fields" value="1">
+    <label class="form-check form-switch mb-2">
+      <input class="form-check-input" type="checkbox" name="installments_enabled" value="1"
+             {{ 'checked' if inst.enabled }}>
+      <span class="form-check-label">Teilrechnungen verwenden</span>
+    </label>
+    <div class="form-text mb-3">
+      Die Mitglieder zahlen während des Jahres Teilbeträge, berechnet aus dem Verbrauch der
+      Vorperiode. Die Jahresabrechnung zieht die versendeten {{ inst.title or inst.default_title }}en
+      ab und ergibt eine Nachzahlung oder ein Guthaben. Menüpunkt: Rechnungen / OP →
+      {{ installment_words() }}.
+    </div>
+    <div class="row g-2">
+      <div class="col-md-6 mb-3">
+        <label class="form-label">Fälligkeiten im Abrechnungszeitraum</label>
+        <input type="text" name="installments_due_dates" class="form-control"
+               value="{{ inst.due_dates }}" placeholder="15.02.;15.05.;15.08.;15.11.">
+        <div class="form-hint">Tag und Monat, mit Strichpunkt getrennt. Die Anzahl ergibt die
+          Zahl der Teilbeträge (z. B. vier für vierteljährlich).</div>
+      </div>
+      <div class="col-md-6 mb-3">
+        <label class="form-label">Teilbetrag runden</label>
+        <select name="installments_rounding" class="form-select">
+          {% for value, label in inst.rounding_choices %}
+          <option value="{{ value }}" {{ 'selected' if value == inst.rounding }}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-6 mb-3">
+        <label class="form-label">Mindest-Jahresbetrag <small class="text-muted">(optional)</small></label>
+        <div class="input-group">
+          <input type="text" name="installments_min_annual" class="form-control"
+                 value="{{ inst.min_annual }}" inputmode="decimal" placeholder="z. B. 50,00">
+          <span class="input-group-text">€</span>
+        </div>
+        <div class="form-hint">Darunter keine Teilbeträge – nur die Jahresabrechnung.</div>
+      </div>
+      <div class="col-md-6 mb-3">
+        <label class="form-label">Guthaben aus der Jahresabrechnung</label>
+        <select name="installments_credit_mode" class="form-select">
+          {% for value, label in inst.credit_modes %}
+          <option value="{{ value }}" {{ 'selected' if value == inst.credit_mode }}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <div class="form-hint">Im Rechnungslauf je Lauf änderbar. Ausgenommene Kontakte bekommen
+          das Guthaben immer ausbezahlt.</div>
+      </div>
+      <div class="col-md-6 mb-1">
+        <label class="form-label">Bezeichnung auf dem Beleg</label>
+        <input type="text" name="installments_title" class="form-control" maxlength="60"
+               value="{{ inst.title }}" placeholder="{{ inst.default_title }}">
+        <div class="form-hint">Leer = „{{ inst.default_title }}“ (z. B. „Vorschreibung“).</div>
+      </div>
+    </div>
+  </div>
+</div>

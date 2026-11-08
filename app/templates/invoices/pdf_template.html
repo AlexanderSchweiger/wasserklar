@@ -137,6 +137,9 @@
 </div>
 
 {% set is_credit = invoice.is_credit_note %}
+{% from "invoices/_installment_blocks.html" import inst_styles, inst_meta, inst_intro, inst_regular_rows, inst_settlement, inst_credit_text, inst_schedule with context %}
+{% set inst = installment_summary(invoice) %}
+{% if inst %}{{ inst_styles() }}{% endif %}
 {# Rueckzahlbetrag: abgeleitet (Invoice.refund_amount), NICHT aus dem Offenen
    Posten gelesen — den gibt es erst nach dem Versenden, ein Entwurfs-Ausdruck
    haette sonst faelschlich „keine Rueckzahlung" behauptet. #}
@@ -149,6 +152,7 @@
   {% else %}<strong>Lieferdatum:</strong> {{ invoice.date.strftime('%d.%m.%Y') }}<br>{% endif %}
   {% endif %}
   {% if invoice.customer.customer_number %}<strong>Kundennummer:</strong> {{ invoice.customer.customer_number }}<br>{% endif %}
+  {{ inst_meta(inst) }}
   {% if is_credit %}
   {# UStG § 11: die Gutschrift muss die stornierte Rechnung eindeutig benennen. #}
   {% if invoice.cancels_invoice %}<strong>Storno zu Rechnung:</strong> {{ invoice.cancels_invoice.invoice_number }}
@@ -181,6 +185,8 @@
   {% if invoice.property %}für die Liegenschaft <strong>„{{ invoice.property.address_display() or invoice.property.label() }}"</strong>{% endif %}
   und schreiben Ihnen die folgenden Positionen gut:
 </p>
+{% elif inst %}
+<p class="intro">{{ inst_intro(inst, invoice) }}</p>
 {% elif invoice.property %}
 <p class="intro">Wir stellen für die Liegenschaft <strong>„{{ invoice.property.address_display() or invoice.property.label() }}"</strong> wie folgt in Rechnung:</p>
 {% else %}
@@ -201,7 +207,7 @@
   </thead>
   <tbody>
     {# Mahngebuehren sind Positionen, gehoeren aber nicht zur Rechnung (Summen ohne sie). #}
-    {% for item in invoice.items if not item.is_dunning_fee %}
+    {% for item in invoice_display_items(invoice) %}
     <tr>
       <td>{{ item.description }}{% if item.is_estimated %} <strong>(geschätzt)</strong>{% endif %}</td>
       <td class="text-right">{{ item.quantity|de_number(2) }}</td>
@@ -212,6 +218,9 @@
     {% endfor %}
   </tbody>
   <tfoot>
+    {% if inst and inst.kind == 'settlement' %}
+    {{ inst_regular_rows(inst) }}
+    {% else %}
     {% if has_tax %}
     <tr>
       <td colspan="4" class="text-right">Nettobetrag</td>
@@ -228,8 +237,10 @@
       <td colspan="4" class="text-right">Gesamtsumme</td>
       <td class="text-right">{{ invoice.total_amount|de_number(2) }} €</td>
     </tr>
+    {% endif %}
   </tfoot>
 </table>
+{% if inst and inst.kind == 'settlement' %}{{ inst_settlement(inst, invoice) }}{% endif %}
 
 {% if legal and legal.small_business_note %}
 <p style="margin-top:0.3cm">{{ legal.small_business_note }}</p>
@@ -292,6 +303,16 @@
   als gegenstandslos.
   {% endif %}
 </div>
+{% elif inst and inst.kind == 'settlement' and inst.is_credit %}
+<div class="payment-info">
+  <strong>Guthaben</strong><br>
+  {{ inst_credit_text(inst, invoice) }}
+</div>
+{% elif inst and invoice.total_amount <= 0 %}
+<div class="payment-info">
+  <strong>Zahlung</strong><br>
+  Es ist nichts zu zahlen{% if inst.kind == 'installment' %} – der {{ inst.word }} ist mit Ihrem Guthaben verrechnet{% endif %}.
+</div>
 {% elif sepa_debit %}
 <div class="payment-info">
   <strong>{{ sepa_debit.title }}</strong><br>
@@ -315,6 +336,8 @@
   Verwendungszweck: <strong>{{ invoice.invoice_number }}</strong>
 </div>
 {% endif %}
+
+{% if inst %}{{ inst_schedule(inst) }}{% endif %}
 
 <p class="closing">Mit freundlichen Grüßen<br>{{ wg.name }}</p>
 

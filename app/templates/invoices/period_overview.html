@@ -241,7 +241,7 @@
             <td>{{ run.created_by.username if run.created_by else '—' }}</td>
             <td>
               {{ run.tariff_name }}
-              <small class="text-muted">({{ run.tariff_price_per_m3 | de_number(4) }} €/m³)</small>
+              {% if run.tariff_price_per_m3 is not none %}<small class="text-muted">({{ run.tariff_price_per_m3 | de_number(4) }} €/m³)</small>{% else %}<span class="badge bg-cyan-lt">{{ installment_title() }}en</span>{% endif %}
             </td>
             <td class="text-end">{{ st.count }}</td>
             <td class="text-end">{{ st.gross | de_number }} €</td>
@@ -432,7 +432,7 @@
             <td class="text-end">{{ amt.ust | de_number }} €</td>
             {% endif %}
             <td class="text-end fw-semibold">{{ amt.gross | de_number }} €</td>
-            <td>{% with subject = inv %}{% include "invoices/_email_status_badge.html" %}{% endwith %}</td>
+            <td>{% with subject = inv.mail_status_invoice %}{% include "invoices/_email_status_badge.html" %}{% endwith %}</td>
             <td>
               {% if inv.status == 'Entwurf' %}
                 <span class="badge bg-secondary text-white">{{ inv.status }}</span>

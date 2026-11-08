@@ -613,6 +613,15 @@
   abgebucht wird. Die Mandatsreferenz bleibt leer = automatisch (Präfix aus den Einstellungen +
   Kundennummer); für bestehende Papier-Mandate die dort vergebene Referenz eintragen.
 </small>
+{% if installments_enabled() %}
+{% if form_data is defined and form_data %}{% set v_inst_out = form_data.get('installment_opt_out') %}
+{% else %}{% set v_inst_out = customer.installment_opt_out if customer else false %}{% endif %}
+<input type="hidden" name="installment_fields" value="1">
+<label class="form-check mb-3">
+  <input class="form-check-input" type="checkbox" name="installment_opt_out" value="1" {{ 'checked' if v_inst_out }}>
+  <span class="form-check-label">Keine {{ installment_title() }}en – zahlt nur mit der Jahresabrechnung</span>
+</label>
+{% endif %}
 <script>
 (function () {
   var sel = document.getElementById('payment_method');

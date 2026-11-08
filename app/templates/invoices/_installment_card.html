@@ -1,0 +1,51 @@
+{# Detailseite: Teilrechnung (Plan, verrechnet in …) bzw. Gegenverrechnung der Abrechnung. #}
+{% set inst = installment_summary(invoice) %}
+{% if inst %}
+<div class="card mb-3">
+  <div class="card-header">
+    <h3 class="card-title"><i class="fas fa-calendar-alt me-1"></i>
+      {{ 'Teilbetrag' if inst.kind == 'installment' else 'Gegenverrechnung' }}</h3>
+  </div>
+  <div class="card-body">
+    {% if inst.kind == 'installment' %}
+    <div>{{ inst.seq }}. {{ inst.word }}{% if inst.count %} von {{ inst.count }}{% endif %}
+      · Abrechnungsperiode {{ inst.period.name if inst.period }}
+      {% if inst.plan and current_user.has_permission('rechnungen_op') %}
+      · <a href="{{ url_for('installments.period', period_id=inst.plan.billing_period_id) }}">Teilbetragsplan</a>
+      {% endif %}</div>
+    <div class="small mt-1">
+      {% if inst.settled_by %}
+      Verrechnet in <a href="{{ url_for('invoices.detail', invoice_id=inst.settled_by.id) }}">{{ inst.settled_by.document_title }} {{ inst.settled_by.invoice_number }}</a>.
+      {% else %}<span class="text-secondary">Noch nicht mit einer Jahresabrechnung verrechnet.</span>{% endif %}
+    </div>
+    {% else %}
+    <div class="table-responsive">
+      <table class="table table-sm mb-2">
+        <thead><tr><th>Beleg</th><th>Status</th><th class="text-end">brutto</th><th class="text-end">offen</th></tr></thead>
+        <tbody>
+          {% for d in inst.deductions %}
+          <tr>
+            <td>{% if d.invoice %}<a href="{{ url_for('invoices.detail', invoice_id=d.invoice.id) }}">{{ d.invoice.invoice_number }}</a>{% endif %}</td>
+            <td>{{ d.invoice.status if d.invoice }}</td>
+            <td class="text-end">{{ d.gross|de_number(2) }} €</td>
+            <td class="text-end">{{ d.open|de_number(2) }} €</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="small">
+      Summe Jahresabrechnung {{ inst.regular.gross|de_number(2) }} € − {{ inst.words }}
+      {{ inst.deducted.gross|de_number(2) }} € =
+      <strong>{{ 'Guthaben' if inst.is_credit else 'Nachzahlung' }} {{ (inst.credit if inst.is_credit else inst.balance)|de_number(2) }} €</strong>
+      {% if inst.credit_mode == 'offset' %}· wird mit der nächsten {{ installment_title() }} verrechnet
+      {% elif inst.credit_mode == 'refund' %}· wird ausbezahlt (Rückzahlung über den Offenen Posten){% endif %}
+    </div>
+    {% if inst.next_plan %}
+    <div class="small mt-1">{{ inst.words }} {{ inst.next_plan.period.name }}:
+      {% for e in inst.next_plan.entries %}{{ e.amount|de_number(2) }} € am {{ e.due.strftime('%d.%m.%Y') }}{{ ', ' if not loop.last }}{% endfor %}</div>
+    {% endif %}
+    {% endif %}
+  </div>
+</div>
+{% endif %}
