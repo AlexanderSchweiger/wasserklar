@@ -407,9 +407,10 @@ def _build_settlement_invoice(*, prop, period, stichtag, tariff, fee_mode,
     installments = inst_settlement.deductible_installments(
         period.id, prop.id, recipient.id, due_before=stichtag)
     if installments:
-        inst_settlement.deduct_into(inv, installments)
-        inst_settlement.handle_credit(inv, CREDIT_REFUND, meter_id=None,
-                                      period_id=period.id, created_by_id=created_by_id)
+        # Wie im Rechnungslauf: bei Guthaben unbezahlte Teilrechnungen stornieren.
+        inst_settlement.settle_installments(
+            inv, installments, credit_mode=CREDIT_REFUND, meter_id=None,
+            period_id=period.id, created_by_id=created_by_id)
 
     old_days = None
     if fee_mode == FEE_MODE_PRO_RATA:

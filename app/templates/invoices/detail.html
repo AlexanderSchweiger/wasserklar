@@ -81,7 +81,17 @@
           </dd>
           {% endif %}
           <dt class="col-sm-5">Gesamt</dt>
-          <dd class="col-sm-7"><strong>{{ invoice.total_amount|de_number }} €</strong></dd>
+          <dd class="col-sm-7"><strong>{{ invoice.total_amount|de_number }} €</strong>
+            {#- Guthaben aus der Jahresabrechnung: vorgetragen (Betrag 0) oder ausbezahlt (negativ). #}
+            {% set carried = invoice.carried_credit %}
+            {% if carried > 0 %}
+            <div class="small text-success"><i class="fas fa-piggy-bank me-1"></i>Guthaben
+              <strong>{{ carried|de_number }} €</strong> – wird mit der nächsten {{ installment_title() }} verrechnet</div>
+            {% elif invoice.total_amount < 0 and not invoice.is_credit_note %}
+            <div class="small text-success"><i class="fas fa-piggy-bank me-1"></i>Guthaben
+              <strong>{{ (-invoice.total_amount)|de_number }} €</strong> – wird ausbezahlt</div>
+            {% endif %}
+          </dd>
           <dt class="col-sm-5">Status</dt>
           <dd class="col-sm-7" id="status-badge">{% include "invoices/_status_badge.html" %}</dd>
           {% if invoice.last_email_status %}

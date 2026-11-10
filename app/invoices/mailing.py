@@ -34,7 +34,7 @@ def primary_of(invoices):
     """Hauptbeleg: Jahres-/Schlussrechnung vor Teilrechnungen, sonst der
     frueheste faellige."""
     def key(inv):
-        rank = 1 if inv.is_installment else 0
+        rank = 2 if inv.is_credit_note else (1 if inv.is_installment else 0)
         return (rank, inv.due_date or inv.date, inv.invoice_number)
     return sorted(invoices, key=key)[0]
 
@@ -42,9 +42,11 @@ def primary_of(invoices):
 def ordered(invoices):
     """Reihenfolge im Anhang/Kuvert: Hauptbeleg, dann nach Faelligkeit."""
     primary = primary_of(invoices)
+    # Hauptbeleg, dann Storno-Gutschriften (gehoeren zur Abrechnung), dann
+    # die Teilrechnungen des Folgejahres nach Faelligkeit.
     rest = sorted((i for i in invoices if i.id != primary.id),
-                  key=lambda i: (1 if i.is_installment else 0, i.due_date or i.date,
-                                 i.invoice_number))
+                  key=lambda i: (0 if i.is_credit_note else (2 if i.is_installment else 1),
+                                 i.due_date or i.date, i.invoice_number))
     return [primary] + rest
 
 
@@ -72,11 +74,36 @@ def post_order(invoices):
     return out
 
 
+def post_invoices_for_run(run, invoice_ids):
+    """Belege eines Post-Drucks (OSS-Route ``billing_run_post_bulk`` und
+    SaaS-Job-Renderer): nur IDs aus dem Lauf, seinen verknuepften
+    Teilrechnungslaeufen und den Storno-Gutschriften, die der Lauf erzeugt hat
+    — fremde IDs aus einem manipulierten Request fallen raus. Reihenfolge je
+    Kontakt zusammen (Kuvert), sonst nach Nummer."""
+    from app.installments.settlement import companion_credit_notes
+    wanted = {int(i) for i in invoice_ids or []}
+    run_ids = [run.id] + [lr.id for lr in (getattr(run, "linked_runs", None) or [])]
+    invoices = (Invoice.query
+                .filter(Invoice.id.in_(list(wanted) or [-1]),
+                        Invoice.billing_run_id.in_(run_ids))
+                .order_by(Invoice.invoice_number).all())
+    run_invoices = run.invoices.all()
+    companions = [c for c in companion_credit_notes(run_invoices) if c.id in wanted]
+    invoices.extend(companions)
+    if len(run_ids) > 1 or companions:
+        invoices = post_order(invoices)
+    return invoices
+
+
 def run_invoices_with_linked(run):
-    """Rechnungen eines Laufs plus die der verknuepften Teilrechnungslaeufe."""
+    """Rechnungen eines Laufs plus die der verknuepften Teilrechnungslaeufe und
+    die Storno-Gutschriften der Teilrechnungen, die der Lauf wegen eines
+    Guthabens storniert hat (``settlement.companion_credit_notes``)."""
+    from app.installments.settlement import companion_credit_notes
     invoices = run.invoices.order_by(Invoice.invoice_number).all()
     for linked in getattr(run, "linked_runs", None) or []:
         invoices.extend(linked.invoices.order_by(Invoice.invoice_number).all())
+    invoices.extend(companion_credit_notes(invoices))
     return invoices
 
 

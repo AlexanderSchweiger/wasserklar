@@ -765,33 +765,58 @@ def _add_installment_settlement(doc, inst, *, font_name, heading_rgb):
     run = p.add_run(f"Gegenverrechnung der vorgeschriebenen {inst['words']}")
     run.bold = True
     run.font.color.rgb = heading_rgb
-    tbl = doc.add_table(rows=1, cols=5)
+    tbl = doc.add_table(rows=1, cols=6)
     tbl.style = "Table Grid"
-    for i, hdr in enumerate(["Beleg", "fällig", "netto", "USt", "brutto"]):
+    for i, hdr in enumerate(["Beleg", "fällig", "Zahlung", "netto", "USt", "brutto"]):
         tbl.rows[0].cells[i].text = hdr
     reg = inst["regular"]
-    rows = [("Summe Jahresabrechnung", "", reg["net"], reg["tax"], reg["gross"])]
+
+    def pay_state(d):
+        if d["pay_state"] == "cancelled":
+            return "storniert"
+        if d["pay_state"] == "open":
+            return "offen"
+        if d["pay_state"] == "partial":
+            return f"offen {_de_fmt(d['open'], 2)} €"
+        return "bezahlt"
+
+    fmt = lambda v: f"{_de_fmt(v, 2)} €" if v is not None else ""  # noqa: E731
+    rows = []
     for d in inst["deductions"]:
         inv = d["invoice"]
+        if d["pay_state"] == "cancelled":
+            rows.append((f"{inv.document_title} {inv.invoice_number}" if inv else "",
+                         inv.due_date.strftime("%d.%m.%Y") if inv and inv.due_date else "",
+                         "storniert", "", "", "entfällt"))
+            continue
         rows.append((f"abzüglich {inv.document_title} {inv.invoice_number}" if inv else "abzüglich",
                      inv.due_date.strftime("%d.%m.%Y") if inv and inv.due_date else "",
-                     -d["net"], -d["tax"], -d["gross"]))
-    rows.append(("Guthaben" if inst["is_credit"] else "Nachzahlung", "",
-                 reg["net"] - inst["deducted"]["net"], reg["tax"] - inst["deducted"]["tax"],
-                 inst["balance"]))
-    for label, due, net, tax, gross in rows:
-        cells = tbl.add_row().cells
-        cells[0].text = label
-        cells[1].text = due
-        _right_align_cell(cells[2], f"{_de_fmt(net, 2)} €")
-        _right_align_cell(cells[3], f"{_de_fmt(tax, 2)} €")
-        _right_align_cell(cells[4], f"{_de_fmt(gross, 2)} €")
+                     pay_state(d), fmt(-d["net"]), fmt(-d["tax"]), fmt(-d["gross"])))
+    rows.append(("Guthaben" if inst["is_credit"] else "Nachzahlung", "", "",
+                 fmt(abs(reg["net"] - inst["deducted"]["net"])),
+                 fmt(abs(reg["tax"] - inst["deducted"]["tax"])), fmt(abs(inst["balance"]))))
     if inst["open_installments"]:
-        nums = ", ".join(f"{d['invoice'].invoice_number} ({_de_fmt(d['open'], 2)} €)"
-                         for d in inst["open_installments"])
+        for d in inst["open_installments"]:
+            rows.append((f"zuzüglich noch offen: {d['invoice'].document_title} "
+                         f"{d['invoice'].invoice_number}", "", "", "", "",
+                         f"+{_de_fmt(d['open'], 2)} €"))
+        rows.append(("Insgesamt offen", "", "", "", "", fmt(inst["due_overall"])))
+    for row in rows:
+        cells = tbl.add_row().cells
+        for i, value in enumerate(row):
+            if i < 3:
+                cells[i].text = value
+            else:
+                _right_align_cell(cells[i], value)
+    if inst.get("cancelled_installments"):
+        nums = ", ".join(d["invoice"].invoice_number for d in inst["cancelled_installments"])
         doc.add_paragraph(
-            f"Noch nicht bezahlt: {nums}. Diese {inst['words']} bleiben offen; insgesamt sind "
-            f"daher {_de_fmt(inst['due_overall'], 2)} € zu zahlen.")
+            f"{nums}: noch nicht bezahlt, deshalb storniert und in dieser Abrechnung schon "
+            "berücksichtigt. Sie brauchen sie nicht mehr zu bezahlen.")
+    if inst["open_installments"]:
+        doc.add_paragraph(
+            f"Offene {inst['words']} bitte unter ihrer eigenen Rechnungsnummer bezahlen, "
+            "falls noch nicht geschehen.")
 
 
 def _add_installment_schedule(doc, inst):

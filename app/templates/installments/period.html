@@ -38,7 +38,8 @@
           <p class="text-secondary small mb-2">
             Grundlage ist der Verbrauch jeder Liegenschaft in der Vorperiode
             {%- if previous %} ({{ previous[0].name }}){% endif %}, bewertet mit dem gewählten Tarif
-            (inkl. individueller Gebühren, Staffeln, Mindestabnahme). Ohne Vorjahresverbrauch gilt
+            (inkl. individueller Gebühren, Staffeln, Mindestabnahme; nur die in den Einstellungen
+            eingerechneten Gebührenarten). Ohne Vorjahresverbrauch gilt
             der Durchschnitt gleichartiger Objekte. Von Hand geänderte Pläne und Pläne mit
             bereits ausgestellten {{ title }}en bleiben unverändert.
           </p>
@@ -54,6 +55,7 @@
             Fälligkeiten: {% for d in due_dates %}{{ d.strftime('%d.%m.%Y') }}{{ ', ' if not loop.last }}{% else %}<span class="text-danger">keine in dieser Periode</span>{% endfor %}
             · Rundung: {{ 'auf ' ~ (rounding|int) ~ ' €' if rounding else 'auf Cent' }}
             {% if min_annual %}· Mindest-Jahresbetrag {{ min_annual|de_number(2) }} €{% endif %}
+            {% if excluded_labels %}· ohne {{ excluded_labels|join(', ') }} (erst in der Jahresabrechnung){% endif %}
             {% if current_user.has_permission('verwaltung') %}
             · <a href="{{ url_for('settings.index') }}#card-installments">ändern</a>
             {% endif %}

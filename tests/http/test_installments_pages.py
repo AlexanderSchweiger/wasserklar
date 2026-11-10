@@ -87,6 +87,29 @@ def test_settings_card_saves_with_marker(setup, logged_in_admin):
     assert terms.is_enabled()
 
 
+def test_settings_card_excluded_charges(setup, logged_in_admin):
+    html = logged_in_admin.get("/einstellungen/").get_data(as_text=True)
+    assert 'name="installments_charges"' in html
+    base = {"installment_fields": "1", "installments_enabled": "1",
+            "installments_due_dates": "15.02.;15.05.;15.08.;15.11."}
+    # Nur Wasser angehakt (water kommt ohnehin über das Hidden-Feld) → Grundgebühr raus
+    logged_in_admin.post("/einstellungen/", data={
+        **base, "installments_charge_fields": "1", "installments_charges": ["water"]})
+    assert "base_fee" in terms.excluded_charge_keys()
+    assert "water" not in terms.excluded_charge_keys()
+    # Karte ohne Untermarker (z. B. ältere Seite) lässt die Auswahl stehen
+    logged_in_admin.post("/einstellungen/", data=base)
+    assert "base_fee" in terms.excluded_charge_keys()
+    # Periodenseite nennt die ausgeschlossene Gebühr
+    html = logged_in_admin.get(f"/installments/period/{setup['cur'].id}").get_data(as_text=True)
+    assert "ohne Grundgebühr" in html
+    # wieder alle angehakt
+    logged_in_admin.post("/einstellungen/", data={
+        **base, "installments_charge_fields": "1",
+        "installments_charges": ["water", "base_fee", "additional_fee", "water_levy"]})
+    assert terms.excluded_charge_keys() == frozenset()
+
+
 def test_generate_form_shows_installments(setup, logged_in_admin):
     _enable()
     s = setup

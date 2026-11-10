@@ -93,6 +93,7 @@
     background: {{ design.payment_bg }};
     border: 1px solid {{ design.payment_border }};
     color: {{ design.payment_text }};
+    break-inside: avoid;   /* Zahlungsblock nie ueber den Seitenumbruch teilen */
   }
   .payment-info strong { color: {{ design.heading_color }}; }
   /* Verbrauchsnachweis (Zaehlerstaende) */

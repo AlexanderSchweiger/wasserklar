@@ -41,7 +41,7 @@ from app.models import (
     AppSetting, BankStatementLine, BankStatementLineAllocation,
     Booking, BookingGroup, Customer, CustomerCounter, SupplierCounter,
     DunningNotice, Document, DocumentEvent, DocumentLink, FiscalYear, IncomingInvoice, Invoice,
-    InvoiceCounter, InvoiceItem, InvoiceMeterReading, RolePermission, SchriftverkehrDocument,
+    InvoiceCounter, InvoiceItem, InvoiceMeterReading, Role, RolePermission,SchriftverkehrDocument,
     AccountingHandover, AccountingHandoverItem, DirectDebitItem, DirectDebitRun,
 )
 from app.data_transfer.registry import (
@@ -760,11 +760,17 @@ def import_from_zip(extract_dir: Path, manifest: dict, *, mode: str = "replace",
     try:
         with import_active():
             if mode == "replace":
+                role_state = _detach_roles(models) if Role in models else None
                 _truncate_models(models)
                 for model in models:
                     if model not in table_records:
                         continue
+                    if model is Role:
+                        _upsert_roles(table_records[model], stats)
+                        continue
                     _insert_replace(model, table_records[model], stats)
+                if role_state is not None:
+                    _reattach_users(role_state)
                 _apply_deferred_updates(table_records, mode="replace", id_map=id_map, stats=stats)
                 _reset_sequences(models)
             else:  # merge
@@ -929,8 +935,89 @@ def _truncate_models(models: list):
         tname = model.__tablename__
         if tname in EXCLUDED_TABLES:
             continue
+        if model is Role:
+            # ``users`` (vom Export ausgeschlossen) verweist auf roles → nie
+            # loeschen, sondern per _detach_roles/_upsert_roles abgleichen.
+            continue
         db.session.execute(text(f"DELETE FROM {tname}"))
     db.session.flush()
+
+
+_ROLE_TMP = "__imp_"
+
+
+def _detach_roles(models: list) -> dict:
+    """Bereitet den Vollersatz der Rollen vor, ohne ``roles`` zu loeschen.
+
+    ``users`` ist nicht im Export, referenziert aber ``roles.id`` (NOT NULL).
+    Merkt sich die Rolle jedes Benutzers per **Namen** und benennt alle
+    bestehenden Rollen auf einen Platzhalter um (``name`` ist unique, ein
+    Tausch waere sonst mitten im Abgleich eine Verletzung).
+    """
+    roles = db.session.execute(text("SELECT id, name FROM roles")).all()
+    users = db.session.execute(text("SELECT id, role_id FROM users")).all()
+    names = {r.id: r.name for r in roles}
+    for rid in names:
+        db.session.execute(text("UPDATE roles SET name = :n WHERE id = :i"),
+                           {"n": f"{_ROLE_TMP}{rid}", "i": rid})
+    db.session.flush()
+    _expire_auth_objects()
+    return {"names": names, "users": {u.id: u.role_id for u in users}}
+
+
+def _upsert_roles(records: list, stats: dict):
+    """Rollen des Exports uebernehmen: gleiche ID → aktualisieren, sonst anlegen."""
+    inserted = updated = 0
+    for rec in records:
+        data = deserialize_record(Role, rec)
+        existing = db.session.get(Role, data.get("id"))
+        if existing is not None:
+            for key, value in data.items():
+                setattr(existing, key, value)
+            updated += 1
+        else:
+            db.session.add(Role(**data))
+            inserted += 1
+    db.session.flush()
+    stats.setdefault(Role.__tablename__, {"inserted": 0, "updated": 0, "skipped": 0})
+    stats[Role.__tablename__]["inserted"] += inserted
+    stats[Role.__tablename__]["updated"] += updated
+
+
+def _reattach_users(state: dict):
+    """Benutzer behalten ihre Rolle (nach Namen); ohne Treffer: Admin."""
+    final = {r.name: r.id for r in db.session.execute(
+        text("SELECT id, name FROM roles WHERE name NOT LIKE :p"),
+        {"p": f"{_ROLE_TMP}%"}).all()}
+    leftovers = {r.id for r in db.session.execute(
+        text("SELECT id FROM roles WHERE name LIKE :p"), {"p": f"{_ROLE_TMP}%"}).all()}
+    admin_id = final.get("Admin")
+    for uid, old_role_id in state["users"].items():
+        target = final.get(state["names"].get(old_role_id))
+        if target is None and old_role_id not in leftovers:
+            target = admin_id  # Rolle wurde durch eine andere gleicher ID ersetzt
+        if target is not None:
+            db.session.execute(text("UPDATE users SET role_id = :r WHERE id = :u"),
+                               {"r": target, "u": uid})
+    for rid in leftovers:
+        used = db.session.execute(text("SELECT COUNT(*) FROM users WHERE role_id = :r"),
+                                  {"r": rid}).scalar()
+        if used:  # kein Gegenstueck im Export: Rolle samt Namen behalten
+            db.session.execute(text("UPDATE roles SET name = :n WHERE id = :i"),
+                               {"n": state["names"][rid], "i": rid})
+        else:
+            db.session.execute(text("DELETE FROM role_permissions WHERE role_id = :r"), {"r": rid})
+            db.session.execute(text("DELETE FROM roles WHERE id = :r"), {"r": rid})
+    db.session.flush()
+    _expire_auth_objects()
+
+
+def _expire_auth_objects():
+    """Roh-SQL auf roles/users/role_permissions: nur diese Objekte neu laden lassen."""
+    from app.models import User
+    for obj in list(db.session.identity_map.values()):
+        if isinstance(obj, (Role, RolePermission, User)):
+            db.session.expire(obj)
 
 
 def _clear_file_paths(model, data: dict):

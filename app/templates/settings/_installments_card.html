@@ -53,6 +53,24 @@
         <div class="form-hint">Im Rechnungslauf je Lauf änderbar. Ausgenommene Kontakte bekommen
           das Guthaben immer ausbezahlt.</div>
       </div>
+      {% if inst.charge_types %}
+      <div class="col-md-6 mb-3">
+        <input type="hidden" name="installments_charge_fields" value="1">
+        <label class="form-label">In die {{ installment_words() }} einrechnen</label>
+        {% for ct in inst.charge_types %}
+        <label class="form-check mb-1">
+          <input class="form-check-input" type="checkbox" name="installments_charges"
+                 value="{{ ct.key }}" {{ 'checked' if ct.included or ct.fixed }}
+                 {{ 'disabled' if ct.fixed }}>
+          <span class="form-check-label">{{ ct.label }}
+            <small class="text-muted">({{ 'je m³' if ct.per_m3 else 'pauschal' }})</small></span>
+        </label>
+        {% if ct.fixed %}<input type="hidden" name="installments_charges" value="{{ ct.key }}">{% endif %}
+        {% endfor %}
+        <div class="form-hint">Nicht angehakte Gebühren (z. B. die Grundgebühr) verrechnet erst
+          die Jahresabrechnung. Gilt für neu berechnete Pläne.</div>
+      </div>
+      {% endif %}
       <div class="col-md-6 mb-1">
         <label class="form-label">Bezeichnung auf dem Beleg</label>
         <input type="text" name="installments_title" class="form-control" maxlength="60"

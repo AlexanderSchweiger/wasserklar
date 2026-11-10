@@ -12,6 +12,11 @@ ROUNDING_KEY = "installments.rounding"
 MIN_ANNUAL_KEY = "installments.min_annual_amount"
 CREDIT_MODE_KEY = "installments.credit_mode"
 TITLE_KEY = "installments.title"
+# Gebuehrenarten (``ChargeType.key``), die NICHT in den Teilbetrag eingehen —
+# sie verrechnet erst die Jahresabrechnung. Gespeichert werden bewusst die
+# ausgeschlossenen Schluessel: eine neue Gebuehrenart ist damit automatisch
+# dabei, und ohne Eintrag gilt wie bisher „alle“.
+EXCLUDED_CHARGES_KEY = "installments.excluded_charges"
 
 DEFAULT_DUE_DATES = "15.02.;15.05.;15.08.;15.11."
 ROUNDING_CHOICES = (
@@ -73,6 +78,43 @@ def credit_mode():
     return raw if raw in (CREDIT_OFFSET, CREDIT_REFUND) else CREDIT_OFFSET
 
 
+def excluded_charge_keys():
+    """Gebuehrenart-Schluessel, die nicht in den Teilbetrag eingehen.
+
+    Der Wasserverbrauch ist nie ausgeschlossen: er ist die Grundlage der
+    Planung und der Rueckfall fuer Konto/USt der Teilrechnung."""
+    from app.models import ChargeType
+    raw = str(_get(EXCLUDED_CHARGES_KEY, "") or "")
+    keys = {k.strip() for k in raw.split(",") if k.strip()}
+    keys.discard(ChargeType.KEY_WATER)
+    return frozenset(keys)
+
+
+def _charge_type_choices():
+    """Aktive Gebuehrenarten fuer die Einstellungskarte (Katalog-Reihenfolge)."""
+    from app.models import ChargeType
+    try:
+        types = (ChargeType.query.filter(ChargeType.active.is_(True))
+                 .order_by(ChargeType.sort_order, ChargeType.id).all())
+    except Exception:  # noqa: BLE001 — Tabelle fehlt (Migration offen)
+        return []
+    excluded = excluded_charge_keys()
+    return [{"key": ct.key, "label": ct.label, "per_m3": ct.is_per_m3,
+             "fixed": ct.key == ChargeType.KEY_WATER,
+             "included": ct.key not in excluded} for ct in types]
+
+
+def excluded_charge_labels():
+    """Bezeichnungen der ausgeschlossenen Gebuehrenarten (fuer Hinweise)."""
+    from app.models import ChargeType
+    excluded = excluded_charge_keys()
+    if not excluded:
+        return []
+    types = (ChargeType.query.filter(ChargeType.key.in_(list(excluded)))
+             .order_by(ChargeType.sort_order, ChargeType.id).all())
+    return [ct.label for ct in types]
+
+
 def installment_title():
     """Belegtitel der Teilrechnung: Mandanten-Text, sonst Landesstandard."""
     from app import country
@@ -119,6 +161,7 @@ def form_values():
         "default_title": _default_title(),
         "rounding_choices": ROUNDING_CHOICES,
         "credit_modes": CREDIT_MODES,
+        "charge_types": _charge_type_choices(),
     }
 
 
@@ -159,4 +202,20 @@ def save_from_form(form):
         AppSetting.set(CREDIT_MODE_KEY, mode)
     title = (form.get("installments_title") or "").strip()[:60]
     AppSetting.set(TITLE_KEY, title or None)
+    if form.get("installments_charge_fields"):
+        _save_excluded_charges(form)
     return errors
+
+
+def _save_excluded_charges(form):
+    """Ausgeschlossen = aktive Gebuehrenarten ohne Haekchen. Ausgeschlossene,
+    inzwischen inaktive Arten bleiben ausgeschlossen (aeltere Tarife rechnen
+    sie weiter ab)."""
+    from app.models import AppSetting, ChargeType
+    getlist = getattr(form, "getlist", None)
+    chosen = set(getlist("installments_charges") if getlist else
+                 (form.get("installments_charges") or []))
+    active = {ct.key for ct in ChargeType.query.filter(ChargeType.active.is_(True)).all()}
+    excluded = (set(excluded_charge_keys()) - active) | (active - chosen)
+    excluded.discard(ChargeType.KEY_WATER)
+    AppSetting.set(EXCLUDED_CHARGES_KEY, ",".join(sorted(excluded)) or None)

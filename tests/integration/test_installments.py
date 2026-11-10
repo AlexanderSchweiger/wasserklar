@@ -230,6 +230,148 @@ class TestInstallmentInvoices:
 # Jahresabrechnung
 # ---------------------------------------------------------------------------
 
+class TestExcludedCharges:
+    """Nur ausgewaehlte Gebuehrenarten im Teilbetrag, der Rest in der
+    Jahresabrechnung."""
+
+    def _exclude_base_fee(self):
+        AppSetting.set(terms.EXCLUDED_CHARGES_KEY, "base_fee")
+        db.session.commit()
+
+    def test_plan_only_water(self, setup):
+        self._exclude_base_fee()
+        plan = _plan(setup)
+        # 100 m³ × 2 = 200 netto → 220 brutto ÷ 4 = 55
+        assert plan.annual_amount == D("220.00")
+        assert plan.installment_amount == D("55.00")
+        assert {r["charge_key"] for r in plan.composition_rows} == {"water"}
+
+    def test_minimum_checked_against_included_amount(self, setup):
+        self._exclude_base_fee()
+        [p] = plans.compute_plans(setup["cur"], setup["tariff"], min_annual=D("250"))
+        assert p.status == plans.STATUS_BELOW_MIN     # 220 < 250 (mit Grundgebühr 264)
+
+    def test_water_never_excluded(self, setup):
+        AppSetting.set(terms.EXCLUDED_CHARGES_KEY, "water,base_fee")
+        db.session.commit()
+        assert terms.excluded_charge_keys() == frozenset({"base_fee"})
+        [p] = plans.compute_plans(setup["cur"], setup["tariff"], excluded={"water"})
+        assert p.annual_amount == D("264.00")
+
+    def test_items_only_on_water_account(self, setup):
+        self._exclude_base_fee()
+        plan = _plan(setup)
+        [inv] = _issue(setup, plan, seqs={1}).created
+        assert {i.account_id for i in inv.items} == {setup["water"].id}
+        assert inv.total_amount == D("55.00")
+
+    def test_annual_settlement_bills_base_fee_in_full(self, setup, logged_in_admin):
+        self._exclude_base_fee()
+        s = setup
+        plan = _plan(s)
+        _send(_issue(s, plan).created)
+        inv = _annual(s, logged_in_admin, "100")   # 200 + 40 = 240 → 264 brutto
+        summ = settlement.summary(inv)
+        assert summ["regular"]["gross"] == D("264.00")
+        assert summ["deducted"]["gross"] == D("220.00")
+        # Nachzahlung = Grundgebühr brutto (Verbrauch unverändert)
+        assert inv.total_amount == D("44.00")
+        assert any(i.charge_key == "base_fee" for i in inv.items)
+
+
+def _pay(s, inv, real_account):
+    from app.accounting.services import booking_group_from_invoice_payment
+    booking_group_from_invoice_payment(inv, inv.total_amount, TODAY, real_account.id,
+                                       s["user"].id, open_item=inv.open_item)
+    db.session.commit()
+
+
+def _send_paid(s, invoices, real_account):
+    """Versenden und voll bezahlen."""
+    _send(invoices)
+    for inv in invoices:
+        _pay(s, inv, real_account)
+
+
+class TestCreditCancelsUnpaid:
+    """Guthaben + unbezahlte Teilrechnung: storniert statt abgezogen."""
+
+    def _sent(self, s):
+        insts = sorted(_issue(s, _plan(s)).created, key=lambda i: i.due_date)
+        _send(insts)
+        return insts
+
+    def test_unpaid_cancelled_credit_reduced(self, setup, logged_in_admin, real_account):
+        s = setup
+        insts = self._sent(s)
+        for inv in insts[:3]:
+            _pay(s, inv, real_account)
+        # 50 m³ → 100 + 40 = 140 → 154 brutto; Soll-Abzug 264 → Guthaben 110,
+        # davon 66 nie bezahlt → 4. storniert, Guthaben 154 − 198 = −44
+        inv = _annual(s, logged_in_admin, "50", credit_mode="offset")
+        db.session.refresh(insts[3])
+        assert insts[3].status == Invoice.STATUS_CANCELLED
+        credit = insts[3].active_credit_note
+        assert credit is not None and credit.status == Invoice.STATUS_DRAFT
+        assert inv.invoice_number in (credit.notes or "")
+        summ = settlement.summary(inv)
+        assert summ["deducted"]["gross"] == D("198.00")
+        assert summ["credit"] == D("44.00")
+        assert [d["invoice"].id for d in summ["cancelled_installments"]] == [insts[3].id]
+        assert summ["open_installments"] == []
+        carry = ReadingCorrection.query.filter_by(
+            source_invoice_id=inv.id, kind=ReadingCorrection.KIND_CREDIT_CARRY).all()
+        # Uebertrag netto, negativ = Guthaben: 44 brutto / 1,1
+        assert sum((c.amount for c in carry), D("0")) == D("-40.00")
+        assert settlement.deducting_invoice(insts[3]).id == inv.id
+        assert insts[3].open_item.status != "Offen"
+
+    def test_partial_cover_turns_into_back_payment(self, setup, logged_in_admin,
+                                                   real_account):
+        s = setup
+        insts = self._sent(s)
+        _pay(s, insts[0], real_account)
+        # Guthaben 110 bei 3 unbezahlten: 4. storniert (−44), 3. storniert (+22) → Stopp
+        inv = _annual(s, logged_in_admin, "50")
+        db.session.refresh(insts[2])
+        db.session.refresh(insts[3])
+        assert insts[3].status == Invoice.STATUS_CANCELLED
+        assert insts[2].status == Invoice.STATUS_CANCELLED
+        assert insts[1].status == Invoice.STATUS_SENT
+        assert inv.total_amount == D("22.00")
+        summ = settlement.summary(inv)
+        assert len(summ["cancelled_installments"]) == 2
+        assert [d["invoice"].id for d in summ["open_installments"]] == [insts[1].id]
+        assert summ["due_overall"] == D("88.00")
+
+    def test_back_payment_cancels_nothing(self, setup, logged_in_admin):
+        s = setup
+        insts = self._sent(s)
+        inv = _annual(s, logged_in_admin, "120")
+        assert all(db.session.get(Invoice, i.id).status == Invoice.STATUS_SENT for i in insts)
+        assert settlement.summary(inv)["cancelled_installments"] == []
+
+    def test_credit_note_travels_with_settlement(self, app, setup, logged_in_admin,
+                                                 real_account):
+        from app.invoices import mailing
+        s = setup
+        insts = self._sent(s)
+        for inv in insts[:3]:
+            _pay(s, inv, real_account)
+        inv = _annual(s, logged_in_admin, "50")
+        credit = db.session.get(Invoice, insts[3].id).active_credit_note
+        listed = mailing.run_invoices_with_linked(inv.billing_run)
+        assert credit.id in {i.id for i in listed}
+        [bundle] = [b for b in mailing.bundles(listed) if b["customer"].id == s["cust"].id]
+        assert [i.id for i in bundle["invoices"]] == [inv.id, credit.id]
+        # Post-Druck (OSS-Route + SaaS-Job): Gutschrift mit ins Kuvert, fremde IDs nicht
+        printed = mailing.post_invoices_for_run(inv.billing_run, [inv.id, credit.id, insts[0].id])
+        assert [i.id for i in printed] == [inv.id, credit.id]
+        html = TestDocuments._html(None, app, inv)
+        assert "entfällt – nicht zu zahlen" in html and "storniert" in html
+        assert "nicht mehr zu bezahlen" in html
+
+
 class TestAnnualSettlement:
     def test_back_payment(self, setup, logged_in_admin):
         s = setup
@@ -248,16 +390,22 @@ class TestAnnualSettlement:
         for t in insts:
             assert settlement.deducting_invoice(t).id == inv.id
 
-    def test_credit_offset_into_next_installment(self, setup, logged_in_admin):
+    def test_credit_offset_into_next_installment(self, setup, logged_in_admin, real_account):
         s = setup
         plan = _plan(s)
-        _send(_issue(s, plan).created)
+        _send_paid(s, _issue(s, plan).created, real_account)
         inv = _annual(s, logged_in_admin, "50", credit_mode="offset")  # 140 → 154 brutto
         assert inv.total_amount == D("0.00")
         carries = settlement.credit_carries(inv)
         assert sum(c.amount for c in carries) < 0
         summ = settlement.summary(inv)
         assert summ["is_credit"] and summ["credit"] == D("110.00")   # 264 - 154
+        # Ansicht + Liste zeigen das vorgetragene Guthaben statt nur 0,00 €
+        assert inv.carried_credit == D("110.00")
+        detail = logged_in_admin.get(f"/invoices/{inv.id}").get_data(as_text=True)
+        assert "Guthaben" in detail and "110,00" in detail
+        listing = logged_in_admin.get("/invoices/").get_data(as_text=True)
+        assert "Guthaben 110,00" in listing
         # Naechste Periode: Plan + erste Teilrechnung zieht das Guthaben ein.
         nxt = BillingPeriod(name=str(Y + 1), start_date=date(Y + 1, 1, 1),
                             end_date=date(Y + 1, 12, 31))
@@ -278,10 +426,10 @@ class TestAnnualSettlement:
         assert totals[2] == D("39.00") * 3 - D("110.00")
         assert totals[3] == D("39.00")
 
-    def test_credit_refund_keeps_negative(self, setup, logged_in_admin):
+    def test_credit_refund_keeps_negative(self, setup, logged_in_admin, real_account):
         s = setup
         plan = _plan(s)
-        _send(_issue(s, plan).created)
+        _send_paid(s, _issue(s, plan).created, real_account)
         inv = _annual(s, logged_in_admin, "50", credit_mode="refund")
         assert inv.total_amount == D("154.00") - D("264.00")
         create_or_update_open_item(inv)
@@ -390,24 +538,49 @@ class TestDocuments:
         assert "Summe Jahresabrechnung" in html and "308,00" in html
         # Gegenverrechnungs-Zeilen stehen nicht in der Positionstabelle
         assert html.count("abzüglich Teilrechnung") == 4
-        assert "Noch nicht bezahlt" in html
+        # Zahlstand steht in der Tabelle, offene Beträge laufen bis „Insgesamt offen“
+        assert "<th>Zahlung</th>" in html
+        assert html.count('<span class="inst-open">offen</span>') == 4
+        assert html.count("zuzüglich noch offen") == 4
+        # Nachzahlung 44 + 4 × 66 offen = 308
+        assert settlement.summary(inv)["due_overall"] == D("308.00")
+        assert "Insgesamt offen" in html
+        assert "Noch nicht bezahlt" not in html
 
-    def test_credit_document(self, app, setup, logged_in_admin):
+    def test_settlement_document_paid_installment(self, app, setup, logged_in_admin,
+                                                  real_account):
         s = setup
-        _send(_issue(s, _plan(s)).created)
+        insts = _issue(s, _plan(s)).created
+        _send(insts)
+        from app.accounting.services import booking_group_from_invoice_payment
+        first = min(insts, key=lambda i: i.due_date)
+        booking_group_from_invoice_payment(first, first.total_amount, TODAY, real_account.id,
+                                           s["user"].id, open_item=first.open_item)
+        db.session.commit()
+        inv = _annual(s, logged_in_admin, "120")
+        summ = settlement.summary(inv)
+        states = [d["pay_state"] for d in summ["deductions"]]
+        assert states.count("paid") == 1 and states.count("open") == 3
+        html = self._html(app, inv)
+        assert html.count("zuzüglich noch offen") == 3
+        assert ">bezahlt<" in html
+
+    def test_credit_document(self, app, setup, logged_in_admin, real_account):
+        s = setup
+        _send_paid(s, _issue(s, _plan(s)).created, real_account)
         inv = _annual(s, logged_in_admin, "50", credit_mode="offset")
         html = self._html(app, inv)
         assert "Guthaben" in html and "110,00" in html
         assert "verrechnen wir" in html
         assert "Verrechnung mit der nächsten Teilrechnung" not in html  # Uebertragszeile verborgen
 
-    def test_docx_settlement_and_credit(self, app, setup, logged_in_admin):
+    def test_docx_settlement_and_credit(self, app, setup, logged_in_admin, real_account):
         import io as _io
         from docx import Document as _Docx
         from app.invoices.document_service import generate_docx
         from app.settings_service import wg_settings
         s = setup
-        _send(_issue(s, _plan(s)).created)
+        _send_paid(s, _issue(s, _plan(s)).created, real_account)
         inv = _annual(s, logged_in_admin, "50", credit_mode="offset")
         with app.test_request_context():
             data = generate_docx(inv, wg_settings())

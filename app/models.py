@@ -2717,6 +2717,16 @@ class Invoice(EmailTrackableMixin, db.Model):
         return [i for i in self.items if i.deducts_invoice_id]
 
     @property
+    def carried_credit(self):
+        """Brutto-Guthaben, das diese Abrechnung auf 0 gekappt und vorgetragen
+        hat (Zeilen ``credit_carry``), sonst 0. Ohne eigene Abfrage — nutzt die
+        geladenen Positionen, damit die Rechnungsliste es je Zeile zeigen kann."""
+        from decimal import Decimal
+        from app.invoices.amounts import line_gross
+        return sum((line_gross(i.amount, i.tax_rate) for i in self.items
+                    if i.charge_key == "credit_carry"), Decimal("0"))
+
+    @property
     def has_deductions(self):
         return any(i.deducts_invoice_id for i in self.items)
 

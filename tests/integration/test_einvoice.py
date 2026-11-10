@@ -430,3 +430,20 @@ class TestInstallments:
         e, tree = _xml(inv, "G15_jahresabrechnung_guthaben")
         assert e.grand_total == inv.total_amount
         assert "Guthaben" in e.payment_terms
+
+    def test_g15b_cancelled_installment_zero_line(self, app):
+        """Wegen Guthaben stornierte Teilrechnung: Nullzeile mit Verweis bleibt
+        regelkonform (BR-24 ff. erlauben Betrag 0)."""
+        from app.installments.settlement import cancel_into
+        _seller(DE_SELLER)
+        inst = self._installment(number="2026-00101")
+        inst.status = Invoice.STATUS_SENT
+        inv = _invoice([
+            _item("Wasserverbrauch 2025/26", "20", "m³", "2.00", "7"),
+        ], number="2026-00144", customer=inst.customer)
+        cancel_into(inv, [inst])
+        db.session.commit()
+        assert inst.status == Invoice.STATUS_CANCELLED
+        e, tree = _xml(inv, "G15b_jahresabrechnung_storno_teilrechnung")
+        assert e.grand_total == inv.total_amount == Decimal("42.80")
+        assert any(line.net_amount == 0 for line in e.lines)

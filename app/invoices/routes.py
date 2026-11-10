@@ -579,6 +579,7 @@ def generate():
         inst_settlement.delete_drafts(obsolete_drafts)
         deducted_count = 0
         credit_offset = credit_refund = 0
+        cancelled_credits = []
         foreign_warnings = []
         for property_id, prop_readings in sorted_items:
             prop = prop_readings[0].meter.property
@@ -750,10 +751,14 @@ def generate():
             installments = inst_settlement.deductible_installments(
                 period.id, prop.id, ownership.customer_id)
             if installments:
-                deducted_count += inst_settlement.deduct_into(inv, installments)
-                applied_mode = inst_settlement.handle_credit(
-                    inv, credit_mode, meter_id=prop_readings[0].meter_id,
-                    period_id=period.id, created_by_id=current_user.id)
+                # Bei Guthaben werden ganz unbezahlte Teilrechnungen nicht
+                # abgezogen, sondern storniert (settlement.split_for_credit).
+                n_deducted, credits, applied_mode = inst_settlement.settle_installments(
+                    inv, installments, credit_mode=credit_mode,
+                    meter_id=prop_readings[0].meter_id, period_id=period.id,
+                    created_by_id=current_user.id)
+                deducted_count += n_deducted
+                cancelled_credits.extend(credits)
                 if applied_mode == inst_terms.CREDIT_OFFSET:
                     credit_offset += 1
                 elif applied_mode == inst_terms.CREDIT_REFUND:
@@ -796,6 +801,11 @@ def generate():
             if credit_refund:
                 parts.append(f"{credit_refund} Guthaben zur Auszahlung")
             flash("Teilrechnungen: " + ", ".join(parts) + ".", "info")
+        if cancelled_credits:
+            flash(f"{len(cancelled_credits)} unbezahlte {inst_terms.installment_title()}(en) "
+                  "wegen Guthaben storniert statt abgezogen – die Storno-Gutschriften "
+                  f"({', '.join(c.invoice_number for c in cancelled_credits)}) gehen mit der "
+                  "Jahresabrechnung an den Kontakt.", "info")
         if obsolete_drafts:
             flash(f"{len(obsolete_drafts)} nie versendete {inst_terms.installment_title()}"
                   f"-Entwürfe wurden gelöscht (die Periode ist jetzt abgerechnet).", "info")
@@ -2610,7 +2620,8 @@ def billing_run_detail(run_id):
     if not any(len(b["invoices"]) > 1 for b in mail_bundles):
         mail_bundles = []
     overview = _billing_run_overview(run)
-    if run.linked_runs:
+    has_companions = any(inv.is_credit_note for inv in all_invoices)
+    if run.linked_runs or has_companions:
         # Post: Entwuerfe der verknuepften Teilrechnungslaeufe mit ins Kuvert,
         # je Kontakt zusammen (Jahresabrechnung, dann Teilrechnungen).
         from app.einvoice.obligation import electronic_reason
@@ -2951,16 +2962,10 @@ def billing_run_post_bulk(run_id):
     # Auf den Lauf (und seine verknuepften Teilrechnungslaeufe) einschränken:
     # keine fremden Rechnungen über manipulierte IDs. Reihenfolge je Kontakt
     # zusammen (Kuvert), sonst nach Nummer.
+    # Auch die Storno-Gutschriften der wegen Guthaben stornierten Teilrechnungen
+    # gehoeren ins Kuvert (sie haben keinen Lauf) — eine Stelle fuer OSS + SaaS-Job.
     from app.invoices import mailing
-    run_ids = [run.id] + [lr.id for lr in run.linked_runs]
-    invoices = (
-        Invoice.query
-        .filter(Invoice.id.in_(invoice_ids), Invoice.billing_run_id.in_(run_ids))
-        .order_by(Invoice.invoice_number)
-        .all()
-    )
-    if run.linked_runs:
-        invoices = mailing.post_order(invoices)
+    invoices = mailing.post_invoices_for_run(run, invoice_ids)
     if not invoices:
         flash("Keine Rechnungen gefunden.", "warning")
         return redirect(url_for("invoices.billing_run_detail", run_id=run_id))

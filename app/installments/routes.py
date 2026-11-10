@@ -136,6 +136,7 @@ def period(period_id):
         open_by_seq={s: [e for e in open_entries if e.seq == s] for s in open_seqs},
         enabled=terms.is_enabled(), rounding=terms.rounding_step(),
         min_annual=terms.min_annual_amount(), source_run=source_run,
+        excluded_labels=terms.excluded_charge_labels(),
         projects=Project.query.filter_by(closed=False).order_by(Project.name).all(),
         sort_order_choices=BillingRun.SORT_ORDER_CHOICES,
         word=terms.installment_word(), words=terms.installment_words(),

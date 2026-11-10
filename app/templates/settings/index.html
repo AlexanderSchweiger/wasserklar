@@ -37,11 +37,13 @@
         <i class="fas fa-tachometer-alt me-1"></i> Zähler
       </a>
     </li>
+    {% block settings_tab_db %}
     <li class="nav-item" role="presentation">
       <a class="nav-link" id="tab-db" data-bs-toggle="tab" href="#pane-db" role="tab">
         <i class="fas fa-database me-1"></i> Datenbankverbindung
       </a>
     </li>
+    {% endblock %}
     {% if current_user.is_admin %}
     <li class="nav-item" role="presentation">
       <a class="nav-link text-danger" id="tab-danger" data-bs-toggle="tab" href="#pane-danger" role="tab">
@@ -755,6 +757,7 @@
     </div>
 
     {# ── Tab 4: Datenbankverbindung ──────────────────────────────────── #}
+    {% block settings_pane_db %}
     <div class="tab-pane fade" id="pane-db" role="tabpanel">
       <div class="card">
         <div class="card-header">
@@ -799,6 +802,7 @@
         </div>
       </div>
     </div>
+    {% endblock %}
 
     {# ── Tab: Danger Zone (nur Admin) ────────────────────────────────── #}
     {% if current_user.is_admin %}

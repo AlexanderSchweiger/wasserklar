@@ -25,7 +25,7 @@ from app.installments.amounts import round_installment
 from app.invoices import tariff_engine as engine
 from app.invoices.amounts import line_gross
 from app.models import (
-    BillingPeriod, Customer, InstallmentPlan, InstallmentPlanEntry, Invoice,
+    BillingPeriod, ChargeType, Customer, InstallmentPlan, InstallmentPlanEntry, Invoice,
     MeterReading, Property, PropertyOwnership, WaterMeter,
 )
 
@@ -214,12 +214,16 @@ def candidate_properties():
             .all())
 
 
-def compute_plans(period, tariff, *, due_spec=None, step=None, min_annual=None, today=None):
+def compute_plans(period, tariff, *, due_spec=None, step=None, min_annual=None, today=None,
+                  excluded=None):
     """Vorschlaege fuer alle Objekte (schreibt nichts).
 
     ``due_spec`` = Ergebnis von ``schedule.parse_due_dates`` (Standard aus der
-    Einstellung). Wirft ``PlanError``, wenn die Faelligkeiten nicht in die
-    Periode passen oder der Tarif keinen Wasserpreis hat."""
+    Einstellung). ``excluded`` = Gebuehrenart-Schluessel, die nicht in den
+    Teilbetrag eingehen (Standard aus der Einstellung; der Wasserverbrauch ist
+    nie ausgeschlossen) — die Jahresabrechnung verrechnet sie dann voll.
+    Wirft ``PlanError``, wenn die Faelligkeiten nicht in die Periode passen
+    oder der Tarif keinen Wasserpreis hat."""
     today = today or date.today()
     if tariff is None:
         raise PlanError("Bitte einen Tarif wählen.")
@@ -233,6 +237,8 @@ def compute_plans(period, tariff, *, due_spec=None, step=None, min_annual=None, 
         raise PlanError("Keine der Fälligkeiten liegt in der Abrechnungsperiode.")
     step = terms.rounding_step() if step is None else Decimal(str(step))
     min_annual = terms.min_annual_amount() if min_annual is None else Decimal(str(min_annual))
+    excluded = set(terms.excluded_charge_keys() if excluded is None else excluded)
+    excluded.discard(ChargeType.KEY_WATER)
 
     props = candidate_properties()
     owners = _owners([p.id for p in props])
@@ -288,6 +294,12 @@ def compute_plans(period, tariff, *, due_spec=None, step=None, min_annual=None, 
 
         lines = estimate_lines(tariff, prop, customer, period, qty,
                                vat_liable=vat_liable, wg_mode=wg_mode)
+        if excluded:
+            # Vor der Zusammensetzung filtern: Jahresbetrag, Mindestbetrag und
+            # Konto-/USt-Gruppen beziehen sich dann nur auf die eingerechneten
+            # Gebuehren. Auffuellzeilen (Mindestabnahme) tragen den Schluessel
+            # ihrer m³-Position und folgen ihr.
+            lines = [ln for ln in lines if ln.get("charge_key") not in excluded]
         p.composition, p.annual_amount = composition_from_lines(lines)
         if p.annual_amount <= 0:
             p.status = STATUS_EMPTY

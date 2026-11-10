@@ -148,6 +148,118 @@ def deduct_into(invoice, installments):
     return count
 
 
+def _installment_gross(inst):
+    return _sums(installment_items(inst))["gross"]
+
+
+def _fully_unpaid(inst, in_collection):
+    """Versendet, nichts bezahlt, nicht im Lastschrift-Einzug (die Bank zieht
+    sonst trotzdem ein)."""
+    if inst.status != Invoice.STATUS_SENT:
+        return False
+    if Decimal(str(inst.paid_amount or 0)) != 0:
+        return False
+    op = inst.open_item
+    return op is None or op.id not in in_collection
+
+
+def split_for_credit(invoice, installments):
+    """Welche Teilrechnungen abgezogen und welche storniert werden.
+
+    Abgezogen wird der vorgeschriebene Betrag (Soll). Ergaebe das ein
+    Guthaben, waeren darin auch Teilrechnungen enthalten, die nie bezahlt
+    wurden — der Kunde muesste sie zahlen und bekaeme dasselbe Geld als
+    Guthaben zurueck. Deshalb werden ganz unbezahlte Teilrechnungen (spaeteste
+    Faelligkeit zuerst) nicht abgezogen, sondern storniert, solange der Saldo
+    negativ ist; die letzte darf ihn ins Plus drehen (dann eine Nachzahlung
+    statt offener Teilrechnung + Guthaben). Teilweise bezahlte bleiben im Abzug.
+
+    Gibt ``(abziehen, stornieren)`` zurueck. Schreibt nichts."""
+    invoice.recalculate_total()
+    balance = Decimal(str(invoice.total_amount or 0)) - sum(
+        (_installment_gross(i) for i in installments), ZERO)
+    if balance >= 0:
+        return list(installments), []
+    from app.direct_debit.services import open_item_ids_in_collection
+    in_collection = set(open_item_ids_in_collection())
+    unpaid = sorted((i for i in installments if _fully_unpaid(i, in_collection)),
+                    key=lambda i: (scheduled_due(i) or i.date, i.id), reverse=True)
+    cancel = []
+    for inst in unpaid:
+        if balance >= 0:
+            break
+        cancel.append(inst)
+        balance += _installment_gross(inst)
+    cancel_ids = {i.id for i in cancel}
+    return [i for i in installments if i.id not in cancel_ids], cancel
+
+
+def cancel_into(invoice, installments, *, created_by_id=None):
+    """Storniert ``installments`` (Gutschrift-Entwurf ohne Rueckzahlung, weil
+    nichts bezahlt war) und vermerkt sie auf ``invoice`` als Nullzeile mit
+    ``deducts_invoice_id`` — so zeigt die Gegenverrechnung „storniert“, und
+    ``deducting_invoice`` kennt die erledigende Abrechnung. Flusht. Gibt die
+    Gutschriften zurueck."""
+    from app.installments.owner_change import cancel_installment
+    if not installments:
+        return []
+    for inst in installments:
+        rate = next((it.tax_rate for it in installment_items(inst)), None)
+        invoice.items.append(InvoiceItem(
+            description=(f"{inst.document_title} {inst.invoice_number} storniert – "
+                         "mit dieser Abrechnung erledigt")[:500],
+            quantity=Decimal("1"), unit="Pauschal", unit_price=ZERO, amount=ZERO,
+            tax_rate=rate, charge_key=terms.KEY_DEDUCTION, deducts_invoice_id=inst.id,
+            price_decimals=2,
+        ))
+    db.session.flush()
+    invoice.recalculate_total()
+    # Titel erst jetzt: mit den Vermerkzeilen ist es eine Jahres-/Schlussrechnung.
+    title = invoice.document_title
+    credits = []
+    for inst in installments:
+        credit = cancel_installment(
+            inst, reason=f"Mit der {title} {invoice.invoice_number} erledigt.",
+            created_by_id=created_by_id)
+        if credit is not None:
+            credits.append(credit)
+    db.session.flush()
+    return credits
+
+
+def settle_installments(invoice, installments, *, credit_mode, meter_id, period_id,
+                        created_by_id=None):
+    """Gegenverrechnung einer Abrechnung in einem Schritt: unbezahlte
+    Teilrechnungen bei Guthaben stornieren (``split_for_credit``), den Rest
+    abziehen, ein verbleibendes Guthaben verrechnen/auszahlen.
+
+    Gibt ``(abgezogen, gutschriften, modus)`` zurueck. Flusht."""
+    deduct, cancel = split_for_credit(invoice, installments)
+    count = deduct_into(invoice, deduct)
+    credits = cancel_into(invoice, cancel, created_by_id=created_by_id)
+    mode = handle_credit(invoice, credit_mode, meter_id=meter_id, period_id=period_id,
+                         created_by_id=created_by_id)
+    return count, credits, mode
+
+
+def companion_credit_notes(invoices):
+    """Gutschriften der Teilrechnungen, die eine der ``invoices`` storniert hat
+    (Nullzeilen aus ``cancel_into``) — sie gehoeren in dieselbe E-Mail bzw.
+    dasselbe Kuvert wie die Abrechnung."""
+    ids = [inv.id for inv in invoices if inv.id is not None]
+    if not ids:
+        return []
+    inst_ids = [r[0] for r in db.session.query(InvoiceItem.deducts_invoice_id).filter(
+        InvoiceItem.invoice_id.in_(ids), InvoiceItem.deducts_invoice_id.isnot(None),
+        InvoiceItem.amount == 0).distinct()]
+    if not inst_ids:
+        return []
+    return (Invoice.query.filter(Invoice.invoice_kind == Invoice.KIND_CREDIT_NOTE,
+                                 Invoice.cancels_invoice_id.in_(inst_ids),
+                                 Invoice.status != Invoice.STATUS_CANCELLED)
+            .order_by(Invoice.invoice_number).all())
+
+
 # ---------------------------------------------------------------------------
 # Guthaben
 # ---------------------------------------------------------------------------
@@ -325,9 +437,21 @@ def summary(invoice):
         inst = db.session.get(Invoice, inst_id)
         sums = _sums(its)
         open_balance = Decimal(str(inst.open_balance)) if inst is not None else ZERO
+        open_amount = open_balance if open_balance > 0 else ZERO
+        gross = -sums["gross"]
+        # Zahlstand fuer die Spalte „Zahlung“ der Gegenverrechnung. Eine mit
+        # dieser Abrechnung stornierte Teilrechnung (Nullzeile) ist erledigt.
+        if inst is not None and inst.status == Invoice.STATUS_CANCELLED:
+            open_amount = ZERO
+            pay_state = "cancelled"
+        elif open_amount <= 0:
+            pay_state = "paid"
+        elif open_amount < gross:
+            pay_state = "partial"
+        else:
+            pay_state = "open"
         rows.append({"invoice": inst, "net": -sums["net"], "tax": -sums["tax"],
-                     "gross": -sums["gross"],
-                     "open": open_balance if open_balance > 0 else ZERO})
+                     "gross": gross, "open": open_amount, "pay_state": pay_state})
     deducted = {
         "net": sum((r["net"] for r in rows), ZERO),
         "tax": sum((r["tax"] for r in rows), ZERO),
@@ -352,6 +476,7 @@ def summary(invoice):
         "carry": carry,
         "total": total,
         "open_installments": open_installments,
+        "cancelled_installments": [r for r in rows if r["pay_state"] == "cancelled"],
         "open_total": open_total,
         "due_overall": (total if total > 0 else ZERO) + open_total,
         "next_plan": next_plan_for(invoice),

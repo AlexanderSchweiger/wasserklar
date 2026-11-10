@@ -83,7 +83,9 @@
         {% set cons = inv.consumption %}
         {% if cons %}{{ "%.3g"|format(cons|float) }} m³{% else %}—{% endif %}
       </td>
-      <td class="text-end"><strong>{{ inv.total_amount|de_number }} €</strong></td>
+      <td class="text-end"><strong>{{ inv.total_amount|de_number }} €</strong>
+        {%- set carried = inv.carried_credit %}
+        {%- if carried > 0 %}<br><small class="text-success text-nowrap" title="Guthaben, mit der nächsten {{ installment_title() }} verrechnet">Guthaben {{ carried|de_number }} €</small>{% endif %}</td>
       <td>
         {% with invoice = inv %}{% include "invoices/_status_badge.html" %}{% endwith %}
         {% if inv.last_email_status and inv.last_email_status != 'sent' %}
