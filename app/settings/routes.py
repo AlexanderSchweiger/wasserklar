@@ -151,6 +151,39 @@ def _save_supplier_number_start(raw):
         counter.next_seq = start
 
 
+# Reiter der Einstellungsseite (``?tab=<name>``, Pane-ID ``pane-<name>``).
+# Der aktive Reiter reist als Query-Parameter, nicht als ``#anker``: hx-boost
+# folgt dem Redirect nach dem Speichern per XHR, und dabei geht ein Fragment
+# verloren — die Seite sprang immer auf den ersten Reiter zurueck.
+SETTINGS_TABS = ('mandant', 'tax', 'kontakt', 'email', 'rechnung', 'zaehler', 'db', 'danger')
+DEFAULT_TAB = 'mandant'
+
+
+def _settings_tab(raw):
+    """Gueltiger Reiter-Name oder der Standard (unbekannte Werte verworfen)."""
+    raw = (raw or '').strip()
+    if raw.startswith('pane-'):
+        raw = raw[len('pane-'):]
+    if raw == 'danger' and not current_user.is_admin:
+        return DEFAULT_TAB
+    return raw if raw in SETTINGS_TABS else DEFAULT_TAB
+
+
+def settings_url(tab=None):
+    """URL der Einstellungsseite mit geoeffnetem Reiter."""
+    tab = _settings_tab(tab)
+    if tab == DEFAULT_TAB:
+        return url_for('settings.index')
+    return url_for('settings.index', tab=tab)
+
+
+def _form_flag(form, name):
+    """Checkbox/Hidden-Wert als bool. ``"false"``/``"0"``/``"off"`` sind aus —
+    ein verstecktes Feld mit ``value="false"`` ist sonst ein nicht leerer String
+    und damit „an“ (so verschwanden die SMTP-Daten der SaaS-Basis-Mandanten)."""
+    return (form.get(name) or '').strip().lower() in ('true', '1', 'on', 'yes')
+
+
 @bp.route('/', methods=['GET', 'POST'])
 @login_required
 def index():
@@ -199,7 +232,11 @@ def index():
                 water_rate = Decimal(water_raw)
             except (InvalidOperation, ValueError):
                 water_rate = None
-            if water_rate is not None and water_rate in set(tax_service.known_rate_values()):
+            # Nur bei echter Aenderung schreiben (die Auswahl liefert „7.00“,
+            # gespeichert ist oft „7“ — sonst aendert jedes Speichern den Wert).
+            if (water_rate is not None
+                    and water_rate in set(tax_service.known_rate_values())
+                    and water_rate != tax_service.water_tax_rate()):
                 AppSetting.set(tax_service.WATER_RATE_KEY, str(water_rate))
 
         # Voranmeldungszeitraum der USt (nur bekannte Werte; fehlt das Feld, bleibt er).
@@ -232,14 +269,23 @@ def index():
             if error:
                 flash(error, 'danger')
 
-        # Mail-Versandmodus (Checkbox). Bei aktivem Plattform-Relay sind die
-        # SMTP-Felder im UI disabled und werden nicht mitgesendet — der
-        # _MAIL_MAP-Loop würde die gespeicherten mail.*-Werte sonst leeren.
-        relay = 'true' if request.form.get('mail_use_platform_relay') else 'false'
-        AppSetting.set('mail.use_platform_relay', relay)
+        # Mail-Versandmodus (Checkbox bzw. verstecktes Feld der SaaS). Bei
+        # aktivem Plattform-Relay sind die SMTP-Felder im UI disabled und werden
+        # nicht mitgesendet — der _MAIL_MAP-Loop würde die gespeicherten
+        # mail.*-Werte sonst leeren.
+        # Geschrieben wird die Wahl nur, wenn der Schalter im Formular steht
+        # (Feld selbst oder Marker mail_relay_field=1 fuer die nicht angehakte
+        # Checkbox). Ohne Schalter (OSS-Standalone, SaaS ohne Relay-Recht) bleibt
+        # die gespeicherte Wahl bzw. der Config-Default MAIL_PLATFORM_RELAY.
+        relay = None
+        if ('mail_use_platform_relay' in request.form
+                or request.form.get('mail_relay_field') == '1'):
+            relay = 'true' if _form_flag(request.form, 'mail_use_platform_relay') else 'false'
+            AppSetting.set('mail.use_platform_relay', relay)
 
-        # Mail-Server (nur wenn kein Plattform-Relay aktiv)
-        if relay != 'true':
+        # Mail-Server (nur wenn kein Plattform-Relay gewaehlt ist und die Felder
+        # im Formular stehen — ein Formular ohne SMTP-Felder leert nichts).
+        if relay != 'true' and 'mail_server' in request.form:
             for attr, db_key, _ in _MAIL_MAP:
                 if attr == 'password':
                     # Leerstring = unverändert lassen
@@ -297,7 +343,7 @@ def index():
             msg += f' – {country_summary}.' if country_summary else '.'
             flash(msg + ' Nicht benötigte Steuersätze lassen sich unter '
                         '„Steuern" deaktivieren.', 'info')
-        return redirect(url_for('settings.index'))
+        return redirect(settings_url(request.form.get('active_tab')))
 
     # Aktuelle Werte für das Formular zusammenstellen (DB > .env-Fallback)
     def _get(db_key, config_key, default=''):
@@ -333,7 +379,11 @@ def index():
     # SMTP-Felder, ohne die Plattform-Relay-Zugangsdaten aus der .env zu zeigen.
     mail_raw = {attr: (AppSetting.get(f'mail.{attr}') or '')
                 for attr in ('server', 'port', 'username', 'default_sender')}
-    mail_raw['use_tls_bool'] = str(AppSetting.get('mail.use_tls')).lower() in ('true', '1', 'yes')
+    # Ohne gespeicherten Wert ist TLS an (Port 587 = STARTTLS, der Normalfall) —
+    # sonst speicherte die Ersteinrichtung stillschweigend „TLS aus“.
+    stored_tls = AppSetting.get('mail.use_tls')
+    mail_raw['use_tls_bool'] = (stored_tls is None
+                                or str(stored_tls).lower() in ('true', '1', 'yes'))
     mail_raw['password_set'] = bool(AppSetting.get('mail.password'))
 
     # Datenbankverbindungsinfo (kein Passwort)
@@ -362,6 +412,7 @@ def index():
 
     from app.einvoice.service import settings_context as einvoice_settings_context
     return render_template('settings/index.html', wg=wg, mail=mail_cfg, mail_raw=mail_raw,
+                           active_tab=_settings_tab(request.args.get('tab')),
                            einvoice=einvoice_settings_context(),
                            sepa=_sepa_context(),
                            db_info=db_info,
@@ -401,7 +452,7 @@ def reset_tenant():
     password = request.form.get('confirm_password', '')
     if not password or not current_user.check_password(password):
         flash('Passwort falsch — der Mandant wurde NICHT zurückgesetzt.', 'danger')
-        return redirect(url_for('settings.index', _anchor='pane-danger'))
+        return redirect(settings_url('danger'))
 
     from app.settings.reset import reset_tenant_data
     try:
@@ -410,7 +461,7 @@ def reset_tenant():
         db.session.rollback()
         current_app.logger.exception('Mandant-Reset fehlgeschlagen')
         flash(f'Zurücksetzen fehlgeschlagen: {exc}', 'danger')
-        return redirect(url_for('settings.index', _anchor='pane-danger'))
+        return redirect(settings_url('danger'))
 
     flash('Mandant wurde zurückgesetzt: alle Daten gelöscht, Einstellungen erhalten. '
           f'({result["cleared_tables"]} Tabellen geleert)', 'success')
@@ -553,7 +604,8 @@ def tax_rate_edit(rate_id):
 def tax_rates_card():
     """Steuersatz-Karte als Fragment — nach dem Speichern im Modal neu geladen,
     damit ungespeicherte Eingaben im Einstellungsformular erhalten bleiben."""
-    return render_template('settings/_tax_rates_card.html', **_tax_card_context())
+    return render_template('settings/_tax_rates_card.html', tax_card_fragment=True,
+                           **_tax_card_context())
 
 
 @bp.route('/country-defaults', methods=['POST'])
@@ -574,7 +626,7 @@ def apply_country_defaults_route():
         flash(f'Länder-Defaults ({name}) übernommen – {summary}.', 'success')
     else:
         flash(f'Länder-Defaults ({name}) waren bereits aktiv — nichts geändert.', 'info')
-    return redirect(url_for('settings.index', _anchor='pane-tax'))
+    return redirect(settings_url('tax'))
 
 
 
@@ -619,7 +671,7 @@ def share_binding():
         flash('Anteile gibt es nur im Mandant-Typ Wassergenossenschaft.', 'warning')
         return redirect(url_for('settings.index'))
     current = current_binding()
-    back = url_for('settings.index', _anchor='pane-mandant')
+    back = settings_url('mandant')
 
     if request.method == 'POST':
         target = request.form.get('target')

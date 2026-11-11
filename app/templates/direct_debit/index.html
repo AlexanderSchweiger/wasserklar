@@ -13,7 +13,7 @@
         {% for issue in readiness %}<li>{{ issue }}</li>{% endfor %}
       </ul>
       {% if current_user.has_permission('verwaltung') %}
-      <a href="{{ url_for('settings.index') }}#tab-kontakt" class="alert-link">Zu den Einstellungen (Kontaktdaten → Bankdaten / SEPA-Lastschrift)</a>
+      <a href="{{ url_for('settings.index', tab='kontakt', _anchor='sepa-card') }}" class="alert-link">Zu den Einstellungen (Kontaktdaten → Bankdaten / SEPA-Lastschrift)</a>
       {% else %}
       Bitte die Verwaltung bitten, die Bankdaten und die Gläubiger-ID unter Einstellungen zu hinterlegen.
       {% endif %}
