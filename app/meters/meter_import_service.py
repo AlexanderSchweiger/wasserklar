@@ -368,6 +368,7 @@ def commit(rows: list[PreviewRow], cfg: MeterImportConfig) -> ImportStats:
     from app.models import Property, WaterMeter
     from app.imports.relations import MeterObjectTracker
     from app.meters.services import recompute_meter_chain
+    from app import consumption as consumption_years
 
     stats = ImportStats()
     tracker = MeterObjectTracker()
@@ -451,6 +452,10 @@ def commit(rows: list[PreviewRow], cfg: MeterImportConfig) -> ImportStats:
                     initial_value_changed = existing.initial_value != initial_value
                     existing.initial_value = initial_value
                 if cfg.col_meter_type:
+                    if existing.meter_type != meter_type:
+                        # Haupt-/Subzaehler entscheidet, ob der Verbrauch
+                        # zaehlt — Jahressummen neu rechnen.
+                        consumption_years.mark_stale()
                     existing.meter_type = meter_type
                 if cfg.col_notes:
                     existing.notes = notes

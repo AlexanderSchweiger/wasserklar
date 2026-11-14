@@ -95,16 +95,37 @@ def post_invoices_for_run(run, invoice_ids):
     return invoices
 
 
-def run_invoices_with_linked(run):
+def run_invoices_with_linked(run, *, include_linked=True):
     """Rechnungen eines Laufs plus die der verknuepften Teilrechnungslaeufe und
     die Storno-Gutschriften der Teilrechnungen, die der Lauf wegen eines
-    Guthabens storniert hat (``settlement.companion_credit_notes``)."""
+    Guthabens storniert hat (``settlement.companion_credit_notes``).
+
+    ``include_linked=False``: ohne die verknuepften Teilrechnungen (Schalter
+    „mitschicken“ im Versenden-Dialog aus) — die Gutschriften gehoeren zur
+    Abrechnung und bleiben dabei."""
     from app.installments.settlement import companion_credit_notes
     invoices = run.invoices.order_by(Invoice.invoice_number).all()
-    for linked in getattr(run, "linked_runs", None) or []:
-        invoices.extend(linked.invoices.order_by(Invoice.invoice_number).all())
-    invoices.extend(companion_credit_notes(invoices))
+    own = list(invoices)
+    if include_linked:
+        for linked in getattr(run, "linked_runs", None) or []:
+            invoices.extend(linked.invoices.order_by(Invoice.invoice_number).all())
+    invoices.extend(companion_credit_notes(own))
     return invoices
+
+
+def linked_drafts(run):
+    """Noch nicht versendete Teilrechnungen der mit ``run`` verknuepften Laeufe."""
+    return [inv for linked in (getattr(run, "linked_runs", None) or [])
+            for inv in linked.invoices.order_by(Invoice.invoice_number).all()
+            if inv.status == Invoice.STATUS_DRAFT]
+
+
+def start_on_new_sheet(writer):
+    """Duplexdruck: hat das Sammel-PDF eine ungerade Seitenzahl, eine Leerseite
+    anhaengen — der naechste Beleg beginnt dann auf einem neuen Blatt (nach
+    jedem Beleg samt Beilage aufrufen; OSS-Route und SaaS-Job-Renderer)."""
+    if len(writer.pages) % 2:
+        writer.add_blank_page()
 
 
 def _context(customer, invoices):

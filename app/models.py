@@ -830,6 +830,21 @@ class WaterMeter(db.Model):
     def is_sub(self):
         return self.meter_type == "sub"
 
+    # Abrechnungsregel (einzige Stelle): ein Subzaehler sitzt hinter dem
+    # Hauptzaehler (z. B. Gartenwasser) — dessen Stand misst seinen Verbrauch
+    # schon mit. Subzaehler werden abgelesen und aufgezeichnet, aber nie
+    # verrechnet: weder im Rechnungslauf noch in Schlussrechnung,
+    # Verbrauchsnachweis, Teilbetragsplaenen, Jahressummen oder Schaetz-
+    # korrekturen. Wer Verbrauch je Objekt/Periode summiert, filtert hierueber.
+    def is_billable(self):
+        return not self.is_sub()
+
+    @classmethod
+    def billable_filter(cls):
+        """SQL-Bedingung fuer Zaehler, deren Verbrauch abgerechnet wird
+        (``meter_type`` ist NOT NULL, ``!=`` ist also NULL-sicher)."""
+        return cls.meter_type != "sub"
+
     def type_label(self):
         return "Subzähler" if self.is_sub() else "Hauptzähler"
 

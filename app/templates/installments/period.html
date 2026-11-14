@@ -76,7 +76,6 @@
       <div class="card-header"><h3 class="card-title">2. {{ title }}en erstellen</h3></div>
       <form method="post" action="{{ url_for('installments.create_invoices', period_id=period.id) }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        {% if source_run %}<input type="hidden" name="source_run_id" value="{{ source_run.id }}">{% endif %}
         <div class="card-body">
           {% if open_seqs %}
           <p class="text-secondary small mb-2">
@@ -109,6 +108,20 @@
                 {% endfor %}
               </select>
             </div>
+            {% if linkable_runs %}
+            <div class="col-12">
+              <label class="form-label">Gemeinsam versenden mit</label>
+              <select name="source_run_id" class="form-select form-select-sm">
+                {% for r in linkable_runs %}
+                <option value="{{ r.id }}" {{ 'selected' if link_default and r.id == link_default.id }}>
+                  Rechnungslauf {{ r.billing_period.name if r.billing_period }} vom {{ r.created_at.strftime('%d.%m.%Y') }}</option>
+                {% endfor %}
+                <option value="" {{ 'selected' if not link_default }}>– nicht verknüpfen (eigener Versand) –</option>
+              </select>
+              <div class="form-hint">Verknüpfte {{ title }}en gehen im Versenden-Dialog dieses Laufs mit:
+                eine E-Mail bzw. ein Kuvert je Mitglied mit der Jahresabrechnung.</div>
+            </div>
+            {% endif %}
           </div>
           {% else %}
           <div class="text-secondary">

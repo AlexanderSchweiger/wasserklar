@@ -7,6 +7,10 @@ Sammel-PDF, Post-Druck, Excel-Export und Lauf-Loeschen unveraendert.
 Positionen je (Konto, USt-Satz) aus der Plan-Zusammensetzung: die Zahlung
 splittet ``_split_invoice_by_dimensions`` so auf die richtigen Erloeskonten,
 und die USt entsteht bei Vereinnahmung (Buchungen).
+
+Leistungszeitraum: in AT ihr Abschnitt der Periode (``service_part``,
+eingefroren in ``service_date_from/_to``, wie auf einer Akonto-Vorschreibung
+„01.10.–31.12.“), in DE die ganze Periode (Anzahlung, ``country``-Profil).
 """
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, field
@@ -17,6 +21,7 @@ from app.extensions import db
 from app.installments import terms
 from app.installments.amounts import split_gross
 from app.installments.plans import billed_property_ids
+from app.installments.schedule import part_of_period
 from app.invoices import tariff_engine as engine
 from app.models import (
     BillingRun, ChargeType, Invoice, InvoiceItem, InstallmentPlanEntry, ReadingCorrection,
@@ -84,13 +89,33 @@ def _groups(plan, vat_liable):
     return list(merged.values())
 
 
+def service_part(entry):
+    """Leistungszeitraum der Teilrechnung: der Abschnitt der Periode, fuer den
+    der Teilbetrag gilt (``schedule.part_of_period``; vier Teilbetraege →
+    Quartale) — nur in Laendern mit ``installment_service_part`` (AT). ``None``
+    = die ganze Periode (DE: Anzahlung auf die Jahresleistung)."""
+    from app import country
+    if not country.current_profile().installment_service_part:
+        return None
+    plan = entry.plan
+    period = plan.billing_period if plan is not None else None
+    if period is None:
+        return None
+    return part_of_period(period.start_date, period.end_date, len(plan.entries), entry.seq)
+
+
 def build_items(entry, vat_liable, *, project_id=None):
     """Positionen (ungespeichert) fuer die Teilrechnung zu ``entry``."""
     plan = entry.plan
     period = plan.billing_period
     count = len(plan.entries)
     word = terms.installment_word()
-    base = f"{entry.seq}. {word} {period.name}" + (f" (von {count})" if count > 1 else "")
+    part = service_part(entry)
+    if part is not None:
+        # wie auf einer Akonto-Vorschreibung: „1. Teilbetrag 01.01.–31.03.2026“
+        base = f"{entry.seq}. {word} {part[0]:%d.%m.}–{part[1]:%d.%m.%Y}"
+    else:
+        base = f"{entry.seq}. {word} {period.name}" + (f" (von {count})" if count > 1 else "")
     groups = _groups(plan, vat_liable)
     parts = split_gross(Decimal(str(entry.amount)), groups)
     items = []
@@ -151,12 +176,15 @@ def create_installment_invoices(period, entries, *, created_by_id=None, project_
     by_customer = defaultdict(list)
     for entry in todo:
         plan = entry.plan
+        part = service_part(entry)
         inv = Invoice(
             invoice_number=next_invoice_number(today.year),
             customer_id=plan.customer_id, property_id=plan.property_id,
             billing_run_id=run.id, billing_period_id=period.id,
             invoice_kind=Invoice.KIND_INSTALLMENT, installment_entry_id=entry.id,
             date=today, due_date=max(entry.due_date, earliest),
+            service_date_from=part[0] if part else None,
+            service_date_to=part[1] if part else None,
             status=Invoice.STATUS_DRAFT, created_by_id=created_by_id,
         )
         db.session.add(inv)
@@ -175,12 +203,7 @@ def create_installment_invoices(period, entries, *, created_by_id=None, project_
             applied = apply_credit_carries(inv, customer_id)
             if not applied:
                 continue
-            fallback = next((it.account_id for it in inv.items if it.account_id), None)
-            for it in inv.items:
-                if it.account_id is None:
-                    it.account_id = fallback
-                if it.project_id is None:
-                    it.project_id = project_id
+            _fill_item_accounts(inv, project_id)
 
     run.invoices_created = len(result.created)
     run.invoices_skipped = len(result.skipped)
@@ -259,6 +282,61 @@ def _sort_key(plan, sort_order):
     if sort_order == "address":
         return ((prop.strasse or "").lower(), prop.hausnummer or "", prop.id)
     return ((cust.name or "").lower(), prop.id)
+
+
+def linkable_runs(period):
+    """Rechnungslaeufe, mit denen die Teilrechnungen von ``period`` gemeinsam
+    versendet werden koennen: Jahresabrechnungs-Laeufe der Vorperiode mit noch
+    unversendeten Belegen, juengster zuerst (Vorbelegung beim Erstellen)."""
+    from app.installments.plans import previous_periods
+    prev = previous_periods(period, limit=1)
+    if not prev:
+        return []
+    runs = (BillingRun.query
+            .filter(BillingRun.billing_period_id == prev[0].id,
+                    BillingRun.run_kind != BillingRun.KIND_INSTALLMENT)
+            .order_by(BillingRun.created_at.desc(), BillingRun.id.desc()).all())
+    return [r for r in runs
+            if r.invoices.filter(Invoice.status == Invoice.STATUS_DRAFT).count()]
+
+
+def pull_credit_into_drafts(customer_ids, *, after_period=None):
+    """Guthaben-Uebertraege in schon erstellte, noch nicht versendete
+    Teilrechnungen einziehen (frueheste Faelligkeit zuerst) — fuer Teilrechnungen,
+    die VOR der Jahresabrechnung entstanden sind. Ohne das stuende das Guthaben
+    erst in einer spaeteren Teilrechnung. Flusht. Gibt die Anzahl der
+    geaenderten Teilrechnungen zurueck."""
+    if not customer_ids:
+        return 0
+    query = Invoice.query.filter(Invoice.invoice_kind == Invoice.KIND_INSTALLMENT,
+                                 Invoice.status == Invoice.STATUS_DRAFT,
+                                 Invoice.customer_id.in_(list(customer_ids)))
+    if after_period is not None:
+        from app.models import BillingPeriod
+        query = query.join(BillingPeriod, BillingPeriod.id == Invoice.billing_period_id).filter(
+            BillingPeriod.start_date > after_period.end_date)
+    changed = 0
+    by_customer = defaultdict(list)
+    for inv in query.order_by(Invoice.due_date, Invoice.id).all():
+        by_customer[inv.customer_id].append(inv)
+    for customer_id, invoices in by_customer.items():
+        for inv in invoices:
+            if apply_credit_carries(inv, customer_id):
+                _fill_item_accounts(inv)
+                changed += 1
+    db.session.flush()
+    return changed
+
+
+def _fill_item_accounts(inv, project_id=None):
+    """Eingezogene Guthaben-Zeilen bekommen Konto/Projekt der Teilbetrags-Zeilen."""
+    fallback = next((it.account_id for it in inv.items if it.account_id), None)
+    project = project_id or next((it.project_id for it in inv.items if it.project_id), None)
+    for it in inv.items:
+        if it.account_id is None:
+            it.account_id = fallback
+        if it.project_id is None:
+            it.project_id = project
 
 
 def open_entries(period, *, seqs=None, due_until=None):

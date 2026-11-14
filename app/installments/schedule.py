@@ -7,7 +7,7 @@ innerhalb ``[start, end]`` — auch bei Perioden, die nicht im Jänner beginnen
 """
 import calendar
 import re
-from datetime import date
+from datetime import date, timedelta
 
 MAX_INSTALLMENTS = 12
 
@@ -51,6 +51,34 @@ def format_due_dates(spec):
 def _on(year, month, day):
     """Datum, der Tag auf das Monatsende gekappt (29.02. in Nicht-Schaltjahren)."""
     return date(year, month, min(day, calendar.monthrange(year, month)[1]))
+
+
+def _add_months(d, months):
+    month = d.month - 1 + months
+    return _on(d.year + month // 12, month % 12 + 1, d.day)
+
+
+def part_of_period(start, end, count, seq):
+    """Teilzeitraum ``seq`` (1-basiert) von ``count`` gleich langen Abschnitten
+    der Periode ``[start, end]`` als ``(von, bis)`` — der Leistungszeitraum einer
+    Teilrechnung (vier Teilbetraege → Quartale, zwei → Halbjahre).
+
+    Ganze Monate, wenn die Periode am Monatsersten beginnt, am Monatsletzten
+    endet und sich ihre Monate glatt teilen; sonst nach Tagen. ``None`` bei
+    ungueltigem ``seq``/``count``."""
+    if not count or not 1 <= seq <= count or end < start:
+        return None
+    months = (end.year - start.year) * 12 + end.month - start.month + 1
+    month_end = end.day == calendar.monthrange(end.year, end.month)[1]
+    if start.day == 1 and month_end and months % count == 0:
+        step = months // count
+        part_start = _add_months(start, step * (seq - 1))
+        part_end = _add_months(start, step * seq) - timedelta(days=1)
+        return part_start, part_end
+    days = (end - start).days + 1
+    part_start = start + timedelta(days=days * (seq - 1) // count)
+    part_end = start + timedelta(days=days * seq // count - 1)
+    return part_start, part_end
 
 
 def dates_for_period(spec, start, end):

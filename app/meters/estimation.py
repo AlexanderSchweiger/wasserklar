@@ -29,8 +29,8 @@ from decimal import Decimal, ROUND_DOWN
 
 from app.extensions import db
 from app.models import (
-    MeterReading, BillingPeriod, Invoice, InvoiceItem, BillingRun,
-    ReadingCorrection,
+    MeterReading, BillingPeriod, Invoice, InvoiceItem, InvoiceMeterReading,
+    BillingRun, ReadingCorrection,
 )
 
 _ISSUED_STATUSES = (Invoice.STATUS_SENT, Invoice.STATUS_PAID, Invoice.STATUS_CREDIT)
@@ -140,6 +140,14 @@ def _issued_invoice_for(property_id, period_id):
         .order_by(Invoice.id.desc())
         .first()
     )
+
+
+def _billed_meter_on(invoice, meter):
+    """Steht ``meter`` im eingefrorenen Verbrauchsnachweis von ``invoice``?"""
+    return db.session.query(
+        InvoiceMeterReading.query
+        .filter_by(invoice_id=invoice.id, meter_id=meter.id).exists()
+    ).scalar()
 
 
 def _consumption_price(invoice):
@@ -292,6 +300,11 @@ def build_correction(reading, estimated_consumption, *, created_by_id=None):
     invoice = _issued_invoice_for(meter.property_id, reading.billing_period_id)
     if invoice is None:
         return None  # Schaetzung wurde nie abgerechnet -> nichts zu korrigieren
+    if not meter.is_billable() and not _billed_meter_on(invoice, meter):
+        # Subzaehler werden nie verrechnet — korrigiert wird nur, was die
+        # Rechnung nachweislich abgerechnet hat (Altbeleg vor der Regel: der
+        # Subzaehler steht dann im eingefrorenen Verbrauchsnachweis).
+        return None
 
     delta = Decimal(str(reading.consumption)) - Decimal(str(estimated_consumption))
     if delta == 0:

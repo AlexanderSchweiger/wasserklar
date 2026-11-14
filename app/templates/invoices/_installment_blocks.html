@@ -6,7 +6,7 @@
 <style>
   .inst-block { margin-top: 0.35cm; break-inside: avoid; page-break-inside: avoid; }
   .inst-block table { width: 100%; border-collapse: collapse; font-size: 9pt; }
-  .inst-block th, .inst-block td { padding: 2px 4px; border-bottom: 0.5px solid #ddd; text-align: left; }
+  .inst-block th, .inst-block td { padding: 1px 4px; border-bottom: 0.5px solid #ddd; text-align: left; }
   .inst-block .r { text-align: right; white-space: nowrap; }
   .inst-block .sum td { font-weight: bold; border-top: 1px solid #555; border-bottom: none; }
   .inst-block .muted { color: #666; }
@@ -60,63 +60,52 @@ vorgeschriebenen {{ s.words }}:
 
 {# Block „Gegenverrechnung“ der Jahres-/Schlussrechnung. Abgezogen werden die
    vorgeschriebenen Betraege (Soll); ob eine Teilrechnung schon bezahlt ist,
-   zeigt die Spalte „Zahlung“, und noch offene Betraege kommen in eigenen
-   Zeilen bis zum Gesamtbetrag dazu. #}
+   zeigt die Spalte „Zahlung“. Eine Zeile je Teilrechnung (die Nummer
+   genuegt, die Ueberschrift nennt die Belegart) und netto/USt nur mit USt —
+   so bleibt die Abrechnung meist auf einer Seite. #}
 {% macro inst_settlement(s, invoice) %}
+{% set amount_cols = 3 if s.has_tax else 1 %}
+{% set first = (s.deductions | selectattr('invoice') | first) %}
 <div class="inst-block">
   <div class="inst-head">Gegenverrechnung der vorgeschriebenen {{ s.words }}</div>
   <table>
     <thead>
-      <tr><th>Beleg</th><th>vom</th><th>fällig</th><th>Zahlung</th>
-        <th class="r">netto</th><th class="r">USt</th><th class="r">brutto</th></tr>
+      <tr><th>{{ first.invoice.document_title if first else 'Beleg' }}</th><th>fällig</th><th>Zahlung</th>
+        {% if s.has_tax %}<th class="r">netto</th><th class="r">USt</th><th class="r">brutto</th>
+        {% else %}<th class="r">Betrag</th>{% endif %}</tr>
     </thead>
     <tbody>
       {% for d in s.deductions %}
-      {% if d.pay_state == 'cancelled' %}
-      {#- Unbezahlt + Guthaben: mit dieser Abrechnung storniert statt abgezogen. #}
-      <tr class="muted"><td>{{ d.invoice.document_title if d.invoice }} {{ d.invoice.invoice_number if d.invoice }}</td>
-        <td>{{ d.invoice.date.strftime('%d.%m.%Y') if d.invoice and d.invoice.date }}</td>
+      <tr{% if d.pay_state == 'cancelled' %} class="muted"{% endif %}>
+        <td>{{ d.invoice.invoice_number if d.invoice }}</td>
         <td>{{ d.invoice.due_date.strftime('%d.%m.%Y') if d.invoice and d.invoice.due_date }}</td>
         <td>{{ inst_pay_state(d) }}</td>
-        <td class="r" colspan="3">entfällt – nicht zu zahlen</td></tr>
-      {% else %}
-      <tr><td>abzüglich {{ d.invoice.document_title if d.invoice }} {{ d.invoice.invoice_number if d.invoice }}</td>
-        <td>{{ d.invoice.date.strftime('%d.%m.%Y') if d.invoice and d.invoice.date }}</td>
-        <td>{{ d.invoice.due_date.strftime('%d.%m.%Y') if d.invoice and d.invoice.due_date }}</td>
-        <td>{{ inst_pay_state(d) }}</td>
+        {% if d.pay_state == 'cancelled' %}
+        {#- Unbezahlt + Guthaben: mit dieser Abrechnung storniert statt abgezogen. #}
+        <td class="r" colspan="{{ amount_cols }}">entfällt – nicht zu zahlen</td>
+        {% elif s.has_tax %}
         <td class="r">−{{ d.net|de_number(2) }} €</td>
         <td class="r">−{{ d.tax|de_number(2) }} €</td>
-        <td class="r">−{{ d.gross|de_number(2) }} €</td></tr>
-      {% endif %}
+        <td class="r">−{{ d.gross|de_number(2) }} €</td>
+        {% else %}
+        <td class="r">−{{ d.gross|de_number(2) }} €</td>
+        {% endif %}
+      </tr>
       {% endfor %}
       {# Saldo als Betrag (ohne Vorzeichen) — die Beschriftung sagt, wohin er geht. #}
-      <tr class="sum"><td colspan="4">{{ 'Guthaben' if s.is_credit else 'Nachzahlung' }}</td>
+      <tr class="sum"><td colspan="3">{{ 'Guthaben' if s.is_credit else 'Nachzahlung' }}</td>
+        {% if s.has_tax %}
         <td class="r">{{ (s.regular.net - s.deducted.net)|abs|de_number(2) }} €</td>
         <td class="r">{{ (s.regular.tax - s.deducted.tax)|abs|de_number(2) }} €</td>
+        {% endif %}
         <td class="r">{{ s.balance|abs|de_number(2) }} €</td></tr>
-      {% if s.open_installments %}
-      {% for d in s.open_installments %}
-      <tr><td colspan="6">zuzüglich noch offen: {{ d.invoice.document_title }} {{ d.invoice.invoice_number }}</td>
-        <td class="r">+{{ d.open|de_number(2) }} €</td></tr>
-      {% endfor %}
-      <tr class="sum"><td colspan="6">Insgesamt offen</td>
-        <td class="r">{{ s.due_overall|de_number(2) }} €</td></tr>
-      {% endif %}
+      {#- Bewusst keine Summe „Insgesamt offen“: zu zahlen ist mit diesem Beleg nur
+          die Nachzahlung — offene Teilrechnungen zeigt die Spalte „Zahlung“, der
+          Hinweis darunter sagt, wie sie beglichen werden. #}
     </tbody>
   </table>
-  {% if s.cancelled_installments %}
-  <div class="inst-note">
-    {% for d in s.cancelled_installments %}{{ d.invoice.invoice_number }}{{ ', ' if not loop.last }}{% endfor %}
-    {{ 'ist' if s.cancelled_installments|length == 1 else 'sind' }} noch nicht bezahlt und
-    {{ 'wird' if s.cancelled_installments|length == 1 else 'werden' }} deshalb storniert und ist in
-    dieser Abrechnung schon berücksichtigt. Sie brauchen
-    {{ 'sie' if s.cancelled_installments|length == 1 else 'diese' }} nicht mehr zu bezahlen.
-  </div>
-  {% endif %}
-  {% if s.open_installments %}
-  <div class="inst-note">
-    Offene {{ s.words }} bitte unter ihrer eigenen Rechnungsnummer bezahlen, falls noch nicht geschehen.
-  </div>
+  {% if s.cancel_note or s.open_note %}
+  <div class="inst-note">{{ s.cancel_note }}{{ ' ' if s.cancel_note and s.open_note }}{{ s.open_note }}</div>
   {% endif %}
 </div>
 {% endmacro %}
@@ -145,7 +134,8 @@ Ihre Bankverbindung mit, falls sie sich geändert hat{% endif %}.
   {#- Gleiche Betraege: eine Zeile statt einer Tabelle (haelt die Abrechnung auf Seite 1). #}
   <div class="inst-note">{{ np.entries | length }} × <strong>{{ amounts[0]|de_number(2) }} €</strong>, fällig am
     {% for e in np.entries %}{{ e.due.strftime('%d.%m.') if not loop.last else e.due.strftime('%d.%m.%Y') }}{{ ', ' if not loop.last }}{% endfor %}
-    <span class="muted">· berechnet aus Ihrem Verbrauch und dem Tarif {{ np.plan.tariff.name if np.plan.tariff }}</span></div>
+    {%- if np.basis_text %} <span class="muted">· {{ np.basis_text }}</span>{% endif %}.
+    {% if np.notice %}{{ np.notice }}{% endif %}</div>
   {% else %}
   <table>
     <tbody>
@@ -155,7 +145,8 @@ Ihre Bankverbindung mit, falls sie sich geändert hat{% endif %}.
       {% endfor %}
     </tbody>
   </table>
-  <div class="inst-note muted">Berechnet aus Ihrem Verbrauch und dem Tarif {{ np.plan.tariff.name if np.plan.tariff }}.</div>
+  <div class="inst-note">{% if np.basis_text %}<span class="muted">{{ np.basis_text[:1]|upper }}{{ np.basis_text[1:] }}.</span>{% endif %}
+    {% if np.notice %}{{ np.notice }}{% endif %}</div>
   {% endif %}
 </div>
 {% elif s.kind == 'installment' and s.others %}

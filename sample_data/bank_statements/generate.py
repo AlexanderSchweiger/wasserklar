@@ -3,13 +3,16 @@
 Erzeugt MT940, MT942 und camt.053 mit identischem Buchungs-Inhalt — passend
 zu den Open Items / Rechnungen aus ``flask --app run seed-demo``.
 
-Aufruf:
-    .venv/Scripts/python sample_data/bank_statements/generate.py
+Der Demo-Datensatz startet immer im laufenden Jahr (Stichtag = Tag des Seeds),
+die Rechnungsnummern tragen das Vorjahr (``RE-<Vorjahr>-0004``). Deshalb die
+Auszuege mit dem Seed-Tag erzeugen — die Buchungen liegen 3 bis 13 Tage davor:
 
-Schreibt drei Dateien neben dieses Skript:
-    giro_2025-09.mt940.sta
-    giro_2025-09.mt942.sta
-    giro_2025-09.camt053.xml
+    .venv/Scripts/python sample_data/bank_statements/generate.py [--today JJJJ-MM-TT]
+
+Ohne ``--today`` gilt heute. Schreibt drei Dateien neben dieses Skript:
+    giro_demo.mt940.sta
+    giro_demo.mt942.sta
+    giro_demo.camt053.xml
 
 Nach der Generierung wird automatisch jede Datei durch die OSS-Parser geschickt,
 damit ein Schreibfehler sofort auffaellt.
@@ -34,7 +37,7 @@ if _REPO_ROOT not in sys.path:
 # Konfiguration
 # ---------------------------------------------------------------------------
 
-ACCOUNT_IBAN_FORMATTED = "AT12 3456 7890 1111 0000"
+ACCOUNT_IBAN_FORMATTED = "AT93 3456 7890 1111 0000"
 ACCOUNT_IBAN_COMPACT = ACCOUNT_IBAN_FORMATTED.replace(" ", "")
 CURRENCY = "EUR"
 OPENING_BALANCE = Decimal("8500.00")
@@ -53,23 +56,31 @@ class Tx:
 
 
 # Sieben Buchungen — sechs decken Open Items / Rechnungen aus dem Seed ab,
-# eine ist fremd (Energie AG, kein Kunde der WG).
-TRANSACTIONS: list[Tx] = [
-    Tx(date(2025, 9, 2),  Decimal("120.00"), "Karl Weidinger",
-       "AT11 1111 1111 1111 0006", "Anschlussgebuehr Gartenzaehler Nachruestung", "E2E-2025-09-001"),
-    Tx(date(2025, 9, 3),  Decimal("8.50"),   "Petra Voglhuber",
-       "AT11 1111 1111 1111 0013", "Saeumniszuschlag manuell", "E2E-2025-09-002"),
-    Tx(date(2025, 9, 4),  Decimal("218.46"), "Brigitte Kogler",
-       "AT11 1111 1111 1111 0080", "Rechnung RE-2024-0004", "E2E-2025-09-003"),
-    Tx(date(2025, 9, 7),  Decimal("200.00"), "Edith Fischer",
-       "AT11 1111 1111 1111 0017", "RE-2024-0005 Teilzahlung", "E2E-2025-09-004"),
-    Tx(date(2025, 9, 8),  Decimal("163.02"), "Hildegard Wagner",
-       "AT11 1111 1111 1111 0089", "Rechnung RE-2024-0011", "E2E-2025-09-005"),
-    Tx(date(2025, 9, 10), Decimal("229.24"), "Monika Leitner",
-       "AT11 1111 1111 1111 0031", "Rechnung RE-2024-0019", "E2E-2025-09-006"),
-    Tx(date(2025, 9, 12), Decimal("285.40"), "Energie AG Oberoesterreich",
-       "AT22 2222 2222 2222 0000", "Akonto-Rueckverrechnung Q2/2025", "E2E-2025-09-007"),
+# eine ist fremd (Energie AG, kein Kunde der WG). (Tage vor dem Stichtag, Betrag,
+# Name, IBAN, Verwendungszweck; ``{prev}`` = Vorjahr der Rechnungsnummern)
+_PLAN = [
+    (13, "120.00", "Karl Weidinger", "AT11 1111 1111 1111 0006",
+     "Anschlussgebuehr Gartenzaehler Nachruestung"),
+    (12, "8.50", "Petra Voglhuber", "AT11 1111 1111 1111 0013", "Saeumniszuschlag manuell"),
+    (11, "341.66", "Brigitte Kogler", "AT11 1111 1111 1111 0080", "Rechnung RE-{prev}-0007"),
+    (8, "200.00", "Hildegard Stadler", "AT11 1111 1111 1111 0017", "RE-{prev}-0011 Teilzahlung"),
+    (7, "412.86", "Monika Leitner", "AT11 1111 1111 1111 0089", "Rechnung RE-{prev}-0001"),
+    (5, "362.16", "Anna Schober", "AT11 1111 1111 1111 0031", "Rechnung RE-{prev}-0018"),
+    (3, "285.40", "Energie AG Oberoesterreich", "AT22 2222 2222 2222 0000",
+     "Akonto-Rueckverrechnung"),
 ]
+
+
+def build_transactions(today: date) -> list[Tx]:
+    """Die Buchungen zum Seed-Stichtag ``today``."""
+    from datetime import timedelta
+    prev = today.year - 1
+    return [Tx(today - timedelta(days=days), Decimal(amount), name, iban,
+               purpose.format(prev=prev), f"E2E-{today:%Y-%m}-{n:03d}")
+            for n, (days, amount, name, iban, purpose) in enumerate(_PLAN, start=1)]
+
+
+TRANSACTIONS: list[Tx] = build_transactions(date.today())
 
 
 def _closing_balance() -> Decimal:
@@ -299,10 +310,16 @@ def _selftest(path: str, expected_format: str, expected_count: int) -> None:
 
 
 def main() -> None:
+    import argparse
+    global TRANSACTIONS
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--today", type=date.fromisoformat, default=date.today(),
+                        help="Stichtag des Demo-Seeds (JJJJ-MM-TT), Standard: heute")
+    TRANSACTIONS = build_transactions(parser.parse_args().today)
     targets = [
-        ("giro_2025-09.mt940.sta",   render_mt940(TRANSACTIONS),   "mt940"),
-        ("giro_2025-09.mt942.sta",   render_mt942(TRANSACTIONS),   "mt942"),
-        ("giro_2025-09.camt053.xml", render_camt053(TRANSACTIONS), "camt053"),
+        ("giro_demo.mt940.sta",   render_mt940(TRANSACTIONS),   "mt940"),
+        ("giro_demo.mt942.sta",   render_mt942(TRANSACTIONS),   "mt942"),
+        ("giro_demo.camt053.xml", render_camt053(TRANSACTIONS), "camt053"),
     ]
     for name, content, _fmt in targets:
         path = os.path.join(_HERE, name)

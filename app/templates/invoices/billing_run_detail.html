@@ -398,143 +398,7 @@
         <h5 class="modal-title"><i class="fas fa-paper-plane me-2"></i> Rechnungen versenden</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
       </div>
-      <div class="modal-body">
-        <!-- Per E-Mail -->
-        <h6 class="mb-2">
-          <i class="fas fa-envelope me-1"></i> Per E-Mail versenden
-          <span class="badge bg-azure-lt ms-1">{{ mail_bundles | length if mail_bundles else mailable | length }}</span>
-        </h6>
-        {% if mail_bundles %}
-        <p class="text-muted small mb-2">
-          <strong>Eine E-Mail je Kontakt:</strong> alle versandbereiten Entwürfe eines Kontakts
-          {%- if run.linked_runs %} (auch die verknüpften {{ inst_title }}en){% endif %} gehen als
-          Anhänge in einer E-Mail. Danach stehen sie auf „Versendet“, die Dokumente sind gespeichert.
-        </p>
-        <div class="d-flex align-items-center flex-wrap gap-3 mb-2">
-          <button type="button" class="btn btn-primary btn-sm" id="br-bundle-start">
-            <i class="fas fa-paper-plane me-1"></i> {{ mail_bundles | length }} E-Mails versenden
-          </button>
-          <div class="form-check mb-0">
-            <input type="checkbox" class="form-check-input" id="br-bundle-testmode">
-            <label class="form-check-label text-warning small" for="br-bundle-testmode">
-              <i class="fas fa-flask me-1"></i> Testmodus (an Admin-Adresse, max. 3 Mails)
-            </label>
-          </div>
-        </div>
-        <div class="table-responsive" style="max-height:240px;overflow:auto">
-          <table class="table table-sm mb-0">
-            <thead><tr><th>Kontakt</th><th>Belege</th><th>E-Mail</th><th style="width:60px">Status</th></tr></thead>
-            <tbody>
-              {% for b in mail_bundles %}
-              <tr id="br-mb-{{ b.customer.id }}" data-id="{{ b.customer.id }}"
-                  data-ids="{{ b.invoices | map(attribute='id') | join(',') }}">
-                <td>{{ b.customer.name }}</td>
-                <td class="small">{% for inv in b.invoices %}<code>{{ inv.invoice_number }}</code>{{ ', ' if not loop.last }}{% endfor %}</td>
-                <td>{{ b.customer.email }}</td>
-                <td><i class="fas fa-clock text-muted" id="br-mb-icon-{{ b.customer.id }}"></i></td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-        {% elif mailable %}
-        <p class="text-muted small mb-2">
-          Versendet alle versandbereiten Entwürfe, deren Kunde „Schriftverkehr per E-Mail" aktiviert hat.
-          Nach dem Versand wird die Rechnung auf „Versendet" gesetzt und das Dokument gespeichert.
-        </p>
-        <div class="d-flex align-items-center flex-wrap gap-3 mb-2">
-          <button type="button" class="btn btn-primary btn-sm" id="br-mail-start">
-            <i class="fas fa-paper-plane me-1"></i> Alle {{ mailable | length }} per Mail versenden
-          </button>
-          <div class="form-check mb-0">
-            <input type="checkbox" class="form-check-input" id="br-mail-testmode">
-            <label class="form-check-label text-warning small" for="br-mail-testmode">
-              <i class="fas fa-flask me-1"></i> Testmodus (an Admin-Adresse, max. 3 Mails)
-            </label>
-          </div>
-        </div>
-        <div class="table-responsive" style="max-height:240px;overflow:auto">
-          <table class="table table-sm mb-0">
-            <thead>
-              <tr><th>Nr.</th><th>Kunde</th><th>E-Mail</th><th style="width:60px">Status</th></tr>
-            </thead>
-            <tbody>
-              {% for m in mailable %}
-              <tr id="br-mm-{{ m.id }}" data-id="{{ m.id }}">
-                <td><code>{{ m.number }}</code></td>
-                <td>{{ m.name }}</td>
-                <td>{{ m.email }}</td>
-                <td><i class="fas fa-clock text-muted" id="br-mm-icon-{{ m.id }}"></i></td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-        {% else %}
-        <p class="text-muted mb-0">Keine versandbereiten Rechnungen für den E-Mail-Versand.</p>
-        {% endif %}
-
-        {% if electronic_only %}
-        <hr class="my-4">
-
-        <!-- Nur elektronisch zustellbar -->
-        <h6 class="mb-2">
-          <i class="fas fa-file-code me-1"></i> Nur elektronisch zustellbar
-          <span class="badge bg-yellow-lt ms-1">{{ electronic_only | length }}</span>
-        </h6>
-        <p class="text-muted small mb-2">
-          Diese Rechnungen dürfen <strong>nicht gedruckt und per Post</strong> versendet werden und bekommen
-          deshalb keinen Post-Versand. Beim Kunden eine E-Mail-Adresse hinterlegen und „Schriftverkehr per
-          E-Mail" aktivieren — danach erscheinen sie oben unter „Per E-Mail". Bei einer XRechnung lässt sich die
-          XML-Datei auch herunterladen und im Portal der Behörde einreichen.
-        </p>
-        <div class="table-responsive" style="max-height:200px;overflow:auto">
-          <table class="table table-sm mb-0">
-            <thead><tr><th>Nr.</th><th>Kunde</th><th>Grund</th><th></th></tr></thead>
-            <tbody>
-              {% for e in electronic_only %}
-              <tr>
-                <td><code>{{ e.number }}</code></td>
-                <td><a href="{{ url_for('customers.detail', customer_id=e.customer_id) }}">{{ e.name }}</a></td>
-                <td>{{ e.reason }}</td>
-                <td class="text-end text-nowrap">
-                  {% if e.xml_only %}
-                  <a href="{{ url_for('invoices.einvoice_xml', invoice_id=e.id) }}" class="btn btn-sm btn-outline-azure">
-                    <i class="fas fa-file-code me-1"></i> XML
-                  </a>
-                  {% endif %}
-                </td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-        {% endif %}
-
-        <hr class="my-4">
-
-        <!-- Per Post -->
-        <h6 class="mb-2">
-          <i class="fas fa-inbox me-1"></i> Per Post (Download)
-          <span class="badge bg-secondary-lt ms-1">{{ post_ids | length }}</span>
-        </h6>
-        {% if post_ids %}
-          {% if doc_format in ('pdf', 'both') %}
-          <p class="text-muted small mb-2">
-            Zusammengeführte PDFs der per Post zu versendenden Rechnungen – in Gruppen zu max.
-            {{ config.get('BULK_PRINT_MAX', 100) }} Dokumenten. Jeder geladene Bulk setzt die enthaltenen
-            Entwürfe auf „Versendet" und speichert das erzeugte Dokument.
-          </p>
-          <div class="list-group" id="br-post-list"></div>
-          {% else %}
-          <div class="alert alert-info mb-0">
-            Der Post-Download ist nur im PDF-Format verfügbar (aktuelles Dokumentformat: <strong>{{ doc_format }}</strong>).
-          </div>
-          {% endif %}
-        {% else %}
-        <p class="text-muted mb-0">Keine per Post zu versendenden Rechnungen.</p>
-        {% endif %}
-      </div>
+      {% include "invoices/_run_send_body.html" %}
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Schließen</button>
       </div>
@@ -554,7 +418,6 @@
 // sind bei jedem Lauf frisch -> re-execution-sicher.
 (function () {
   const BR_CSRF = "{{ csrf_token() }}";
-  const BR_POST_IDS = [{{ post_ids | join(',') }}];
   const BR_POST_URL = "{{ url_for('invoices.billing_run_post_bulk', run_id=run.id) }}";
   const BR_BULK_MAX = {{ config.get('BULK_PRINT_MAX', 100) }};
   let brVersandDirty = false;
@@ -627,7 +490,7 @@
   // ---------- Versenden: Mail-Bulk ----------
   async function brStartMail() {
     const btn = document.getElementById('br-mail-start');
-    if (!btn) return;
+    if (!btn || btn.disabled) return;
     btn.disabled = true;
     const res = await wkSerialSend({
       rows: Array.from(document.querySelectorAll('#versendenModal tr[id^="br-mm-"]'), tr => (
@@ -638,13 +501,11 @@
     });
     if (res.sent) brVersandDirty = true;
   }
-  const mailStartBtn = document.getElementById('br-mail-start');
-  if (mailStartBtn) mailStartBtn.addEventListener('click', brStartMail);
 
   // ---------- Versenden: eine E-Mail je Kontakt (Sammelversand) ----------
   async function brStartBundle() {
     const btn = document.getElementById('br-bundle-start');
-    if (!btn) return;
+    if (!btn || btn.disabled) return;
     btn.disabled = true;
     const rows = Array.from(document.querySelectorAll('#versendenModal tr[id^="br-mb-"]'));
     const ids = {};
@@ -658,13 +519,30 @@
     });
     if (res.sent) brVersandDirty = true;
   }
-  const bundleStartBtn = document.getElementById('br-bundle-start');
-  if (bundleStartBtn) bundleStartBtn.addEventListener('click', brStartBundle);
 
   // ---------- Versenden: Post-Download in 100er-Gruppen ----------
+  // Duplexdruck: Wahl je Browser merken (Komfort; ohne Speicher einfach aus).
+  const BR_DUPLEX_KEY = 'wk.brPostDuplex';
+  function brInitDuplex() {
+    const box = document.getElementById('br-post-duplex');
+    if (!box || box.dataset.bound === '1') return;
+    box.dataset.bound = '1';
+    try { box.checked = window.localStorage.getItem(BR_DUPLEX_KEY) === '1'; } catch (e) {}
+    box.addEventListener('change', function () {
+      try { window.localStorage.setItem(BR_DUPLEX_KEY, box.checked ? '1' : '0'); } catch (e) {}
+    });
+  }
+  window.brPostDuplex = function () {
+    const box = document.getElementById('br-post-duplex');
+    return !!(box && box.checked);
+  };
+
   function brBuildPostList() {
+    brInitDuplex();
     const list = document.getElementById('br-post-list');
-    if (!list || !BR_POST_IDS.length || list.dataset.built === '1') return;
+    if (!list || list.dataset.built === '1') return;
+    const BR_POST_IDS = (list.dataset.postIds || '').split(',').filter(Boolean).map(Number);
+    if (!BR_POST_IDS.length) return;
     list.dataset.built = '1';
     for (let start = 0; start < BR_POST_IDS.length; start += BR_BULK_MAX) {
       const chunk = BR_POST_IDS.slice(start, start + BR_BULK_MAX);
@@ -696,6 +574,7 @@
       const fd = new FormData();
       fd.append('csrf_token', BR_CSRF);
       ids.forEach(id => fd.append('invoice_ids', id));
+      if (window.brPostDuplex()) fd.append('duplex', '1');
       const resp = await fetch(BR_POST_URL, { method: 'POST', body: fd, headers: { 'X-CSRFToken': BR_CSRF } });
       const disp = resp.headers.get('Content-Disposition') || '';
       if (!resp.ok || !disp.toLowerCase().includes('attachment')) {
@@ -728,7 +607,13 @@
 
   const modalEl = document.getElementById('versendenModal');
   if (modalEl) {
+    // Klicks per Delegation: der Schalter „mitschicken“ tauscht den Dialoginhalt aus.
+    modalEl.addEventListener('click', function (ev) {
+      if (ev.target.closest('#br-bundle-start')) brStartBundle();
+      else if (ev.target.closest('#br-mail-start')) brStartMail();
+    });
     modalEl.addEventListener('shown.bs.modal', brBuildPostList);
+    window.brBuildPostList = brBuildPostList;   // neu geladener Dialoginhalt (hx-on::load)
     modalEl.addEventListener('hidden.bs.modal', function () {
       if (brVersandDirty) window.location.reload();
     });

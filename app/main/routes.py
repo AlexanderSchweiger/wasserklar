@@ -5,7 +5,6 @@ from app.main import bp
 from app.extensions import db
 from app.models import (Invoice, Booking, WaterMeter, MeterReading, Property,
                         BillingPeriod, DunningPolicy, DunningNotice, Circular)
-from app import consumption
 from app.accounting import services as acc_svc
 from app.dunning import services as dunning_svc
 from app.network import services as technik_svc
@@ -48,11 +47,16 @@ def dashboard():
         # Bewusst live gerechnet und NICHT aus ``consumption_years`` gelesen:
         # diese Kachel muss sofort nach einer Erfassung stimmen, ein noch nicht
         # nachgerechneter Cache-Wert waere hier eine sichtbare Verschlechterung.
-        # Die Summe laeuft ueber genau EINE Periode (indizierte Spalte) — teuer
-        # war der Verlauf weiter unten, nicht das hier.
+        # Die Summe laeuft ueber genau EINE Periode (indizierte Spalte). Den
+        # mehrjaehrigen Verlauf zeigt nur die Verbrauchsseite der
+        # Plankostenrechnung (``cost_planning.consumption_index``).
+        # Ohne Subzaehler: deren Wasser laeuft schon durch den Hauptzaehler.
         period_consumption = db.session.query(
             func.sum(MeterReading.consumption)
-        ).filter(MeterReading.billing_period_id == active_period.id).scalar() or 0
+        ).join(WaterMeter, WaterMeter.id == MeterReading.meter_id).filter(
+            MeterReading.billing_period_id == active_period.id,
+            WaterMeter.billable_filter(),
+        ).scalar() or 0
     missing_readings = total_meters - read_in_period
     read_percent = round(read_in_period / total_meters * 100) if total_meters else 0
 
@@ -115,18 +119,6 @@ def dashboard():
             "sum_total": sum_total,
             "pct_paid": round(sum_paid / sum_total * 100) if sum_total else 0,
         }
-
-    # Verbrauchs-Historie (letzte 8 Jahre, chronologisch) aus den gecachten
-    # Jahressummen statt aus einem GROUP BY ueber saemtliche Ablesungen — bei
-    # vielen Zaehlern war das die teuerste Abfrage des Dashboards. Nebeneffekt:
-    # manuell nachgetragene Jahre vor der App-Einfuehrung erscheinen jetzt
-    # ebenfalls im Verlauf (siehe app/consumption.py).
-    #
-    # Bewusst KEIN ``ensure_fresh()`` hier: das Dashboard soll nichts committen.
-    # Veraltete Jahre werden auf der Verbrauchs-/Plankostenseite nachgerechnet;
-    # ``consumption_stale`` blendet dafuer einen dezenten Hinweis ein.
-    consumption_history = consumption.history(limit=8)
-    consumption_stale = consumption.has_stale()
 
     # Offene Posten mit Mahnstufe, sortiert nach Fälligkeit (längst fällig zuerst).
     # NULL-due_date via portablem CASE-Präfix ans Ende (MySQL kennt kein NULLS LAST).
@@ -244,8 +236,6 @@ def dashboard():
         missing_readings=missing_readings,
         period_consumption=period_consumption,
         read_percent=read_percent,
-        consumption_history=consumption_history,
-        consumption_stale=consumption_stale,
         open_item_rows=open_item_rows,
         meters_to_swap=meters_to_swap,
         meter_interval=interval,

@@ -8,7 +8,12 @@
    Erwartet: tax_rate_rows, water_rate_options, water_tax_rate, vat_return_period,
    country_profile. #}
 <div id="taxRatesCard">
+  {# Meldungen nur beim Fragment-Neuladen (nach dem Modal) — beim Voll-Render
+     zeigt base.html sie; sonst stand jede Meldung der Einstellungsseite doppelt
+     da (eine davon versteckt im Reiter „Steuern“). #}
+  {% if tax_card_fragment is defined and tax_card_fragment %}
   {% include "_flash_inline.html" %}
+  {% endif %}
   <div class="card mb-3">
     <div class="card-header">
       <h3 class="card-title"><i class="fas fa-percentage me-1"></i> Umsatzsteuer-Sätze</h3>

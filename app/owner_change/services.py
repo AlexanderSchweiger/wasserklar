@@ -176,7 +176,8 @@ def collect_meter_snapshots(prop, period, stichtag, meter_inputs):
     fuer die editierbaren Zaehler. Ergaenzt automatisch die vor dem Stichtag
     ausgebauten (``fixed``) Zaehler. Rueckgabe: Liste von Dicts
     ``{meter, value_at_change, consumption_billed, is_estimated, source}`` sowie
-    ``warnings`` (Zaehler ohne Abrechnungsbasis).
+    ``warnings`` (Zaehler ohne Abrechnungsbasis). Subzaehler bekommen den
+    Stand, aber nie ``consumption_billed`` (``WaterMeter.is_billable``).
     """
     snapshots = []
     warnings = []
@@ -191,7 +192,11 @@ def collect_meter_snapshots(prop, period, stichtag, meter_inputs):
             continue
         value = Decimal(str(data["value"]))
         base = settlement_base_value(meter, period, stichtag)
-        if base is None:
+        if not meter.is_billable():
+            # Subzaehler: Stand wird aufgezeichnet, verrechnet nie (der
+            # Hauptzaehler enthaelt seinen Verbrauch).
+            consumption = None
+        elif base is None:
             consumption = None
             warnings.append(
                 f"Zähler {meter.meter_number}: kein Vorstand vorhanden — "
@@ -213,7 +218,7 @@ def collect_meter_snapshots(prop, period, stichtag, meter_inputs):
             "value_at_change": Decimal(str(reading.value)),
             "consumption_billed": (
                 Decimal(str(reading.consumption))
-                if reading.consumption is not None else None),
+                if reading.consumption is not None and meter.is_billable() else None),
             "is_estimated": bool(reading.is_estimated),
             "source": "fixed",
         })

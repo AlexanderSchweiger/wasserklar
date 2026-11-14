@@ -505,13 +505,15 @@ def generate():
         vat_liable = acc_svc.is_year_vat_liable(invoice_date.year)
         water_tax = engine.effective_tax(water_comp.tax_rate, vat_liable)
 
-        # Alle Ablesungen der Periode holen (inkl. ausgebauter Zähler)
+        # Alle Ablesungen der Periode holen (inkl. ausgebauter Zähler).
+        # Subzähler nie: der Hauptzähler misst ihren Verbrauch schon mit
+        # (WaterMeter.billable_filter).
         readings = (
             MeterReading.query
             .filter_by(billing_period_id=period.id)
             .join(WaterMeter)
             .join(Property)
-            .filter(Property.active == True)
+            .filter(Property.active == True, WaterMeter.billable_filter())
             .all()
         )
 
@@ -579,6 +581,7 @@ def generate():
         inst_settlement.delete_drafts(obsolete_drafts)
         deducted_count = 0
         credit_offset = credit_refund = 0
+        offset_customers = set()   # Guthaben verrechnet → evtl. schon erstellte Teilrechnungen
         cancelled_credits = []
         foreign_warnings = []
         for property_id, prop_readings in sorted_items:
@@ -761,6 +764,7 @@ def generate():
                 cancelled_credits.extend(credits)
                 if applied_mode == inst_terms.CREDIT_OFFSET:
                     credit_offset += 1
+                    offset_customers.add(ownership.customer_id)
                 elif applied_mode == inst_terms.CREDIT_REFUND:
                     credit_refund += 1
             for foreign in inst_settlement.foreign_installments(
@@ -785,6 +789,11 @@ def generate():
 
         billing_run.invoices_created = created
         billing_run.invoices_skipped = skipped
+        # Teilrechnungen des Folgejahres, die schon VOR diesem Lauf erstellt
+        # wurden, ziehen das neue Guthaben sofort ein (frueheste zuerst).
+        from app.installments import invoicing as inst_invoicing
+        credit_into_drafts = inst_invoicing.pull_credit_into_drafts(
+            offset_customers, after_period=period)
 
         try:
             db.session.commit()
@@ -801,6 +810,9 @@ def generate():
             if credit_refund:
                 parts.append(f"{credit_refund} Guthaben zur Auszahlung")
             flash("Teilrechnungen: " + ", ".join(parts) + ".", "info")
+        if credit_into_drafts:
+            flash(f"Guthaben in {credit_into_drafts} schon erstellte "
+                  f"{inst_terms.installment_title()}(en) des Folgejahres eingerechnet.", "info")
         if cancelled_credits:
             flash(f"{len(cancelled_credits)} unbezahlte {inst_terms.installment_title()}(en) "
                   "wegen Guthaben storniert statt abgezogen – die Storno-Gutschriften "
@@ -2611,33 +2623,74 @@ def billing_run_detail(run_id):
             from app.models import InstallmentPlan
             next_plan_count = InstallmentPlan.query.filter_by(
                 billing_period_id=next_period.id).count()
-    # Sammelversand: eine E-Mail je Kontakt fuer alle Entwuerfe dieses Laufs
-    # und der mit ihm verknuepften Teilrechnungslaeufe — nur, wenn sich dabei
-    # wirklich etwas buendeln laesst.
-    from app.invoices import mailing
-    all_invoices = mailing.run_invoices_with_linked(run)
-    mail_bundles = mailing.bundles(all_invoices)
-    if not any(len(b["invoices"]) > 1 for b in mail_bundles):
-        mail_bundles = []
     overview = _billing_run_overview(run)
-    has_companions = any(inv.is_credit_note for inv in all_invoices)
-    if run.linked_runs or has_companions:
-        # Post: Entwuerfe der verknuepften Teilrechnungslaeufe mit ins Kuvert,
-        # je Kontakt zusammen (Jahresabrechnung, dann Teilrechnungen).
-        from app.einvoice.obligation import electronic_reason
-        post = [inv for inv in all_invoices
-                if inv.status == Invoice.STATUS_DRAFT and not inv.customer.wants_email
-                and not electronic_reason(inv)]
-        overview["post_ids"] = [inv.id for inv in mailing.post_order(post)]
-        overview["count_post"] = len(overview["post_ids"])
+    send = _run_send_context(run, overview, request.args.get("with_installments"))
+    overview.update(post_ids=send["post_ids"], count_post=len(send["post_ids"]))
     return render_template(
         "invoices/billing_run_detail.html",
-        mail_bundles=mail_bundles,
+        **{k: v for k, v in send.items() if k != "post_ids"},
         run=run, doc_format=doc_format, next_period=next_period,
         next_plan_count=next_plan_count, inst_words=inst_terms.installment_words(),
         inst_title=inst_terms.installment_title(),
         **overview,
     )
+
+
+def _run_send_context(run, overview, with_installments=None):
+    """Inhalt des Versenden-Dialogs eines Laufs (E-Mail-Gruppen, Post-IDs).
+
+    Sammelversand: eine E-Mail je Kontakt fuer alle Entwuerfe des Laufs — mit
+    ``with_linked`` auch die der verknuepften Teilrechnungslaeufe (Jahresabrechnung
+    + Teilrechnungen des Folgejahres in einer E-Mail bzw. einem Kuvert). Die Wahl
+    kommt aus dem Schalter im Dialog (``with_installments`` = "1"/"0"), sonst aus
+    der Einstellung. Versendet wird ausschliesslich ueber die IDs, die dieser
+    Kontext liefert — Mail und Druck pruefen sie serverseitig gegen den Lauf."""
+    from app.installments import terms as inst_terms
+    from app.invoices import mailing
+    drafts = mailing.linked_drafts(run)
+    if with_installments in ("0", "1"):
+        with_linked = with_installments == "1"
+    else:
+        with_linked = inst_terms.send_with_settlement()
+    with_linked = with_linked and bool(drafts)
+    all_invoices = mailing.run_invoices_with_linked(run, include_linked=with_linked)
+    mail_bundles = mailing.bundles(all_invoices)
+    if not any(len(b["invoices"]) > 1 for b in mail_bundles):
+        mail_bundles = []        # nichts zu buendeln → Einzelversand des Laufs
+    post_ids = overview["post_ids"]
+    if with_linked or any(inv.is_credit_note for inv in all_invoices):
+        # Post: Belege eines Kontakts hintereinander (ein Kuvert) — Abrechnung,
+        # Storno-Gutschriften, dann die Teilrechnungen nach Faelligkeit.
+        from app.einvoice.obligation import electronic_reason
+        post = [inv for inv in all_invoices
+                if inv.status == Invoice.STATUS_DRAFT and not inv.customer.wants_email
+                and not electronic_reason(inv)]
+        post_ids = [inv.id for inv in mailing.post_order(post)]
+    periods = sorted({inv.billing_period.name for inv in drafts if inv.billing_period})
+    return {
+        "mail_bundles": mail_bundles,
+        "post_ids": post_ids,
+        "linked_choice": bool(drafts),
+        "with_linked": with_linked,
+        "linked_count": len(drafts),
+        "linked_period_name": ", ".join(periods),
+    }
+
+
+@bp.route("/billing-runs/<int:run_id>/send-panel")
+@login_required
+def billing_run_send_panel(run_id):
+    """Dialoginhalt „Rechnungen versenden“ neu (Schalter „Teilrechnungen
+    mitschicken“) — htmx-Fragment, schreibt nichts."""
+    from app.installments import terms as inst_terms
+    run = db.get_or_404(BillingRun, run_id)
+    overview = _billing_run_overview(run)
+    send = _run_send_context(run, overview, request.args.get("with_installments"))
+    return render_template(
+        "invoices/_run_send_body.html", run=run,
+        doc_format=AppSetting.get("invoice.document_format", "pdf"),
+        mailable=overview["mailable"], electronic_only=overview["electronic_only"],
+        inst_title=inst_terms.installment_title(), **send)
 
 
 def _period_completeness(period):
@@ -2663,14 +2716,15 @@ def _period_completeness(period):
     from app.models import PropertyOwnership
 
     # Objekte MIT Ablesung in der Periode (gleiche Bedingungen wie im Lauf:
-    # ueber alle Zaehler, auch ausgebaute; nur aktive Objekte).
+    # ueber alle abrechenbaren Zaehler, auch ausgebaute — Subzaehler zaehlen
+    # nicht; nur aktive Objekte).
     read_prop_ids = {
         pid for (pid,) in
         db.session.query(WaterMeter.property_id)
         .join(MeterReading, MeterReading.meter_id == WaterMeter.id)
         .join(Property, Property.id == WaterMeter.property_id)
         .filter(MeterReading.billing_period_id == period.id,
-                Property.active.is_(True))
+                Property.active.is_(True), WaterMeter.billable_filter())
         .distinct()
     }
 
@@ -2685,13 +2739,15 @@ def _period_completeness(period):
         .distinct()
     }
 
-    # Aktive Objekte mit mindestens einem aktiven Zaehler — die Grundgesamtheit
-    # dessen, was in der Periode ueberhaupt abgerechnet werden sollte.
+    # Aktive Objekte mit mindestens einem aktiven abrechenbaren Zaehler — die
+    # Grundgesamtheit dessen, was in der Periode ueberhaupt abgerechnet werden
+    # sollte (ein Objekt nur mit Subzaehler hat nichts abzurechnen).
     metered_prop_ids = {
         pid for (pid,) in
         db.session.query(Property.id)
         .join(WaterMeter, WaterMeter.property_id == Property.id)
-        .filter(Property.active.is_(True), WaterMeter.active.is_(True))
+        .filter(Property.active.is_(True), WaterMeter.active.is_(True),
+                WaterMeter.billable_filter())
         .distinct()
     }
 
@@ -2985,6 +3041,7 @@ def billing_run_post_bulk(run_id):
 
     from app.direct_debit.mandate_form import EnclosureAppender
     enclosures = EnclosureAppender()  # Lastschrift-Mandat als Beilage (Einstellung)
+    duplex = request.form.get("duplex") == "1"
     writer = PdfWriter()
     for invoice in invoices:
         # Der Post-Beleg wird jetzt versendet — seine E-Rechnungsdaten einfrieren,
@@ -2999,6 +3056,8 @@ def billing_run_post_bulk(run_id):
         writer.append(io.BytesIO(pdf_bytes))
         # Beilage nur im Sammel-PDF, nie im archivierten Rechnungsbeleg.
         enclosures.after(writer, invoice)
+        if duplex:
+            mailing.start_on_new_sheet(writer)
     db.session.commit()
     return send_pdf_writer(writer, "Rechnungen_Post.pdf")
 

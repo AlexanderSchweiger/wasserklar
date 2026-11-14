@@ -17,6 +17,9 @@ TITLE_KEY = "installments.title"
 # ausgeschlossenen Schluessel: eine neue Gebuehrenart ist damit automatisch
 # dabei, und ohne Eintrag gilt wie bisher „alle“.
 EXCLUDED_CHARGES_KEY = "installments.excluded_charges"
+# Teilrechnungen des Folgejahres mit der Jahresabrechnung versenden (eine E-Mail /
+# ein Kuvert je Kontakt) — Vorbelegung des Schalters im Versenden-Dialog.
+SEND_TOGETHER_KEY = "installments.send_with_settlement"
 
 DEFAULT_DUE_DATES = "15.02.;15.05.;15.08.;15.11."
 ROUNDING_CHOICES = (
@@ -71,6 +74,11 @@ def min_annual_amount():
     except InvalidOperation:
         return Decimal("0")
     return value if value > 0 else Decimal("0")
+
+
+def send_with_settlement():
+    """Verknuepfte Teilrechnungen mit der Jahresabrechnung versenden? (Standard: ja)"""
+    return str(_get(SEND_TOGETHER_KEY, "true")).lower() != "false"
 
 
 def credit_mode():
@@ -157,6 +165,7 @@ def form_values():
         "min_annual": (str(min_annual_amount()).replace(".", ",")
                        if min_annual_amount() else ""),
         "credit_mode": credit_mode(),
+        "send_together": send_with_settlement(),
         "title": (_get(TITLE_KEY) or ""),
         "default_title": _default_title(),
         "rounding_choices": ROUNDING_CHOICES,
@@ -200,6 +209,11 @@ def save_from_form(form):
     mode = form.get("installments_credit_mode")
     if mode in (CREDIT_OFFSET, CREDIT_REFUND):
         AppSetting.set(CREDIT_MODE_KEY, mode)
+    # Nur bei einer Aenderung schreiben: ohne Eintrag gilt „ja“, ein unveraendert
+    # gespeichertes Formular soll keinen neuen Wert anlegen.
+    together = bool(form.get("installments_send_together"))
+    if together != send_with_settlement():
+        AppSetting.set(SEND_TOGETHER_KEY, "true" if together else "false")
     title = (form.get("installments_title") or "").strip()[:60]
     AppSetting.set(TITLE_KEY, title or None)
     if form.get("installments_charge_fields"):

@@ -71,6 +71,18 @@
           die Jahresabrechnung. Gilt für neu berechnete Pläne.</div>
       </div>
       {% endif %}
+      <div class="col-md-6 mb-3">
+        <label class="form-label">Versand</label>
+        <label class="form-check mb-1">
+          <input class="form-check-input" type="checkbox" name="installments_send_together"
+                 value="1" {{ 'checked' if inst.send_together }}>
+          <span class="form-check-label">{{ inst.title or inst.default_title }}en mit der
+            Jahresabrechnung versenden</span>
+        </label>
+        <div class="form-hint">Eine E-Mail bzw. ein Kuvert je Mitglied mit der Jahresabrechnung und
+          den {{ installment_words() }}n des neuen Jahres. Im Versenden-Dialog des Rechnungslaufs je
+          Lauf änderbar.</div>
+      </div>
       <div class="col-md-6 mb-1">
         <label class="form-label">Bezeichnung auf dem Beleg</label>
         <input type="text" name="installments_title" class="form-control" maxlength="60"

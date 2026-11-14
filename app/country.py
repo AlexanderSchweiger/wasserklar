@@ -69,6 +69,12 @@ class CountryProfile:
     # Protokolle/Beschluesse haben keine Frist (dauerhaft, ``app/documents/retention.py``).
     business_letter_retention_years: int = 7
     business_letter_retention_hint: str = ""
+    # Leistungszeitraum einer Teilrechnung (app/installments/invoicing.py): ``True`` =
+    # ihr Abschnitt der Abrechnungsperiode (vier Teilbetraege → Quartale), wie auf
+    # oesterreichischen Akonto-Vorschreibungen. ``False`` = die ganze Periode: in DE
+    # gilt Wasser ueber Netze erst mit Ablauf des Ablesezeitraums als geliefert
+    # (UStAE 13.1 Abs. 2) — der Abschlag ist eine Anzahlung auf die Jahresleistung.
+    installment_service_part: bool = False
     # Wann monatlich statt vierteljährlich vorangemeldet wird + Abgabefrist — nur
     # Hinweistext in den Steuer-Einstellungen; den Zeitraum wählt der Mandant selbst.
     vat_return_hint: str = ""
@@ -125,6 +131,7 @@ _AT = CountryProfile(
         "annual_settlement_title": "Jahresabrechnung",
     },
     einvoice_default=False,
+    installment_service_part=True,
     document_retention_years=7,
     document_retention_hint=(
         "§ 132 BAO: 7 Jahre ab Ende des Kalenderjahres, länger solange ein Verfahren offen ist. "

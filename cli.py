@@ -1003,7 +1003,10 @@ def register_commands(app):
     @click.option("--country", "country_code", default=None,
                   help="Datensatz AT (Hagenberg) oder DE (Habach, inkl. E-Rechnung). "
                        "Ohne Angabe: Land laut DEFAULT_COUNTRY.")
-    def seed_demo(yes, country_code):
+    @click.option("--installments", is_flag=True, default=False,
+                  help="Teilrechnungen (Akonto/Abschlag) einschalten und fuer das laufende "
+                       "Jahr durchspielen (Plaene, versendete Teilrechnungen, Folgeperiode).")
+    def seed_demo(yes, country_code, installments):
         """Reproduzierbaren Demo-Datensatz erzeugen (100 Kunden, 150 Zaehler, ...).
 
         Wirft alle Geschaefts-Daten weg und erzeugt einen deterministischen
@@ -1031,9 +1034,10 @@ def register_commands(app):
         Dazu Schriftfuehrung (nur WG-Modus): Vorstandssitzungen + Hauptversammlungen
         mit Tagesordnung, Anwesenheit, Protokollen und einem Beschluss-Register.
 
-        Die Buchhaltung wird zudem bis ins **aktuelle Jahr** fortgeschrieben
-        (``now=date.today()``): Vorjahre abgeschlossen, ein offenes Buchungsjahr
-        im laufenden Jahr und laufende Buchungen/Posten/Umbuchung bis heute.
+        Der Datensatz startet immer im **laufenden Jahr** (Stichtag ``date.today()``):
+        Vorjahr abgeschlossen und abgelesen, laufendes Jahr als aktive Periode mit
+        offenem Buchungsjahr und Ablesungen zum heutigen Tag. ``--installments``
+        schaltet die Teilrechnungen ein und spielt sie fuer das laufende Jahr durch.
 
         ``--country DE`` erzeugt den deutschen Datensatz (Habach, Oberbayern) mit
         E-Rechnung (ZUGFeRD, XRechnung/Leitweg-ID, Eingangs-E-Rechnungen) und
@@ -1053,10 +1057,11 @@ def register_commands(app):
 
         print("Wipe und Demo-Seed laeuft...")
         _wipe_business_data(db, verbose=True)
-        # ``now`` = echtes heute -> Buchhaltung bis ins aktuelle Jahr fortschreiben.
+        # Stichtag = echtes heute -> der Datensatz startet im laufenden Jahr.
         code = country.normalize_code(country_code) or country.current_code()
         fill_demo_identity(code)
-        seed_demo_data(db, verbose=True, now=date.today(), country=code)
+        seed_demo_data(db, verbose=True, now=date.today(), country=code,
+                       installments=installments)
         # OpenItems fuer SENT-Rechnungen + ggf. Kundennummern nachziehen
         run_data_migrations(db, verbose=True)
         db.session.commit()

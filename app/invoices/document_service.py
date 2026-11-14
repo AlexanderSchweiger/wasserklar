@@ -795,12 +795,6 @@ def _add_installment_settlement(doc, inst, *, font_name, heading_rgb):
     rows.append(("Guthaben" if inst["is_credit"] else "Nachzahlung", "", "",
                  fmt(abs(reg["net"] - inst["deducted"]["net"])),
                  fmt(abs(reg["tax"] - inst["deducted"]["tax"])), fmt(abs(inst["balance"]))))
-    if inst["open_installments"]:
-        for d in inst["open_installments"]:
-            rows.append((f"zuzüglich noch offen: {d['invoice'].document_title} "
-                         f"{d['invoice'].invoice_number}", "", "", "", "",
-                         f"+{_de_fmt(d['open'], 2)} €"))
-        rows.append(("Insgesamt offen", "", "", "", "", fmt(inst["due_overall"])))
     for row in rows:
         cells = tbl.add_row().cells
         for i, value in enumerate(row):
@@ -808,15 +802,9 @@ def _add_installment_settlement(doc, inst, *, font_name, heading_rgb):
                 cells[i].text = value
             else:
                 _right_align_cell(cells[i], value)
-    if inst.get("cancelled_installments"):
-        nums = ", ".join(d["invoice"].invoice_number for d in inst["cancelled_installments"])
-        doc.add_paragraph(
-            f"{nums}: noch nicht bezahlt, deshalb storniert und in dieser Abrechnung schon "
-            "berücksichtigt. Sie brauchen sie nicht mehr zu bezahlen.")
-    if inst["open_installments"]:
-        doc.add_paragraph(
-            f"Offene {inst['words']} bitte unter ihrer eigenen Rechnungsnummer bezahlen, "
-            "falls noch nicht geschehen.")
+    note = " ".join(t for t in (inst.get("cancel_note"), inst.get("open_note")) if t)
+    if note:
+        doc.add_paragraph(note)
 
 
 def _add_installment_schedule(doc, inst):
@@ -827,6 +815,10 @@ def _add_installment_schedule(doc, inst):
         p.add_run(f"Ihre {inst['words']} {np_['period'].name}: ").bold = True
         p.add_run("; ".join(f"{e['seq']}. am {e['due'].strftime('%d.%m.%Y')} "
                             f"{_de_fmt(e['amount'], 2)} €" for e in np_["entries"]))
+        if np_.get("basis_text"):
+            p.add_run(f" ({np_['basis_text']})")
+        if np_.get("notice"):
+            p.add_run(f". {np_['notice']}")
     elif inst["kind"] == "installment" and inst.get("others"):
         doc.add_paragraph(
             f"Weitere {inst['words']}: "

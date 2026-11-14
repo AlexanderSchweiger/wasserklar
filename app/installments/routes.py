@@ -128,6 +128,10 @@ def period(period_id):
     source_run_id = request.args.get("source_run_id", type=int)
     if source_run_id:
         source_run = db.session.get(BillingRun, source_run_id)
+    # „Gemeinsam versenden mit“: Jahresabrechnungs-Laeufe der Vorperiode mit noch
+    # unversendeten Belegen — vorbelegt mit dem, von dem man kommt, sonst dem juengsten.
+    linkable = invoicing.linkable_runs(period)
+    link_default = source_run if source_run in linkable else (linkable[0] if linkable else None)
     return render_template(
         "installments/period.html",
         period=period, periods=_periods(), rows=rows, stats=_period_stats(rows),
@@ -136,6 +140,7 @@ def period(period_id):
         open_by_seq={s: [e for e in open_entries if e.seq == s] for s in open_seqs},
         enabled=terms.is_enabled(), rounding=terms.rounding_step(),
         min_annual=terms.min_annual_amount(), source_run=source_run,
+        linkable_runs=linkable, link_default=link_default,
         excluded_labels=terms.excluded_charge_labels(),
         projects=Project.query.filter_by(closed=False).order_by(Project.name).all(),
         sort_order_choices=BillingRun.SORT_ORDER_CHOICES,
@@ -241,7 +246,10 @@ def create_invoices(period_id):
         flash("Bitte mindestens eine Fälligkeit auswählen.", "warning")
         return redirect(url_for("installments.period", period_id=period.id))
     entries = invoicing.open_entries(period, seqs=seqs)
-    source_run = db.session.get(BillingRun, request.form.get("source_run_id", type=int) or 0)
+    # Nur ein Lauf aus der Auswahl (Vorperiode, noch unversendete Belege) — eine
+    # fremde ID aus einem manipulierten Formular verknuepft nichts.
+    wanted = request.form.get("source_run_id", type=int)
+    source_run = next((r for r in invoicing.linkable_runs(period) if r.id == wanted), None)
     sort_order = request.form.get("sort_order", "customer_name")
     if sort_order not in {k for k, _ in BillingRun.SORT_ORDER_CHOICES}:
         sort_order = "customer_name"

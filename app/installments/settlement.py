@@ -463,11 +463,14 @@ def summary(invoice):
     total = Decimal(str(invoice.total_amount or 0))
     open_installments = [r for r in rows if r["open"] > 0]
     open_total = sum((r["open"] for r in open_installments), ZERO)
+    cancelled = [r for r in rows if r["pay_state"] == "cancelled"]
     return {
         "kind": "settlement",
         "regular": reg,
         "deductions": rows,
         "deducted": deducted,
+        # Spalten netto/USt nur, wo es USt gibt (sonst stuende ueberall −0,00 €).
+        "has_tax": bool(reg["tax"] or deducted["tax"]),
         "balance": balance_before_carry,
         "is_credit": balance_before_carry < 0,
         "credit": -balance_before_carry if balance_before_carry < 0 else ZERO,
@@ -476,13 +479,39 @@ def summary(invoice):
         "carry": carry,
         "total": total,
         "open_installments": open_installments,
-        "cancelled_installments": [r for r in rows if r["pay_state"] == "cancelled"],
+        "cancelled_installments": cancelled,
         "open_total": open_total,
-        "due_overall": (total if total > 0 else ZERO) + open_total,
+        "cancel_note": _cancel_note(cancelled),
+        "open_note": _open_note(invoice, open_installments),
         "next_plan": next_plan_for(invoice),
         "word": terms.installment_word(),
         "words": terms.installment_words(),
     }
+
+
+def _cancel_note(cancelled):
+    """Ein Satz zu den mit der Abrechnung stornierten Teilrechnungen (PDF, Word)."""
+    if not cancelled:
+        return ""
+    numbers = ", ".join(r["invoice"].invoice_number for r in cancelled if r["invoice"])
+    title = cancelled[0]["invoice"].document_title if cancelled[0]["invoice"] else ""
+    if len(cancelled) == 1:
+        return (f"Die noch unbezahlte {title} {numbers} ist mit dieser Abrechnung erledigt "
+                "und storniert – bitte nicht mehr bezahlen.")
+    return (f"Die noch unbezahlten Belege {numbers} sind mit dieser Abrechnung erledigt "
+            "und storniert – bitte nicht mehr bezahlen.")
+
+
+def _open_note(invoice, open_installments):
+    """Hinweis zu noch offenen Teilrechnungen — bei Bankeinzug zieht die WG sie
+    selbst ein, eine Ueberweisungsbitte waere dort falsch."""
+    if not open_installments:
+        return ""
+    from app.direct_debit.notice import is_debit_invoice
+    words = terms.installment_words()
+    if is_debit_invoice(invoice):
+        return f"Offene {words} buchen wir wie angekündigt von Ihrem Konto ab."
+    return f"Offene {words} bitte unter ihrer eigenen Rechnungsnummer bezahlen, falls noch nicht geschehen."
 
 
 def next_plan_for(invoice):
@@ -496,9 +525,28 @@ def next_plan_for(invoice):
     plan = plan_for(nxt.id, invoice.property_id, invoice.customer_id)
     if plan is None or not plan.active_entries:
         return None
-    return {"plan": plan, "period": nxt,
+    # Stimmt fuer beide Versandarten (mit der Abrechnung oder spaeter je Faelligkeit) —
+    # das PDF weiss beim Erzeugen nicht, wie es versendet wird.
+    notice = f"Für jeden {terms.installment_word()} erhalten Sie eine eigene {terms.installment_title()}."
+    return {"plan": plan, "period": nxt, "basis_text": _basis_text(plan), "notice": notice,
             "entries": [{"seq": e.seq, "due": e.due_date, "amount": e.amount}
                         for e in plan.active_entries]}
+
+
+def _basis_text(plan):
+    """Woraus die neuen Teilbetraege berechnet sind (eine Zeile, ohne Punkt)."""
+    from app.models import InstallmentPlan
+    if plan.manual:
+        return "festgelegt von der Verwaltung"
+    if plan.basis_source == InstallmentPlan.BASIS_READING and plan.basis_consumption is not None:
+        qty = Decimal(str(plan.basis_consumption))
+        places = 0 if qty == qty.to_integral_value() else 2
+        qty_text = f"{qty:,.{places}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        period = f" {plan.basis_period.name}" if plan.basis_period else ""
+        return f"berechnet aus Ihrem Verbrauch{period} ({qty_text} m³)"
+    if plan.basis_source == InstallmentPlan.BASIS_AVERAGE:
+        return "berechnet aus dem Durchschnittsverbrauch vergleichbarer Objekte"
+    return "berechnet aus den Grundgebühren"
 
 
 def _installment_summary(invoice):

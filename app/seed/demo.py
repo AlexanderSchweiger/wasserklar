@@ -171,6 +171,58 @@ _DEMO_CREDITOR_IDS = {"AT": "AT61ZZZ01234567890", "DE": "DE98ZZZ09999999999"}
 # Demo-Eigentuemerschaft, damit Stichtags-Listen auch rueckwirkend stimmen).
 _DEMO_SHARE_OPENING = date(2000, 1, 1)
 
+# Die Vorlage des laufenden Jahres (Zaehlertausch 30.06., Buchungen Februar bis
+# August, Sitzungen, Wartungen …) ist auf den 15.09. abgestimmt.
+_TEMPLATE_DAY = (9, 15)
+
+
+def levy_for_year(loc, year):
+    """``(Betrag, Stichtag | None)`` des Wassercents im Tarifjahr ``year``, sonst
+    ``(None, None)``: im Einfuehrungsjahr ab dem Stichtag (zeitanteilig), danach
+    ganzjaehrig, davor gar nicht."""
+    if loc.water_levy is None or year < loc.water_levy_from.year:
+        return None, None
+    start = loc.water_levy_from if loc.water_levy_from > date(year, 1, 1) else None
+    return loc.water_levy, start
+
+
+class DemoClock:
+    """Datumsrahmen des Demo-Datensatzes: Vorjahr + laufendes Jahr von ``today``.
+
+    Ab dem 15.09. stehen die Termine des laufenden Jahres wie in der Vorlage. Liegt
+    ``today`` frueher im Jahr, wird das bisher vergangene Jahr anteilig gestaucht —
+    kein Termin liegt in der Zukunft, und die Verbraeuche der laufenden Periode
+    schrumpfen im selben Verhaeltnis (``qty``). Kein Zufall: der RNG-Ablauf bleibt
+    gleich, nur Datum und Menge werden umgerechnet."""
+
+    def __init__(self, today: date):
+        self.today = today
+        self.year = today.year
+        self._start = date(today.year, 1, 1)
+        span = (date(today.year, *_TEMPLATE_DAY) - self._start).days
+        elapsed = (today - self._start).days
+        self.factor = Decimal(1) if elapsed >= span else Decimal(elapsed) / Decimal(span)
+
+    @property
+    def compressed(self) -> bool:
+        return self.factor < 1
+
+    def on(self, month: int, day: int) -> date:
+        """Termin ``TT.MM.`` der Vorlage im laufenden Jahr."""
+        return self.shift(date(self.year, month, day))
+
+    def shift(self, when: date) -> date:
+        """Ein Datum der Vorlage im laufenden Jahr, bei Bedarf gestaucht."""
+        if not self.compressed or when.year != self.year:
+            return when
+        return self._start + timedelta(days=int((when - self._start).days * self.factor))
+
+    def qty(self, value: Decimal) -> Decimal:
+        """Verbrauch der laufenden Periode (ganze m³, mindestens 1)."""
+        if not self.compressed:
+            return value
+        return max(Decimal(1), (Decimal(value) * self.factor).quantize(Decimal(1)))
+
 
 def _seed_direct_debit(customers, loc, signed_base) -> int:
     """Jeder dritte Kunde zahlt per Bankeinzug (SEPA-Lastschrift).
@@ -201,8 +253,9 @@ def _seed_direct_debit(customers, loc, signed_base) -> int:
     return count
 
 
-def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
-                   verbose: bool = True, author=None, country: str = None) -> dict:
+def seed_demo_data(db, *, today: date = None, now: date = None,
+                   verbose: bool = True, author=None, country: str = None,
+                   installments: bool = False) -> dict:
     """Seedet den vollstaendigen Demo-Datensatz.
 
     Voraussetzung: DB hat die Defaults (TaxRates, DunningPolicy "Standard",
@@ -211,16 +264,16 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
 
     Parameter:
         db: SQLAlchemy-Instanz (`app.extensions.db`).
-        today: Historischer Anker fuer den Hauptdatensatz (Perioden,
-            Ablesungen, Zaehlertausche, Rechnungen). Default 2025-09-15 —
-            bewusst fix, weil viele Stichtage darauf kalibriert sind (u.a. die
-            statischen Bank-Sample-Dateien). NICHT auf ``date.today()`` setzen.
-        now: Echtes „heute" (vom CLI = ``date.today()``). Liegt es in einem
-            spaeteren Jahr als ``today``, wird die Buchhaltung bis ``now``
-            fortgeschrieben: Vorjahre abgeschlossen, ein offenes Buchungsjahr
-            im aktuellen Jahr, laufende Buchungen/Posten/Umbuchungen bis ``now``.
-            ``None`` -> faellt auf ``today`` zurueck (Tests bleiben deterministisch
-            und das Bestandsverhalten unveraendert).
+        today: Stichtag des Datensatzes. Vorjahr (abgerechnet, abgeschlossen) und
+            laufendes Jahr (aktive Periode, offenes Buchungsjahr, Ablesungen zum
+            Stichtag) richten sich danach — der Datensatz startet also immer im
+            aktuellen Jahr. Vor dem 15.09. wird das laufende Jahr anteilig
+            gestaucht (``DemoClock``). ``None`` -> ``now``, sonst ``date.today()``.
+            Tests geben ihn fest vor (deterministisch).
+        now: Echtes „heute" (CLI/SaaS: ``date.today()``). Ohne ``today`` ist es
+            der Stichtag. Nur wenn beide angegeben sind und ``now`` in einem
+            spaeteren Jahr liegt, wird die Buchhaltung bis ``now`` fortgeschrieben
+            (Vorjahre abgeschlossen, laufende Buchungen/Posten/Umbuchungen).
         verbose: Print-Output.
         author: Optionaler ``User``, der als Autor (``created_by_id`` etc.) aller
             erzeugten Eintraege verwendet wird. Wird er gesetzt (Web-/Self-
@@ -230,6 +283,11 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         country: ``"AT"`` / ``"DE"`` — stellt das Land des Mandanten vorher um
             (``switch_country``) und waehlt den Datensatz. ``None`` -> der Datensatz
             des aktuellen Mandanten-Landes.
+        installments: Teilrechnungen (Akonto/Abschlag) einschalten und fuer das
+            laufende Jahr durchspielen (``demo_installments``): Plaene aus dem
+            Vorjahresverbrauch, bis zum Stichtag faellige Teilrechnungen versendet
+            und meist bezahlt, die Folgeperiode mit Plaenen fuer die Vorschau auf
+            der Jahresabrechnung.
 
     Rueckgabe: Dict mit Counts pro Entitaet (fuer Tests / Smoke-Asserts).
     """
@@ -251,8 +309,11 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     from app.invoices import tariff_engine as engine
     from app.seed.demo_locale import locale_for
 
+    if today is None:
+        today = now or date.today()
     if now is None:
         now = today
+    clock = DemoClock(today)
     if country is not None:
         switch_country(db, country)
     loc = locale_for(country_mod.current_code())
@@ -327,12 +388,13 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     # ------------------------------------------------------------------
     # clear-db --full leert fiscal_years; nichts kollidiert. Vorjahr ist
     # "closed" (mit closed_at + closed_by_id=admin), aktuelles Jahr offen.
+    _time_noon = datetime.min.time().replace(hour=12)
     fy_prev = FiscalYear(
         year=prev_year,
         start_date=date(prev_year, 1, 1),
         end_date=date(prev_year, 12, 31),
         closed=True,
-        closed_at=datetime(current_year, 1, 31, 12, 0, 0),
+        closed_at=datetime.combine(min(date(current_year, 1, 31), today), _time_noon),
         closed_by_id=admin.id,
         is_vat_liable=loc.vat_liable,
     )
@@ -354,29 +416,39 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     # USt je Position: der Wasser-Satz des Mandanten-Landes (AT 10 %, DE 7 %).
     # Der Wassercent (Landesabgabe je m³) nur, wo es ihn gibt: im deutschen
     # Datensatz der bayerische Wassercent (10 ct/m³) ab 1.7.2026 — als Position
-    # des laufenden Tarifs mit Stichtag, die Engine grenzt zeitanteilig ab.
+    # jedes Tarifs, dessen Jahr er erreicht; im Einfuehrungsjahr mit Stichtag,
+    # die Engine grenzt zeitanteilig ab.
     base_prev, add_prev, price_prev = loc.tariff_prev
     base_curr, add_curr, price_curr = loc.tariff_curr
+
+    def _levy_note(year):
+        levy, start = levy_for_year(loc, year)
+        if levy is None:
+            return ""
+        when = f"ab {start.strftime('%d.%m.%Y')} (zeitanteilig)" if start else "ganzjährig"
+        return f" Wassercent {int(levy * 100)} ct/m³ {when}."
+
+    def _set_levy_start(tariff, year):
+        _levy, start = levy_for_year(loc, year)
+        for comp in tariff.components:
+            if comp.charge_type.is_levy:
+                comp.valid_from = start
+
     t_prev = build_tariff(
         name=f"Tarif {prev_year}", valid_from=prev_year, valid_to=prev_year,
         base_fee=base_prev, additional_fee=add_prev,
-        water_price=price_prev, water_levy=None,
-        notes=f"Tarif für Periode {prev_year}.",
+        water_price=price_prev, water_levy=levy_for_year(loc, prev_year)[0],
+        notes=f"Tarif für Periode {prev_year}.{_levy_note(prev_year)}",
     )
-    curr_notes = "Preisanpassung wegen gestiegener Betriebskosten."
-    if loc.water_levy is not None:
-        curr_notes += (f" Wassercent {int(loc.water_levy * 100)} ct/m³ ab "
-                       f"{loc.water_levy_from.strftime('%d.%m.%Y')} (zeitanteilig).")
     t_curr = build_tariff(
         name=f"Tarif {current_year}", valid_from=current_year, valid_to=None,
         base_fee=base_curr, additional_fee=add_curr,
-        water_price=price_curr, water_levy=loc.water_levy,
-        notes=curr_notes,
+        water_price=price_curr, water_levy=levy_for_year(loc, current_year)[0],
+        notes=("Preisanpassung wegen gestiegener Betriebskosten."
+               + _levy_note(current_year)),
     )
-    if loc.water_levy is not None:
-        for comp in t_curr.components:
-            if comp.charge_type.is_levy:
-                comp.valid_from = loc.water_levy_from
+    _set_levy_start(t_prev, prev_year)
+    _set_levy_start(t_curr, current_year)
     counts["tariffs"] = 2
 
     # ------------------------------------------------------------------
@@ -419,7 +491,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     # Projekte (5 mit Farben)
     # ------------------------------------------------------------------
     project_data = [
-        ("QSA", "Quellsanierung 2025", "#2ecc71", "Sanierung Hauptquelle Nord"),
+        ("QSA", f"Quellsanierung {current_year}", "#2ecc71", "Sanierung Hauptquelle Nord"),
         ("LTN", "Leitungstausch Nord", "#3498db", "Erneuerung Hauptleitung Nord-Süd"),
         ("HYD", "Hydrantenwartung", "#e67e22", "Jährliche Hydrantenwartung"),
         ("VER", "Verwaltung", "#95a5a6", "Allgemeine Verwaltungstätigkeit"),
@@ -675,15 +747,15 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     # Auswahl von 20 Hauptzaehlern, die in der aktuellen Periode getauscht werden
     main_meters_only = [m for m in meters if m.is_main()]
     swap_meters = rng.sample(main_meters_only, 20)
-    swap_date = date(current_year, 6, 30)
-    new_install = date(current_year, 7, 1)
+    swap_date = clock.on(6, 30)
+    new_install = min(swap_date + timedelta(days=1), today)
 
     swap_count = 0
     new_meters: list[WaterMeter] = []
     for old_meter in swap_meters:
         # Endstand alt am swap_date
         prev_val = meter_prev_value[old_meter.id]
-        verbrauch_h1 = Decimal(rng.randint(30, 140))
+        verbrauch_h1 = clock.qty(Decimal(rng.randint(30, 140)))
         end_old = prev_val + verbrauch_h1
 
         # alten Zaehler deaktivieren + Ausbau-Reading
@@ -716,7 +788,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         db.session.flush()
         new_meters.append(m_new)
         # Reading per Stichtag fuer den neuen Zaehler
-        verbrauch_h2 = Decimal(rng.randint(15, 80))
+        verbrauch_h2 = clock.qty(Decimal(rng.randint(15, 80)))
         r_new = MeterReading(
             meter_id=m_new.id,
             billing_period_id=p_curr.id,
@@ -749,7 +821,8 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         if m.id in swapped_ids:
             continue
         prev_val = meter_prev_value[m.id]
-        verbrauch = Decimal(rng.randint(40, 220)) if m.is_main() else Decimal(rng.randint(10, 60))
+        verbrauch = clock.qty(Decimal(rng.randint(40, 220)) if m.is_main()
+                              else Decimal(rng.randint(10, 60)))
         new_val = prev_val + verbrauch
         r = MeterReading(
             meter_id=m.id,
@@ -792,7 +865,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
             inv_date = today - timedelta(days=offset + 14)
             due = today - timedelta(days=offset)
         else:
-            inv_date = date(current_year, 1, 15) + timedelta(days=idx * 3)
+            inv_date = clock.shift(date(current_year, 1, 15) + timedelta(days=idx * 3))
             due = inv_date + timedelta(days=30)
 
         verbrauch = Decimal(rng.randint(70, 240))
@@ -845,7 +918,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         # bewusst eine flache Buchung geschrieben, damit der Seed nicht von der
         # Split-Logik abhaengt (siehe accounting/services.py).
         if status == Invoice.STATUS_PAID:
-            pay_date = inv_date + timedelta(days=14)
+            pay_date = min(inv_date + timedelta(days=14), today)
             b = Booking(
                 date=pay_date,
                 account_id=acc_wasser.id,
@@ -956,12 +1029,12 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         (date(prev_year, 9, 5), "Bankkosten Q3", acc_bank, None, None, Decimal("-32.40"), giro),
         (date(prev_year, 11, 18), "Anschlussgebühr Neuanlage", acc_anschluss, 1, conn, Decimal("450.00"), giro),
         (date(prev_year, 12, 28), "Kreditzinsen Q4", acc_bank, None, None, Decimal("-185.00"), kredit),
-        (date(current_year, 2, 11), "Leitungstausch Material", acc_reparatur, 1, std, Decimal("-2350.00"), kredit),
-        (date(current_year, 3, 14), "Büromaterial Toner", acc_buero, 3, std, Decimal("-65.00"), giro),
-        (date(current_year, 5, 9), "Quellsanierung Vorarbeiten", acc_reparatur, 0, std, Decimal("-1820.00"), giro),
-        (date(current_year, 6, 21), "Bankkosten Q2", acc_bank, None, None, Decimal("-28.90"), giro),
-        (date(current_year, 7, 2), "Hydrantenwartung Sommer", acc_reparatur, 2, std, Decimal("-540.00"), giro),
-        (date(current_year, 8, 30), "Sonder-Anschluss Bauplatz", acc_anschluss, 1, conn, Decimal("900.00"), giro),
+        (clock.on(2, 11), "Leitungstausch Material", acc_reparatur, 1, std, Decimal("-2350.00"), kredit),
+        (clock.on(3, 14), "Büromaterial Toner", acc_buero, 3, std, Decimal("-65.00"), giro),
+        (clock.on(5, 9), "Quellsanierung Vorarbeiten", acc_reparatur, 0, std, Decimal("-1820.00"), giro),
+        (clock.on(6, 21), "Bankkosten Q2", acc_bank, None, None, Decimal("-28.90"), giro),
+        (clock.on(7, 2), "Hydrantenwartung Sommer", acc_reparatur, 2, std, Decimal("-540.00"), giro),
+        (clock.on(8, 30), "Sonder-Anschluss Bauplatz", acc_anschluss, 1, conn, Decimal("900.00"), giro),
     ]
     plan_bookings = {}      # Beschreibung -> Buchung (Belege werden spaeter angehaengt)
     for bdate, desc, account, proj_idx, tax, amt, ra in booking_plan:
@@ -990,13 +1063,13 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
             created_by_id=admin.id,
         ),
         Transfer(
-            date=date(current_year, 3, 31), amount=Decimal("2000.00"),
+            date=clock.on(3, 31), amount=Decimal("2000.00"),
             description="Quartalstilgung Q1",
             from_real_account_id=giro.id, to_real_account_id=kredit.id,
             created_by_id=admin.id,
         ),
         Transfer(
-            date=date(current_year, 7, 15), amount=Decimal("5000.00"),
+            date=clock.on(7, 15), amount=Decimal("5000.00"),
             description="Kreditauszahlung für Quellsanierung",
             from_real_account_id=kredit.id, to_real_account_id=giro.id,
             created_by_id=admin.id,
@@ -1199,7 +1272,8 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     assigned_props = properties[:len(geo.HOUSE_CONNECTIONS)]
     ha_stub_example = None
     geocoded_count = 0
-    geocode_ts = datetime(current_year, 3, 15, 9, 0, 0)
+    _geo_day = clock.on(3, 15)
+    geocode_ts = datetime(_geo_day.year, _geo_day.month, _geo_day.day, 9, 0, 0)
 
     for prop, (h_lng, h_lat, t_lng, t_lat) in zip(assigned_props,
                                                   geo.HOUSE_CONNECTIONS):
@@ -1288,21 +1362,21 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     # (feature, Art, letzte Durchfuehrung, Intervall Monate, Ergebnis)
     maint_plan = [
         (hydranten[0], MaintenanceLog.KIND_FLUSH, date(prev_year, 5, 12), 12, "ok"),
-        (hydranten[1], MaintenanceLog.KIND_FLUSH, date(current_year, 4, 8), 12, "ok"),
-        (hydranten[2], MaintenanceLog.KIND_FLUSH, date(current_year, 8, 20), 12, "mangel"),
+        (hydranten[1], MaintenanceLog.KIND_FLUSH, clock.on(4, 8), 12, "ok"),
+        (hydranten[2], MaintenanceLog.KIND_FLUSH, clock.on(8, 20), 12, "mangel"),
         (hydranten[3], MaintenanceLog.KIND_FLUSH, date(prev_year, 9, 3), 12, "ok"),
-        (hydranten[4], MaintenanceLog.KIND_FLUSH, date(current_year, 6, 30), 12, "ok"),
-        (hydranten[5], MaintenanceLog.KIND_FLUSH, date(current_year, 7, 15), 12, "ok"),
+        (hydranten[4], MaintenanceLog.KIND_FLUSH, clock.on(6, 30), 12, "ok"),
+        (hydranten[5], MaintenanceLog.KIND_FLUSH, clock.on(7, 15), 12, "ok"),
         (schieber[0], MaintenanceLog.KIND_FUNCTION_TEST, date(prev_year - 1, 10, 5), 24, "ok"),
-        (schieber[1], MaintenanceLog.KIND_FUNCTION_TEST, date(current_year, 3, 18), 24, "ok"),
+        (schieber[1], MaintenanceLog.KIND_FUNCTION_TEST, clock.on(3, 18), 24, "ok"),
         (schieber[2], MaintenanceLog.KIND_FUNCTION_TEST, date(prev_year, 11, 2), 24, "mangel"),
         (schieber[3], MaintenanceLog.KIND_FUNCTION_TEST, date(prev_year - 1, 6, 14), 24, "ok"),
-        (schieber[4], MaintenanceLog.KIND_FUNCTION_TEST, date(current_year, 5, 9), 24, "ok"),
+        (schieber[4], MaintenanceLog.KIND_FUNCTION_TEST, clock.on(5, 9), 24, "ok"),
         (schieber[5], MaintenanceLog.KIND_FUNCTION_TEST, date(prev_year, 4, 22), 12, "ok"),
-        (behaelter, MaintenanceLog.KIND_INSPECTION, date(current_year, 4, 2), 12, "ok"),
+        (behaelter, MaintenanceLog.KIND_INSPECTION, clock.on(4, 2), 12, "ok"),
         (springs[0]["f"], MaintenanceLog.KIND_INSPECTION, date(prev_year, 8, 1), 12, "ok"),
-        (springs[1]["f"], MaintenanceLog.KIND_INSPECTION, date(current_year, 5, 20), 24, "ok"),
-        (springs[2]["f"], MaintenanceLog.KIND_INSPECTION, date(current_year, 7, 1), 12, "ok"),
+        (springs[1]["f"], MaintenanceLog.KIND_INSPECTION, clock.on(5, 20), 24, "ok"),
+        (springs[2]["f"], MaintenanceLog.KIND_INSPECTION, clock.on(7, 1), 12, "ok"),
     ]
     for feat, kind, last_date, interval, result in maint_plan:
         db.session.add(MaintenanceLog(
@@ -1775,6 +1849,11 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         return m
 
     R = MeetingResolution  # kuerzere Statuskonstanten unten
+    _months = ("Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August",
+               "September", "Oktober", "November", "Dezember")
+
+    def _month_name(d):
+        return country_mod.term("january") if d.month == 1 else _months[d.month - 1]
     # Fachbegriffe des Landes (Obmann/Vorsitzender, Kassier/Kassierer …)
     t_chair = country_mod.term("The_chairman")
     t_treasurer = country_mod.term("treasurer")
@@ -1831,8 +1910,8 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
              f"Vertagt bis zur Klärung der Förderzusage {names['state_funding']}.", 3),
         ])
     add_meeting(
-        mtype=Meeting.TYPE_BOARD, title=f"Vorstandssitzung März {current_year}",
-        when=date(current_year, 3, 11), start=_time(19, 0), end=_time(20, 40),
+        mtype=Meeting.TYPE_BOARD, title=f"Vorstandssitzung {_month_name(clock.on(3, 11))} {current_year}",
+        when=clock.on(3, 11), start=_time(19, 0), end=_time(20, 40),
         status=Meeting.STATUS_HELD, agenda=_board_agenda,
         attendees=board_members, present_ratio=0.83, intro=_board_intro,
         protocol_html="<p>Nachbereitung der Hauptversammlung; Beauftragung der "
@@ -1844,8 +1923,8 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
              R.STATUS_ACCEPTED, 5, 1, 0, f"Angebot {loc.contractor} angenommen.", 3),
         ])
     add_meeting(
-        mtype=Meeting.TYPE_BOARD, title=f"Vorstandssitzung Juni {current_year}",
-        when=date(current_year, 6, 17), start=_time(19, 0), end=_time(20, 20),
+        mtype=Meeting.TYPE_BOARD, title=f"Vorstandssitzung {_month_name(clock.on(6, 17))} {current_year}",
+        when=clock.on(6, 17), start=_time(19, 0), end=_time(20, 20),
         status=Meeting.STATUS_HELD, agenda=_board_agenda,
         attendees=board_members, present_ratio=0.66, intro=_board_intro,
         protocol_html="<p>Diskussion über die Beschaffung eines Notstromaggregats; "
@@ -1896,7 +1975,7 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
     add_meeting(
         mtype=Meeting.TYPE_ASSEMBLY,
         title=f"Ordentliche Hauptversammlung {current_year}",
-        when=date(current_year, 5, 13), start=_time(19, 30), end=_time(22, 15),
+        when=clock.on(5, 13), start=_time(19, 30), end=_time(22, 15),
         location=loc.venue, status=Meeting.STATUS_HELD,
         agenda=_assembly_agenda + [("Neuwahl des Vorstands", None, True)],
         attendees=assembly_members, present_ratio=0.44,
@@ -1957,6 +2036,16 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
         bridge_bookings=bridge_booking_objs,
         accounts={"buero": acc_buero, "reparatur": acc_reparatur},
         projects=projects, giro=giro))
+
+    # ==================================================================
+    # Teilrechnungen (optional): Plaene, versendete/bezahlte Teilrechnungen
+    # des laufenden Jahres, Folgeperiode mit neuen Plaenen.
+    # ==================================================================
+    if installments:
+        from app.seed import demo_installments
+        counts.update(demo_installments.seed_installments(
+            db, today=today, p_curr=p_curr, t_curr=t_curr, customers=customers,
+            admin=admin, giro=giro, with_next_period=not clock.compressed))
 
     if verbose:
         print("Demo-Daten-Counts:")

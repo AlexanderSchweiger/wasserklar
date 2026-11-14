@@ -8,7 +8,7 @@
   <i class="fas fa-exclamation-triangle me-2"></i>
   <strong>Einzug noch nicht möglich:</strong> {{ readiness | join(', ') }}.
   {% if current_user.has_permission('verwaltung') %}
-  <a href="{{ url_for('settings.index') }}#tab-kontakt" class="alert-link">Zu den Einstellungen</a>
+  <a href="{{ url_for('settings.index', tab='kontakt', _anchor='sepa-card') }}" class="alert-link">Zu den Einstellungen</a>
   {% endif %}
 </div>
 {% endif %}

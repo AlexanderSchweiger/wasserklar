@@ -101,11 +101,13 @@ def next_period(period):
 
 
 def consumption_by_property(period_id):
-    """``{property_id: m³}`` aus den Ablesungen einer Periode (alle Zaehler,
-    auch ausgebaute — wie der Rechnungslauf)."""
+    """``{property_id: m³}`` aus den Ablesungen einer Periode (alle
+    abrechenbaren Zaehler, auch ausgebaute, ohne Subzaehler — wie der
+    Rechnungslauf)."""
     rows = (db.session.query(WaterMeter.property_id, func.sum(MeterReading.consumption))
             .join(MeterReading, MeterReading.meter_id == WaterMeter.id)
-            .filter(MeterReading.billing_period_id == period_id)
+            .filter(MeterReading.billing_period_id == period_id,
+                    WaterMeter.billable_filter())
             .group_by(WaterMeter.property_id).all())
     return {pid: Decimal(str(total or 0)) for pid, total in rows}
 
@@ -142,8 +144,17 @@ def basis_for(period):
 # ---------------------------------------------------------------------------
 
 def _vat_liable(period, today):
+    """USt-Pflicht des Jahres, in dem die Teilbetraege anfallen. Ist das
+    Buchungsjahr noch nicht angelegt (Plaene der Folgeperiode, berechnet im
+    Dezember), gilt das juengste vorhandene — sonst entstuenden die Plaene ohne
+    USt, und die Teilrechnungen des Folgejahres erbten das."""
     from app.accounting.services import is_year_vat_liable
+    from app.models import FiscalYear
     year = max(today, period.start_date).year
+    if db.session.get(FiscalYear, year) is None:
+        latest = (FiscalYear.query.filter(FiscalYear.year < year)
+                  .order_by(FiscalYear.year.desc()).first())
+        return bool(latest and latest.is_vat_liable)
     return is_year_vat_liable(year)
 
 
@@ -205,10 +216,12 @@ def billed_property_ids(period_id):
 
 
 def candidate_properties():
-    """Aktive Objekte mit mindestens einem aktiven Zaehler."""
+    """Aktive Objekte mit mindestens einem aktiven abrechenbaren Zaehler
+    (ein Objekt nur mit Subzaehler bekommt keine Jahresabrechnung)."""
     return (Property.query
             .join(WaterMeter, WaterMeter.property_id == Property.id)
-            .filter(Property.active.is_(True), WaterMeter.active.is_(True))
+            .filter(Property.active.is_(True), WaterMeter.active.is_(True),
+                    WaterMeter.billable_filter())
             .distinct()
             .order_by(Property.object_number, Property.strasse, Property.id)
             .all())

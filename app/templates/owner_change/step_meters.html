@@ -22,11 +22,15 @@
       {% for m in editable %}
       <div class="row g-3 align-items-end mb-3 pb-3 border-bottom">
         <div class="col-md-5">
-          <div class="fw-bold">Zähler {{ m.meter_number }}</div>
+          <div class="fw-bold">Zähler {{ m.meter_number }}
+            {% if m.is_sub() %}<span class="badge bg-azure-lt ms-1">Subzähler</span>{% endif %}</div>
           <div class="text-secondary small">
             {{ m.location or '—' }}
             {% if prefills[m.id] is not none %}· Schätzvorschlag: {{ prefills[m.id] | de_number }} m³{% endif %}
           </div>
+          {% if m.is_sub() %}
+          <div class="text-secondary small">Nur zur Aufzeichnung — im Hauptzähler enthalten, wird nicht verrechnet.</div>
+          {% endif %}
         </div>
         <div class="col-md-4">
           <label class="form-label required">Stand am Stichtag (m³)</label>
@@ -50,7 +54,8 @@
         Diese ausgebauten Zähler werden vollständig dem Altbesitzer verrechnet:
         <ul class="mb-0 mt-1">
           {% for m, r in fixed %}
-          <li>Zähler {{ m.meter_number }} – Verbrauch {{ (r.consumption or 0) | de_number }} m³</li>
+          <li>Zähler {{ m.meter_number }} – Verbrauch {{ (r.consumption or 0) | de_number }} m³
+            {%- if m.is_sub() %} (Subzähler, wird nicht verrechnet){% endif %}</li>
           {% endfor %}
         </ul>
       </div>

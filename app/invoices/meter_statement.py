@@ -140,6 +140,8 @@ def rows_for_billing(prop, period, readings, deductions=None):
     rows = []
     for reading in readings:
         meter = reading.meter
+        if not meter.is_billable():
+            continue  # Subzaehler: im Hauptzaehler enthalten, nie verrechnet
         consumption = _dec(reading.consumption) or ZERO
         deducted = by_meter.get(meter.id, ZERO)
         if deducted > 0:
@@ -235,7 +237,8 @@ def _live_rows(invoice):
         MeterReading.query
         .join(WaterMeter, WaterMeter.id == MeterReading.meter_id)
         .filter(MeterReading.billing_period_id == period.id,
-                WaterMeter.property_id == prop.id)
+                WaterMeter.property_id == prop.id,
+                WaterMeter.billable_filter())
         .all()
     )
     return rows_for_billing(prop, period, readings, deductions_for_property(prop.id, period.id))

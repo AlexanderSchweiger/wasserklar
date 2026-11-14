@@ -176,6 +176,24 @@ class TestPlan:
         [p] = plans.compute_plans(s["cur"], s["tariff"], min_annual=D("500"))
         assert p.status == plans.STATUS_BELOW_MIN
 
+    def test_next_period_without_fiscal_year_keeps_vat(self, setup):
+        """Plaene der Folgeperiode entstehen oft im Dezember, bevor das Buchungsjahr
+        angelegt ist — sie bekommen trotzdem die USt (juengstes Buchungsjahr)."""
+        s = setup
+        save_reading(s["meter"], s["cur"], D("200"), is_estimated=False,
+                     reading_date=date(Y, 12, 31))
+        nxt = BillingPeriod(name=str(Y + 1), start_date=date(Y + 1, 1, 1),
+                            end_date=date(Y + 1, 12, 31), active=False)
+        db.session.add(nxt)
+        db.session.commit()
+        assert db.session.get(FiscalYear, Y + 1) is None
+        proposals = plans.compute_plans(nxt, s["tariff"], today=date(Y, 12, 1))
+        plans.save_plans(nxt, s["tariff"], proposals, created_by_id=s["user"].id)
+        plan = InstallmentPlan.query.filter_by(billing_period_id=nxt.id).one()
+        # 100 m³ × 2 + 40 = 240 netto → 264 brutto (wie im laufenden Jahr)
+        assert plan.annual_amount == D("264.00")
+        assert {r["tax_rate"] for r in plan.composition_rows} == {D("10")}
+
     def test_manual_amount_survives_recalculation(self, setup):
         s = setup
         plan = _plan(s)
@@ -204,6 +222,27 @@ class TestInstallmentInvoices:
         assert all(i.charge_key == terms.KEY_INSTALLMENT for i in inv.items)
         assert inv.document_title == "Teilrechnung"
         assert inv.installment_entry.seq == 1
+
+    def test_service_period_is_quarter_in_austria(self, setup):
+        """AT: Leistungszeitraum = Abschnitt der Periode (wie eine Akonto-Vorschreibung)."""
+        s = setup
+        invs = sorted(_issue(s, _plan(s)).created, key=lambda i: i.due_date)
+        assert [(i.service_date_from, i.service_date_to) for i in invs] == [
+            (date(Y, 1, 1), date(Y, 3, 31)), (date(Y, 4, 1), date(Y, 6, 30)),
+            (date(Y, 7, 1), date(Y, 9, 30)), (date(Y, 10, 1), date(Y, 12, 31))]
+        assert invs[1].items[0].description.startswith(f"2. Teilbetrag 01.04.–30.06.{Y}")
+
+    def test_service_period_is_whole_period_in_germany(self, setup):
+        """DE: Wasser ueber Netze gilt erst mit Ablauf des Ablesezeitraums als
+        geliefert — der Abschlag nennt die ganze Periode (Anzahlung)."""
+        from app.invoices.services import service_period
+        AppSetting.set("org.country", "DE")
+        db.session.commit()
+        s = setup
+        inv = _issue(s, _plan(s), seqs={2}).created[0]
+        assert inv.service_date_from is None
+        assert service_period(inv) == (date(Y, 1, 1), date(Y, 12, 31))
+        assert inv.items[0].description.startswith(f"2. Abschlag {Y} (von 4)")
 
     def test_no_second_invoice_for_entry(self, setup):
         s = setup
@@ -342,7 +381,7 @@ class TestCreditCancelsUnpaid:
         summ = settlement.summary(inv)
         assert len(summ["cancelled_installments"]) == 2
         assert [d["invoice"].id for d in summ["open_installments"]] == [insts[1].id]
-        assert summ["due_overall"] == D("88.00")
+        assert summ["open_total"] == D("66.00")
 
     def test_back_payment_cancels_nothing(self, setup, logged_in_admin):
         s = setup
@@ -369,7 +408,7 @@ class TestCreditCancelsUnpaid:
         assert [i.id for i in printed] == [inv.id, credit.id]
         html = TestDocuments._html(None, app, inv)
         assert "entfällt – nicht zu zahlen" in html and "storniert" in html
-        assert "nicht mehr zu bezahlen" in html
+        assert "bitte nicht mehr bezahlen" in html
 
 
 class TestAnnualSettlement:
@@ -536,15 +575,22 @@ class TestDocuments:
         assert "Jahresabrechnung" in html
         assert "Gegenverrechnung" in html and "Nachzahlung" in html
         assert "Summe Jahresabrechnung" in html and "308,00" in html
-        # Gegenverrechnungs-Zeilen stehen nicht in der Positionstabelle
-        assert html.count("abzüglich Teilrechnung") == 4
-        # Zahlstand steht in der Tabelle, offene Beträge laufen bis „Insgesamt offen“
+        # Gegenverrechnungs-Zeilen stehen nicht in der Positionstabelle, sondern
+        # je Teilrechnung eine Zeile im eigenen Block (Nummer + Belegart im Kopf)
+        assert "abzüglich Teilrechnung" not in html
+        assert "<th>Teilrechnung</th>" in html
+        summ = settlement.summary(inv)
+        assert summ["has_tax"]
+        for d in summ["deductions"]:
+            assert html.count(f"<td>{d['invoice'].invoice_number}</td>") == 1
+        assert "<th class=\"r\">USt</th>" in html
+        # Zahlstand steht in der Tabelle; zu zahlen ist mit diesem Beleg nur die
+        # Nachzahlung — keine Summe „Insgesamt offen“, die offenen Teilrechnungen
+        # erklärt der Hinweis darunter.
         assert "<th>Zahlung</th>" in html
         assert html.count('<span class="inst-open">offen</span>') == 4
-        assert html.count("zuzüglich noch offen") == 4
-        # Nachzahlung 44 + 4 × 66 offen = 308
-        assert settlement.summary(inv)["due_overall"] == D("308.00")
-        assert "Insgesamt offen" in html
+        assert "zuzüglich noch offen" not in html and "Insgesamt offen" not in html
+        assert "bitte unter ihrer eigenen Rechnungsnummer bezahlen" in html
         assert "Noch nicht bezahlt" not in html
 
     def test_settlement_document_paid_installment(self, app, setup, logged_in_admin,
@@ -562,8 +608,56 @@ class TestDocuments:
         states = [d["pay_state"] for d in summ["deductions"]]
         assert states.count("paid") == 1 and states.count("open") == 3
         html = self._html(app, inv)
-        assert html.count("zuzüglich noch offen") == 3
+        assert html.count('<span class="inst-open">offen</span>') == 3
         assert ">bezahlt<" in html
+
+    def test_open_note_depends_on_payment_method(self, app, setup, logged_in_admin):
+        """Ueberweisung: offene Teilrechnungen bitte selbst zahlen; Bankeinzug: die WG
+        bucht sie ab — eine Zahlungsbitte waere dort falsch."""
+        s = setup
+        cust = s["cust"]
+        cust.payment_method = Customer.PAYMENT_DIRECT_DEBIT
+        cust.iban = "AT611904300234573201"
+        cust.mandate_reference = "WG-1"
+        cust.mandate_signed_on = date(Y - 2, 1, 1)
+        db.session.commit()
+        _send(_issue(s, _plan(s)).created)
+        inv = _annual(s, logged_in_admin, "120")
+        summ = settlement.summary(inv)
+        assert "buchen wir wie angekündigt" in summ["open_note"]
+        assert "buchen wir wie angekündigt" in self._html(app, inv)
+
+    def test_no_tax_columns_without_vat(self, app, setup, logged_in_admin):
+        """Kleinunternehmer (Buchungsjahr nicht USt-pflichtig): nur eine Betragsspalte."""
+        s = setup
+        for fy in FiscalYear.query:
+            fy.is_vat_liable = False
+        db.session.commit()
+        _send(_issue(s, _plan(s)).created)
+        inv = _annual(s, logged_in_admin, "120")
+        summ = settlement.summary(inv)
+        assert not summ["has_tax"]
+        html = self._html(app, inv)
+        assert '<th class="r">Betrag</th>' in html and "−0,00 €" not in html
+
+    def test_next_plan_names_its_basis(self, app, setup, logged_in_admin):
+        """„Ihre Teilbeträge“ nennt die Grundlage (Verbrauch + Periode), nicht den Tarifnamen."""
+        s = setup
+        _send(_issue(s, _plan(s)).created)
+        nxt = BillingPeriod(name=str(Y + 1), start_date=date(Y + 1, 1, 1),
+                            end_date=date(Y + 1, 12, 31), active=False)
+        db.session.add(nxt)
+        save_reading(s["meter"], s["cur"], D("220"), is_estimated=False,
+                     reading_date=date(Y, 12, 31))
+        db.session.commit()
+        proposals = plans.compute_plans(nxt, s["tariff"])
+        plans.save_plans(nxt, s["tariff"], proposals, created_by_id=s["user"].id)
+        db.session.commit()
+        inv = _annual(s, logged_in_admin, "120")
+        summ = settlement.summary(inv)
+        assert summ["next_plan"]["basis_text"] == f"berechnet aus Ihrem Verbrauch {Y} (120 m³)"
+        html = self._html(app, inv)
+        assert f"Ihre Teilbeträge {Y + 1}" in html and "dem Tarif" not in html
 
     def test_credit_document(self, app, setup, logged_in_admin, real_account):
         s = setup
@@ -590,6 +684,24 @@ class TestDocuments:
         assert "Gegenverrechnung" in text and "Guthaben" in cells
         assert "verrechnen wir" in cells
         assert "Summe Jahresabrechnung" in cells
+
+    def test_docx_back_payment_without_open_total(self, app, setup, logged_in_admin):
+        """Word wie PDF: Nachzahlung ja, aber keine Summe „Insgesamt offen“."""
+        import io as _io
+        from docx import Document as _Docx
+        from app.invoices.document_service import generate_docx
+        from app.settings_service import wg_settings
+        s = setup
+        _send(_issue(s, _plan(s)).created)
+        inv = _annual(s, logged_in_admin, "120")
+        with app.test_request_context():
+            data = generate_docx(inv, wg_settings())
+        doc = _Docx(_io.BytesIO(data))
+        text = "\n".join(p.text for p in doc.paragraphs)
+        cells = "\n".join(c.text for t in doc.tables for r in t.rows for c in r.cells)
+        assert "Nachzahlung" in cells
+        assert "Insgesamt offen" not in cells and "zuzüglich noch offen" not in cells
+        assert "bitte unter ihrer eigenen Rechnungsnummer bezahlen" in text
 
 
 class TestOwnerChange:
