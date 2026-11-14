@@ -5,7 +5,10 @@
    Erwartete Variablen:
      booking            — Booking oder None (Neuanlage)
      is_modal           — bool: hx-Modal-Kontext (hx-post) vs. nativer POST
-     is_verbucht        — bool: gesperrte Felder (Datum/Betrag/Steuer/Beleg)
+     is_verbucht        — bool: gesperrte Felder (Datum/Betrag/Beleg)
+     tax_blocker        — Grund, warum der Steuersatz gesperrt ist (nur verbuchte Buchungen), sonst None;
+                          bei verbuchten Buchungen ohne Sperre wird eine Änderung protokolliert
+     vat_period_label   — Voranmeldungszeitraum der verbuchten Buchung (Hinweistext)
      handover           — aktive Übergabe an die Steuerberatung (oder None): sperrt
                           Konto, Bank/Kasse und Projekt (handover_lock_message = Text)
      form_action_url    — Ziel-URL fuer POST
@@ -20,6 +23,7 @@
    aufgeloest, sodass bei einem Validierungsfehler KEINE Eingabe verloren geht.
 =========================================================================== #}
 {% set locked = is_verbucht %}
+{% set tax_locked = locked and tax_blocker is defined and tax_blocker %}
 {% set ledger_locked = handover is defined and handover %}
 {% set fd = form_data if (form_data is defined and form_data) else None %}
 
@@ -59,8 +63,15 @@
 
   {% if locked %}
   <div class="alert alert-warning py-2" role="alert">
-    <i class="fas fa-lock me-1"></i> Verbuchte Buchung — Datum, Betrag, Belegnummer und
-    Steuersatz können nicht mehr geändert werden.
+    <i class="fas fa-lock me-1"></i> Verbuchte Buchung — Datum, Betrag und Belegnummer können
+    nicht mehr geändert werden.
+    {% if tax_locked %}
+    Steuersatz: {{ tax_blocker }}
+    {% else %}
+    Der Steuersatz lässt sich noch korrigieren (der Bruttobetrag bleibt gleich); die Änderung wird
+    an der Buchung protokolliert und wirkt auf die Umsatzsteuer {{ vat_period_label }} — eine dafür
+    bereits abgegebene Voranmeldung ist zu berichtigen.
+    {% endif %}
   </div>
   {% endif %}
 
@@ -96,7 +107,8 @@
       <label class="form-label">Steuersatz</label>
       {# Bewusst NATIVES Select: nur wenige feste Werte → maximal tastatur-
          freundlich und nie doppelt initialisiert. #}
-      <select name="tax_rate" id="tax_rate" class="form-select" {{ 'disabled' if locked }}>
+      <select name="tax_rate" id="tax_rate" class="form-select{{ ' is-invalid' if errors.get('tax_rate') }}"
+              {{ 'disabled' if tax_locked }}>
         <option value="">–</option>
         {% for tr in tax_rates %}
         {# Numerischer Vergleich beim Bearbeiten (DB liefert 20.00, Option-Wert 20);
@@ -112,7 +124,7 @@
         </option>
         {% endfor %}
       </select>
-      {% if locked %}<input type="hidden" name="tax_rate" value="{{ booking.tax_rate or 0 }}">{% endif %}
+      {% if tax_locked %}<input type="hidden" name="tax_rate" value="{{ booking.tax_rate or 0 }}">{% endif %}
     </div>
     <div class="col-12 col-sm-3">
       <label class="form-label">&nbsp;</label>
@@ -134,7 +146,8 @@
         {{ 'disabled' if ledger_locked }}>
         <option value=""></option>
         {% for a in accounts %}
-        <option value="{{ a.id }}" {{ 'selected' if sel_account == a.id|string }}>
+        <option value="{{ a.id }}" {{ 'selected' if sel_account == a.id|string }}
+                {% if a.default_tax_rate %}data-default-tax="{{ a.default_tax_rate }}"{% endif %}>
           {% if a.code %}{{ a.code }} – {% endif %}{{ a.name }}
         </option>
         {% endfor %}
@@ -202,6 +215,21 @@
       {% if ledger_locked %}<input type="hidden" name="real_account_id" value="{{ booking.real_account_id or '' }}">{% endif %}
     </div>
   </div>
+
+  {% if booking and booking.changes %}
+  {# Änderungsprotokoll verbuchter Buchungen (BookingChange) — der ursprüngliche Wert bleibt sichtbar. #}
+  <div class="mt-3 small text-muted">
+    <div class="fw-bold mb-1"><i class="fas fa-history me-1"></i>Änderungen nach dem Verbuchen</div>
+    <ul class="mb-0 ps-3">
+      {% for ch in booking.changes %}
+      <li>
+        {{ ch.changed_at.strftime('%d.%m.%Y %H:%M') }}{% if ch.changed_by %} · {{ ch.changed_by.username }}{% endif %}:
+        Steuersatz {{ (ch.old_value ~ ' %') if ch.old_value else 'ohne' }} → {{ (ch.new_value ~ ' %') if ch.new_value else 'ohne' }}
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
 
   {# Belege: hochladen oder aus dem Belegeingang wählen (bereits zugeordnete stehen als Liste darüber) #}
   <div class="row g-3 mt-1"><div class="col-12">{% include "documents/_picker.html" %}</div></div>
@@ -282,6 +310,25 @@
   if (amountEl) amountEl.addEventListener('input', updateUI);
   if (rateEl) rateEl.addEventListener('change', updateUI);
   updateUI();
+
+  {# Neue Buchung: der Standard-Steuersatz des Kontos belegt den Steuersatz vor, solange der Nutzer
+     ihn nicht selbst gewählt hat. Bestehende Buchungen werden nie still umgestellt. #}
+  var accountEl = form.querySelector('#booking-account-select');
+  if (accountEl && rateEl && form.dataset.new === 'true') {
+    var rateTouched = rateEl.value !== '';
+    rateEl.addEventListener('change', function () { rateTouched = true; });
+    accountEl.addEventListener('change', function () {
+      if (rateTouched) return;
+      var opt = accountEl.options[accountEl.selectedIndex];
+      var def = parseFloat(opt ? (opt.getAttribute('data-default-tax') || '') : '');
+      {# Zahlenvergleich: die Optionen tragen je nach Datenbank „20“ oder „20.00“. #}
+      var hit = Array.prototype.find.call(rateEl.options, function (o) {
+        return o.value !== '' && parseFloat(o.value) === def;
+      });
+      rateEl.value = hit ? hit.value : '';
+      updateUI();
+    });
+  }
 
   {# Tastatur: Enter = naechstes Feld; Ctrl/Cmd+Enter = Speichern + weitere.
      TomSelect erledigt Tab-Auswahl selbst (selectOnTab). #}

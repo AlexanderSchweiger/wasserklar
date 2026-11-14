@@ -61,6 +61,14 @@ def _validate_code(code_raw, model_cls, exclude_id=None):
     return code, None
 
 
+def _apply_account_default_tax(account, form):
+    """Standard-Steuersatz des Kontos — nur, wenn das Feld im Formular steht (Marker
+    ``account_tax_field=1``); ein Formular ohne das Feld ändert nichts."""
+    if form.get("account_tax_field") != "1":
+        return
+    account.default_tax_rate = _parse_tax_rate(form.get("default_tax_rate"))
+
+
 def _account_modal_saved(account_id):
     """204 + HX-Trigger fuers Kontenplan-Modal (schliessen + neu laden)."""
     resp = make_response("", 204)
@@ -86,6 +94,7 @@ def account_new():
             name=request.form["name"].strip(),
             description=request.form.get("description", ""),
         )
+        _apply_account_default_tax(a, request.form)
         err = handover_svc.apply_account_fields(a, request.form)
         if err:
             flash(err, "danger")
@@ -122,6 +131,7 @@ def account_edit(account_id):
         a.name = request.form["name"].strip()
         a.description = request.form.get("description", "")
         a.active = "active" in request.form
+        _apply_account_default_tax(a, request.form)
         db.session.commit()
         flash("Konto aktualisiert.", "success")
         if is_modal:
@@ -181,7 +191,8 @@ def _apply_project_contact_search(query, project_id, customer_id, q):
     return query
 
 
-def _bookings_table_ctx(params, bulk_done_count=None, bulk_handed_over_skipped=0):
+def _bookings_table_ctx(params, bulk_done_count=None, bulk_handed_over_skipped=0,
+                        bulk_tax_skipped=0):
     """Baut den Render-Kontext der Buchungstabelle aus den Filter-Parametern.
 
     ``params`` ist eine MultiDict — ``request.args`` beim Filter-GET,
@@ -390,6 +401,7 @@ def _bookings_table_ctx(params, bulk_done_count=None, bulk_handed_over_skipped=0
         pagination=pagination,
         bulk_done_count=bulk_done_count,
         bulk_handed_over_skipped=bulk_handed_over_skipped,
+        bulk_tax_skipped=bulk_tax_skipped,
         # Hinweis „N offen — jetzt verbuchen“ (gilt für alle Buchungen, nicht nur den Filter).
         open_count=acc_svc.open_bookings_query().count(),
     )
@@ -470,10 +482,15 @@ def bookings_bulk_edit():
     new_account_id, set_account = _resolve("bulk_account_id", Account)
     new_project_id, set_project = _resolve("bulk_project_id", Project)
     new_customer_id, set_customer = _resolve("bulk_customer_id", Customer)
+    # Steuersatz: leer = unveraendert, "0" = ohne Steuer, sonst ein bekannter Satz.
+    raw_tax = (request.form.get("bulk_tax_rate") or "").strip()
+    set_tax = raw_tax != "" and (raw_tax == "0" or _parse_tax_rate(raw_tax) is not None)
+    new_tax_rate = _parse_tax_rate(raw_tax) if set_tax else None
 
     updated = 0
     handed_over_skipped = 0
-    if ids and (set_account or set_project or set_customer):
+    tax_skipped = 0
+    if ids and (set_account or set_project or set_customer or set_tax):
         # An die Steuerberatung übergebene Buchungen behalten Konto und Projekt
         # (der Kontakt bleibt änderbar).
         handed_over = handover_svc.handed_over_booking_ids(ids) if (set_account or set_project) else set()
@@ -495,6 +512,13 @@ def bookings_bulk_edit():
             if set_customer:
                 b.customer_id = new_customer_id
                 changed = True
+            if set_tax:
+                # Sammeländerung ist strenger als das Einzelformular: Buchungen aus Rechnungen
+                # behalten immer den Satz der Rechnung (tax_change_blocker), auch wenn sie offen sind.
+                if acc_svc.tax_change_blocker(b):
+                    tax_skipped += 1
+                elif acc_svc.set_booking_tax_rate(b, new_tax_rate, current_user.id):
+                    changed = True
             if locked and (set_account or set_project):
                 handed_over_skipped += 1
             if changed:
@@ -502,7 +526,8 @@ def bookings_bulk_edit():
         db.session.commit()
 
     table_ctx, _ = _bookings_table_ctx(request.form, bulk_done_count=updated,
-                                       bulk_handed_over_skipped=handed_over_skipped)
+                                       bulk_handed_over_skipped=handed_over_skipped,
+                                       bulk_tax_skipped=tax_skipped)
     return render_template("accounting/_bookings_table.html", **table_ctx)
 
 
@@ -669,17 +694,13 @@ def _parse_booking_form(form, today, *, booking=None):
             errors["amount"] = "Der Betrag darf nicht 0 sein."
         data["amount"] = amount
 
-        # Steuersatz (optional; 0/ungueltig/unbekannt → kein Steuersatz)
-        tax_rate_raw = (form.get("tax_rate") or "").strip().replace(",", ".")
-        try:
-            tax_rate = Decimal(tax_rate_raw) if tax_rate_raw else Decimal("0")
-        except (InvalidOperation, ValueError):
-            tax_rate = Decimal("0")
-        known_rates = set(tax_service.known_rate_values())
-        data["tax_rate"] = tax_rate if (tax_rate > 0 and tax_rate in known_rates) else None
-
         # Belegnummer (optional)
         data["reference"] = (form.get("reference") or "").strip()
+
+    # Steuersatz (optional; 0/ungueltig/unbekannt → kein Steuersatz). Auch bei verbuchten
+    # Buchungen: er aendert nur die Aufteilung Netto/Steuer, nie den Betrag — ob er sich aendern
+    # darf, entscheidet ``acc_svc.tax_change_blocker`` in ``booking_edit``.
+    data["tax_rate"] = _parse_tax_rate(form.get("tax_rate"))
 
     # Belege (Beleg-Auswahl): nur pruefen, verknuepft wird nach dem Speichern der Buchung.
     data["document_ids"], document_error = documents_svc.parse_document_ids(form.getlist("document_ids"))
@@ -687,6 +708,23 @@ def _parse_booking_form(form, today, *, booking=None):
         errors["document_ids"] = document_error
 
     return data, errors
+
+
+def _parse_tax_rate(raw):
+    """Steuersatz aus einem Formularwert: bekannter Satz > 0 als Decimal, sonst None (keine Steuer)."""
+    raw = (raw or "").strip().replace(",", ".")
+    try:
+        rate = Decimal(raw) if raw else Decimal("0")
+    except (InvalidOperation, ValueError):
+        return None
+    return rate if (rate > 0 and rate in set(tax_service.known_rate_values())) else None
+
+
+def _tax_blocker_for_form(booking):
+    """Sperrgrund fuer das Steuersatz-Feld: nur bei verbuchten Buchungen (offene sind frei)."""
+    if booking is None or booking.status != Booking.STATUS_VERBUCHT:
+        return None
+    return acc_svc.tax_change_blocker(booking)
 
 
 def _render_booking_form(*, booking, ctx, hx, keep_date="", form_data=None,
@@ -704,6 +742,8 @@ def _render_booking_form(*, booking, ctx, hx, keep_date="", form_data=None,
         booking=booking,
         is_modal=hx,
         is_verbucht=is_verbucht,
+        tax_blocker=_tax_blocker_for_form(booking),
+        vat_period_label=acc_svc.vat_period_label(booking.date) if is_verbucht else None,
         handover=handover,
         handover_lock_message=handover_svc.lock_message(handover) if handover else None,
         form_action_url=form_action_url,
@@ -873,9 +913,14 @@ def booking_edit(booking_id):
                 "account_id": data["account"].id,
                 "real_account_id": data["real_account_id"],
                 "project_id": data["project_id"],
+                "tax_rate": data["tax_rate"],
             }
             if handover_svc.locked_changes(b, requested):
                 errors["handover"] = handover_svc.lock_message(handover)
+        tax_blocker = _tax_blocker_for_form(b)
+        if (tax_blocker and not errors
+                and (data["tax_rate"] or None) != (b.tax_rate if b.tax_rate else None)):
+            errors["tax_rate"] = tax_blocker
         if errors:
             return _booking_form_error(errors, request.form, booking=b, hx=hx)
         b.account_id = data["account"].id
@@ -887,7 +932,9 @@ def booking_edit(booking_id):
             b.amount = data["amount"]
             b.date = data["date"]
             b.reference = data["reference"]
-            b.tax_rate = data["tax_rate"]
+        if not tax_blocker:
+            # verbucht → mit Eintrag im Änderungsprotokoll (BookingChange)
+            acc_svc.set_booking_tax_rate(b, data["tax_rate"], current_user.id)
         try:
             documents_svc.link_many(data["document_ids"], booking=b, user_id=current_user.id)
             db.session.commit()

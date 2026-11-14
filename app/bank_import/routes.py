@@ -14,6 +14,7 @@ from flask_login import current_user, login_required
 from sqlalchemy import case as sa_case, or_
 from sqlalchemy.orm import selectinload
 
+from app import tax_service
 from app.accounting import services as acc_svc
 from app.country import term
 from app.extensions import db
@@ -136,8 +137,30 @@ def _line_render_context(lines):
         if a.open_item is not None and not a.account_id and _op_needs_account(a.open_item)
     }
 
+    # Steuersatz je Zeile ohne Rechnung (Bankimport-Auswahl vor Standard des Kontos) und ob das
+    # Buchungsjahr umsatzsteuerpflichtig ist — dann warnt die Zeile bei „ohne Steuer“.
+    line_tax = {}
+    vat_years = {}
+    for l in lines:
+        if l.line_status != BankStatementLine.STATUS_PENDING or l.is_split:
+            continue
+        op = l.matched_open_item
+        if op is not None and op.invoice_id:
+            continue                                  # Satz kommt aus der Rechnung
+        account_id = l.override_account_id or (op.account_id if op is not None else None)
+        year = l.booking_date.year
+        if year not in vat_years:
+            vat_years[year] = acc_svc.is_year_vat_liable(year)
+        line_tax[l.id] = {
+            "rate": services.line_tax_rate(l, account_id),
+            "explicit": l.override_tax_rate is not None,
+            "vat_year": vat_years[year],
+        }
+
     return {
         "accounts": accounts,
+        "tax_rates": [tr for tr in tax_service.tax_rates() if tr.rate > 0],
+        "line_tax": line_tax,
         "open_items_by_customer": open_items_by_customer,
         "payment_status": payment_status,
         "alloc_missing_account": alloc_missing_account,
@@ -351,6 +374,17 @@ def update_line(statement_id, line_id):
     elif action == "set_account":
         acc_id = request.form.get("account_id", type=int)
         line.override_account_id = acc_id or None
+
+    elif action == "set_tax":
+        # "" = Standard des Kontos, "0" = ohne Steuer, sonst ein bekannter Satz
+        raw = (request.form.get("tax_rate") or "").strip().replace(",", ".")
+        try:
+            rate = Decimal(raw) if raw else None
+        except ArithmeticError:
+            rate = None
+        if rate is not None and rate != 0 and rate not in set(tax_service.known_rate_values()):
+            rate = None
+        line.override_tax_rate = rate
 
     elif action == "set_split":
         _apply_split(line)

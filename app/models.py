@@ -2958,6 +2958,9 @@ class Account(db.Model):
     ledger_account = db.Column(db.String(9), nullable=True)
     ledger_auto_tax = db.Column(db.Boolean, nullable=False, default=False,
                                 server_default=sa.false())
+    # Standard-Steuersatz für Buchungen auf dieses Konto (in %, NULL = keiner). Nur ein Vorschlag:
+    # Bankimport und Buchungsformular belegen damit vor, die Buchung trägt ihren eigenen Satz.
+    default_tax_rate = db.Column(db.Numeric(5, 2), nullable=True)
 
     bookings = db.relationship("Booking", backref="account", lazy="dynamic")
 
@@ -3003,6 +3006,37 @@ class Booking(db.Model):
 
     def __repr__(self):
         return f"<Booking {self.date} {self.amount}>"
+
+
+class BookingChange(db.Model):
+    """Protokoll einer Änderung an einer **verbuchten** Buchung (append-only).
+
+    Verbuchte Buchungen sind bis auf wenige Felder gesperrt; was danach noch geändert werden darf
+    (derzeit der Steuersatz, siehe ``accounting.services.change_posted_tax_rate``), wird hier mit
+    altem und neuem Wert festgehalten — der ursprüngliche Inhalt bleibt so feststellbar
+    (§ 131 Abs. 1 Z 8 BAO, § 146 Abs. 4 AO).
+    """
+    __tablename__ = "booking_changes"
+
+    FIELD_TAX_RATE = "tax_rate"
+
+    id = db.Column(db.Integer, primary_key=True)
+    booking_id = db.Column(db.Integer, db.ForeignKey("bookings.id"), nullable=False, index=True)
+    field = db.Column(db.String(30), nullable=False)
+    old_value = db.Column(db.String(100), nullable=True)
+    new_value = db.Column(db.String(100), nullable=True)
+    changed_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    changed_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+
+    booking = db.relationship(
+        "Booking",
+        backref=db.backref("changes", lazy="select", order_by="BookingChange.id",
+                           cascade="all, delete-orphan"),
+    )
+    changed_by = db.relationship("User", foreign_keys=[changed_by_id])
+
+    def __repr__(self):
+        return f"<BookingChange {self.booking_id} {self.field}: {self.old_value} -> {self.new_value}>"
 
 
 class BookingGroup(db.Model):
@@ -3926,6 +3960,9 @@ class BankStatementLine(db.Model):
     match_type = db.Column(db.String(20))
 
     override_account_id = db.Column(db.Integer, db.ForeignKey("accounts.id"), nullable=True)
+    # Steuersatz der Buchung ohne Rechnung (in %). NULL = noch nicht gewählt → Standard-Steuersatz
+    # des Kontos; 0 = bewusst ohne Steuer (``bank_import.services.line_tax_rate``).
+    override_tax_rate = db.Column(db.Numeric(5, 2), nullable=True)
     selected = db.Column(db.Boolean, default=False, nullable=False)
     line_status = db.Column(db.String(20), default=STATUS_PENDING, nullable=False)
     booking_id = db.Column(db.Integer, db.ForeignKey("bookings.id"), nullable=True)

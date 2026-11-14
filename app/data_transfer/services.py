@@ -39,7 +39,7 @@ from app.extensions import db
 from app.data_transfer.guard import import_active
 from app.models import (
     AppSetting, BankStatementLine, BankStatementLineAllocation,
-    Booking, BookingGroup, Customer, CustomerCounter, SupplierCounter,
+    Booking, BookingChange, BookingGroup, Customer, CustomerCounter, SupplierCounter,
     DunningNotice, Document, DocumentEvent, DocumentLink, FiscalYear, IncomingInvoice, Invoice,
     InvoiceCounter, InvoiceItem, InvoiceMeterReading, RolePermission, SchriftverkehrDocument,
     AccountingHandover, AccountingHandoverItem, DirectDebitItem, DirectDebitRun,
@@ -246,6 +246,10 @@ def _build_query_filtered(model, years: list[int], invoice_ids: set | None,
         q = q.filter(DunningNotice.invoice_id.in_(invoice_ids or [-1]))
     elif model is BookingGroup and booking_group_ids is not None:
         q = q.filter(BookingGroup.id.in_(booking_group_ids or [-1]))
+    elif model is BookingChange and years:
+        # Das Protokoll folgt dem Jahr seiner Buchung.
+        q = q.filter(BookingChange.booking_id.in_(
+            db.session.query(Booking.id).filter(func.extract("year", Booking.date).in_(years))))
     elif model is BankStatementLineAllocation and bank_line_ids is not None:
         q = q.filter(BankStatementLineAllocation.line_id.in_(bank_line_ids or [-1]))
     elif model is DirectDebitItem and years:

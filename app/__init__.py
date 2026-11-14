@@ -282,6 +282,8 @@ def create_app(config_name=None):
                                  display_label as _tax_rate_display)
     app.jinja_env.globals["tax_rate_label"] = _tax_rate_label
     app.jinja_env.globals["tax_rate_display"] = _tax_rate_display
+    from app.tax_service import tax_rates as _tax_rate_options
+    app.jinja_env.globals["tax_rate_options"] = _tax_rate_options
 
     # Individuelle Gebuehren (Kunde/Objekt): Formularzeilen + Anzeige.
     from app.invoices.charges import (minimum_override_rows as _minimum_rows,

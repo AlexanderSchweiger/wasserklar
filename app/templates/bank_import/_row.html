@@ -2,6 +2,29 @@
    (preview.html, Schleife) als auch beim HTMX-Row-Swap (update_line bei
    HX-Request) gerendert — jede Aktion tauscht via hx-target="closest tr"
    nur diese Zeile, kein Full-Reload. #}
+{# Steuersatz einer Zeile ohne Rechnung (line_tax aus _line_render_context). Vorbelegt mit der
+   Auswahl im Import, sonst dem Standard-Steuersatz des Kontos; gespeichert wird erst beim Ändern. #}
+{% macro tax_select(line) %}
+  {% set _t = line_tax.get(line.id) %}
+  {% if _t %}
+  <form method="post" action="{{ url_for('bank_import.update_line', statement_id=line.statement_id, line_id=line.id) }}"
+        hx-post="{{ url_for('bank_import.update_line', statement_id=line.statement_id, line_id=line.id) }}"
+        hx-target="closest tr" hx-swap="outerHTML" class="m-0">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="action" value="set_tax">
+    <select name="tax_rate" class="form-select form-select-sm{{ ' border-warning' if _t.vat_year and not _t.rate }}"
+            style="max-width: 140px;" title="Steuersatz" onchange="this.form.requestSubmit()">
+      <option value="0" {{ 'selected' if not _t.rate }}>ohne Steuer</option>
+      {% for tr in tax_rates %}
+      <option value="{{ tr.rate }}" {{ 'selected' if _t.rate and _t.rate == tr.rate }}>{{ tr.label or (tr.rate | int ~ ' %') }}</option>
+      {% endfor %}
+    </select>
+  </form>
+  {% if _t.vat_year and not _t.rate and line.override_tax_rate is none %}
+  <div class="text-warning small mt-1"><i class="fas fa-exclamation-triangle me-1"></i>Ohne Steuer — bitte prüfen</div>
+  {% endif %}
+  {% endif %}
+{% endmacro %}
 {% set is_pending = line.line_status == 'pending' %}
 {% set is_income = line.amount > 0 %}
 {% set _act = url_for('bank_import.update_line', statement_id=stmt.id, line_id=line.id) %}
@@ -168,6 +191,7 @@
             {% endfor %}
           </select>
         </form>
+        {{ tax_select(line) }}
         <form method="post" action="{{ _act }}"
               hx-post="{{ _act }}" hx-target="closest tr" hx-swap="outerHTML" class="m-0">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -245,6 +269,7 @@
           {% endfor %}
         </select>
       </form>
+      {% if line.override_account_id %}<div class="mt-1">{{ tax_select(line) }}</div>{% endif %}
       {% if is_income %}
       <button type="button" class="btn btn-sm btn-link p-0 mt-1" onclick="openSplitModal({{ line.id }})">
         <i class="fas fa-code-branch me-1"></i>Auf mehrere Posten aufteilen

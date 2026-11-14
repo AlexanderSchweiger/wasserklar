@@ -160,6 +160,74 @@ def post_open_bookings(until=None):
     return count
 
 
+# ---------------------------------------------------------------------------
+# Steuersatz nach dem Verbuchen
+# ---------------------------------------------------------------------------
+# Der Steuersatz ändert nur die Aufteilung des Bruttobetrags in Netto + Steuer, nie den Betrag,
+# das Datum oder das Bankkonto. Deshalb darf er an einer verbuchten Buchung noch korrigiert werden —
+# aber nur protokolliert (``BookingChange``: alter Wert bleibt feststellbar) und nur, wo der Satz
+# nicht aus einer anderen Quelle kommt (Rechnung, Sammelbuchung, Storno-Paar, Übergabe).
+
+def tax_change_blocker(booking):
+    """Grund (deutsch), warum der Steuersatz von ``booking`` nicht geändert werden darf, sonst None.
+
+    Gilt für offene wie verbuchte Buchungen gleichermaßen; die Sperre für Datum, Betrag und
+    Belegnummer verbuchter Buchungen bleibt davon unberührt.
+    """
+    from app.accounting import handover as handover_svc     # lokal: handover importiert services
+
+    if booking.group_id is not None:
+        return "Der Steuersatz einer Sammelbuchung wird in der Sammelbuchung geändert."
+    if booking.status == Booking.STATUS_STORNIERT:
+        return "Stornierte Buchungen können nicht geändert werden."
+    if booking.storno_of_id is not None:
+        return "Der Steuersatz einer Storno-Gegenbuchung folgt dem Original."
+    if booking.invoice_id is not None:
+        return "Der Steuersatz kommt aus der Rechnung — bitte die Rechnung bzw. ihre Positionen prüfen."
+    fy = locked_fiscal_year(booking.date)
+    if fy is not None:
+        return f"Das Buchungsjahr {fy.year} ist abgeschlossen."
+    handover = handover_svc.active_handover_for(booking)
+    if handover is not None:
+        return handover_svc.lock_message(handover)
+    return None
+
+
+def _tax_value(rate):
+    """Speicherform eines Steuersatzes an der Buchung: 0/None → None (= keine Steuer)."""
+    if rate is None:
+        return None
+    rate = Decimal(str(rate))
+    return rate if rate > 0 else None
+
+
+def _tax_text(rate):
+    return None if rate is None else format(Decimal(str(rate)).normalize(), "f")
+
+
+def set_booking_tax_rate(booking, new_rate, user_id):
+    """Setzt den Steuersatz von ``booking`` (offen oder verbucht).
+
+    Bei einer verbuchten Buchung entsteht ein ``BookingChange`` mit altem und neuem Wert. Der Aufrufer
+    prüft vorher :func:`tax_change_blocker`; der Satz muss ein bekannter sein (``None``/0 = keine
+    Steuer). Liefert True, wenn sich etwas geändert hat. Committet nicht.
+    """
+    from app.models import BookingChange
+
+    new_rate = _tax_value(new_rate)
+    old_rate = _tax_value(booking.tax_rate)
+    if new_rate == old_rate:
+        return False
+    if booking.status == Booking.STATUS_VERBUCHT:
+        db.session.add(BookingChange(
+            booking=booking, field=BookingChange.FIELD_TAX_RATE,
+            old_value=_tax_text(old_rate), new_value=_tax_text(new_rate),
+            changed_by_id=user_id,
+        ))
+    booking.tax_rate = new_rate
+    return True
+
+
 def locked_fiscal_year(booking_date):
     """Gibt das abgeschlossene Buchungsjahr zurück, in das ``booking_date`` fällt.
 
@@ -644,6 +712,14 @@ def ust_period_label(year, quartal, month=0):
     if quartal in (1, 2, 3, 4):
         return f"Q{quartal}/{year}"
     return str(year)
+
+
+def vat_period_label(booking_date):
+    """Voranmeldungszeitraum, in den ``booking_date`` fällt (nach ``tax.vat_return_period``)."""
+    from app import tax_service
+    if tax_service.vat_return_period() == tax_service.VAT_RETURN_MONTH:
+        return ust_period_label(booking_date.year, 0, booking_date.month)
+    return ust_period_label(booking_date.year, (booking_date.month - 1) // 3 + 1)
 
 
 def ust_compute(year, quartal, month=0):

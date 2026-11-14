@@ -30,7 +30,8 @@ SETTING_KEY = "accounting.handover_format"
 FORMATS_EXTENSION = "accounting.handover_formats"
 
 # Felder einer Buchung, die nach der Übergabe nicht mehr geändert werden dürfen.
-LOCKED_FIELDS = ("account_id", "real_account_id", "project_id")
+# Steuersatz: der Steuerschlüssel steht schon im übergebenen Stapel.
+LOCKED_FIELDS = ("account_id", "real_account_id", "project_id", "tax_rate")
 
 LEDGER_ACCOUNT_MAX_LEN = 9
 TAX_KEY_MAX_LEN = 4
@@ -268,7 +269,7 @@ def lock_message(handover):
     """Deutsche Meldung, warum eine übergebene Buchung nicht geändert werden darf."""
     when = handover.created_at.strftime("%d.%m.%Y") if handover.created_at else ""
     return (f"Diese Buchung wurde am {when} an die Steuerberatung übergeben "
-            f"({format_label(handover.format)}). Konto, Bank/Kasse und Projekt lassen sich "
+            f"({format_label(handover.format)}). Konto, Bank/Kasse, Projekt und Steuersatz lassen sich "
             "nicht mehr ändern — zum Ändern stornieren und neu buchen oder die Übergabe "
             "zurückziehen.")
 

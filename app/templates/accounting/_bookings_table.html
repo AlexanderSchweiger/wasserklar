@@ -109,6 +109,13 @@
     <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Schließen"></button>
   </div>
   {% endif %}
+  {% if bulk_tax_skipped %}
+  <div class="alert alert-warning alert-dismissible" role="alert">
+    Bei {{ bulk_tax_skipped }} Buchung(en) wurde der Steuersatz nicht geändert — er kommt aus
+    einer Rechnung, gehört zu einem Storno oder die Buchung ist an die Steuerberatung übergeben.
+    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Schließen"></button>
+  </div>
+  {% endif %}
   {% if bulk_done_count > 0 %}
   <div class="alert alert-success alert-dismissible" role="alert">
     {{ bulk_done_count }} Buchung(en) aktualisiert.

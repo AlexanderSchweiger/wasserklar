@@ -2,6 +2,13 @@
    Erwartet account (oder None) + optional form (nach Validierungsfehler). #}
 {% include "_flash_inline.html" %}
 {% if form %}
+  {% set val_tax = form.get('default_tax_rate', '') %}
+{% elif account and account.default_tax_rate %}
+  {% set val_tax = account.default_tax_rate | string %}
+{% else %}
+  {% set val_tax = '' %}
+{% endif %}
+{% if form %}
   {% set val_code = form.get('code', '') %}
   {% set val_name = form.get('name', '') %}
   {% set val_description = form.get('description', '') %}
@@ -34,6 +41,22 @@
 <div class="mb-3">
   <label class="form-label">Beschreibung</label>
   <textarea name="description" class="form-control" rows="3">{{ val_description }}</textarea>
+</div>
+<input type="hidden" name="account_tax_field" value="1">
+<div class="mb-3">
+  <label class="form-label">Standard-Steuersatz</label>
+  {% set _cur = account.default_tax_rate if account else none %}
+  <select name="default_tax_rate" class="form-select" style="max-width: 220px;">
+    <option value="">– keiner –</option>
+    {% for tr in tax_rate_options(include=_cur) if tr.rate > 0 %}
+    {% set _sel = (form and val_tax == tr.rate | string) or (not form and _cur is not none and _cur == tr.rate) %}
+    <option value="{{ tr.rate }}" {{ 'selected' if _sel }}>{{ tr.label or (tr.rate | int ~ ' %') }}</option>
+    {% endfor %}
+  </select>
+  <small class="form-hint">
+    Wird beim Bankimport und bei neuen Buchungen auf dieses Konto vorgeschlagen (z. B. 20 % für
+    Strom, 10 % für Wasser). Die Buchung kann trotzdem einen anderen Satz bekommen.
+  </small>
 </div>
 {% if handover_active() %}
 {# Übergabe an die Steuerberatung (nur wenn eingeschaltet, siehe app/accounting/handover.py) #}

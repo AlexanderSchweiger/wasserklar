@@ -380,7 +380,7 @@ setupEditModal({
   var modalEl = document.getElementById('bookingsBulkEditModal');
   if (modalEl) {
     modalEl.addEventListener('hidden.bs.modal', function () {
-      ['bulk_account_id', 'bulk_project_id', 'bulk_customer_id'].forEach(function (name) {
+      ['bulk_account_id', 'bulk_project_id', 'bulk_customer_id', 'bulk_tax_rate'].forEach(function (name) {
         var sel = modalEl.querySelector('[name="' + name + '"]');
         if (!sel) return;
         if (sel.tomselect) sel.tomselect.clear(true); else sel.value = '';
@@ -612,6 +612,20 @@ if (!window.__bookingFocusBound) {
               <option value="{{ c.id }}">{{ c.name }}</option>
               {% endfor %}
             </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Steuersatz</label>
+            <select name="bulk_tax_rate" class="form-select">
+              <option value="">– nicht ändern –</option>
+              <option value="0">ohne Steuer</option>
+              {% for tr in tax_rates if tr.active and tr.rate > 0 %}
+              <option value="{{ tr.rate }}">{{ tr.label or (tr.rate | int ~ ' %') }}</option>
+              {% endfor %}
+            </select>
+            <small class="form-hint">
+              Auch bei verbuchten Buchungen möglich (der Bruttobetrag bleibt gleich, die Änderung wird
+              an der Buchung protokolliert). Buchungen aus Rechnungen behalten den Satz der Rechnung.
+            </small>
           </div>
         </div>
         <div class="modal-footer">
