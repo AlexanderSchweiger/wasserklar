@@ -41,7 +41,7 @@
    je eigenem Tarif-Konto, ein hier gewähltes Konto überschreibt alle drei.
    Kontext-Variablen werden bewusst als Parameter durchgereicht, damit das
    Makro nicht von der Scope-Aufloesung des Templates abhaengt. #}
-{# MwSt-Auswahl einer freien Position: nur die unter Einstellungen → Steuern
+{# MwSt-Auswahl einer freien Position: nur die unter Einstellungen → Buchhaltung
    hinterlegten Sätze. Numerischer Vergleich (DB liefert 20.00, Option „20"). #}
 {% macro tax_select(prefix, tax_rates, current=none) %}
 <select name="{{ prefix }}row_tax_rate[]" class="form-select form-select-sm" aria-label="MwSt">

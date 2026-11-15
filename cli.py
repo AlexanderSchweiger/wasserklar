@@ -849,19 +849,9 @@ def register_commands(app):
 
     @app.cli.command("mark-posted")
     def mark_posted():
-        """Alle 'Offen'-Buchungen von Vortagen als 'Verbucht' markieren."""
-        from datetime import date as date_cls
-        from app.models import Booking
-        today = date_cls.today()
-        updated = (
-            db.session.query(Booking)
-            .filter(
-                Booking.status == Booking.STATUS_OFFEN,
-                Booking.date < today,
-            )
-            .update({"status": Booking.STATUS_VERBUCHT}, synchronize_session=False)
-        )
-        db.session.commit()
+        """Offene Buchungen laut Einstellung verbuchen (je Voranmeldungszeitraum, täglich oder aus)."""
+        from app.accounting.services import auto_post_bookings
+        updated = auto_post_bookings()
         print(f"{updated} Buchung(en) als 'Verbucht' markiert.")
 
     @app.cli.command("split-customer-names")

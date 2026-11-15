@@ -814,11 +814,13 @@
       <div class="modal-body">
         <p class="text-muted small">
           Die {{ 'Gutschrift' if invoice.is_credit_note else 'Rechnung' }} wird
-          storniert: verknüpfte Zahlungsbuchungen werden gegengebucht, der Offene
-          Posten geschlossen und aktive Mahnungen zurückgenommen. Der Beleg selbst
+          storniert: der Offene Posten wird geschlossen und aktive Mahnungen
+          werden zurückgenommen. Bereits gebuchte
+          {{ 'Rücküberweisungen' if invoice.is_credit_note else 'Zahlungen' }}
+          bleiben stehen — das Geld ist tatsächlich geflossen. Der Beleg selbst
           bleibt unverändert erhalten.
         </p>
-        {% with suffix = '', with_toggle = not invoice.is_credit_note %}
+        {% with suffix = '', with_toggle = not invoice.is_credit_note, with_payment_toggle = True %}
         {% include "invoices/_storno_form_body.html" %}
         {% endwith %}
       </div>
@@ -851,9 +853,9 @@
         <p class="text-muted small">
           Es wird ein eigener Beleg mit fortlaufender Rechnungsnummer und
           gespiegelten (negativen) Positionen erstellt. Die Buchungen der
-          Originalrechnung sind bereits storniert und bleiben unberührt.
+          Originalrechnung bleiben unberührt.
         </p>
-        {% with suffix = 'Cn', with_toggle = False %}
+        {% with suffix = 'Cn', with_toggle = False, with_payment_toggle = False %}
         {% include "invoices/_storno_form_body.html" %}
         {% endwith %}
       </div>
@@ -966,12 +968,27 @@
 
 // Storno-Dialog: Rückzahlungs-Felder nur zeigen, wenn eine Gutschrift
 // ausgestellt wird — ohne Beleg gibt es auch keinen Rückzahlungs-Posten.
+// „Zahlung nie eingegangen" storniert die Zahlung mit → keine Rückzahlung;
+// bleibt die Zahlung ohne Gutschrift stehen, warnt ein Hinweis.
 (function () {
   const toggle = document.getElementById('createCreditNote');
   const fields = document.getElementById('creditNoteFields');
   if (!toggle || !fields) return;
-  const sync = function () { fields.hidden = !toggle.checked; };
+  const notReceived = document.getElementById('paymentNotReceived');
+  const refundInfo = document.getElementById('refundInfo');
+  const noRefundInfo = document.getElementById('noRefundInfo');
+  const keptInfo = document.getElementById('paymentKeptInfo');
+  const sync = function () {
+    const reversed = !!(notReceived && notReceived.checked);
+    fields.hidden = !toggle.checked;
+    if (refundInfo && noRefundInfo) {
+      refundInfo.hidden = reversed;
+      noRefundInfo.hidden = !reversed;
+    }
+    if (keptInfo) keptInfo.hidden = toggle.checked || reversed;
+  };
   toggle.addEventListener('change', sync);
+  if (notReceived) notReceived.addEventListener('change', sync);
   sync();
 })();
 </script>

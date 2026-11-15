@@ -73,7 +73,7 @@ class TestPostedBookingTax:
         assert (change.field, change.old_value, change.new_value) == ("tax_rate", None, "20")
         assert change.changed_by_id == setup["u"].id
         html = client.get(f"/accounting/bookings/{b.id}/edit", headers=HX).get_data(as_text=True)
-        assert "Änderungen nach dem Verbuchen" in html
+        assert "Änderungsprotokoll" in html and "Steuersatz ohne → 20 %" in html
 
     def test_unchanged_save_logs_nothing(self, client, setup):
         client.post(f"/accounting/bookings/{setup['b'].id}/edit", headers=HX, data=_payload(setup))

@@ -215,6 +215,9 @@
           <a class="dropdown-item" href="{{ url_for('accounting.import_bookings') }}">
             <i class="fas fa-file-import me-1"></i> Importieren
           </a>
+          <a class="dropdown-item" href="{{ url_for('accounting.booking_removals', year=year) }}">
+            <i class="fas fa-history me-1"></i> Gelöschte Buchungen
+          </a>
           <div class="dropdown-divider"></div>
           <h6 class="dropdown-header">CSV exportieren</h6>
           <a class="dropdown-item disabled" id="export-filtered"
@@ -512,30 +515,6 @@ if (!window.__bookingFocusBound) {
 {% include "accounting/_storno_modal.html" %}
 {% include "accounting/_booking_group_modal.html" %}
 {% include "accounting/_transfer_modal.html" %}
-
-{# Offene Buchungen sofort verbuchen (Hinweisleiste in _bookings_table.html). #}
-<div class="modal fade" id="postOpenModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog">
-    <form class="modal-content" method="post" action="{{ url_for('accounting.bookings_post_open') }}">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <div class="modal-header">
-        <h5 class="modal-title">Offene Buchungen jetzt verbuchen?</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
-      </div>
-      <div class="modal-body">
-        <p>Alle offenen Buchungen bis heute werden sofort <strong>verbucht</strong> — sonst passiert das
-          automatisch in der Nacht.</p>
-        <p class="mb-0 small text-secondary">Danach lassen sich Datum, Betrag, Belegnummer und Steuersatz nicht
-          mehr ändern und die Buchungen nicht mehr löschen; Korrekturen gehen nur noch per Storno. Konto,
-          Projekt und Beschreibung bleiben änderbar.</p>
-      </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
-        <button type="submit" class="btn btn-primary"><i class="fas fa-check-double me-1"></i> Jetzt verbuchen</button>
-      </div>
-    </form>
-  </div>
-</div>
 
 {# Buchung anlegen / bearbeiten. Inhalt wird pro Oeffnen frisch per hx-get in
    #booking-form-host geladen; beim Schliessen werden die TomSelects zerstoert

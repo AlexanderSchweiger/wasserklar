@@ -104,3 +104,29 @@ class TestBookingsListLayout:
         assert f'data-bk-group="{key}"' in html
         assert html.count(f'data-bk-parent="{key}"') == 2
         assert "-80,00&nbsp;€" in html
+
+    def test_storno_pair_both_dimmed_and_struck(self, client, admin, books):
+        """Original und Gegenbuchung heben sich gemeinsam auf — beide ausgegraut,
+        beide Beträge durchgestrichen (sonst wirkt die Gegenbuchung wie die gültige)."""
+        acc, _acc2, ra = books
+        b = _single(acc, ra, date.today(), description="Storno-Paar Huber")
+        _login(client)
+        client.post(f"/accounting/bookings/{b.id}/stornieren", data={"storno_reason": "falsch"})
+        html = client.get(f"/accounting/bookings?year={YEAR}").get_data(as_text=True)
+        rows = [r for r in re.findall(r'<tr class="bk-row[^"]*">.*?</tr>', html, re.S)
+                if "Storno-Paar Huber" in r]
+        assert len(rows) == 2
+        for r in rows:
+            assert "bk-storniert" in r.split(">", 1)[0]
+            assert "bk-void" in r
+
+    def test_group_storno_row_dimmed(self, client, admin, books):
+        acc, acc2, ra = books
+        group = _group(acc, acc2, ra, date.today())
+        _login(client)
+        client.post(f"/accounting/booking-groups/{group.id}/stornieren", data={"storno_reason": "doppelt"})
+        html = client.get(f"/accounting/bookings?year={YEAR}").get_data(as_text=True)
+        heads = re.findall(r'<tr class="bk-group[^"]*">', html)
+        assert len(heads) == 2 and all("bk-storniert" in h for h in heads)
+        assert html.count(f'data-bk-parent="s{group.id}-') == 2
+        assert re.search(r'bk-out bk-void">-80,00', html)

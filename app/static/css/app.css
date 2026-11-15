@@ -447,8 +447,8 @@ tr.overdue { background-color: #fff3cd !important; }
 }
 .bk-open-legend { display: inline-block; width: 3px; height: 1.1rem; background: var(--tblr-azure); }
 
-/* Storniertes Original: ausgegraut, Betrag durchgestrichen (zählt per Generalumkehr
-   weiter mit, die Gegenbuchung hebt ihn auf). */
+/* Storno-Paar (Original + Gegenbuchung): beide ausgegraut, Betrag durchgestrichen —
+   sie zählen per Generalumkehr beide weiter mit und heben sich gemeinsam auf. */
 .bookings-table > tbody > tr.bk-storniert { opacity: .55; }
 
 /* Spalten: Konto/Projekt/Kontakt einzeilig mit Ellipse, Beschreibung bekommt den Rest. */

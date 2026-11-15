@@ -134,14 +134,19 @@ def signed_booking_tax(booking):
 # Allgemeine Helfer
 # ---------------------------------------------------------------------------
 
-def auto_post_bookings():
-    """Markiert alle 'Offen'-Buchungen mit Datum < heute als 'Verbucht'."""
-    today = date.today()
-    Booking.query.filter(
-        Booking.status == Booking.STATUS_OFFEN,
-        Booking.date < today,
-    ).update({"status": Booking.STATUS_VERBUCHT}, synchronize_session=False)
+def auto_post_bookings(today=None):
+    """Nächtlicher Lauf (``mark-posted``): verbucht die offenen Buchungen laut Einstellung des
+    Mandanten (``app/accounting/posting.py`` — je Voranmeldungszeitraum, täglich oder gar nicht).
+    Liefert die Anzahl; committet."""
+    from app.accounting import posting
+
+    until = posting.current_cutoff(today)
+    if until is None:
+        return 0
+    count = open_bookings_query(until).update({"status": Booking.STATUS_VERBUCHT},
+                                              synchronize_session=False)
     db.session.commit()
+    return count
 
 
 def open_bookings_query(until=None):
@@ -151,12 +156,27 @@ def open_bookings_query(until=None):
 
 
 def post_open_bookings(until=None):
-    """Verbucht alle offenen Buchungen bis einschließlich heute **sofort** — dasselbe, was der
-    nächtliche ``mark-posted``-Lauf am Folgetag täte (dann sind Datum, Betrag, Belegnummer und
-    Steuersatz gesperrt, Löschen geht nur noch per Storno). Liefert die Anzahl; committet."""
+    """Verbucht alle offenen Buchungen bis einschließlich ``until`` (Standard: heute) **sofort** —
+    „Zeitraum abschließen“ der USt-Voranmeldung. Danach sind Datum, Betrag, Belegnummer und
+    Steuersatz gesperrt, Löschen geht nur noch per Storno. Liefert die Anzahl; committet."""
     count = open_bookings_query(until).update({"status": Booking.STATUS_VERBUCHT},
                                               synchronize_session=False)
     db.session.commit()
+    return count
+
+
+def post_bookings(booking_ids):
+    """Verbucht die offenen unter ``booking_ids`` (Übergabe an die Steuerberatung: was übergeben
+    ist, ist festgeschrieben). Liefert die Anzahl; committet **nicht**."""
+    ids = [i for i in (booking_ids or []) if i is not None]
+    if not ids:
+        return 0
+    count = 0
+    for start in range(0, len(ids), 500):       # IN-Listen klein halten (SQLite-Grenze)
+        count += (Booking.query
+                  .filter(Booking.id.in_(ids[start:start + 500]),
+                          Booking.status == Booking.STATUS_OFFEN)
+                  .update({"status": Booking.STATUS_VERBUCHT}, synchronize_session=False))
     return count
 
 
@@ -226,6 +246,193 @@ def set_booking_tax_rate(booking, new_rate, user_id):
         ))
     booking.tax_rate = new_rate
     return True
+
+
+# ---------------------------------------------------------------------------
+# Protokoll offener Buchungen + Betrag-Schutz
+# ---------------------------------------------------------------------------
+# Offene Buchungen bleiben bis zum Sperrtag ihres Voranmeldungszeitraums änderbar
+# (``app/accounting/posting.py``). Damit der ursprüngliche Inhalt feststellbar bleibt, werden
+# Änderungen und Löschungen ab dem Tag nach der Erfassung protokolliert; am Erfassungstag selbst
+# gilt eine Korrektur als Teil der Eingabe.
+
+_CHANGE_VALUE_MAX = 100     # booking_changes.old_value/new_value
+
+
+def _logged_after_entry_day(obj, today=None):
+    """True, wenn ``obj`` (Buchung/Sammelbuchung) nicht heute erfasst wurde."""
+    created = getattr(obj, "created_at", None)
+    if created is None:
+        return True
+    return created.date() < (today or date.today())
+
+
+def _clip(text):
+    if text is None:
+        return None
+    text = str(text)
+    return text if len(text) <= _CHANGE_VALUE_MAX else text[:_CHANGE_VALUE_MAX - 1] + "…"
+
+
+def _label_account(account_id):
+    from app.models import Account
+
+    if not account_id:
+        return None
+    acc = db.session.get(Account, account_id)
+    if acc is None:
+        return f"#{account_id}"
+    return f"{acc.code} {acc.name}" if getattr(acc, "code", None) else acc.name
+
+
+def _label_model(model, obj_id, attr="name"):
+    if not obj_id:
+        return None
+    obj = db.session.get(model, obj_id)
+    return getattr(obj, attr, None) if obj is not None else f"#{obj_id}"
+
+
+def _amount_text(value):
+    if value is None:
+        return None
+    return format(Decimal(str(value)).quantize(Decimal("0.01")), "f").replace(".", ",")
+
+
+def _booking_field_texts(values):
+    """Lesbare Texte je protokolliertem Feld aus einem dict mit Buchungswerten."""
+    from app.models import BookingChange, Customer, Project, RealAccount
+
+    out = {}
+    if "date" in values:
+        d = values["date"]
+        out[BookingChange.FIELD_DATE] = d.strftime("%d.%m.%Y") if d else None
+    if "amount" in values:
+        out[BookingChange.FIELD_AMOUNT] = _amount_text(values["amount"])
+    if "reference" in values:
+        out[BookingChange.FIELD_REFERENCE] = (values["reference"] or None)
+    if "description" in values:
+        out[BookingChange.FIELD_DESCRIPTION] = (values["description"] or None)
+    if "account_id" in values:
+        out[BookingChange.FIELD_ACCOUNT] = _label_account(values["account_id"])
+    if "real_account_id" in values:
+        out[BookingChange.FIELD_REAL_ACCOUNT] = _label_model(RealAccount, values["real_account_id"])
+    if "project_id" in values:
+        out[BookingChange.FIELD_PROJECT] = _label_model(Project, values["project_id"])
+    if "customer_id" in values:
+        out[BookingChange.FIELD_CUSTOMER] = _label_model(Customer, values["customer_id"])
+    if "tax_rate" in values:
+        out[BookingChange.FIELD_TAX_RATE] = _tax_text(_tax_value(values["tax_rate"]))
+    return out
+
+
+def record_booking_changes(booking, new_values, user_id, today=None):
+    """Protokolliert, was ``new_values`` an einer **offenen** Buchung ändert (``BookingChange``).
+
+    Nur ab dem Tag nach der Erfassung; verbuchte Buchungen protokollieren ihren Steuersatz über
+    :func:`set_booking_tax_rate`. Aufruf **vor** dem Zuweisen der neuen Werte. Liefert die Anzahl
+    der Einträge; committet nicht.
+    """
+    from app.models import BookingChange
+
+    if booking.status != Booking.STATUS_OFFEN or not _logged_after_entry_day(booking, today):
+        return 0
+    old = _booking_field_texts({key: getattr(booking, key) for key in new_values})
+    new = _booking_field_texts(new_values)
+    count = 0
+    for field, new_text in new.items():
+        old_text = old.get(field)
+        if (old_text or None) == (new_text or None):
+            continue
+        db.session.add(BookingChange(booking=booking, field=field, old_value=_clip(old_text),
+                                     new_value=_clip(new_text), changed_by_id=user_id))
+        count += 1
+    return count
+
+
+def _booking_snapshot(b):
+    texts = _booking_field_texts({
+        "date": b.date, "amount": b.amount, "reference": b.reference, "description": b.description,
+        "account_id": b.account_id, "real_account_id": b.real_account_id,
+        "project_id": b.project_id, "customer_id": b.customer_id, "tax_rate": b.tax_rate,
+    })
+    return {
+        "id": b.id, "status": b.status,
+        "created_at": b.created_at.isoformat() if b.created_at else None,
+        "created_by": b.created_by.username if getattr(b, "created_by", None) else None,
+        "invoice_id": b.invoice_id, "open_item_id": b.open_item_id,
+        **{key: value for key, value in texts.items()},
+    }
+
+
+def record_booking_removal(*, booking=None, group=None, reason=None, user_id=None, today=None):
+    """Hält eine gelöschte Buchung bzw. Sammelbuchung als Abbild fest (``BookingRemoval``).
+
+    Nur ab dem Tag nach der Erfassung. Aufruf **vor** dem ``db.session.delete``. Liefert den
+    Eintrag oder ``None``; committet nicht.
+    """
+    import json
+    from app.models import BookingRemoval
+
+    obj = booking if booking is not None else group
+    if obj is None or not _logged_after_entry_day(obj, today):
+        return None
+    reason = reason or BookingRemoval.REASON_DELETED
+    if booking is not None:
+        snapshot = _booking_snapshot(booking)
+        entry = BookingRemoval(original_booking_id=booking.id, booking_date=booking.date,
+                               amount=booking.amount or 0, description=booking.description or "",
+                               reference=booking.reference, created_at=booking.created_at)
+    else:
+        children = list(group.children)
+        snapshot = {
+            "group_id": group.id, "date": group.date.strftime("%d.%m.%Y") if group.date else None,
+            "description": group.description, "reference": group.reference,
+            "invoice_id": group.invoice_id,
+            "created_at": group.created_at.isoformat() if group.created_at else None,
+            "children": [_booking_snapshot(c) for c in children],
+        }
+        total = sum((Decimal(str(c.amount or 0)) for c in children), Decimal("0"))
+        entry = BookingRemoval(original_group_id=group.id, booking_date=group.date,
+                               amount=total, description=group.description or "",
+                               reference=group.reference, created_at=group.created_at)
+    entry.reason = reason
+    entry.snapshot = json.dumps(snapshot, ensure_ascii=False)
+    entry.removed_by_id = user_id
+    db.session.add(entry)
+    return entry
+
+
+def bank_line_booking_ids(booking_ids):
+    """Buchungs-IDs, die aus einer Bankauszugszeile entstanden sind (eine Abfrage)."""
+    from app.models import BankStatementLine
+
+    ids = [i for i in (booking_ids or []) if i is not None]
+    if not ids:
+        return set()
+    rows = (db.session.query(BankStatementLine.booking_id)
+            .filter(BankStatementLine.booking_id.in_(ids)).distinct())
+    return {row[0] for row in rows}
+
+
+def payment_lock(booking, from_bank=None):
+    """Grund, warum Betrag (und bei Bankimport die Bank/Kasse) einer Buchung fest ist, sonst ``None``.
+
+    Gilt auch für **offene** Buchungen: der Betrag einer Zahlung zu einer Rechnung bzw. einem
+    Offenen Posten bestimmt deren Status, der einer Bankimport-Buchung steht auf dem Kontoauszug —
+    beides liefe sonst auseinander. Korrigiert wird per Storno. Liefert ``(grund, bank)``;
+    ``bank`` = Bankimport (Bank/Kasse ebenfalls fest).
+    """
+    if booking is None or booking.id is None:
+        return None
+    if from_bank is None:
+        from_bank = booking.id in bank_line_booking_ids([booking.id])
+    if from_bank:
+        return ("Der Betrag stammt aus dem Kontoauszug — Betrag und Bank/Kasse lassen sich nicht "
+                "ändern; zum Korrigieren die Buchung stornieren.", True)
+    if booking.invoice_id is not None or booking.open_item_id is not None:
+        return ("Der Betrag gleicht eine Rechnung bzw. einen Offenen Posten aus und lässt sich nicht "
+                "ändern — zum Korrigieren die Buchung stornieren.", False)
+    return None
 
 
 def locked_fiscal_year(booking_date):
@@ -1171,9 +1378,13 @@ def storno_booking(booking, reason, created_by_id, storno_date=None):
 def storno_invoice_bookings(invoice, reason, created_by_id, storno_date=None):
     """Storniert alle wirksamen Buchungen einer Rechnung (Einzel- und Sammelbuchungen).
 
-    Wird beim Stornieren einer Rechnung aufgerufen, damit eine zuvor automatisch
-    erzeugte Zahlungsbuchung nicht als Phantom-Einnahme in den Auswertungen
-    hängen bleibt. Jede betroffene Buchung wird per Generalumkehr storniert
+    Wird beim Stornieren einer Rechnung **nur** aufgerufen, wenn die Zahlung
+    nie eingegangen ist (Rechnung irrtümlich als bezahlt erfasst — Schalter im
+    Storno-Dialog), damit sie nicht als Phantom-Einnahme in den Auswertungen
+    hängen bleibt. Eine echte Zahlung bleibt beim Storno stehen; die
+    Rücküberweisung über die Gutschrift gleicht sie aus (sonst stünde die
+    Rückzahlung doppelt in der Buchhaltung, siehe ``app/invoices/credit_note.py``).
+    Jede betroffene Buchung wird per Generalumkehr storniert
     (:func:`storno_booking`), Sammelbuchungen gruppen-atomar über
     :func:`storno_booking_group`.
 

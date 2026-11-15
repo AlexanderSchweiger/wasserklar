@@ -316,6 +316,12 @@ def create_app(config_name=None):
     app.jinja_env.globals["handover_formats"] = _handover.available_formats
     app.jinja_env.globals["handover_default_tax_keys"] = _handover.default_tax_keys
 
+    # Festschreiben je Voranmeldungszeitraum: „änderbar bis …“ an offenen Buchungen.
+    from app.accounting import posting as _posting
+    app.jinja_env.globals["posting_open_hint"] = _posting.open_hint
+    app.jinja_env.globals["posting_lock_date"] = _posting.booking_lock_date
+    app.jinja_env.globals["posting_late_entry"] = _posting.late_entry_context
+
     # Zu grosser Upload (Request ueber der Grenze, siehe _limit_document_uploads): deutsche
     # Meldung, fuer fetch (Beleg-Upload) als JSON, sonst als Hinweis auf der Belegseite.
     from flask import flash as _flash, jsonify as _jsonify, redirect as _redirect, url_for as _url_for

@@ -4,7 +4,7 @@ Das OSS erzeugt selbst keine Exportdatei. Es liefert nur, was eine Erweiterung (
 ihrem DATEV-Export, später z. B. BMD) nicht selbst mitbringen kann:
 
 * **Aktivierung je Mandant.** Eine Erweiterung meldet ihr Format per :func:`register_format` an.
-  Der Mandant wählt es unter *Einstellungen → Steuern* (``AppSetting`` ``accounting.handover_format``).
+  Der Mandant wählt es unter *Einstellungen → Buchhaltung* (``AppSetting`` ``accounting.handover_format``).
   Ohne angemeldetes Format gibt es weder Schalter noch Felder; ein nicht (mehr) angemeldetes
   Format gilt als aus.
 * **Zuordnungsfelder** (Sachkonto an Konto und Geldkonto, Steuerschlüssel am Steuersatz) — nur

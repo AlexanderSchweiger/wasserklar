@@ -29,7 +29,7 @@
       </div>
       <div>
         <label class="form-label mb-1">Zeitraum</label>
-        {# Der Voranmeldungszeitraum des Mandanten (Einstellungen → Steuern) steht
+        {# Der Voranmeldungszeitraum des Mandanten (Einstellungen → Buchhaltung) steht
            oben; gewählt werden kann immer jeder Monat und jedes Quartal. #}
         {% set _quarter_opts %}
           <optgroup label="Quartale">
@@ -78,11 +78,27 @@
   <i class="fas fa-cog me-1"></i>
   Voranmeldungszeitraum: <strong>{{ 'monatlich' if vat_return_period == 'month' else 'vierteljährlich' }}</strong>
   {% if current_user.has_permission('verwaltung') %}
-  &mdash; <a href="{{ url_for('settings.index', tab='tax') }}">ändern unter Einstellungen → Steuern</a>
+  &mdash; <a href="{{ url_for('settings.index', tab='tax') }}">ändern unter Einstellungen → Buchhaltung</a>
   {% else %}
-  (Einstellungen → Steuern)
+  (Einstellungen → Buchhaltung)
   {% endif %}
 </p>
+
+{# --- Zeitraum abschließen (app/accounting/posting.py): verbucht alles bis zum Zeitraumende. --- #}
+{% if close_open_count and current_user.has_permission('buchhaltung') %}
+<div class="alert alert-info d-flex flex-wrap align-items-center gap-2 mb-3" id="ust-close-period">
+  <i class="fas fa-lock-open"></i>
+  <span class="flex-grow-1">
+    <strong>{{ close_open_count }} Buchung(en)</strong> bis {{ date_to.strftime("%d.%m.%Y") }} sind noch offen
+    und lassen sich ändern{% if posting_lock %} — automatisch verbucht am Ende des
+    {{ posting_lock.strftime("%d.%m.%Y") }}{% endif %}. Nach Abgabe der Voranmeldung den Zeitraum abschließen,
+    damit die Zahlen so bleiben.
+  </span>
+  <button type="button" class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#ustClosePeriodModal">
+    <i class="fas fa-lock me-1"></i> Zeitraum abschließen …
+  </button>
+</div>
+{% endif %}
 
 {# --- Zusammenfassung oben ---
    Jede Kachel und jede Tabellenzeile verlinkt auf die Buchungsliste, gefiltert
@@ -317,4 +333,34 @@
   </div>
 </div>
 
+{% endblock %}
+
+{% block modals %}
+{{ super() }}
+{% if close_open_count and current_user.has_permission('buchhaltung') %}
+<div class="modal fade" id="ustClosePeriodModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <form class="modal-content" method="post" action="{{ url_for('accounting.ust_close_period') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="year" value="{{ year }}">
+      <input type="hidden" name="period" value="{{ period_key }}">
+      <div class="modal-header">
+        <h5 class="modal-title">{{ period_label }} abschließen?</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
+      </div>
+      <div class="modal-body">
+        <p>Alle {{ close_open_count }} offenen Buchungen bis {{ date_to.strftime("%d.%m.%Y") }} werden sofort
+          <strong>verbucht</strong>.</p>
+        <p class="mb-0 small text-secondary">Danach lassen sich Datum, Betrag, Belegnummer und Steuersatz nicht
+          mehr ändern und die Buchungen nicht mehr löschen; Korrekturen gehen nur noch per Storno. Konto,
+          Projekt und Beschreibung bleiben änderbar.</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Abbrechen</button>
+        <button type="submit" class="btn btn-primary"><i class="fas fa-lock me-1"></i> Zeitraum abschließen</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
 {% endblock %}

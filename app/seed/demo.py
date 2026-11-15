@@ -1624,7 +1624,13 @@ def seed_demo_data(db, *, today: date = date(2025, 9, 15), now: date = None,
             (acc_bank,   None, None,             Decimal("-185.00"),  kredit, "Kreditzinsen"),
             (acc_reparatur, 0, std, Decimal("-560.00"),  giro,   "Quellschacht-Sanierung Material"),
         ]
-        offen_cutoff = now - timedelta(days=40)
+        # Offen bleibt, was nach dem Festschreiben je Voranmeldungszeitraum (Standard: Quartal,
+        # Sperrtag laut Länderprofil) noch nicht gesperrt wäre — wie in einem echten Mandanten.
+        from app import country as _country
+        from app.accounting import posting as _posting
+        _profile = _country.current_profile()
+        offen_cutoff = _posting.cutoff(now, _posting.MODE_PERIOD, _posting.PERIOD_QUARTER,
+                                       _profile.posting_lock_day, _profile.posting_lock_month_offset)
         bridge_bookings = 0
         gy, gm = current_year + 1, 1
         plan_i = 0
