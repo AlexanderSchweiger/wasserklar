@@ -1,0 +1,37 @@
+{# Hinweis bei einer Nachbuchung in einen schon abgeschlossenen Voranmeldungszeitraum
+   (Regeln: app/accounting/posting.py, closed_through/late_entry_warning). Erlaubt bleibt sie —
+   der Hinweis erscheint live, sobald das Datum (input[name=date] im selben Formular) im
+   abgeschlossenen Bereich eines umsatzsteuerpflichtigen Jahres liegt. #}
+{%- set _late = posting_late_entry() -%}
+{% if _late.closed_through %}
+<div class="alert alert-warning py-2 mt-3 mb-0 d-none" role="alert" data-late-entry-hint
+     data-closed-through="{{ _late.closed_through.isoformat() }}"
+     data-vat-years="{{ _late.vat_years|join(',') }}">
+  <i class="fas fa-exclamation-triangle me-1"></i>
+  Dieser Voranmeldungszeitraum ist bereits abgeschlossen (bis {{ _late.closed_through.strftime('%d.%m.%Y') }}) —
+  die Umsatzsteuer-Voranmeldung dafür ist vermutlich schon abgegeben. Die Buchung zählt trotzdem zu diesem
+  Zeitraum und wird in der nächsten Nacht verbucht. Bitte prüfen, ob die Voranmeldung berichtigt werden muss.
+</div>
+<script>
+(function () {
+  // Alle noch nicht gebundenen Hinweise (Modal-Fragmente werden bei jedem Öffnen frisch eingefügt).
+  document.querySelectorAll('[data-late-entry-hint]').forEach(function (hint) {
+    if (hint._wkLateBound) return;
+    hint._wkLateBound = true;
+    var form = hint.closest('form');
+    var input = form && form.querySelector('input[name=date]');
+    if (!input) return;
+    var through = hint.dataset.closedThrough;
+    var years = (hint.dataset.vatYears || '').split(',');
+    function update() {
+      var v = input.value || '';     // ISO-Datum → Textvergleich genügt
+      var late = v !== '' && !input.readOnly && v <= through && years.indexOf(v.slice(0, 4)) !== -1;
+      hint.classList.toggle('d-none', !late);
+    }
+    input.addEventListener('input', update);
+    input.addEventListener('change', update);
+    update();
+  });
+})();
+</script>
+{% endif %}

@@ -56,9 +56,12 @@
 </button>
 {%- endmacro %}
 
-{# Kindzeile einer Sammelbuchung (bzw. ihrer Storno-Gegenbuchung) — standardmäßig eingeklappt. #}
+{# Kindzeile einer Sammelbuchung (bzw. ihrer Storno-Gegenbuchung) — standardmäßig eingeklappt.
+   Storno-Paar (Generalumkehr): Original UND Gegenbuchung werden gleich gedämpft — sie heben
+   sich gemeinsam auf, keine der beiden ist „die richtige". #}
 {% macro bk_child_row(b, key, alt) -%}
-<tr class="bk-child{{ alt }}{{ ' bk-storniert' if b.status == 'Storniert' }}" data-bk-parent="{{ key }}">
+{% set void = b.status == 'Storniert' or b.storno_of_id is not none %}
+<tr class="bk-child{{ alt }}{{ ' bk-storniert' if void }}" data-bk-parent="{{ key }}">
   <td></td>
   <td></td>
   <td></td>
@@ -67,7 +70,7 @@
   <td class="bk-col-project">{{ bk_project(b.project) }}</td>
   <td></td>
   <td class="text-end bk-tax">{{ bk_tax(b) }}</td>
-  <td class="text-end">{{ bk_amount(b.amount, void=(b.status == 'Storniert')) }}</td>
+  <td class="text-end">{{ bk_amount(b.amount, void=void) }}</td>
   <td class="col-actions"></td>
 </tr>
 {%- endmacro %}
@@ -109,6 +112,13 @@
     <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Schließen"></button>
   </div>
   {% endif %}
+  {% if bulk_tax_skipped %}
+  <div class="alert alert-warning alert-dismissible" role="alert">
+    Bei {{ bulk_tax_skipped }} Buchung(en) wurde der Steuersatz nicht geändert — er kommt aus
+    einer Rechnung, gehört zu einem Storno oder die Buchung ist an die Steuerberatung übergeben.
+    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Schließen"></button>
+  </div>
+  {% endif %}
   {% if bulk_done_count > 0 %}
   <div class="alert alert-success alert-dismissible" role="alert">
     {{ bulk_done_count }} Buchung(en) aktualisiert.
@@ -134,18 +144,34 @@
       Auswahl aufheben
     </button>
   </div>
-  {# Offene Buchungen (heute erfasst) werden nachts automatisch verbucht — hier sofort. Zählt alle
-     offenen Buchungen, nicht nur die gefilterten; Bestätigung im Modal #postOpenModal (bookings.html).
-     Der Balken vor dem Badge erklärt den blauen Rand offener Zeilen in der Tabelle. #}
-  {% if open_count %}
-  <div class="d-flex align-items-center gap-2 small" id="bookings-open-hint">
+  {# Offene Buchungen lassen sich noch frei ändern; wann sie verbucht (gesperrt) werden, regelt die
+     Einstellung „Buchungen festschreiben“ (app/accounting/posting.py). Zählt alle offenen Buchungen,
+     nicht nur die gefilterten. Reine Info — verbucht wird nachts bzw. über „Zeitraum abschließen“
+     in der USt-Voranmeldung. Der Balken vor dem Badge erklärt den blauen Rand offener Zeilen. #}
+  {% set pn = posting_next %}
+  {% if pn and pn.open_count %}
+  <div class="d-flex align-items-center gap-2 small{{ ' text-warning' if pn.warn }}" id="bookings-open-hint">
     <span class="bk-open-legend" aria-hidden="true"></span>
-    <span class="badge bg-azure-lt">{{ open_count }} offen</span>
-    <span class="text-secondary d-none d-md-inline">wird über Nacht verbucht</span>
-    <button type="button" class="btn btn-sm btn-outline-primary"
-            data-bs-toggle="modal" data-bs-target="#postOpenModal">
-      <i class="fas fa-check-double me-1"></i> Jetzt verbuchen
-    </button>
+    <span class="badge {{ 'bg-yellow text-dark' if pn.warn else 'bg-azure-lt' }}">{{ pn.open_count }} offen</span>
+    <span class="{{ 'fw-semibold' if pn.warn else 'text-secondary' }} d-none d-md-inline">
+      {%- if pn.mode == 'off' -%}
+        werden nicht automatisch verbucht
+      {%- elif pn.mode == 'daily' -%}
+        werden über Nacht verbucht
+      {%- else -%}
+      {%- if pn.overdue_count -%}
+        {{ pn.overdue_count }} {{ 'Nachtrag wird' if pn.overdue_count == 1 else 'Nachträge werden' }} heute Nacht verbucht{{ ' · ' if pn.due_count }}
+      {%- endif -%}
+      {%- if pn.due_count -%}
+        {{ pn.due_count }} bis {{ pn.period_end.strftime('%d.%m.%Y') }} ({{ pn.period_label }}) werden am Ende des {{ pn.lock_date.strftime('%d.%m.%Y') }} verbucht
+      {%- elif not pn.overdue_count -%}
+        nächster Sperrtag: {{ pn.lock_date.strftime('%d.%m.%Y') }} ({{ pn.period_label }})
+      {%- endif -%}
+      {%- endif -%}
+    </span>
+    {% if pn.warn and has_vat_fiscal_year is defined and has_vat_fiscal_year and current_user.has_permission('auswertungen') %}
+    <a class="d-none d-md-inline" href="{{ url_for('accounting.ust', year=pn.period_end.year, period=pn.period_key) }}">USt-Voranmeldung</a>
+    {% endif %}
   </div>
   {% endif %}
   <div class="text-end ms-auto">
@@ -217,7 +243,7 @@
     {% set is_open = all_children_offen and not is_stornogruppe %}
     <tr class="bk-group{{ alt }}{{ ' bk-storniert' if is_stornogruppe }}{{ ' bk-open' if is_open }}">
       <td></td>
-      <td class="bk-date"{% if is_open %} title="Offen – wird über Nacht verbucht"{% endif %}>{{ g.date.strftime('%d.%m.%Y') }}</td>
+      <td class="bk-date"{% if is_open %} title="{{ posting_open_hint(g.date) }}"{% endif %}>{{ g.date.strftime('%d.%m.%Y') }}</td>
       <td class="text-center">{{ bk_bank((effective_children|first).real_account if effective_children else none) }}</td>
       <td class="bk-col-account">{{ bk_toggle(gkey, effective_children|length) }}</td>
       <td class="bk-col-desc">
@@ -289,7 +315,7 @@
       {% set ns.total = ns.total + c.amount %}
       {% if c.tax_rate and c.tax_rate > 0 %}{% set ns.tax = ns.tax + signed_booking_tax(c) %}{% endif %}
     {% endfor %}
-    <tr class="bk-group{{ alt }}">
+    <tr class="bk-group{{ alt }} bk-storniert">
       <td></td>
       <td class="bk-date">{{ row.date.strftime('%d.%m.%Y') }}</td>
       <td class="text-center">{{ bk_bank((row.children|first).real_account if row.children else none) }}</td>
@@ -302,7 +328,7 @@
       <td class="bk-col-project"></td>
       <td class="bk-col-contact">{% if g.customer %}{{ bk_contact(g.customer, bk_contact_number(g.customer, ns.total)) }}{% endif %}</td>
       <td class="text-end bk-tax">{% if ns.tax %}{{ ns.tax|de_number }}&nbsp;€{% endif %}</td>
-      <td class="text-end">{{ bk_amount(ns.total) }}</td>
+      <td class="text-end">{{ bk_amount(ns.total, void=true) }}</td>
       <td class="text-end col-actions" style="white-space:nowrap">
         <button type="button" class="btn btn-sm btn-outline-secondary" title="Sammelbuchung ansehen"
                 data-url="{{ url_for('accounting.booking_group_edit', group_id=g.id) }}"
@@ -369,17 +395,18 @@
     {# ── BUCHUNG ──────────────────────────────────────────────────── #}
     {% else %}
     {% set b = row.obj %}
-    {# Generalumkehr: Original (ausgegraut, Betrag durchgestrichen) und Gegenbuchung
-       (am Storno-Datum) stehen beide in der Liste und zählen beide in der Summe. #}
+    {# Generalumkehr: Original und Gegenbuchung (am Storno-Datum) stehen beide in der Liste,
+       beide ausgegraut mit durchgestrichenem Betrag, und zählen beide in der Summe. #}
     {% set is_open = b.status == 'Offen' and not b.storno_of_id %}
-    <tr class="bk-row{{ alt }}{{ ' bk-storniert' if b.status == 'Storniert' }}{{ ' bk-open' if is_open }}">
+    {% set void = b.status == 'Storniert' or b.storno_of_id is not none %}
+    <tr class="bk-row{{ alt }}{{ ' bk-storniert' if void }}{{ ' bk-open' if is_open }}">
       <td class="text-center" style="width:1%">
         {% if b.status != 'Storniert' and not b.storno_of_id and not b.group_id and b.id not in locked_booking_ids %}
         <input type="checkbox" class="form-check-input booking-select"
                name="booking_ids" value="{{ b.id }}" aria-label="Buchung auswählen">
         {% endif %}
       </td>
-      <td class="bk-date"{% if is_open %} title="Offen – wird über Nacht verbucht"{% endif %}>{{ b.date.strftime('%d.%m.%Y') }}</td>
+      <td class="bk-date"{% if is_open %} title="{{ posting_open_hint(b.date) }}"{% endif %}>{{ b.date.strftime('%d.%m.%Y') }}</td>
       <td class="text-center">{{ bk_bank(b.real_account) }}</td>
       <td class="bk-col-account">{{ bk_account(b.account) }}</td>
       <td class="bk-col-desc">
@@ -407,7 +434,7 @@
       <td class="bk-col-project">{{ bk_project(b.project) }}</td>
       <td class="bk-col-contact">{% if b.customer %}{{ bk_contact(b.customer, bk_contact_number(b.customer, b.amount)) }}{% endif %}</td>
       <td class="text-end bk-tax">{{ bk_tax(b) }}</td>
-      <td class="text-end">{{ bk_amount(b.amount, void=(b.status == 'Storniert')) }}</td>
+      <td class="text-end">{{ bk_amount(b.amount, void=void) }}</td>
       <td class="text-end col-actions" style="white-space:nowrap">
         {% set fy_locked = b.id in locked_booking_ids %}
         {% if b.storno_of_id %}
@@ -435,6 +462,15 @@
            hx-target="#booking-form-host" hx-swap="innerHTML">
           <i class="fas fa-edit"></i>
         </button>
+        {% if payment_locked_ids is defined and b.id in payment_locked_ids %}
+        {# Zahlung zu Rechnung/Offenem Posten bzw. aus dem Kontoauszug: Storno statt Löschen. #}
+        <button type="button" class="btn btn-sm btn-outline-secondary bk-act-danger" title="Stornieren"
+                data-url="{{ url_for('accounting.booking_stornieren', booking_id=b.id) }}"
+                data-modal-title="Buchung stornieren"
+                onclick="openStornoModal(this)">
+          <i class="fas fa-ban"></i>
+        </button>
+        {% else %}
         <form method="post" action="{{ url_for('accounting.booking_delete', booking_id=b.id) }}"
               style="display:inline"
               hx-boost="false"
@@ -444,6 +480,7 @@
             <i class="fas fa-trash"></i>
           </button>
         </form>
+        {% endif %}
         {% elif b.status == 'Verbucht' %}
         <button type="button" class="btn btn-sm btn-outline-secondary" title="Bearbeiten"
            data-bs-toggle="modal" data-bs-target="#bookingFormModal"

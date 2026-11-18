@@ -27,12 +27,25 @@ War die Originalrechnung noch **unbezahlt**, entsteht KEIN Offener Posten:
 die Forderung wurde beim Stornieren bereits ausgebucht, ein negativer OP
 wuerde eine Verbindlichkeit vortaeuschen, die es nicht gibt.
 
-Abgrenzung
-----------
-Die Buchungen der Originalrechnung werden NICHT hier zurueckgenommen — das
-macht ``app.accounting.services.storno_invoice_bookings`` beim Statuswechsel
-auf „Storniert". Dieser Service erzeugt ausschliesslich den Beleg und den
-Rueckzahlungs-OP.
+Zahlung bleibt stehen
+---------------------
+Das Stornieren einer Rechnung nimmt die **Zahlungsbuchungen nicht zurueck**:
+das Geld ist auf dem Konto eingegangen, die Einnahme ist echt. Erst die
+Rueckueberweisung (Buchung auf den Rueckzahlungs-Posten) gleicht sie aus —
+Zahlung am Zahltag, Erloesminderung am Rueckzahlungstag, in Summe 0.
+Frueher stornierte der Statuswechsel die Zahlung mit; zusammen mit der
+Rueckueberweisung stand der Betrag dann **zweimal** als Ausgabe in der
+Buchhaltung und das Bankkonto in der App lag um ihn zu niedrig.
+
+Nur wenn das Geld **nie eingegangen** ist (Rechnung irrtuemlich als bezahlt
+erfasst), storniert der Statuswechsel auf Wunsch die Zahlungsbuchungen mit
+(``storno_invoice_bookings``, Schalter im Storno-Dialog). Dann ist wirksam
+nichts bezahlt und es entsteht folgerichtig kein Rueckzahlungs-Posten.
+
+Der Rueckzahlbetrag ist deshalb immer der **wirksam** auf die Originalrechnung
+gebuchte Betrag (Storno-Paare heben sich auf), abzueglich dessen, was ueber
+fruehere, inzwischen stornierte Gutschriften schon zurueckgeflossen ist
+(:func:`refund_due`).
 """
 
 from datetime import date
@@ -45,33 +58,38 @@ from app.utils import next_invoice_number
 from app.invoices.services import invoice_period_year
 
 
-def refundable_amount(invoice):
-    """Bereits auf die Rechnung geflossener Betrag — der Rueckzahlungs-Vorschlag.
+def refund_due(original, *, exclude=None):
+    """Was dem Kunden aus ``original`` (noch) zurueckzuzahlen ist.
 
-    **Muss vor** ``storno_invoice_bookings`` gelesen werden: nach dem Storno
-    heben sich Original- und Gegenbuchung auf und ``paid_amount`` ist 0.
+    = wirksam auf die Rechnung gebuchte Zahlungen (``paid_amount`` summiert
+    alle Buchungen, ein Storno-Paar hebt sich also auf) plus die Buchungen auf
+    den anderen Gutschriften zu ``original`` — eine dort schon verbuchte
+    Rueckueberweisung ist negativ und mindert den Betrag. ``exclude`` ist die
+    Gutschrift, fuer die gerade gerechnet wird (ihre eigene Rueckzahlung
+    mindert ihren Betrag nicht).
 
-    Teilzahlungen ergeben hier folgerichtig nur den tatsaechlich erhaltenen
+    Teilzahlungen ergeben folgerichtig nur den tatsaechlich erhaltenen
     Teilbetrag — die Gutschrift lautet zwar ueber die volle Rechnungssumme
     (sie hebt den ganzen Beleg auf), zurueckzuzahlen ist aber nur das, was
-    auch eingegangen ist.
+    auch eingegangen ist. Der Betrag wird jederzeit neu abgeleitet statt
+    gespeichert und kann deshalb nicht veralten.
     """
-    paid = Decimal(str(invoice.paid_amount or 0))
-    return paid if paid > 0 else Decimal("0")
+    total = Decimal(str(original.paid_amount or 0))
+    for other in original.credit_notes:
+        if exclude is not None and other.id == exclude.id:
+            continue
+        total += Decimal(str(other.paid_amount or 0))
+    return total if total > 0 else Decimal("0")
 
 
-def historic_paid_amount(invoice):
-    """Betrag, der **vor** dem Storno auf die Rechnung geflossen war.
+def reversed_payment_amount(invoice):
+    """Summe der auf ``Storniert`` gesetzten Zahlungsbuchungen von ``invoice``.
 
-    Nach ``storno_invoice_bookings`` heben sich Original- und Gegenbuchung auf,
-    ``paid_amount`` ist also 0. Die Originalbuchungen stehen aber weiterhin in
-    der Tabelle (Status ``Storniert``) — ihre Summe ist der Betrag, der dem
-    Kunden zurueckzuzahlen ist.
-
-    Das ist die Quelle fuer :func:`refund_amount_for` und damit fuer den
-    Rueckzahlungs-Posten: der Betrag wird jederzeit neu abgeleitet statt
-    gespeichert — er kann also nicht veralten, egal wie viel Zeit zwischen
-    Storno, Gutschrift-Entwurf und Versand liegt.
+    Nur fuer den Hinweis im Gutschrift-Dialog: bei Rechnungen, die vor der
+    Umstellung storniert wurden, hat der Statuswechsel die Zahlung immer
+    mitstorniert — auch wenn das Geld tatsaechlich eingegangen war. Dann ist
+    wirksam nichts bezahlt (:func:`refund_due` = 0), die Rueckueberweisung darf
+    also nicht noch einmal gebucht werden.
     """
     from sqlalchemy import func
     from app.models import Booking
@@ -89,11 +107,9 @@ def historic_paid_amount(invoice):
 
 
 def refund_suggestion(invoice):
-    """Vorschlag fuer den Rueckzahlbetrag — unabhaengig davon, ob die Rechnung
-    gerade storniert wird oder es schon ist."""
-    if invoice.status == Invoice.STATUS_CANCELLED:
-        return historic_paid_amount(invoice)
-    return refundable_amount(invoice)
+    """Vorschlag fuer den Rueckzahlbetrag — vor und nach dem Storno gleich,
+    weil der Storno die Zahlung stehen laesst."""
+    return refund_due(invoice)
 
 
 def credit_note_blocker(invoice):
@@ -201,25 +217,33 @@ def create_credit_note(original, *, reason=None, created_by_id=None,
     return credit
 
 
-def refund_amount_for(credit):
-    """Rueckzahlbetrag der Gutschrift ``credit`` — abgeleitet, nicht gespeichert.
-
-    Zurueckzuzahlen ist genau das, was auf die stornierte Originalrechnung
-    tatsaechlich geflossen ist. Nach dem Storno steht dieser Betrag in den auf
-    ``Storniert`` gesetzten Originalbuchungen (:func:`historic_paid_amount`) —
-    er ist also jederzeit rekonstruierbar und muss nirgends dupliziert werden.
-
-    Gedeckelt auf die Gutschriftssumme: mehr als die Gutschrift ausweist kann
-    nie zurueckgezahlt werden, auch wenn der Kunde ueberwiesen haette.
-
-    Rueckgabe ist positiv (0, wenn nichts zurueckzuzahlen ist).
-    """
+def _derived_refund(credit):
+    """Rueckzahlbetrag aus den Buchungen (:func:`refund_due`), gedeckelt auf
+    die Gutschriftssumme — mehr als die Gutschrift ausweist kann nie
+    zurueckgezahlt werden, auch wenn der Kunde mehr ueberwiesen haette."""
     original = credit.cancels_invoice
     if original is None:
         return Decimal("0")
-    paid = historic_paid_amount(original)
     cap = abs(Decimal(str(credit.total_amount or 0)))
-    return min(paid, cap)
+    return min(refund_due(original, exclude=credit), cap)
+
+
+def refund_amount_for(credit):
+    """Rueckzahlbetrag der Gutschrift ``credit``.
+
+    Vor dem Versand abgeleitet (:func:`_derived_refund`). Ab dem Versand gilt
+    der Rueckzahlungs-Posten: er haelt fest, was der Beleg dem Kunden
+    zugesagt hat — ein spaeter neu gerenderter Beleg muss dasselbe sagen wie
+    der verschickte (auch bei Gutschriften aus der Zeit, als der Storno die
+    Zahlung noch mitstornierte und der Betrag anders abgeleitet wurde).
+
+    Rueckgabe ist positiv (0, wenn nichts zurueckzuzahlen ist).
+    """
+    oi = credit.open_item
+    if oi is not None and Decimal(str(oi.amount or 0)) < 0:
+        cap = abs(Decimal(str(credit.total_amount or 0)))
+        return min(-Decimal(str(oi.amount)), cap)
+    return _derived_refund(credit)
 
 
 def create_refund_open_item(credit, *, created_by_id=None):
@@ -237,7 +261,7 @@ def create_refund_open_item(credit, *, created_by_id=None):
     Idempotent: existiert schon ein Posten, wird nur sein Betrag nachgezogen
     (der Nutzer koennte den Entwurf zwischendurch bearbeitet haben).
     """
-    refund = refund_amount_for(credit)
+    refund = _derived_refund(credit)
     existing = credit.open_item
 
     if refund <= 0:

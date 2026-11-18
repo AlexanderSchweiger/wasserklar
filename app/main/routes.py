@@ -1,5 +1,6 @@
 from flask import render_template
-from flask_login import login_required
+from flask_login import current_user, login_required
+from app.auth.permissions import PERM_BUCHHALTUNG
 from sqlalchemy import extract, func, case
 from app.main import bp
 from app.extensions import db
@@ -223,8 +224,15 @@ def dashboard():
     from app.einvoice.obligation import dashboard_summary
     einvoice_b2b = dashboard_summary()
 
+    # Vorwarnung vor dem nächsten Sperrtag (Festschreiben je Voranmeldungszeitraum).
+    posting_next = None
+    if current_user.has_permission(PERM_BUCHHALTUNG):
+        from app.accounting import posting as posting_svc
+        posting_next = posting_svc.next_lock()
+
     return render_template(
         "main/dashboard.html",
+        posting_next=posting_next,
         einvoice_b2b=einvoice_b2b,
         current_year=current_year,
         today=date.today(),

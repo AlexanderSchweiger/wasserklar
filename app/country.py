@@ -78,6 +78,12 @@ class CountryProfile:
     # Wann monatlich statt vierteljährlich vorangemeldet wird + Abgabefrist — nur
     # Hinweistext in den Steuer-Einstellungen; den Zeitraum wählt der Mandant selbst.
     vat_return_hint: str = ""
+    # Festschreiben je Voranmeldungszeitraum (``app/accounting/posting.py``): Vorgabe für den
+    # Sperrtag (Tag + Monatsversatz nach dem Zeitraumende) = Abgabefrist der Voranmeldung.
+    # AT: 15. des zweitfolgenden Monats (§ 21 Abs. 1 UStG 1994); DE: 10. des Folgemonats
+    # (§ 18 Abs. 1 UStG; mit Dauerfristverlängerung stellt der Mandant den zweitfolgenden Monat ein).
+    posting_lock_day: int = 15
+    posting_lock_month_offset: int = 2
 
     def default_tax_rate_values(self):
         return [rate for rate, _ in self.tax_rates]
@@ -198,6 +204,8 @@ _DE = CountryProfile(
         "installment_words": "Abschläge",
         "annual_settlement_title": "Jahresabrechnung",
     },
+    posting_lock_day=10,
+    posting_lock_month_offset=1,
     document_retention_years=8,
     document_retention_hint=(
         "§ 147 AO / § 14b UStG: 8 Jahre für Buchungsbelege und Rechnungen (seit 2025), "

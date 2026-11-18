@@ -18,7 +18,7 @@
     </li>
     <li class="nav-item" role="presentation">
       <a class="nav-link{{ ' active' if _tab == 'tax' }}" id="tab-tax" data-bs-toggle="tab" href="#pane-tax" role="tab">
-        <i class="fas fa-percentage me-1"></i> Steuern
+        <i class="fas fa-calculator me-1"></i> Buchhaltung
       </a>
     </li>
     <li class="nav-item" role="presentation">
@@ -197,10 +197,11 @@
       </div>
     </div>
 
-    {# ── Tab: Steuern ────────────────────────────────────────────────── #}
+    {# ── Tab: Buchhaltung ────────────────────────────────────────────────── #}
     <div class="tab-pane fade{{ ' show active' if _tab == 'tax' }}" id="pane-tax" role="tabpanel">
       {% include "settings/_tax_rates_card.html" %}
       {% include "settings/_handover_card.html" %}
+      {% include "settings/_posting_card.html" %}
     </div>
 
     {# ── Tab: Kontaktdaten ───────────────────────────────────────────── #}
@@ -1041,7 +1042,7 @@ document.getElementById('btnTestMail')?.addEventListener('click', function () {
 </div>
 {% endif %}
 
-{# Steuersatz anlegen/bearbeiten (Tab „Steuern"). #}
+{# Steuersatz anlegen/bearbeiten (Tab „Buchhaltung"). #}
 {% include "settings/_tax_rate_modal.html" %}
 
 {# ── Länder-Defaults übernehmen — eigenes Formular/Endpunkt ─────────────── #}

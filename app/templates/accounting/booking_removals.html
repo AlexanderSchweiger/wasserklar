@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Gelöschte Buchungen {{ year }}{% endblock %}
+{% block page_title %}<i class="fas fa-history me-2"></i> Gelöschte Buchungen{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap align-items-end gap-3 mb-3">
+  <form method="get" class="d-flex align-items-end gap-2">
+    <div>
+      <label class="form-label mb-1">Jahr</label>
+      <select name="year" class="form-select form-select-sm" style="width:110px" onchange="this.form.requestSubmit()">
+        {% for y in years %}<option value="{{ y }}" {{ 'selected' if y == year }}>{{ y }}</option>{% endfor %}
+      </select>
+    </div>
+  </form>
+  <a href="{{ url_for('accounting.bookings', year=year) }}" class="btn btn-sm btn-outline-secondary ms-auto">
+    <i class="fas fa-arrow-left me-1"></i> Zur Buchungsliste
+  </a>
+</div>
+
+<p class="text-muted small">
+  Offene Buchungen lassen sich bis zum Sperrtag ihres Voranmeldungszeitraums löschen. Wird eine Buchung
+  nicht mehr am Tag ihrer Erfassung gelöscht (oder werden die Zeilen einer Sammelbuchung beim Bearbeiten
+  ersetzt), bleibt sie hier mit ihrem ursprünglichen Inhalt festgehalten. Dieses Protokoll lässt sich nicht
+  ändern.
+</p>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table">
+      <thead>
+        <tr>
+          <th>Gelöscht am</th>
+          <th>Von</th>
+          <th>Art</th>
+          <th>Buchungsdatum</th>
+          <th>Beschreibung</th>
+          <th class="text-end">Betrag</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        {% set snap = r.snapshot_data %}
+        <tr>
+          <td>{{ r.removed_at.strftime('%d.%m.%Y %H:%M') }}</td>
+          <td>{{ r.removed_by.username if r.removed_by else '—' }}</td>
+          <td>
+            <span class="badge bg-secondary-lt">{{ r.reason_label }}</span>
+            {% if r.original_group_id %}<span class="badge bg-azure-lt">Sammelbuchung</span>{% endif %}
+          </td>
+          <td>{{ r.booking_date.strftime('%d.%m.%Y') }}</td>
+          <td>
+            {% if r.reference %}<span class="text-secondary me-1">{{ r.reference }}</span>{% endif %}{{ r.description }}
+            <div class="small text-secondary">
+              {% if snap.get('children') %}
+                {% for c in snap['children'] %}
+                <div>{{ c.get('account_id') or '—' }} · {{ c.get('amount') }} €{% if c.get('tax_rate') %} · {{ c.get('tax_rate') }} %{% endif %}{% if c.get('description') and c.get('description') != r.description %} · {{ c.get('description') }}{% endif %}</div>
+                {% endfor %}
+              {% else %}
+                {{ snap.get('account_id') or '—' }}{% if snap.get('real_account_id') %} · {{ snap.get('real_account_id') }}{% endif %}{% if snap.get('tax_rate') %} · {{ snap.get('tax_rate') }} %{% endif %}{% if snap.get('project_id') %} · Projekt {{ snap.get('project_id') }}{% endif %}{% if snap.get('customer_id') %} · {{ snap.get('customer_id') }}{% endif %}
+              {% endif %}
+              {% if r.created_at %} · erfasst {{ r.created_at.strftime('%d.%m.%Y') }}{% endif %}
+            </div>
+          </td>
+          <td class="text-end">{{ r.amount|de_number }}&nbsp;€</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="text-center text-muted py-4">Keine gelöschten Buchungen in {{ year }}.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

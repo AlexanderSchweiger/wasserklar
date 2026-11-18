@@ -1,4 +1,4 @@
-"""Länder-Defaults auf den Mandanten anwenden (Einstellungen → Land/Steuern).
+"""Länder-Defaults auf den Mandanten anwenden (Einstellungen → Land/Buchhaltung).
 
 Wird an zwei Stellen gebraucht:
 

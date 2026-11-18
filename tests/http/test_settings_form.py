@@ -269,7 +269,7 @@ class TestEveryTabSaves:
             "map_ortho_wms_layers": "l1",
             "map_ortho_attribution": "© X",
             "supplier_number_start": "80001",
-            # Steuern
+            # Buchhaltung
             "tax_vat_return_period": "month",
             # Kontaktdaten + Bank + SEPA
             "wg_name": "WG Neu",

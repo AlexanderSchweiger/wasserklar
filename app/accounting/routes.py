@@ -19,6 +19,7 @@ from app.accounting import bp
 from app.documents import service as documents_svc
 from app.accounting import services as acc_svc
 from app.accounting import handover as handover_svc
+from app.accounting import posting as posting_svc
 from app import tax_service
 from app.extensions import db
 from app.models import Account, Booking, BookingGroup, Document, Invoice, OpenItem, WaterTariff, Customer, Project, RealAccount, RealAccountYearBalance, FiscalYear, FiscalYearReopenLog, Transfer, BillingPeriod, Property, PropertyOwnership, WaterMeter
@@ -61,6 +62,14 @@ def _validate_code(code_raw, model_cls, exclude_id=None):
     return code, None
 
 
+def _apply_account_default_tax(account, form):
+    """Standard-Steuersatz des Kontos — nur, wenn das Feld im Formular steht (Marker
+    ``account_tax_field=1``); ein Formular ohne das Feld ändert nichts."""
+    if form.get("account_tax_field") != "1":
+        return
+    account.default_tax_rate = _parse_tax_rate(form.get("default_tax_rate"))
+
+
 def _account_modal_saved(account_id):
     """204 + HX-Trigger fuers Kontenplan-Modal (schliessen + neu laden)."""
     resp = make_response("", 204)
@@ -86,6 +95,7 @@ def account_new():
             name=request.form["name"].strip(),
             description=request.form.get("description", ""),
         )
+        _apply_account_default_tax(a, request.form)
         err = handover_svc.apply_account_fields(a, request.form)
         if err:
             flash(err, "danger")
@@ -122,6 +132,7 @@ def account_edit(account_id):
         a.name = request.form["name"].strip()
         a.description = request.form.get("description", "")
         a.active = "active" in request.form
+        _apply_account_default_tax(a, request.form)
         db.session.commit()
         flash("Konto aktualisiert.", "success")
         if is_modal:
@@ -181,7 +192,8 @@ def _apply_project_contact_search(query, project_id, customer_id, q):
     return query
 
 
-def _bookings_table_ctx(params, bulk_done_count=None, bulk_handed_over_skipped=0):
+def _bookings_table_ctx(params, bulk_done_count=None, bulk_handed_over_skipped=0,
+                        bulk_tax_skipped=0):
     """Baut den Render-Kontext der Buchungstabelle aus den Filter-Parametern.
 
     ``params`` ist eine MultiDict — ``request.args`` beim Filter-GET,
@@ -349,6 +361,13 @@ def _bookings_table_ctx(params, bulk_done_count=None, bulk_handed_over_skipped=0
             if fy.start_date <= b.date <= fy.end_date:
                 locked_booking_ids.add(b.id)
                 break
+    # Offene Zahlungs-/Bankimport-Buchungen: nicht löschen, sondern stornieren (acc_svc.payment_lock).
+    open_ids = [b.id for b in bkgs if b.status == Booking.STATUS_OFFEN and not b.group_id]
+    bank_ids = acc_svc.bank_line_booking_ids(open_ids)
+    payment_locked_ids = {
+        b.id for b in bkgs
+        if b.id in open_ids and (b.id in bank_ids or b.invoice_id or b.open_item_id)
+    }
     # Umbuchungen: abgeschlossenes Buchungsjahr oder an die Steuerberatung übergeben
     # → kein Löschen (wie auf der Umbuchungsseite).
     handed_over_transfers = handover_svc.handed_over_transfer_ids([t.id for t in transfers])
@@ -386,12 +405,15 @@ def _bookings_table_ctx(params, bulk_done_count=None, bulk_handed_over_skipped=0
         total_vorsteuer=total_vorsteuer,
         total_ust=total_ust,
         locked_booking_ids=locked_booking_ids,
+        payment_locked_ids=payment_locked_ids,
         locked_transfer_ids=locked_transfer_ids,
         pagination=pagination,
         bulk_done_count=bulk_done_count,
         bulk_handed_over_skipped=bulk_handed_over_skipped,
-        # Hinweis „N offen — jetzt verbuchen“ (gilt für alle Buchungen, nicht nur den Filter).
-        open_count=acc_svc.open_bookings_query().count(),
+        bulk_tax_skipped=bulk_tax_skipped,
+        # Hinweisleiste „N offen · bis … werden am … verbucht“ (gilt für alle Buchungen, nicht nur
+        # den Filter; app/accounting/posting.py).
+        posting_next=posting_svc.next_lock(),
     )
     filters = dict(
         account_id=account_id, project_id=project_id,
@@ -470,10 +492,15 @@ def bookings_bulk_edit():
     new_account_id, set_account = _resolve("bulk_account_id", Account)
     new_project_id, set_project = _resolve("bulk_project_id", Project)
     new_customer_id, set_customer = _resolve("bulk_customer_id", Customer)
+    # Steuersatz: leer = unveraendert, "0" = ohne Steuer, sonst ein bekannter Satz.
+    raw_tax = (request.form.get("bulk_tax_rate") or "").strip()
+    set_tax = raw_tax != "" and (raw_tax == "0" or _parse_tax_rate(raw_tax) is not None)
+    new_tax_rate = _parse_tax_rate(raw_tax) if set_tax else None
 
     updated = 0
     handed_over_skipped = 0
-    if ids and (set_account or set_project or set_customer):
+    tax_skipped = 0
+    if ids and (set_account or set_project or set_customer or set_tax):
         # An die Steuerberatung übergebene Buchungen behalten Konto und Projekt
         # (der Kontakt bleibt änderbar).
         handed_over = handover_svc.handed_over_booking_ids(ids) if (set_account or set_project) else set()
@@ -495,6 +522,13 @@ def bookings_bulk_edit():
             if set_customer:
                 b.customer_id = new_customer_id
                 changed = True
+            if set_tax:
+                # Sammeländerung ist strenger als das Einzelformular: Buchungen aus Rechnungen
+                # behalten immer den Satz der Rechnung (tax_change_blocker), auch wenn sie offen sind.
+                if acc_svc.tax_change_blocker(b):
+                    tax_skipped += 1
+                elif acc_svc.set_booking_tax_rate(b, new_tax_rate, current_user.id):
+                    changed = True
             if locked and (set_account or set_project):
                 handed_over_skipped += 1
             if changed:
@@ -502,27 +536,9 @@ def bookings_bulk_edit():
         db.session.commit()
 
     table_ctx, _ = _bookings_table_ctx(request.form, bulk_done_count=updated,
-                                       bulk_handed_over_skipped=handed_over_skipped)
+                                       bulk_handed_over_skipped=handed_over_skipped,
+                                       bulk_tax_skipped=tax_skipped)
     return render_template("accounting/_bookings_table.html", **table_ctx)
-
-
-@bp.route("/bookings/post-open", methods=["POST"])
-@login_required
-def bookings_post_open():
-    """Alle offenen Buchungen bis heute sofort verbuchen (statt auf den nächtlichen Lauf zu warten).
-
-    ``next`` (nur Pfade dieser Seite) führt zurück, z. B. zur Prüfung des DATEV-Exports.
-    """
-    count = acc_svc.post_open_bookings()
-    if count:
-        flash(f"{count} Buchung(en) verbucht — Datum, Betrag, Belegnummer und Steuersatz sind jetzt "
-              "gesperrt; Korrekturen nur noch per Storno.", "success")
-    else:
-        flash("Es gab keine offenen Buchungen.", "info")
-    target = (request.form.get("next") or "").strip()
-    if not (target.startswith("/") and not target.startswith("//") and "\\" not in target):
-        target = url_for("accounting.bookings")
-    return redirect(target)
 
 
 # ---------------------------------------------------------------------------
@@ -605,13 +621,14 @@ def _booking_form_context(booking=None):
     )
 
 
-def _parse_booking_form(form, today, *, booking=None):
+def _parse_booking_form(form, today, *, booking=None, payment_lock=None):
     """Validiert + parst die Buchungs-Formulardaten.
 
     Liefert ``(data, errors)``. ``errors`` ist ein dict {feld → deutsche Meldung}
     und leer, wenn alles gueltig ist. Bei verbuchten Buchungen werden
     Datum/Betrag/Steuersatz/Belegnummer nicht geparst (gesperrt) — der Aufrufer
-    behaelt die bestehenden Werte.
+    behaelt die bestehenden Werte. ``payment_lock`` (``acc_svc.payment_lock``) haelt bei
+    offenen Zahlungs-/Bankimport-Buchungen den Betrag (bzw. auch Bank/Kasse) fest.
     """
     errors = {}
     is_verbucht = booking is not None and booking.status == Booking.STATUS_VERBUCHT
@@ -634,6 +651,8 @@ def _parse_booking_form(form, today, *, booking=None):
     data["project_id"] = _valid_fk(form.get("project_id"), Project)
     data["customer_id"] = _valid_fk(form.get("customer_id"), Customer)
     data["real_account_id"] = _valid_fk(form.get("real_account_id"), RealAccount)
+    if payment_lock and payment_lock[1] and booking is not None:
+        data["real_account_id"] = booking.real_account_id     # Bankimport: Konto steht am Auszug
 
     if not is_verbucht:
         # Datum (Pflicht, gueltig, nicht in der Zukunft, offenes Buchungsjahr)
@@ -655,10 +674,12 @@ def _parse_booking_form(form, today, *, booking=None):
                     errors["date"] = fy_error
         data["date"] = booking_date
 
-        # Betrag (Pflicht, gueltige Zahl, ungleich 0)
+        # Betrag (Pflicht, gueltige Zahl, ungleich 0) — bei Zahlungs-/Bankimport-Buchungen fest
         amount_raw = (form.get("amount") or "").strip().replace(",", ".")
         amount = None
-        if amount_raw == "":
+        if payment_lock and booking is not None:
+            amount = booking.amount
+        elif amount_raw == "":
             errors["amount"] = "Bitte einen Betrag eingeben."
         else:
             try:
@@ -669,17 +690,13 @@ def _parse_booking_form(form, today, *, booking=None):
             errors["amount"] = "Der Betrag darf nicht 0 sein."
         data["amount"] = amount
 
-        # Steuersatz (optional; 0/ungueltig/unbekannt → kein Steuersatz)
-        tax_rate_raw = (form.get("tax_rate") or "").strip().replace(",", ".")
-        try:
-            tax_rate = Decimal(tax_rate_raw) if tax_rate_raw else Decimal("0")
-        except (InvalidOperation, ValueError):
-            tax_rate = Decimal("0")
-        known_rates = set(tax_service.known_rate_values())
-        data["tax_rate"] = tax_rate if (tax_rate > 0 and tax_rate in known_rates) else None
-
         # Belegnummer (optional)
         data["reference"] = (form.get("reference") or "").strip()
+
+    # Steuersatz (optional; 0/ungueltig/unbekannt → kein Steuersatz). Auch bei verbuchten
+    # Buchungen: er aendert nur die Aufteilung Netto/Steuer, nie den Betrag — ob er sich aendern
+    # darf, entscheidet ``acc_svc.tax_change_blocker`` in ``booking_edit``.
+    data["tax_rate"] = _parse_tax_rate(form.get("tax_rate"))
 
     # Belege (Beleg-Auswahl): nur pruefen, verknuepft wird nach dem Speichern der Buchung.
     data["document_ids"], document_error = documents_svc.parse_document_ids(form.getlist("document_ids"))
@@ -687,6 +704,23 @@ def _parse_booking_form(form, today, *, booking=None):
         errors["document_ids"] = document_error
 
     return data, errors
+
+
+def _parse_tax_rate(raw):
+    """Steuersatz aus einem Formularwert: bekannter Satz > 0 als Decimal, sonst None (keine Steuer)."""
+    raw = (raw or "").strip().replace(",", ".")
+    try:
+        rate = Decimal(raw) if raw else Decimal("0")
+    except (InvalidOperation, ValueError):
+        return None
+    return rate if (rate > 0 and rate in set(tax_service.known_rate_values())) else None
+
+
+def _tax_blocker_for_form(booking):
+    """Sperrgrund fuer das Steuersatz-Feld: nur bei verbuchten Buchungen (offene sind frei)."""
+    if booking is None or booking.status != Booking.STATUS_VERBUCHT:
+        return None
+    return acc_svc.tax_change_blocker(booking)
 
 
 def _render_booking_form(*, booking, ctx, hx, keep_date="", form_data=None,
@@ -704,6 +738,10 @@ def _render_booking_form(*, booking, ctx, hx, keep_date="", form_data=None,
         booking=booking,
         is_modal=hx,
         is_verbucht=is_verbucht,
+        tax_blocker=_tax_blocker_for_form(booking),
+        payment_lock=(acc_svc.payment_lock(booking)
+                      if booking is not None and not is_verbucht else None),
+        vat_period_label=acc_svc.vat_period_label(booking.date) if is_verbucht else None,
         handover=handover,
         handover_lock_message=handover_svc.lock_message(handover) if handover else None,
         form_action_url=form_action_url,
@@ -714,6 +752,13 @@ def _render_booking_form(*, booking, ctx, hx, keep_date="", form_data=None,
         **_document_picker_ctx(form_data, entity_type="booking", entity=booking),
         **ctx,
     )
+
+
+def _flash_late_entry(booking_date):
+    """Nachbuchung in einen schon abgeschlossenen Voranmeldungszeitraum: erlaubt, aber mit Hinweis."""
+    warning = posting_svc.late_entry_warning(booking_date)
+    if warning:
+        flash(warning, "warning")
 
 
 def _booking_form_error(errors, form_data, *, booking, hx):
@@ -796,6 +841,7 @@ def booking_new():
         except documents_svc.DocumentError as exc:
             db.session.rollback()
             return _booking_form_error({"document_ids": str(exc)}, request.form, booking=None, hx=hx)
+        _flash_late_entry(b.date)
         action = request.form.get("action")
         if hx:
             return _booking_saved_response(
@@ -863,9 +909,10 @@ def booking_edit(booking_id):
         )
 
     is_verbucht = b.status == Booking.STATUS_VERBUCHT
+    payment_lock = None if is_verbucht else acc_svc.payment_lock(b)
 
     if request.method == "POST":
-        data, errors = _parse_booking_form(request.form, today, booking=b)
+        data, errors = _parse_booking_form(request.form, today, booking=b, payment_lock=payment_lock)
         # An die Steuerberatung übergeben: Konto, Bank/Kasse und Projekt sind gesperrt.
         handover = handover_svc.active_handover_for(b)
         if handover is not None and not errors:
@@ -873,11 +920,25 @@ def booking_edit(booking_id):
                 "account_id": data["account"].id,
                 "real_account_id": data["real_account_id"],
                 "project_id": data["project_id"],
+                "tax_rate": data["tax_rate"],
             }
             if handover_svc.locked_changes(b, requested):
                 errors["handover"] = handover_svc.lock_message(handover)
+        tax_blocker = _tax_blocker_for_form(b)
+        if (tax_blocker and not errors
+                and (data["tax_rate"] or None) != (b.tax_rate if b.tax_rate else None)):
+            errors["tax_rate"] = tax_blocker
         if errors:
             return _booking_form_error(errors, request.form, booking=b, hx=hx)
+        if not is_verbucht:
+            # Offen, aber nicht mehr am Erfassungstag: Änderungen ins Protokoll (BookingChange).
+            acc_svc.record_booking_changes(b, {
+                "date": data["date"], "amount": data["amount"], "reference": data["reference"],
+                "description": data["description"], "account_id": data["account"].id,
+                "real_account_id": data["real_account_id"], "project_id": data["project_id"],
+                "customer_id": data["customer_id"], "tax_rate": data["tax_rate"],
+            }, current_user.id)
+        date_changed = not is_verbucht and data["date"] != b.date
         b.account_id = data["account"].id
         b.description = data["description"]
         b.project_id = data["project_id"]
@@ -887,13 +948,17 @@ def booking_edit(booking_id):
             b.amount = data["amount"]
             b.date = data["date"]
             b.reference = data["reference"]
-            b.tax_rate = data["tax_rate"]
+        if not tax_blocker:
+            # verbucht → mit Eintrag im Änderungsprotokoll (BookingChange)
+            acc_svc.set_booking_tax_rate(b, data["tax_rate"], current_user.id)
         try:
             documents_svc.link_many(data["document_ids"], booking=b, user_id=current_user.id)
             db.session.commit()
         except documents_svc.DocumentError as exc:
             db.session.rollback()
             return _booking_form_error({"document_ids": str(exc)}, request.form, booking=b, hx=hx)
+        if date_changed:
+            _flash_late_entry(b.date)
         if hx:
             return _booking_saved_response(action="save")
         flash("Buchung aktualisiert.", "success")
@@ -901,6 +966,24 @@ def booking_edit(booking_id):
 
     ctx = _booking_form_context(booking=b)
     return _render_booking_form(booking=b, ctx=ctx, hx=hx)
+
+
+@bp.route("/bookings/removed")
+@login_required
+def booking_removals():
+    """Protokoll gelöschter Buchungen (``BookingRemoval``) eines Jahres — nur lesend."""
+    from app.models import BookingRemoval
+
+    year = request.args.get("year", date.today().year, type=int)
+    rows = (BookingRemoval.query
+            .filter(BookingRemoval.booking_date >= date(year, 1, 1),
+                    BookingRemoval.booking_date <= date(year, 12, 31))
+            .order_by(BookingRemoval.removed_at.desc(), BookingRemoval.id.desc())
+            .all())
+    years = sorted({y for (y,) in db.session.query(
+        func.extract("year", BookingRemoval.booking_date)).distinct() if y} | {year}, reverse=True)
+    return render_template("accounting/booking_removals.html", rows=rows, year=year,
+                           years=[int(y) for y in years])
 
 
 @bp.route("/bookings/<int:booking_id>/delete", methods=["POST"])
@@ -923,8 +1006,15 @@ def booking_delete(booking_id):
     if fy_locked:
         flash(f"Das Buchungsjahr {fy_locked.year} ist abgeschlossen. Diese Buchung kann nicht gelöscht werden.", "danger")
         return redirect(url_for("accounting.bookings"))
+    lock = acc_svc.payment_lock(b)
+    if lock:
+        # Löschen ließe Rechnung/Offenen Posten bzw. Kontoauszugszeile auf eine Buchung zeigen,
+        # die es nicht mehr gibt — Storno setzt beides sauber zurück.
+        flash("Diese Buchung kann nicht gelöscht werden: " + lock[0], "warning")
+        return redirect(url_for("accounting.bookings"))
     docs = [link.document for link in b.document_links]
     documents_svc.on_booking_deleted(booking=b, user_id=current_user.id)
+    acc_svc.record_booking_removal(booking=b, user_id=current_user.id)
     db.session.delete(b)
     db.session.commit()
     flash("Buchung gelöscht." + documents_svc.deleted_note(docs), "info")
@@ -1205,6 +1295,7 @@ def booking_group_new():
             return _render_new(form_data=request.form)
 
         flash("Sammelbuchung angelegt.", "success")
+        _flash_late_entry(group_date)
         if is_modal:
             return _modal_saved("closeBookingGroupModal", "bookingGroupSaved", group_id=group.id)
         return redirect(url_for("accounting.booking_group_edit", group_id=group.id))
@@ -1397,6 +1488,10 @@ def booking_group_edit(group_id):
         open_item_id = next(iter(existing_open_item_ids), None) if len(existing_open_item_ids) == 1 else None
 
         try:
+            # Abbild vor dem Ersetzen der Zeilen (nicht am Erfassungstag) — BookingRemoval.
+            from app.models import BookingRemoval
+            acc_svc.record_booking_removal(group=group, user_id=current_user.id,
+                                           reason=BookingRemoval.REASON_GROUP_REPLACED)
             # Header aktualisieren
             group.date = group_date
             group.description = description
@@ -1442,6 +1537,7 @@ def booking_group_edit(group_id):
             return _render_edit(form_data=request.form)
 
         flash("Sammelbuchung aktualisiert.", "success")
+        _flash_late_entry(group_date)
         if is_modal:
             return _modal_saved("closeBookingGroupModal", "bookingGroupSaved", group_id=group.id)
         return redirect(url_for("accounting.booking_group_edit", group_id=group.id))
@@ -1465,6 +1561,7 @@ def booking_group_delete(group_id):
     docs = [link.document for link in group.document_links]
     try:
         documents_svc.on_booking_deleted(group=group, user_id=current_user.id)
+        acc_svc.record_booking_removal(group=group, user_id=current_user.id)
         for child in list(group.children):
             db.session.delete(child)
         db.session.delete(group)
@@ -2953,8 +3050,14 @@ def ust():
     totals = acc_svc.ust_totals(year, quartal, month)
     default_year = date.today().year if date.today().year in vat_years else vat_years[0]
     has_filter = quartal != 0 or month != 0 or year != default_year
+    # „Zeitraum abschließen“: nur für einen Monat bzw. ein Quartal, wenn bis zu dessen Ende noch
+    # offene Buchungen stehen (verbucht wird alles bis zum Zeitraumende, auch Älteres).
+    close_open_count = (acc_svc.open_bookings_query(until=totals["date_to"]).count()
+                        if (quartal or month) else 0)
     return render_template(
         "accounting/ust.html",
+        close_open_count=close_open_count,
+        posting_lock=posting_svc.booking_lock_date(totals["date_to"]),
         year=year, quartal=quartal, month=month,
         period_key=acc_svc.ust_period_key(quartal, month),
         period_label=acc_svc.ust_period_label(year, quartal, month),
@@ -2969,6 +3072,30 @@ def ust():
         ust_brutto=totals["ust_brutto"], ust_netto=totals["ust_netto"],
         vst_brutto=totals["vst_brutto"], vst_netto=totals["vst_netto"],
     )
+
+
+@bp.route("/ust/close-period", methods=["POST"])
+@login_required
+def ust_close_period():
+    """„Zeitraum abschließen“: alle offenen Buchungen bis zum Ende des gewählten Monats bzw.
+    Quartals sofort verbuchen — nach Abgabe der Voranmeldung, statt bis zum Sperrtag zu warten."""
+    year = request.form.get("year", type=int)
+    quartal, month = acc_svc.parse_ust_period(request.form.get("period"))
+    if not year or not (quartal or month):
+        flash("Bitte einen Monat oder ein Quartal wählen.", "warning")
+        return redirect(url_for("accounting.ust"))
+    _date_from, date_to = acc_svc.ust_period(year, quartal, month)
+    label = acc_svc.ust_period_label(year, quartal, month)
+    posting_svc.mark_closed_until(date_to)    # Nachbuchungen dorthin bekommen einen Hinweis
+    count = acc_svc.post_open_bookings(until=date_to)
+    if count:
+        flash(f"{label} abgeschlossen: {count} Buchung(en) bis {date_to:%d.%m.%Y} verbucht — Datum, "
+              "Betrag, Belegnummer und Steuersatz sind jetzt gesperrt, Korrekturen nur noch per "
+              "Storno.", "success")
+    else:
+        flash(f"Bis {date_to:%d.%m.%Y} gab es keine offenen Buchungen mehr.", "info")
+    return redirect(url_for("accounting.ust", year=year,
+                            period=acc_svc.ust_period_key(quartal, month)))
 
 
 @bp.route("/ust/export")

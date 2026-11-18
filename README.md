@@ -162,7 +162,7 @@ Alle Befehle werden mit `flask --app run <befehl>` aufgerufen (lokal: `.venv/Scr
 
 | Befehl | Beschreibung |
 |--------|-------------|
-| `mark-posted` | Alle Buchungen mit Status `Offen` und Datum vor heute auf `Verbucht` setzen. Nützlich nach manuellem Jahresabschluss oder Datenimport. |
+| `mark-posted` | Offene Buchungen laut Einstellung (*Einstellungen → Buchhaltung → Buchungen festschreiben*) auf `Verbucht` setzen: je Voranmeldungszeitraum nach dem Sperrtag (Standard), täglich bis zum Vortag oder gar nicht. Läuft nächtlich über den Scheduler. |
 
 ### Daten-Export / Import
 

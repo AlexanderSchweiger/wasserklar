@@ -3204,6 +3204,9 @@ class Account(db.Model):
     ledger_account = db.Column(db.String(9), nullable=True)
     ledger_auto_tax = db.Column(db.Boolean, nullable=False, default=False,
                                 server_default=sa.false())
+    # Standard-Steuersatz für Buchungen auf dieses Konto (in %, NULL = keiner). Nur ein Vorschlag:
+    # Bankimport und Buchungsformular belegen damit vor, die Buchung trägt ihren eigenen Satz.
+    default_tax_rate = db.Column(db.Numeric(5, 2), nullable=True)
 
     bookings = db.relationship("Booking", backref="account", lazy="dynamic")
 
@@ -3249,6 +3252,108 @@ class Booking(db.Model):
 
     def __repr__(self):
         return f"<Booking {self.date} {self.amount}>"
+
+
+class BookingChange(db.Model):
+    """Änderungsprotokoll einer Buchung (append-only).
+
+    Festgehalten werden mit altem und neuem Wert (lesbar, z. B. Kontoname): Änderungen an einer
+    **offenen** Buchung ab dem Tag nach ihrer Erfassung (Buchungen bleiben bis zum Sperrtag des
+    Voranmeldungszeitraums änderbar, ``accounting/posting.py``) und an einer **verbuchten** der
+    Steuersatz (``accounting.services.set_booking_tax_rate``) — der ursprüngliche Inhalt bleibt so
+    feststellbar (§ 131 Abs. 1 Z 8 BAO, § 146 Abs. 4 AO). Schreibstelle:
+    ``accounting.services.record_booking_changes``.
+    """
+    __tablename__ = "booking_changes"
+
+    FIELD_TAX_RATE = "tax_rate"
+    FIELD_DATE = "date"
+    FIELD_AMOUNT = "amount"
+    FIELD_REFERENCE = "reference"
+    FIELD_DESCRIPTION = "description"
+    FIELD_ACCOUNT = "account_id"
+    FIELD_REAL_ACCOUNT = "real_account_id"
+    FIELD_PROJECT = "project_id"
+    FIELD_CUSTOMER = "customer_id"
+    FIELD_LABELS = {
+        FIELD_TAX_RATE: "Steuersatz", FIELD_DATE: "Datum", FIELD_AMOUNT: "Betrag",
+        FIELD_REFERENCE: "Belegnummer", FIELD_DESCRIPTION: "Beschreibung", FIELD_ACCOUNT: "Konto",
+        FIELD_REAL_ACCOUNT: "Bank/Kasse", FIELD_PROJECT: "Projekt", FIELD_CUSTOMER: "Kontakt",
+    }
+
+    id = db.Column(db.Integer, primary_key=True)
+    booking_id = db.Column(db.Integer, db.ForeignKey("bookings.id"), nullable=False, index=True)
+    field = db.Column(db.String(30), nullable=False)
+    old_value = db.Column(db.String(100), nullable=True)
+    new_value = db.Column(db.String(100), nullable=True)
+    changed_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    changed_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+
+    booking = db.relationship(
+        "Booking",
+        backref=db.backref("changes", lazy="select", order_by="BookingChange.id",
+                           cascade="all, delete-orphan"),
+    )
+    changed_by = db.relationship("User", foreign_keys=[changed_by_id])
+
+    def __repr__(self):
+        return f"<BookingChange {self.booking_id} {self.field}: {self.old_value} -> {self.new_value}>"
+
+    @property
+    def field_label(self):
+        return self.FIELD_LABELS.get(self.field, self.field)
+
+    def display_value(self, value):
+        """Anzeige eines gespeicherten Werts (Steuersatz mit %, leer = „—“ bzw. „ohne“)."""
+        if self.field == self.FIELD_TAX_RATE:
+            return f"{value} %" if value else "ohne"
+        return value if value not in (None, "") else "—"
+
+
+class BookingRemoval(db.Model):
+    """Protokoll einer gelöschten Buchung bzw. Sammelbuchung (append-only).
+
+    Offene Buchungen lassen sich bis zum Sperrtag löschen; geschieht das nicht mehr am Tag der
+    Erfassung, bleibt hier ein Abbild (``snapshot`` = JSON inkl. Kinder einer Sammelbuchung).
+    Ebenso, wenn das Bearbeiten einer Sammelbuchung ihre Zeilen ersetzt. Bewusst ohne
+    Fremdschlüssel auf die Buchung — das Protokoll überlebt sie. Schreibstelle:
+    ``accounting.services.record_booking_removal``.
+    """
+    __tablename__ = "booking_removals"
+
+    REASON_DELETED = "deleted"
+    REASON_GROUP_REPLACED = "group_replaced"
+    REASON_LABELS = {REASON_DELETED: "gelöscht", REASON_GROUP_REPLACED: "Zeilen ersetzt"}
+
+    id = db.Column(db.Integer, primary_key=True)
+    original_booking_id = db.Column(db.Integer, nullable=True)
+    original_group_id = db.Column(db.Integer, nullable=True)
+    reason = db.Column(db.String(30), nullable=False)
+    booking_date = db.Column(db.Date, nullable=False)
+    amount = db.Column(db.Numeric(12, 2), nullable=False)
+    description = db.Column(db.String(500), nullable=False)
+    reference = db.Column(db.String(100), nullable=True)
+    snapshot = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, nullable=True)   # Erfassung der gelöschten Buchung
+    removed_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    removed_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+
+    removed_by = db.relationship("User", foreign_keys=[removed_by_id])
+
+    @property
+    def reason_label(self):
+        return self.REASON_LABELS.get(self.reason, self.reason)
+
+    @property
+    def snapshot_data(self):
+        import json
+        try:
+            return json.loads(self.snapshot or "{}")
+        except ValueError:
+            return {}
+
+    def __repr__(self):
+        return f"<BookingRemoval {self.original_booking_id or self.original_group_id} {self.reason}>"
 
 
 class BookingGroup(db.Model):
@@ -4172,6 +4277,9 @@ class BankStatementLine(db.Model):
     match_type = db.Column(db.String(20))
 
     override_account_id = db.Column(db.Integer, db.ForeignKey("accounts.id"), nullable=True)
+    # Steuersatz der Buchung ohne Rechnung (in %). NULL = noch nicht gewählt → Standard-Steuersatz
+    # des Kontos; 0 = bewusst ohne Steuer (``bank_import.services.line_tax_rate``).
+    override_tax_rate = db.Column(db.Numeric(5, 2), nullable=True)
     selected = db.Column(db.Boolean, default=False, nullable=False)
     line_status = db.Column(db.String(20), default=STATUS_PENDING, nullable=False)
     booking_id = db.Column(db.Integer, db.ForeignKey("bookings.id"), nullable=True)

@@ -1,4 +1,4 @@
-{# Tab „Steuern": Steuersatz-Liste + Standard-USt fuer Wasser.
+{# Tab „Buchhaltung": Steuersatz-Liste + Standard-USt fuer Wasser.
    Wird nach dem Speichern im Steuersatz-Modal per htmx neu geladen
    (settings.tax_rates_card, outerHTML auf #taxRatesCard) — die
    Einstellungsseite bleibt stehen, ungespeicherte Eingaben gehen nicht
@@ -10,7 +10,7 @@
 <div id="taxRatesCard">
   {# Meldungen nur beim Fragment-Neuladen (nach dem Modal) — beim Voll-Render
      zeigt base.html sie; sonst stand jede Meldung der Einstellungsseite doppelt
-     da (eine davon versteckt im Reiter „Steuern“). #}
+     da (eine davon versteckt im Reiter „Buchhaltung“). #}
   {% if tax_card_fragment is defined and tax_card_fragment %}
   {% include "_flash_inline.html" %}
   {% endif %}

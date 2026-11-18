@@ -1,0 +1,161 @@
+{# Tab „Buchhaltung": wann Buchungen automatisch verbucht (festgeschrieben) werden.
+   Regeln: app/accounting/posting.py. Gehört zum umschließenden Einstellungsformular
+   („Einstellungen speichern"); gespeichert wird nur mit dem Marker posting_fields=1.
+   Erwartet: posting (PostingSettings), posting_example. #}
+<div class="card mt-3" id="posting-card">
+  <div class="card-header">
+    <h3 class="card-title"><i class="fas fa-lock me-1"></i> Buchungen festschreiben</h3>
+  </div>
+  <div class="card-body">
+    <input type="hidden" name="posting_fields" value="1">
+    <input type="hidden" name="posting_lock_day_default" value="{{ posting.default_lock_day }}">
+    <input type="hidden" name="posting_lock_month_offset_default" value="{{ posting.default_month_offset }}">
+    <p class="text-muted small mb-3">
+      Offene Buchungen lassen sich frei korrigieren oder löschen. Sind sie <strong>verbucht</strong>,
+      sind Datum, Betrag und Belegnummer gesperrt und Korrekturen gehen nur noch per Storno — so bleibt
+      eine abgegebene Umsatzsteuer-Voranmeldung unverändert. Ein Export für die Steuerberatung (z. B. DATEV) und
+      „Zeitraum abschließen“ in der USt-Voranmeldung verbuchen immer sofort.
+    </p>
+
+    <div class="mb-3">
+      <label class="form-label">Automatisch verbuchen</label>
+      <div class="form-selectgroup form-selectgroup-boxes d-flex flex-column flex-md-row gap-2">
+        <label class="form-selectgroup-item flex-fill">
+          <input type="radio" name="posting_mode" value="period" class="form-selectgroup-input"
+                 {{ 'checked' if posting.mode == 'period' or posting.off_blocked }}>
+          <span class="form-selectgroup-label d-flex align-items-start p-3 text-start">
+            <span>
+              <strong>Je Voranmeldungszeitraum</strong> <span class="badge bg-green-lt ms-1">empfohlen</span>
+              <span class="d-block small text-secondary mt-1">Monat bzw. Quartal wie oben eingestellt,
+                gesperrt am Sperrtag danach.</span>
+            </span>
+          </span>
+        </label>
+        <label class="form-selectgroup-item flex-fill">
+          <input type="radio" name="posting_mode" value="daily" class="form-selectgroup-input"
+                 {{ 'checked' if posting.mode == 'daily' }}>
+          <span class="form-selectgroup-label d-flex align-items-start p-3 text-start">
+            <span>
+              <strong>Täglich über Nacht</strong>
+              <span class="d-block small text-secondary mt-1">Jede Buchung wird in der Nacht nach ihrem
+                Buchungsdatum gesperrt.</span>
+            </span>
+          </span>
+        </label>
+        <label class="form-selectgroup-item flex-fill">
+          <input type="radio" name="posting_mode" value="off" class="form-selectgroup-input"
+                 {{ 'checked' if posting.mode == 'off' and not posting.off_blocked }}
+                 {{ 'disabled' if posting.handover_active }}>
+          <span class="form-selectgroup-label d-flex align-items-start p-3 text-start">
+            <span>
+              <strong>Aus</strong> <span class="badge bg-orange-lt ms-1">nicht empfohlen</span>
+              <span class="d-block small text-secondary mt-1">
+                {% if posting.handover_active %}Nicht möglich, solange eine Übergabe an die
+                  Steuerberatung eingeschaltet ist.{% else %}Buchungen bleiben offen, bis Sie einen
+                  Zeitraum abschließen oder das Buchungsjahr abschließen.{% endif %}
+              </span>
+            </span>
+          </span>
+        </label>
+      </div>
+      {% if posting.off_blocked %}
+      <div class="form-text text-warning">„Aus“ war gewählt, gilt aber nicht, solange eine Übergabe an die
+        Steuerberatung eingeschaltet ist — es wird je Voranmeldungszeitraum verbucht.</div>
+      {% endif %}
+    </div>
+
+    <div class="row g-3 align-items-end" id="posting-lock-fields">
+      <div class="col-6 col-md-3">
+        <label class="form-label" for="posting_lock_day">Sperrtag</label>
+        <div class="input-group">
+          <input type="number" class="form-control" id="posting_lock_day" name="posting_lock_day"
+                 min="1" max="28" step="1" value="{{ posting.lock_day }}">
+          <span class="input-group-text">.</span>
+        </div>
+      </div>
+      <div class="col-6 col-md-4">
+        <label class="form-label" for="posting_lock_month_offset">im</label>
+        <select class="form-select" id="posting_lock_month_offset" name="posting_lock_month_offset">
+          <option value="1" {{ 'selected' if posting.month_offset == 1 }}>Folgemonat</option>
+          <option value="2" {{ 'selected' if posting.month_offset == 2 }}>zweitfolgenden Monat</option>
+        </select>
+      </div>
+      <div class="col-md-5">
+        <div class="form-text">
+          Vorgabe für {{ country_profile.name }}: {{ posting.default_lock_day }}. des
+          {{ 'Folgemonats' if posting.default_month_offset == 1 else 'zweitfolgenden Monats' }}.
+          {% if country_profile.code == 'DE' %}Mit Dauerfristverlängerung: zweitfolgender Monat.{% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="alert alert-info mt-3 mb-0 py-2" id="posting-example" role="status">
+      <i class="fas fa-info-circle me-1"></i> <span data-posting-example>{{ posting_example }}</span>
+    </div>
+    <div class="alert alert-warning mt-2 mb-0 py-2{{ '' if posting.mode == 'off' and not posting.off_blocked else ' d-none' }}"
+         id="posting-off-warning" role="alert">
+      <i class="fas fa-exclamation-triangle me-1"></i> Ohne automatisches Verbuchen bleiben Buchungen
+      änderbar, bis Sie in der USt-Voranmeldung einen Zeitraum abschließen oder das Buchungsjahr
+      abschließen. Ändert sich eine Buchung nach Abgabe der Voranmeldung, stimmt diese nicht mehr.
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  // Beispielsatz live nachrechnen (dieselbe Regel wie app/accounting/posting.py).
+  var card = document.getElementById("posting-card");
+  if (!card || card._wkPostingBound) return;
+  card._wkPostingBound = true;
+  var form = card.closest("form");
+  var MONTHS = ["{{ term('january') }}", "Februar", "März", "April", "Mai", "Juni", "Juli",
+                "August", "September", "Oktober", "November", "Dezember"];
+  var TODAY = new Date({{ today.year }}, {{ today.month - 1 }}, {{ today.day }});
+
+  function pad(n) { return (n < 10 ? "0" : "") + n; }
+  function fmt(d) { return pad(d.getDate()) + "." + pad(d.getMonth() + 1) + "." + d.getFullYear(); }
+  function periodEnd(d, monthly) {
+    var startMonth = monthly ? d.getMonth() : Math.floor(d.getMonth() / 3) * 3;
+    var endMonth = startMonth + (monthly ? 0 : 2);
+    return new Date(d.getFullYear(), endMonth + 1, 0);
+  }
+  function lockDate(end, day, offset) { return new Date(end.getFullYear(), end.getMonth() + offset, day); }
+  function label(end, monthly) {
+    return monthly ? MONTHS[end.getMonth()] + " " + end.getFullYear()
+                   : "Q" + (Math.floor(end.getMonth() / 3) + 1) + "/" + end.getFullYear();
+  }
+
+  function update() {
+    var modeInput = card.querySelector("input[name=posting_mode]:checked");
+    var mode = modeInput ? modeInput.value : "period";
+    var periodSel = form && form.querySelector("select[name=tax_vat_return_period]");
+    var monthly = periodSel ? periodSel.value === "month" : {{ 'true' if posting.period == 'month' else 'false' }};
+    var day = parseInt(card.querySelector("#posting_lock_day").value, 10);
+    var offset = parseInt(card.querySelector("#posting_lock_month_offset").value, 10);
+    var out = card.querySelector("[data-posting-example]");
+    card.querySelector("#posting-lock-fields").classList.toggle("opacity-50", mode !== "period");
+    card.querySelector("#posting-off-warning").classList.toggle("d-none", mode !== "off");
+    if (mode === "off") { out.textContent = "Buchungen werden nicht automatisch verbucht."; return; }
+    if (mode === "daily") {
+      out.textContent = "Jede Buchung wird in der Nacht nach ihrem Buchungsdatum verbucht."; return;
+    }
+    if (!(day >= 1 && day <= 28)) { out.textContent = "Bitte einen Sperrtag zwischen 1 und 28 eingeben."; return; }
+    // Spätestes gesperrtes Zeitraumende, dann der nächste Zeitraum.
+    var end = periodEnd(TODAY, monthly);
+    for (var i = 0; i < 12 && lockDate(end, day, offset) >= TODAY; i++) {
+      end = new Date(end.getFullYear(), end.getMonth() - (monthly ? 1 : 3) + 1, 0);
+    }
+    var next = periodEnd(new Date(end.getFullYear(), end.getMonth() + 1, 1), monthly);
+    out.textContent = label(next, monthly) + " wird am Ende des " + fmt(lockDate(next, day, offset))
+      + " verbucht und ist ab dann gesperrt.";
+  }
+
+  card.addEventListener("change", update);
+  card.addEventListener("input", update);
+  if (form) {
+    var periodSel = form.querySelector("select[name=tax_vat_return_period]");
+    if (periodSel) periodSel.addEventListener("change", update);
+  }
+  update();
+})();
+</script>

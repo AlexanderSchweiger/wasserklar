@@ -289,6 +289,8 @@ def create_app(config_name=None):
                                  display_label as _tax_rate_display)
     app.jinja_env.globals["tax_rate_label"] = _tax_rate_label
     app.jinja_env.globals["tax_rate_display"] = _tax_rate_display
+    from app.tax_service import tax_rates as _tax_rate_options
+    app.jinja_env.globals["tax_rate_options"] = _tax_rate_options
 
     # Individuelle Gebuehren (Kunde/Objekt): Formularzeilen + Anzeige.
     from app.invoices.charges import (minimum_override_rows as _minimum_rows,
@@ -320,6 +322,12 @@ def create_app(config_name=None):
     app.jinja_env.globals["handover_format_info"] = _handover.active_format_info
     app.jinja_env.globals["handover_formats"] = _handover.available_formats
     app.jinja_env.globals["handover_default_tax_keys"] = _handover.default_tax_keys
+
+    # Festschreiben je Voranmeldungszeitraum: „änderbar bis …“ an offenen Buchungen.
+    from app.accounting import posting as _posting
+    app.jinja_env.globals["posting_open_hint"] = _posting.open_hint
+    app.jinja_env.globals["posting_lock_date"] = _posting.booking_lock_date
+    app.jinja_env.globals["posting_late_entry"] = _posting.late_entry_context
 
     # Zu grosser Upload (Request ueber der Grenze, siehe _limit_document_uploads): deutsche
     # Meldung, fuer fetch (Beleg-Upload) als JSON, sonst als Hinweis auf der Belegseite.

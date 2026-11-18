@@ -8,6 +8,7 @@ from app.accounting.services import (
 )
 from app.extensions import db
 from app.models import (
+    Account,
     BankStatement,
     BankStatementLine,
     Booking,
@@ -22,7 +23,26 @@ def _as_decimal(value) -> Decimal:
     return Decimal(str(value))
 
 
-def _book_against_op(op, amount, line, stmt, user_id, account_override=None):
+def account_default_tax(account_id):
+    """Standard-Steuersatz des Kontos (Decimal > 0) oder None."""
+    account = db.session.get(Account, account_id) if account_id else None
+    rate = account.default_tax_rate if account is not None else None
+    return rate if rate else None
+
+
+def line_tax_rate(line, account_id):
+    """Steuersatz, mit dem eine Zeile **ohne Rechnung** gebucht wird.
+
+    Im Import gewählter Satz (``override_tax_rate``; 0 = bewusst ohne Steuer) vor dem
+    Standard-Steuersatz des Kontos. Liefert Decimal > 0 oder None (keine Steuer). Rechnungs-
+    Zahlungen bekommen ihre Sätze immer aus den Rechnungspositionen, nie von hier.
+    """
+    if line.override_tax_rate is not None:
+        return line.override_tax_rate if line.override_tax_rate > 0 else None
+    return account_default_tax(account_id)
+
+
+def _book_against_op(op, amount, line, stmt, user_id, account_override=None, tax_rate=None):
     """Verbucht ``amount`` gegen den offenen Posten ``op`` und aktualisiert dessen
     Status. Gemeinsamer Kern fuer die 1:1-Zuordnung und die Aufteilung.
 
@@ -64,6 +84,7 @@ def _book_against_op(op, amount, line, stmt, user_id, account_override=None):
             real_account_id=stmt.real_account_id,
             customer_id=op.customer_id,
             open_item_id=op.id,
+            tax_rate=tax_rate,
             created_by_id=user_id,
         )
         db.session.add(booking)
@@ -89,7 +110,8 @@ def _commit_with_op(line: BankStatementLine, stmt: BankStatement, user_id: int) 
     if op is None:
         raise ValueError(f"Offener Posten #{line.matched_open_item_id} nicht gefunden")
     group_id, booking_id = _book_against_op(
-        op, line.amount, line, stmt, user_id, account_override=line.override_account_id
+        op, line.amount, line, stmt, user_id, account_override=line.override_account_id,
+        tax_rate=line_tax_rate(line, line.override_account_id or op.account_id),
     )
     line.booking_group_id = group_id
     line.booking_id = booking_id
@@ -135,7 +157,8 @@ def _commit_split(line: BankStatementLine, stmt: BankStatement, user_id: int) ->
             # a.account_id = im Aufteilen-Modal gewaehltes Ersatzkonto fuer
             # Posten ohne (vollstaendige) Kontierung.
             group_id, booking_id = _book_against_op(
-                op, amt, line, stmt, user_id, account_override=a.account_id
+                op, amt, line, stmt, user_id, account_override=a.account_id,
+                tax_rate=account_default_tax(a.account_id or op.account_id),
             )
             created.append((booking_id, group_id))
         elif a.account_id:
@@ -148,6 +171,7 @@ def _commit_split(line: BankStatementLine, stmt: BankStatement, user_id: int) ->
                 reference=line.end_to_end_id or None,
                 real_account_id=stmt.real_account_id,
                 customer_id=line.matched_customer_id,
+                tax_rate=account_default_tax(a.account_id),
                 created_by_id=user_id,
             )
             db.session.add(booking)
@@ -173,6 +197,7 @@ def _commit_without_op(line: BankStatementLine, stmt: BankStatement, user_id: in
         reference=line.end_to_end_id or None,
         real_account_id=stmt.real_account_id,
         customer_id=line.matched_customer_id,
+        tax_rate=line_tax_rate(line, line.override_account_id),
         created_by_id=user_id,
     )
     db.session.add(booking)

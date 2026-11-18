@@ -1,13 +1,21 @@
 {# Gemeinsamer Formular-Rumpf fuer den Storno-Dialog (Rechnung stornieren) und
    das nachtraegliche Ausstellen einer Storno-Rechnung.
 
-   Erwartet: invoice, refund_suggestion, suffix, with_toggle (bool).
-   ``with_toggle`` blendet die Auswahl „Gutschrift erstellen ja/nein" ein — beim
-   nachtraeglichen Ausstellen gibt es nichts zu waehlen.
+   Erwartet: invoice, refund_suggestion, suffix, with_toggle (bool),
+   with_payment_toggle (bool, Schalter „Zahlung nie eingegangen"),
+   optional storno_booked_amount (wirksame Buchungen auf dem Beleg, nur im
+   Storno-Dialog relevant) und reversed_payment (beim Stornieren nach alter
+   Regel mitstornierte Zahlung, nur im Nachtrags-Dialog relevant).
+   ``with_toggle`` blendet die Auswahl „Gutschrift erstellen ja/nein" ein,
+   ``with_payment_toggle`` den Schalter „Zahlung nie eingegangen" (auch beim
+   Storno einer Gutschrift) — beim nachtraeglichen Ausstellen ist die
+   Rechnung schon storniert, beides entfaellt.
 
-   Kein Betragsfeld: der Rueckzahlbetrag wird abgeleitet (was tatsaechlich auf
-   die Rechnung geflossen ist) und erst beim Versenden der Gutschrift zum
-   Offenen Posten. Hier steht er nur als Vorschau. #}
+   Kein Betragsfeld: der Rueckzahlbetrag wird abgeleitet (was wirksam auf
+   die Rechnung gebucht ist — der Storno laesst eine echte Zahlung stehen)
+   und erst beim Versenden der Gutschrift zum Offenen Posten. Hier steht er
+   nur als Vorschau. #}
+{% set booked = storno_booked_amount or 0 %}
 <div class="mb-3">
   <label class="form-label" for="stornoReason{{ suffix }}">Storno-Grund</label>
   <textarea class="form-control" rows="2" id="stornoReason{{ suffix }}"
@@ -17,6 +25,32 @@
     Erscheint auf der Storno-Rechnung und als Grund bei den Storno-Buchungen.
   </div>
 </div>
+
+{% if with_payment_toggle and booked != 0 %}
+<label class="form-check form-switch mb-3">
+  <input class="form-check-input" type="checkbox" name="payment_not_received"
+         value="1" id="paymentNotReceived{{ suffix }}">
+  <span class="form-check-label">
+    {% if invoice.is_credit_note %}
+    <strong>Die Rückzahlung ist nie erfolgt</strong>
+    <span class="d-block form-hint">
+      Nur wählen, wenn die Rücküberweisung irrtümlich gebucht wurde. Die
+      Buchungen der Gutschrift werden dann mitstorniert. Ist das Geld wirklich
+      an den Kunden gegangen, bleibt die Buchung stehen.
+    </span>
+    {% else %}
+    <strong>Die Zahlung ist nie eingegangen</strong>
+    <span class="d-block form-hint">
+      Nur wählen, wenn die Rechnung irrtümlich als bezahlt erfasst wurde. Die
+      Zahlungsbuchungen ({{ booked|de_number }} €) werden dann mitstorniert und
+      es entsteht kein Rückzahlungs-Posten. Ist das Geld auf Ihrem Konto,
+      bleibt die Zahlung als Einnahme stehen — die Rücküberweisung gleicht sie
+      später aus.
+    </span>
+    {% endif %}
+  </span>
+</label>
+{% endif %}
 
 {% if with_toggle %}
 <label class="form-check form-switch mb-3">
@@ -34,17 +68,47 @@
 </label>
 {% endif %}
 
+{% if not invoice.is_credit_note %}
 <div id="creditNoteFields{{ suffix }}">
-  <div class="alert alert-info py-2 px-3 mb-0 small">
-    {% if refund_suggestion and refund_suggestion > 0 %}
+  {% if refund_suggestion and refund_suggestion > 0 %}
+  <div class="alert alert-info py-2 px-3 mb-0 small" id="refundInfo{{ suffix }}">
     <i class="fas fa-info-circle me-1"></i>
     Auf die Rechnung wurden bereits <strong>{{ refund_suggestion|de_number }} €</strong>
-    bezahlt. Sobald Sie die Gutschrift versenden (Status „Versendet"), entsteht
-    dafür ein <strong>Rückzahlungs-Posten</strong> unter Offene Posten. Nach Ihrer
+    bezahlt. Die Zahlung bleibt als Einnahme gebucht. Sobald Sie die Gutschrift
+    versenden (Status „Versendet"), entsteht dafür ein
+    <strong>Rückzahlungs-Posten</strong> unter Offene Posten. Nach Ihrer
     Rücküberweisung ordnet der Bankauszug-Import die Abbuchung automatisch zu.
-    {% else %}
-    <i class="fas fa-info-circle me-1"></i>
-    Die Rechnung wurde noch nicht bezahlt — es entsteht kein Rückzahlungs-Posten.
-    {% endif %}
   </div>
+  {% if with_toggle and not invoice.is_credit_note %}
+  <div class="alert alert-secondary py-2 px-3 mb-0 small" id="noRefundInfo{{ suffix }}" hidden>
+    <i class="fas fa-info-circle me-1"></i>
+    Die Zahlungsbuchungen werden storniert — es entsteht kein Rückzahlungs-Posten.
+  </div>
+  {% endif %}
+  {% elif reversed_payment and reversed_payment > 0 %}
+  <div class="alert alert-warning py-2 px-3 mb-0 small">
+    <i class="fas fa-exclamation-triangle me-1"></i>
+    Die Zahlung über <strong>{{ reversed_payment|de_number }} €</strong> wurde beim
+    Stornieren mitstorniert — in der Buchhaltung ist sie damit schon ausgebucht,
+    es entsteht kein Rückzahlungs-Posten. Wenn Sie das Geld zurücküberweisen,
+    buchen Sie die Abbuchung <strong>nicht</strong> ein zweites Mal (Zeile im
+    Bankauszug-Import überspringen), sonst steht die Rückzahlung doppelt in der
+    Buchhaltung.
+  </div>
+  {% else %}
+  <div class="alert alert-info py-2 px-3 mb-0 small">
+    <i class="fas fa-info-circle me-1"></i>
+    Auf die Rechnung ist nichts bezahlt — es entsteht kein Rückzahlungs-Posten.
+  </div>
+  {% endif %}
 </div>
+{% endif %}
+
+{% if with_toggle and not invoice.is_credit_note and refund_suggestion and refund_suggestion > 0 %}
+<div class="alert alert-warning py-2 px-3 mt-2 mb-0 small" id="paymentKeptInfo{{ suffix }}" hidden>
+  <i class="fas fa-exclamation-triangle me-1"></i>
+  Ohne Gutschrift bleibt die Zahlung über {{ refund_suggestion|de_number }} € als
+  Einnahme gebucht und es gibt keinen Rückzahlungs-Posten. Für eine
+  Rücküberweisung bitte die Gutschrift erstellen.
+</div>
+{% endif %}

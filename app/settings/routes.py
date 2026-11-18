@@ -9,6 +9,7 @@ from flask_login import login_required, current_user
 from app import country as country_mod
 from app import tax_service
 from app.accounting import handover as handover_svc
+from app.accounting import posting as posting_svc
 from app.settings import bp
 from app.extensions import db
 from app.models import AppSetting, TaxRate
@@ -244,6 +245,11 @@ def index():
         if vat_period in tax_service.VAT_RETURN_PERIODS:
             AppSetting.set(tax_service.VAT_RETURN_PERIOD_KEY, vat_period)
 
+        # Buchungen festschreiben (Karte „Buchungen festschreiben“, nur mit Marker) — nach dem
+        # Übergabeformat, weil „Aus“ nur ohne aktive Übergabe gilt.
+        for msg, category in posting_svc.save_from_form(request.form):
+            flash(msg, category)
+
         # WG-Kontaktdaten — nur gesendete Felder (ein ausgeblendetes Feld leert nichts).
         for attr in _WG_MAP:
             if f'wg_{attr}' not in request.form:
@@ -348,7 +354,7 @@ def index():
             msg = f'Land auf {name} umgestellt'
             msg += f' – {country_summary}.' if country_summary else '.'
             flash(msg + ' Nicht benötigte Steuersätze lassen sich unter '
-                        '„Steuern" deaktivieren.', 'info')
+                        '„Buchhaltung" deaktivieren.', 'info')
         return redirect(settings_url(request.form.get('active_tab')))
 
     # Aktuelle Werte für das Formular zusammenstellen (DB > .env-Fallback)
@@ -434,6 +440,9 @@ def index():
                                'attribution': AppSetting.get('map.ortho_attribution') or '',
                            },
                            **_tax_card_context(),
+                           posting=posting_svc.settings(),
+                           posting_example=posting_svc.example_sentence(),
+                           today=date.today(),
                            **invoice_layout.form_context(),
                            meter_replacement_interval=meter_replacement_interval())
 
@@ -501,7 +510,7 @@ def send_test_mail():
 
 
 # ---------------------------------------------------------------------------
-# Steuersaetze (Tab „Steuern")
+# Steuersaetze (Tab „Buchhaltung")
 # ---------------------------------------------------------------------------
 
 def _tax_card_context():

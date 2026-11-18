@@ -22,6 +22,20 @@
 </div>
 {% endif %}
 
+{# ── Vorwarnung: offene Buchungen werden bald verbucht (app/accounting/posting.py) ── #}
+{% if posting_next and posting_next.warn %}
+{% set pn = posting_next %}
+<div class="alert alert-warning d-flex align-items-center" role="alert" id="dashboard-posting-warning">
+  <i class="fas fa-lock me-2"></i>
+  <div class="flex-fill">
+    <strong>Am Ende des {{ pn.lock_date.strftime('%d.%m.%Y') }}</strong> werden {{ pn.due_count }} offene
+    Buchung(en) bis {{ pn.period_end.strftime('%d.%m.%Y') }} ({{ pn.period_label }}) verbucht — danach
+    lassen sie sich nur noch per Storno korrigieren.
+    <a href="{{ url_for('accounting.bookings', year=pn.period_end.year) }}" class="alert-link">Buchungen prüfen</a>
+  </div>
+</div>
+{% endif %}
+
 {# ── Abrechnungs-Fortschritt der aktiven Periode ──────────────────────────
    Prominente „Wie weit bin ich?"-Kachel gegen den Übersichtsverlust beim
    Verrechnen aller Kunden: abgerechnet → versendet → bezahlt, mit direktem

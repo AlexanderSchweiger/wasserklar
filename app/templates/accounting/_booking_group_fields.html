@@ -35,7 +35,7 @@
     </div>
     <div class="col-md-1">
       <label class="small">MwSt</label>
-      {# Nur die unter Einstellungen → Steuern hinterlegten Sätze (wie die Einzelbuchung).
+      {# Nur die unter Einstellungen → Buchhaltung hinterlegten Sätze (wie die Einzelbuchung).
          Numerischer Vergleich: DB liefert 20.00, Formular-Redisplay „20". #}
       {% set _cur = tax_rate|string|trim %}
       <select name="child_tax_rate[]" class="form-select form-select-sm">
@@ -103,6 +103,7 @@
       <input type="text" name="reference" class="form-control" value="{{ hdr_reference }}">
     </div>
   </div>
+  {% include "accounting/_late_entry_hint.html" %}
 
   <div class="row g-3 mt-1">
     <div class="col-12 col-sm-4">

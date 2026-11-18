@@ -1,4 +1,4 @@
-"""HTTP: Land + Steuersaetze in den Einstellungen (Tab „Mandant"/„Steuern")."""
+"""HTTP: Land + Steuersaetze in den Einstellungen (Tab „Mandant"/„Buchhaltung")."""
 import json
 from decimal import Decimal
 

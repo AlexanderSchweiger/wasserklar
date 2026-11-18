@@ -167,14 +167,25 @@ class TestBookingSideEffects:
         _set(client, iid, Invoice.STATUS_PAID)
         assert len(_active_bookings(iid)) == 1
 
-    def test_cancel_reverses_booking(self, client, admin, draft):
-        """Storno einer bezahlten Rechnung wickelt die Buchung ab (keine Phantom-Einnahme)."""
+    def test_cancel_keeps_real_payment(self, client, admin, draft):
+        """Storno einer bezahlten Rechnung laesst die Zahlung stehen — das Geld
+        ist eingegangen; ausgeglichen wird erst durch die Rueckueberweisung."""
+        _login(client)
+        iid = draft.id
+        _set(client, iid, Invoice.STATUS_SENT)
+        _set(client, iid, Invoice.STATUS_PAID)
+        _set(client, iid, Invoice.STATUS_CANCELLED)
+        assert db.session.get(Invoice, iid).status == Invoice.STATUS_CANCELLED
+        assert len(_active_bookings(iid)) == 1
+
+    def test_cancel_reverses_booking_when_not_received(self, client, admin, draft):
+        """„Zahlung nie eingegangen": Storno wickelt die Buchung ab (keine Phantom-Einnahme)."""
         _login(client)
         iid = draft.id
         _set(client, iid, Invoice.STATUS_SENT)
         _set(client, iid, Invoice.STATUS_PAID)
         assert len(_active_bookings(iid)) == 1
-        _set(client, iid, Invoice.STATUS_CANCELLED)
+        _set(client, iid, Invoice.STATUS_CANCELLED, payment_not_received="1")
         inv = db.session.get(Invoice, iid)
         assert inv.status == Invoice.STATUS_CANCELLED
         # Original storniert, Storno-Partner hebt es auf -> Netto 0 wirksam.

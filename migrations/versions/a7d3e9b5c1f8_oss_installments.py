@@ -14,7 +14,7 @@
 Regeln in ``app/installments/``. Alle FKs/Indizes benannt.
 
 Revision ID: a7d3e9b5c1f8
-Revises: f6d2b8a4c0e7
+Revises: d8b4f2a6e1c9
 Create Date: 2026-11-08
 """
 from alembic import op
@@ -22,7 +22,7 @@ import sqlalchemy as sa
 
 
 revision = "a7d3e9b5c1f8"
-down_revision = "f6d2b8a4c0e7"
+down_revision = "d8b4f2a6e1c9"
 branch_labels = None
 depends_on = None
 

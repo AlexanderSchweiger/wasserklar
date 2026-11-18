@@ -71,7 +71,7 @@ def _credit_note_flash(credit_note):
                 f"{_de_money(refund)} €, dem der Bankauszug-Import Ihre "
                 f"Rücküberweisung automatisch zuordnet.")
     else:
-        msg += " (keine Rückzahlung nötig — die Rechnung war unbezahlt)."
+        msg += " (keine Rückzahlung nötig — auf die Rechnung ist nichts bezahlt)."
     return msg
 
 
@@ -1180,7 +1180,9 @@ def detail(invoice_id):
     editor_accounts = accounts
     # Storno-Dialog: darf eine Gutschrift ausgestellt werden, und ueber
     # welchen Betrag? (Vorschlag = bereits geflossene Zahlung.)
-    from app.invoices.credit_note import credit_note_blocker, refund_suggestion
+    from app.invoices.credit_note import (
+        credit_note_blocker, refund_suggestion, reversed_payment_amount,
+    )
 
     # Aktions-Card: konkreter Grund, warum der E-Mail-Versand gerade nicht
     # moeglich ist (fehlende Adresse / keine Einwilligung / Sperrliste) —
@@ -1235,6 +1237,15 @@ def detail(invoice_id):
         # bestehende Gutschrift zurueckzahlt, liefert ``invoice.refund_amount``
         # direkt im Template.)
         refund_suggestion=refund_suggestion(invoice),
+        # Wirksame Buchungen auf diesem Beleg (Zahlung bzw. bei einer
+        # Gutschrift die Rueckueberweisung) — nur dann bietet der Storno-Dialog
+        # „nie eingegangen, mitstornieren" an.
+        storno_booked_amount=Decimal(str(invoice.paid_amount or 0)),
+        # Nachtraegliche Gutschrift zu einer Rechnung, deren Zahlung beim
+        # Stornieren (alte Regel) mitstorniert wurde — Hinweis im Dialog.
+        reversed_payment=(reversed_payment_amount(invoice)
+                          if invoice.status == Invoice.STATUS_CANCELLED
+                          else Decimal("0")),
         email_blocked_reason=email_blocked_reason,
         meter_statement=meter_statement.statement_for(invoice),
     )
@@ -1681,6 +1692,7 @@ def set_status(invoice_id):
 
     credit_note = None
     credit_note_skipped = None
+    payment_kept_hint = None
     try:
         if new_status == Invoice.STATUS_SENT:
             invoice.status = new_status
@@ -1704,16 +1716,21 @@ def set_status(invoice_id):
             if blocker:
                 raise ValueError(blocker)
 
-            # Verknüpfte Buchungen rückabwickeln, sonst bleibt eine zuvor
-            # erzeugte Zahlungsbuchung als Phantom-Einnahme in den Auswertungen.
-            from app.accounting import services as acc_svc
-            err = acc_svc.storno_invoice_bookings(
-                invoice,
-                reason=storno_reason or f"Storno Rechnung {invoice.invoice_number}",
-                created_by_id=current_user.id,
-            )
-            if err:
-                raise ValueError(err)
+            # Zahlungsbuchungen bleiben stehen: das Geld ist eingegangen, erst
+            # die Rueckueberweisung auf den Posten der Gutschrift gleicht sie
+            # aus (siehe credit_note.py „Zahlung bleibt stehen"). Mitstorniert
+            # wird nur, wenn die Zahlung nie eingegangen ist (irrtuemlich als
+            # bezahlt erfasst) — sonst stuende die Rueckzahlung doppelt in der
+            # Buchhaltung.
+            if request.form.get("payment_not_received") == "1":
+                from app.accounting import services as acc_svc
+                err = acc_svc.storno_invoice_bookings(
+                    invoice,
+                    reason=storno_reason or f"Storno Rechnung {invoice.invoice_number}",
+                    created_by_id=current_user.id,
+                )
+                if err:
+                    raise ValueError(err)
             invoice.status = new_status
             if invoice.open_item:
                 invoice.open_item.status = OpenItem.STATUS_PAID
@@ -1735,6 +1752,12 @@ def set_status(invoice_id):
                     reason=storno_reason or None,
                     created_by_id=current_user.id,
                 )
+            # Bezahlte Rechnung ohne Gutschrift: die Zahlung bleibt als
+            # Einnahme stehen — ohne Beleg gibt es keinen Rueckzahlungs-Posten.
+            kept_payment = Decimal(str(invoice.paid_amount or 0))
+            if (credit_note is None and not invoice.is_credit_note
+                    and kept_payment > 0):
+                payment_kept_hint = kept_payment
 
         elif new_status == Invoice.STATUS_PAID:
             paid_account_id_raw = request.form.get("account_id") or None
@@ -1758,6 +1781,11 @@ def set_status(invoice_id):
         flash(f"Status auf '{new_status}' gesetzt.", "success")
         if credit_note_skipped:
             flash(f"Keine Storno-Rechnung erstellt: {credit_note_skipped}", "warning")
+    if payment_kept_hint is not None:
+        flash(f"Die Zahlung über {_de_money(payment_kept_hint)} € bleibt als Einnahme "
+              f"gebucht. Wenn Sie das Geld zurücküberweisen, stellen Sie bitte eine "
+              f"Storno-Rechnung aus — der Bankauszug-Import ordnet die Rücküberweisung "
+              f"dann deren Rückzahlungs-Posten zu.", "warning")
     if new_status == Invoice.STATUS_SENT:
         from app.einvoice.obligation import required_for
         if required_for(invoice) and not invoice.email_sent_at:
@@ -1778,10 +1806,9 @@ def credit_note(invoice_id):
     und man es sich spaeter anders ueberlegt (oder dass die Rechnung noch aus
     der Zeit vor diesem Feature stammt).
 
-    Der Rueckzahlbetrag kann hier nicht mehr aus den Buchungen abgeleitet
-    werden — die sind beim Stornieren bereits aufgehoben worden. Er kommt
-    darum aus dem Formular; die Vorbelegung im Dialog stammt aus den
-    stornierten Originalbuchungen (siehe ``credit_note.refund_suggestion``).
+    Der Rueckzahlbetrag wird wie beim Regelweg aus den wirksamen Buchungen
+    der Originalrechnung abgeleitet (``credit_note.refund_due``) — der Storno
+    laesst die Zahlung stehen.
     """
     from app.invoices.credit_note import create_credit_note, credit_note_blocker
 

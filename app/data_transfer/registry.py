@@ -18,7 +18,7 @@ from app.models import (
     MeterTour, MeterTourStop, OwnerChange, OwnerChangeMeterValue,
     Invoice, InvoiceItem, InvoiceMeterReading, BillingRun, BillingPeriod, OpenItem,
     InstallmentPlan, InstallmentPlanEntry,
-    BookingGroup, Booking, Transfer, RealAccountYearBalance,
+    BookingGroup, Booking, BookingChange, BookingRemoval, Transfer, RealAccountYearBalance,
     DunningPolicy, DunningStage, DunningNotice,
     AppSetting, InvoiceCounter, CustomerCounter, SupplierCounter,
     NetworkPlan, NetworkFeature, MaintenanceLog, SpringYield, Incident,
@@ -55,6 +55,8 @@ NULL_ON_IMPORT_COLS = {
     AccountingHandover: ["created_by_id", "withdrawn_by_id"],
     DirectDebitRun: ["created_by_id"],
     Booking: ["created_by_id"],
+    BookingChange: ["changed_by_id"],
+    BookingRemoval: ["removed_by_id"],
     BookingGroup: ["created_by_id"],
     Document: ["created_by_id"],
     DocumentLink: ["created_by_id"],
@@ -153,7 +155,7 @@ CATEGORIES = {
         MeterTour, MeterTourStop,
         OwnerChange, OwnerChangeMeterValue,
         ReadingCorrection,
-        BookingGroup, Booking, Transfer, RealAccountYearBalance,
+        BookingGroup, Booking, BookingChange, BookingRemoval, Transfer, RealAccountYearBalance,
         # Übergaben an die Steuerberatung: reisen mit, damit nach einer Wiederherstellung
         # nichts doppelt übergeben wird und die Sperre erhalten bleibt.
         AccountingHandover, AccountingHandoverItem,
@@ -210,7 +212,7 @@ INSERT_ORDER = [
     OwnerChange, OwnerChangeMeterValue,
     # Touren NACH MeterReplacement + Invoice (Stop-FKs zeigen auf beide).
     MeterTour, MeterTourStop,
-    BookingGroup, Booking, Transfer, RealAccountYearBalance,
+    BookingGroup, Booking, BookingChange, BookingRemoval, Transfer, RealAccountYearBalance,
     # Übergabe-Protokoll NACH Booking/Transfer (Items verweisen auf beide), Kopf VOR Items.
     AccountingHandover, AccountingHandoverItem,
     # Dokumente NACH Customer (Lieferant); IncomingInvoice/DocumentEvent NACH Document.
@@ -258,6 +260,7 @@ YEAR_FILTERS = {
     OpenItem: "period_year",
     ReadingCorrection: ("date_year", "created_at"),
     Booking: ("date_year", "date"),
+    BookingRemoval: ("date_year", "booking_date"),
     # Document/IncomingInvoice/DocumentLink/DocumentEvent: services._filtered_document_ids
     Transfer: ("date_year", "date"),
     RealAccountYearBalance: "year",
@@ -329,6 +332,8 @@ NATURAL_KEYS = {
     ReadingCorrection: None,
     BookingGroup: None,
     Booking: None,
+    BookingChange: None,                # Protokoll — immer Insert
+    BookingRemoval: None,               # Protokoll — immer Insert
     Document: ("sha256",),              # dieselbe Datei nie doppelt (Dublettenschutz)
     IncomingInvoice: ("document_id",),  # 1:1 zum Beleg
     # genau ein Bezug gesetzt, die uebrigen NULL — NULL zaehlt mit (services._NULLABLE_KEYS)
@@ -452,6 +457,7 @@ FOREIGN_KEYS = {
               "project_id": Project, "real_account_id": RealAccount,
               "customer_id": Customer, "group_id": BookingGroup,
               "storno_of_id": Booking},  # Self-FK, zweiter Pass
+    BookingChange: {"booking_id": Booking},
     Document: {"supplier_id": Customer},
     IncomingInvoice: {"document_id": Document},
     DocumentLink: {"document_id": Document, "booking_id": Booking, "booking_group_id": BookingGroup,
