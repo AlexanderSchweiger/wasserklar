@@ -10,7 +10,7 @@
   <i class="fas fa-exclamation-triangle me-1"></i>
   Dieser Voranmeldungszeitraum ist bereits abgeschlossen (bis {{ _late.closed_through.strftime('%d.%m.%Y') }}) —
   die Umsatzsteuer-Voranmeldung dafür ist vermutlich schon abgegeben. Die Buchung zählt trotzdem zu diesem
-  Zeitraum und wird in der nächsten Nacht verbucht. Bitte prüfen, ob die Voranmeldung berichtigt werden muss.
+  Zeitraum{% if _late.auto_post %} und wird in der nächsten Nacht verbucht{% endif %}. Bitte prüfen, ob die Voranmeldung berichtigt werden muss.
 </div>
 <script>
 (function () {

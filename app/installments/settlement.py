@@ -227,6 +227,49 @@ def cancel_into(invoice, installments, *, created_by_id=None):
     return credits
 
 
+def release_cancelled_installments(invoice):
+    """Macht ``cancel_into`` rueckgaengig, bevor der Entwurf ``invoice`` geloescht
+    wird (Lauf verwerfen, Entwurf loeschen): die Teilrechnungen hat erst die
+    Abrechnung storniert — ohne sie stuenden sie storniert da, ihre
+    Gutschrift-Entwuerfe gehoerten zu keiner Abrechnung mehr und ein neuer Lauf
+    zoege sie nicht mehr ab.
+
+    Wieder offen wird eine Teilrechnung nur, solange ihre Gutschrift noch ein
+    Entwurf ist (die wird geloescht) und nichts bezahlt war (``cancel_into``
+    storniert nur ganz unbezahlte). Ist die Gutschrift schon versendet, bleibt
+    der Storno stehen — er ist dem Kontakt dann bekannt. Stornierte Mahnungen
+    bleiben storniert. Flusht. Gibt die wieder offenen Teilrechnungen zurueck."""
+    from app.meters.estimation import reverse_corrections_for_invoice
+    from app.models import OpenItem
+    if invoice.status != Invoice.STATUS_DRAFT:
+        return []
+    inst_ids = {it.deducts_invoice_id for it in invoice.items
+                if it.charge_key == terms.KEY_DEDUCTION and it.deducts_invoice_id
+                and Decimal(str(it.amount or 0)) == 0}
+    released = []
+    for inst_id in sorted(inst_ids):
+        inst = db.session.get(Invoice, inst_id)
+        if inst is None or inst.status != Invoice.STATUS_CANCELLED:
+            continue
+        if Decimal(str(inst.paid_amount or 0)) != 0:
+            continue
+        credits = [c for c in inst.credit_notes if c.status != Invoice.STATUS_CANCELLED]
+        if any(c.status != Invoice.STATUS_DRAFT for c in credits):
+            continue
+        for credit in credits:
+            reverse_corrections_for_invoice(credit)
+            if credit.open_item is not None:
+                db.session.delete(credit.open_item)
+            db.session.delete(credit)
+        inst.status = Invoice.STATUS_SENT
+        if inst.open_item is not None:
+            inst.open_item.status = OpenItem.STATUS_OPEN
+        released.append(inst)
+    if released:
+        db.session.flush()
+    return released
+
+
 def settle_installments(invoice, installments, *, credit_mode, meter_id, period_id,
                         created_by_id=None):
     """Gegenverrechnung einer Abrechnung in einem Schritt: unbezahlte
@@ -372,6 +415,9 @@ def cancel_blocker(invoice):
         if corr.status != ReadingCorrection.STATUS_OPEN:
             target = corr.applied_invoice
             ref = f" ({target.invoice_number})" if target is not None else ""
+            if target is not None and target.status == Invoice.STATUS_DRAFT:
+                return ("Das Guthaben dieser Abrechnung ist bereits in den Entwurf"
+                        f"{ref} eingerechnet. Bitte zuerst diesen Entwurf löschen.")
             return ("Das Guthaben dieser Abrechnung ist bereits mit einer Teilrechnung"
                     f"{ref} verrechnet. Bitte zuerst diese stornieren.")
     return None

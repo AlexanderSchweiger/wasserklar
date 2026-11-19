@@ -47,15 +47,18 @@ def preview(prop, period, stichtag, seller_ids):
 
 
 def cancel_installment(inv, *, reason, created_by_id=None):
-    """Storniert eine versendete Teilrechnung wie der Storno-Dialog: Buchungen
-    zurueck, Posten erledigt, Mahnungen storniert, Gutschrift als Entwurf."""
-    from app.accounting import services as acc_svc
+    """Storniert eine versendete Teilrechnung wie der Storno-Dialog: Posten
+    erledigt, Mahnungen storniert, Gutschrift als Entwurf.
+
+    **Zahlungen bleiben stehen** (wie beim Storno-Dialog ohne „Zahlung nie
+    eingegangen“): das Geld ist eingegangen; die Gutschrift bekommt beim
+    Versenden einen Rueckzahlungs-Posten ueber das Bezahlte
+    (``credit_note.refund_due``), die Rueckueberweisung gleicht ihn aus.
+    Stornierte man die Zahlung mit, stuende der Betrag mit der Rueckueberweisung
+    doppelt als Ausgabe da und das Bankkonto laege um ihn zu niedrig."""
     from app.dunning.services import cancel_dunnings_for_invoice
     from app.invoices.credit_note import create_credit_note, credit_note_blocker
     from app.models import OpenItem
-    err = acc_svc.storno_invoice_bookings(inv, reason=reason, created_by_id=created_by_id)
-    if err:
-        raise ValueError(err)
     inv.status = Invoice.STATUS_CANCELLED
     if inv.open_item is not None:
         inv.open_item.status = OpenItem.STATUS_PAID

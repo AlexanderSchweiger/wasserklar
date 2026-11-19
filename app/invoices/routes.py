@@ -1355,12 +1355,35 @@ def bulk_action():
     if action == "delete":
         deletable = [inv for inv in invoices if inv.status == Invoice.STATUS_DRAFT]
         skipped = len(invoices) - len(deletable)
+        from app.installments import settlement as inst_settlement
+        from app.models import OwnerChange
         try:
+            # Wie das Einzel-Löschen: Schätz-Korrekturen/Guthaben-Überträge
+            # zurückgeben (sonst bliebe das Guthaben eines gelöschten
+            # Jahresabrechnungs-Entwurfs offen und die nächste Teilrechnung zöge
+            # es ab), wegen Guthaben stornierte Teilrechnungen wieder öffnen,
+            # Verweis eines Eigentümerwechsels lösen. Belege, die ein Guthaben
+            # einziehen, zuerst — sonst scheitert das Zurückgeben des Guthabens
+            # an der Rechnung, die es erzeugt hat und die mitgelöscht wird.
+            deletable.sort(key=lambda i: (
+                0 if any(it.reading_correction_id for it in i.items) else 1, -i.id))
+            for inv in deletable:
+                reverse_corrections_for_invoice(inv)
+                inst_settlement.release_cancelled_installments(inv)
+            ids = [inv.id for inv in deletable]
+            if ids:
+                OwnerChange.query.filter(OwnerChange.settlement_invoice_id.in_(ids)).update(
+                    {"settlement_invoice_id": None, "fee_days_billed": None},
+                    synchronize_session=False)
             for inv in deletable:
                 if inv.open_item:
                     db.session.delete(inv.open_item)
                 db.session.delete(inv)
             db.session.commit()
+        except ValueError as e:
+            db.session.rollback()
+            flash(str(e), "warning")
+            return redirect(url_for("invoices.index"))
         except Exception as e:
             db.session.rollback()
             flash(f"Fehler beim Löschen – alle Änderungen wurden zurückgesetzt: {e}", "danger")
@@ -1867,6 +1890,10 @@ def delete(invoice_id):
         # Schätz-Korrekturen rückabwickeln (verrechnete zurückgeben, aus der
         # Kappung erzeugte entfernen) BEVOR die Rechnung verschwindet.
         reverse_corrections_for_invoice(invoice)
+        # Teilrechnungen, die erst dieser Entwurf wegen Guthaben storniert hat,
+        # wieder öffnen (samt Gutschrift-Entwurf entfernen).
+        from app.installments import settlement as inst_settlement
+        inst_settlement.release_cancelled_installments(invoice)
         # Verweis eines Eigentuemerwechsels auf diese (Schluss-)Rechnung lösen —
         # SQLite feuert das FK-``SET NULL`` nicht; ohne das bliebe ein toter
         # Verweis, den der Deduktions-Join (Status-Filter) zwar ignoriert, aber
@@ -2642,14 +2669,29 @@ def billing_run_detail(run_id):
     doc_format = AppSetting.get("invoice.document_format", "pdf")
     from app.installments import plans as inst_plans
     from app.installments import terms as inst_terms
+    from app.installments import invoicing as inst_invoicing
     next_period = None
     next_plan_count = 0
+    next_open_count = 0
+    unlinked_runs = []
+    link_choices = []
     if not run.is_installment_run and run.billing_period is not None and inst_terms.is_enabled():
         next_period = inst_plans.next_period(run.billing_period)
         if next_period is not None:
             from app.models import InstallmentPlan
             next_plan_count = InstallmentPlan.query.filter_by(
                 billing_period_id=next_period.id).count()
+            if next_plan_count:
+                next_open_count = len(inst_invoicing.open_entries(next_period))
+            # Teilrechnungen des Folgejahres, die vor diesem Lauf entstanden sind:
+            # nachtraeglich verknuepfbar, solange dieser Lauf Entwuerfe hat.
+            if run in inst_invoicing.linkable_runs(next_period):
+                unlinked_runs = inst_invoicing.unlinked_installment_runs(next_period)
+    elif run.is_installment_run and run.billing_period is not None:
+        # Teilrechnungslauf: (andere) Jahresabrechnung der Vorperiode waehlbar,
+        # solange hier noch etwas unversendet ist.
+        if run.invoices.filter(Invoice.status == Invoice.STATUS_DRAFT).count():
+            link_choices = inst_invoicing.linkable_runs(run.billing_period)
     overview = _billing_run_overview(run)
     send = _run_send_context(run, overview, request.args.get("with_installments"))
     overview.update(post_ids=send["post_ids"], count_post=len(send["post_ids"]))
@@ -2657,7 +2699,9 @@ def billing_run_detail(run_id):
         "invoices/billing_run_detail.html",
         **{k: v for k, v in send.items() if k != "post_ids"},
         run=run, doc_format=doc_format, next_period=next_period,
-        next_plan_count=next_plan_count, inst_words=inst_terms.installment_words(),
+        next_plan_count=next_plan_count, next_open_count=next_open_count,
+        unlinked_runs=unlinked_runs, link_choices=link_choices,
+        inst_words=inst_terms.installment_words(),
         inst_title=inst_terms.installment_title(),
         **overview,
     )
@@ -2966,8 +3010,11 @@ def billing_run_delete(run_id):
     # zurückgeben, aus Kappung erzeugte entfernen). Schlägt fehl, wenn eine
     # erzeugte Gutschrift schon in einer späteren Rechnung verrechnet wurde.
     try:
+        from app.installments import settlement as inst_settlement
         for inv in deletable:
             reverse_corrections_for_invoice(inv)
+            # wegen Guthaben stornierte Teilrechnungen wieder öffnen
+            inst_settlement.release_cancelled_installments(inv)
         for inv in deletable:
             db.session.delete(inv)
         db.session.delete(run)

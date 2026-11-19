@@ -440,13 +440,35 @@ class TestLateEntry:
                         follow_redirects=True)
         assert LATE_TEXT not in r.get_data(as_text=True)
 
-    def test_closing_a_period_marks_it(self, client, setup):
-        quarter = (TODAY.month - 1) // 3 + 1
-        client.post("/accounting/ust/close-period", data={"year": YEAR, "period": f"q{quarter}"})
-        assert posting.closed_until() == posting.period_end_for(TODAY, posting.PERIOD_QUARTER)
-        r = client.post("/accounting/bookings/new", data=_new_payload(setup, TODAY),
+    def test_closing_a_period_marks_it(self, client, setup, prev_year):
+        # Q4 des Vorjahrs ist an jedem Tag des laufenden Jahres vorbei, also abschließbar;
+        # der Merker gilt danach unabhängig davon, ob der Sperrtag (15.02.) schon war.
+        q4_end = date(YEAR - 1, 12, 31)
+        client.post("/accounting/ust/close-period", data={"year": YEAR - 1, "period": "q4"})
+        assert posting.closed_until() == q4_end
+        r = client.post("/accounting/bookings/new", data=_new_payload(setup, date(YEAR - 1, 12, 20)),
                         follow_redirects=True)
         assert LATE_TEXT in r.get_data(as_text=True)
+
+    def test_running_period_cannot_be_closed(self, client, setup):
+        """Ein laufender Zeitraum hat noch Tage vor sich — kein Abschluss, kein Merker."""
+        b = _booking(setup, TODAY)
+        quarter = (TODAY.month - 1) // 3 + 1
+        html = client.get(f"/accounting/ust?year={YEAR}&period=q{quarter}").get_data(as_text=True)
+        assert 'id="ust-close-period"' not in html
+        r = client.post("/accounting/ust/close-period",
+                        data={"year": YEAR, "period": f"q{quarter}"}, follow_redirects=True)
+        assert "läuft noch" in r.get_data(as_text=True)
+        assert _status(b.id) == Booking.STATUS_OFFEN
+        assert posting.closed_until() is None
+
+    def test_late_entry_text_in_off_mode(self, app, setup, prev_year):
+        _setting(posting.MODE_KEY, "off")
+        with app.test_request_context():
+            posting.invalidate()
+            text = posting.late_entry_warning(LATE_DATE)
+        assert "automatisches Verbuchen ist ausgeschaltet" in text
+        assert "nächsten Nacht" not in text
 
     def test_edit_warns_only_when_date_moves_in(self, client, setup, prev_year):
         b = _booking(setup, TODAY)

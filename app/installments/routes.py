@@ -132,6 +132,9 @@ def period(period_id):
     # unversendeten Belegen — vorbelegt mit dem, von dem man kommt, sonst dem juengsten.
     linkable = invoicing.linkable_runs(period)
     link_default = source_run if source_run in linkable else (linkable[0] if linkable else None)
+    # Schon erstellte, noch nicht verknuepfte Teilrechnungen (vor der
+    # Jahresabrechnung entstanden) — hier nachtraeglich verknuepfbar.
+    unlinked = invoicing.unlinked_installment_runs(period) if linkable else []
     return render_template(
         "installments/period.html",
         period=period, periods=_periods(), rows=rows, stats=_period_stats(rows),
@@ -140,7 +143,7 @@ def period(period_id):
         open_by_seq={s: [e for e in open_entries if e.seq == s] for s in open_seqs},
         enabled=terms.is_enabled(), rounding=terms.rounding_step(),
         min_annual=terms.min_annual_amount(), source_run=source_run,
-        linkable_runs=linkable, link_default=link_default,
+        linkable_runs=linkable, link_default=link_default, unlinked_runs=unlinked,
         excluded_labels=terms.excluded_charge_labels(),
         projects=Project.query.filter_by(closed=False).order_by(Project.name).all(),
         sort_order_choices=BillingRun.SORT_ORDER_CHOICES,
@@ -234,6 +237,42 @@ def plan_delete(plan_id):
         db.session.rollback()
         flash(str(exc), "warning")
     return redirect(url_for("installments.period", period_id=period_id))
+
+
+@bp.route("/run/<int:run_id>/link", methods=["POST"])
+@login_required
+def link_run(run_id):
+    """Teilrechnungslauf nachtraeglich mit einem Jahresabrechnungslauf verknuepfen
+    (``source_run_id`` leer = Verknuepfung loesen). Rueckweg ``return_to``:
+    ``source`` (Jahresabrechnung), ``period`` (Teilbetraege) oder der Lauf selbst."""
+    inst_run = db.get_or_404(BillingRun, run_id)
+    wanted = request.form.get("source_run_id", type=int)
+    source_run = db.session.get(BillingRun, wanted) if wanted else None
+    if wanted and source_run is None:
+        abort(404)
+    previous = inst_run.source_run
+    title = terms.installment_title()
+    try:
+        invoicing.link_installment_run(inst_run, source_run)
+    except invoicing.InstallmentError as exc:
+        db.session.rollback()
+        flash(str(exc), "warning")
+    else:
+        db.session.commit()
+        if source_run is not None:
+            flash(f"{title}en verknüpft – sie werden mit dem Rechnungslauf vom "
+                  f"{source_run.created_at.strftime('%d.%m.%Y')} versendet.", "success")
+        else:
+            flash(f"Verknüpfung gelöst – die {title}en werden in ihrem eigenen Lauf versendet.",
+                  "success")
+    back = request.form.get("return_to")
+    target = source_run or previous
+    if back == "source" and target is not None:
+        return redirect(url_for("invoices.billing_run_detail", run_id=target.id))
+    if back == "period":
+        return redirect(url_for("installments.period", period_id=inst_run.billing_period_id,
+                                source_run_id=wanted))
+    return redirect(url_for("invoices.billing_run_detail", run_id=inst_run.id))
 
 
 @bp.route("/period/<int:period_id>/invoices", methods=["POST"])

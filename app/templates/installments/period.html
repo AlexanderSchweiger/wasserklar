@@ -19,11 +19,38 @@
 </div>
 {% endif %}
 
-{% if source_run %}
+{% if source_run and open_seqs %}
 <div class="alert alert-info">
   Die {{ title }}en werden mit dem Rechnungslauf
   <a href="{{ url_for('invoices.billing_run_detail', run_id=source_run.id) }}" class="alert-link">vom {{ source_run.created_at.strftime('%d.%m.%Y') }} ({{ source_run.billing_period.name }})</a>
   verknüpft und dort gemeinsam versendet – eine E-Mail je Mitglied.
+</div>
+{% endif %}
+
+{% if unlinked_runs %}
+{# Teilrechnungen, die VOR der Jahresabrechnung erstellt wurden: nachtraeglich verknuepfen. #}
+<div class="alert alert-warning" id="installments-unlinked">
+  <div class="mb-2">
+    <i class="fas fa-link me-1"></i>
+    Schon erstellte {{ title }}en {{ period.name }} gehören noch zu keinem Rechnungslauf –
+    versendet werden sie bisher nur über ihren eigenen Lauf, nicht zusammen mit der Jahresabrechnung.
+  </div>
+  {% for r, drafts in unlinked_runs %}
+  <form method="post" action="{{ url_for('installments.link_run', run_id=r.id) }}"
+        class="d-flex flex-wrap align-items-center gap-2 mb-1">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="return_to" value="source">
+    <span><a href="{{ url_for('invoices.billing_run_detail', run_id=r.id) }}" class="alert-link">Lauf vom {{ r.created_at.strftime('%d.%m.%Y %H:%M') }}</a>
+      <span class="text-secondary">({{ drafts }} Entwürfe)</span> verknüpfen mit</span>
+    <select name="source_run_id" class="form-select form-select-sm w-auto">
+      {% for lr in linkable_runs %}
+      <option value="{{ lr.id }}" {{ 'selected' if link_default and lr.id == link_default.id }}>
+        Rechnungslauf {{ lr.billing_period.name if lr.billing_period }} vom {{ lr.created_at.strftime('%d.%m.%Y') }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit" class="btn btn-sm btn-primary"><i class="fas fa-link me-1"></i> Verknüpfen</button>
+  </form>
+  {% endfor %}
 </div>
 {% endif %}
 
@@ -74,7 +101,8 @@
   <div class="col-lg-6">
     <div class="card h-100">
       <div class="card-header"><h3 class="card-title">2. {{ title }}en erstellen</h3></div>
-      <form method="post" action="{{ url_for('installments.create_invoices', period_id=period.id) }}">
+      <form method="post" action="{{ url_for('installments.create_invoices', period_id=period.id) }}"
+            id="installments-create-form">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="card-body">
           {% if open_seqs %}

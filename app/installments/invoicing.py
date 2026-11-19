@@ -300,6 +300,42 @@ def linkable_runs(period):
             if r.invoices.filter(Invoice.status == Invoice.STATUS_DRAFT).count()]
 
 
+def _draft_count(run):
+    return run.invoices.filter(Invoice.status == Invoice.STATUS_DRAFT).count()
+
+
+def unlinked_installment_runs(period):
+    """Teilrechnungslaeufe von ``period`` mit unversendeten Entwuerfen, die noch
+    zu keinem Jahresabrechnungslauf gehoeren (aeltester zuerst) — typisch, wenn
+    die Teilrechnungen VOR der Jahresabrechnung erstellt wurden."""
+    runs = (BillingRun.query
+            .filter(BillingRun.billing_period_id == period.id,
+                    BillingRun.run_kind == BillingRun.KIND_INSTALLMENT,
+                    BillingRun.source_run_id.is_(None))
+            .order_by(BillingRun.created_at, BillingRun.id).all())
+    return [(r, n) for r in runs for n in [_draft_count(r)] if n]
+
+
+def link_installment_run(inst_run, source_run):
+    """Teilrechnungslauf nachtraeglich mit einem Jahresabrechnungslauf
+    verknuepfen (``source_run=None`` loest die Verknuepfung). Erlaubt nur, solange
+    der Teilrechnungslauf unversendete Entwuerfe hat und — beim Verknuepfen —
+    ``source_run`` zu :func:`linkable_runs` seiner Periode gehoert. Flusht.
+    Wirft ``InstallmentError``."""
+    if not inst_run.is_installment_run:
+        raise InstallmentError("Nur Teilrechnungsläufe lassen sich verknüpfen.")
+    if not _draft_count(inst_run):
+        raise InstallmentError("Alle Teilrechnungen dieses Laufs sind schon versendet.")
+    if source_run is not None:
+        period = inst_run.billing_period
+        if period is None or source_run not in linkable_runs(period):
+            raise InstallmentError(
+                "Dieser Rechnungslauf lässt sich nicht verknüpfen (nur Jahresabrechnungen "
+                "der Vorperiode mit noch unversendeten Belegen).")
+    inst_run.source_run_id = source_run.id if source_run is not None else None
+    db.session.flush()
+
+
 def pull_credit_into_drafts(customer_ids, *, after_period=None):
     """Guthaben-Uebertraege in schon erstellte, noch nicht versendete
     Teilrechnungen einziehen (frueheste Faelligkeit zuerst) — fuer Teilrechnungen,

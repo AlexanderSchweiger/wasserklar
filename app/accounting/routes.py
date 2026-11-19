@@ -3052,8 +3052,10 @@ def ust():
     has_filter = quartal != 0 or month != 0 or year != default_year
     # „Zeitraum abschließen“: nur für einen Monat bzw. ein Quartal, wenn bis zu dessen Ende noch
     # offene Buchungen stehen (verbucht wird alles bis zum Zeitraumende, auch Älteres).
+    # Ein laufender Zeitraum laesst sich noch nicht abschliessen (seine restlichen Tage kaemen
+    # sonst als Nachbuchung in einen „abgeschlossenen“ Zeitraum).
     close_open_count = (acc_svc.open_bookings_query(until=totals["date_to"]).count()
-                        if (quartal or month) else 0)
+                        if (quartal or month) and totals["date_to"] < date.today() else 0)
     return render_template(
         "accounting/ust.html",
         close_open_count=close_open_count,
@@ -3086,6 +3088,11 @@ def ust_close_period():
         return redirect(url_for("accounting.ust"))
     _date_from, date_to = acc_svc.ust_period(year, quartal, month)
     label = acc_svc.ust_period_label(year, quartal, month)
+    if date_to >= date.today():
+        flash(f"{label} läuft noch bis {date_to:%d.%m.%Y} — abschließen lässt sich ein Zeitraum "
+              "erst nach seinem letzten Tag.", "warning")
+        return redirect(url_for("accounting.ust", year=year,
+                                period=acc_svc.ust_period_key(quartal, month)))
     posting_svc.mark_closed_until(date_to)    # Nachbuchungen dorthin bekommen einen Hinweis
     count = acc_svc.post_open_bookings(until=date_to)
     if count:

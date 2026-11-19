@@ -169,6 +169,87 @@ class TestLinkFromInstallmentsPage:
         assert created.source_run_id is None
 
 
+@pytest.fixture
+def created_before(setup, logged_in_admin):
+    """Teilrechnungen des Folgejahres VOR der Jahresabrechnung erstellt (unverknüpft)."""
+    _enable()
+    s = setup
+    _send(_issue(s, _plan(s)).created)
+    nxt = _next_period()
+    nexts = _next_installments(s, nxt)
+    annual = _annual(s, logged_in_admin, "120")
+    inst_run = db.session.get(Invoice, nexts[0].id).billing_run
+    assert inst_run.source_run_id is None
+    return {"s": s, "nxt": nxt, "run": annual.billing_run, "inst_run": inst_run,
+            "next": nexts, "client": logged_in_admin}
+
+
+class TestLinkAfterwards:
+    """Teilrechnungen, die vor der Jahresabrechnung entstanden sind, lassen sich
+    nachträglich verknüpfen — vorher ging das nur beim Erstellen (test13)."""
+
+    def test_annual_run_page_offers_the_link(self, created_before):
+        c = created_before
+        assert invoicing.unlinked_installment_runs(c["nxt"]) == [(c["inst_run"], 4)]
+        html = c["client"].get(f"/invoices/billing-runs/{c['run'].id}").get_data(as_text=True)
+        assert f'id="br-link-{c["inst_run"].id}"' in html
+        assert "Mit diesem Lauf verknüpfen" in html
+        assert "alle Teilrechnungen erstellt" in html and "ansehen" in html
+
+    def test_link_from_annual_run(self, created_before):
+        c = created_before
+        resp = c["client"].post(f"/installments/run/{c['inst_run'].id}/link",
+                                data={"source_run_id": str(c["run"].id), "return_to": "source"})
+        assert resp.status_code == 302 and f"/billing-runs/{c['run'].id}" in resp.headers["Location"]
+        db.session.expire_all()
+        assert db.session.get(BillingRun, c["inst_run"].id).source_run_id == c["run"].id
+        assert {i.id for i in mailing.linked_drafts(db.session.get(BillingRun, c["run"].id))} \
+            == {i.id for i in c["next"]}
+        html = c["client"].get(f"/invoices/billing-runs/{c['run'].id}").get_data(as_text=True)
+        assert 'id="br-with-linked"' in html and "br-link-" not in html
+
+    def test_unlink_and_choose_on_installment_run(self, created_before):
+        c = created_before
+        html = c["client"].get(f"/invoices/billing-runs/{c['inst_run'].id}").get_data(as_text=True)
+        assert 'id="br-link-form"' in html
+        c["client"].post(f"/installments/run/{c['inst_run'].id}/link",
+                         data={"source_run_id": str(c["run"].id)})
+        resp = c["client"].post(f"/installments/run/{c['inst_run'].id}/link",
+                                data={"source_run_id": ""})
+        assert f"/billing-runs/{c['inst_run'].id}" in resp.headers["Location"]
+        db.session.expire_all()
+        assert db.session.get(BillingRun, c["inst_run"].id).source_run_id is None
+
+    def test_installments_page_offers_the_link_instead_of_promising_it(self, created_before):
+        c = created_before
+        html = c["client"].get(
+            f"/installments/period/{c['nxt'].id}?source_run_id={c['run'].id}").get_data(as_text=True)
+        assert 'id="installments-unlinked"' in html
+        assert "werden mit dem Rechnungslauf" not in html      # nichts mehr zu erstellen
+        c["client"].post(f"/installments/run/{c['inst_run'].id}/link",
+                         data={"source_run_id": str(c["run"].id), "return_to": "period"})
+        db.session.expire_all()
+        assert db.session.get(BillingRun, c["inst_run"].id).source_run_id == c["run"].id
+        html = c["client"].get(f"/installments/period/{c['nxt'].id}").get_data(as_text=True)
+        assert 'id="installments-unlinked"' not in html
+
+    def test_foreign_or_sent_runs_are_refused(self, created_before):
+        c = created_before
+        # Ziel ist kein Jahresabrechnungslauf der Vorperiode
+        c["client"].post(f"/installments/run/{c['inst_run'].id}/link",
+                         data={"source_run_id": str(c["inst_run"].id)})
+        db.session.expire_all()
+        assert db.session.get(BillingRun, c["inst_run"].id).source_run_id is None
+        # alles versendet → nichts mehr zu verknüpfen
+        for inv in c["next"]:
+            db.session.get(Invoice, inv.id).status = Invoice.STATUS_SENT
+        db.session.commit()
+        with pytest.raises(invoicing.InstallmentError):
+            invoicing.link_installment_run(db.session.get(BillingRun, c["inst_run"].id),
+                                           db.session.get(BillingRun, c["run"].id))
+        assert invoicing.unlinked_installment_runs(c["nxt"]) == []
+
+
 class TestCreditIntoEarlierDrafts:
     def test_credit_reaches_first_draft_created_before_the_run(self, setup, logged_in_admin,
                                                                real_account):

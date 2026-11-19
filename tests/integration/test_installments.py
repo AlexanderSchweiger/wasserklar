@@ -383,6 +383,70 @@ class TestCreditCancelsUnpaid:
         assert [d["invoice"].id for d in summ["open_installments"]] == [insts[1].id]
         assert summ["open_total"] == D("66.00")
 
+    def _cancelled_scenario(self, s, client, real_account):
+        insts = self._sent(s)
+        for inv in insts[:3]:
+            _pay(s, inv, real_account)
+        annual = _annual(s, client, "50", credit_mode="offset")
+        inst = db.session.get(Invoice, insts[3].id)
+        assert inst.status == Invoice.STATUS_CANCELLED
+        credit_id = inst.active_credit_note.id
+        return annual, inst, credit_id
+
+    def _assert_released(self, s, inst_id, credit_id):
+        db.session.expire_all()
+        inst = db.session.get(Invoice, inst_id)
+        assert inst.status == Invoice.STATUS_SENT
+        assert inst.open_item.status == "Offen"
+        assert db.session.get(Invoice, credit_id) is None
+        # kein Guthaben-Uebertrag der geloeschten Abrechnung bleibt offen
+        assert ReadingCorrection.query.filter_by(
+            kind=ReadingCorrection.KIND_CREDIT_CARRY).count() == 0
+        assert settlement.deducting_invoice(inst) is None
+
+    def test_deleting_draft_run_reopens_cancelled(self, setup, logged_in_admin, real_account):
+        """Lauf verwerfen: die erst durch ihn stornierte Teilrechnung ist wieder
+        offen, ihr Gutschrift-Entwurf weg — ein neuer Lauf rechnet wie vorher."""
+        s = setup
+        annual, inst, credit_id = self._cancelled_scenario(s, logged_in_admin, real_account)
+        resp = logged_in_admin.post(f"/invoices/billing-runs/{annual.billing_run_id}/delete")
+        assert resp.status_code == 302
+        self._assert_released(s, inst.id, credit_id)
+        again = _annual(s, logged_in_admin, "50", credit_mode="offset")
+        assert settlement.summary(again)["credit"] == D("44.00")
+        assert db.session.get(Invoice, inst.id).status == Invoice.STATUS_CANCELLED
+
+    def test_deleting_single_draft_reopens_cancelled(self, setup, logged_in_admin,
+                                                     real_account):
+        s = setup
+        annual, inst, credit_id = self._cancelled_scenario(s, logged_in_admin, real_account)
+        resp = logged_in_admin.post(f"/invoices/{annual.id}/delete")
+        assert resp.status_code == 302
+        self._assert_released(s, inst.id, credit_id)
+
+    def test_bulk_delete_reopens_and_returns_credit(self, setup, logged_in_admin,
+                                                    real_account):
+        """Sammel-Löschen in der Rechnungsliste wickelt genauso zurück."""
+        s = setup
+        annual, inst, credit_id = self._cancelled_scenario(s, logged_in_admin, real_account)
+        resp = logged_in_admin.post("/invoices/bulk-action", data={
+            "action": "delete", "invoice_ids": [str(annual.id)]})
+        assert resp.status_code == 302
+        assert db.session.get(Invoice, annual.id) is None
+        self._assert_released(s, inst.id, credit_id)
+
+    def test_sent_credit_note_keeps_cancellation(self, setup, logged_in_admin, real_account):
+        """Ist die Storno-Gutschrift schon beim Kontakt, bleibt der Storno."""
+        s = setup
+        annual, inst, credit_id = self._cancelled_scenario(s, logged_in_admin, real_account)
+        credit = db.session.get(Invoice, credit_id)
+        credit.status = Invoice.STATUS_SENT
+        db.session.commit()
+        logged_in_admin.post(f"/invoices/{annual.id}/delete")
+        db.session.expire_all()
+        assert db.session.get(Invoice, inst.id).status == Invoice.STATUS_CANCELLED
+        assert db.session.get(Invoice, credit_id) is not None
+
     def test_back_payment_cancels_nothing(self, setup, logged_in_admin):
         s = setup
         insts = self._sent(s)
@@ -733,3 +797,36 @@ class TestOwnerChange:
         bplan = InstallmentPlan.query.filter_by(customer_id=buyer.id).one()
         assert [e.due_date for e in bplan.entries] == [date(Y, 8, 15), date(Y, 11, 15)]
         assert any("übernimmt" in w for w in warnings)
+
+    def test_paid_cancelled_installment_keeps_payment(self, setup, logged_in_admin,
+                                                      real_account):
+        """Eine schon bezahlte, nach dem Stichtag faellige Teilrechnung wird
+        storniert, die Zahlung bleibt aber stehen (wie beim Storno-Dialog) —
+        die Gutschrift zahlt sie ueber ihren Rueckzahlungs-Posten zurueck."""
+        from app.invoices.credit_note import refund_due
+        from app.owner_change import services as oc_svc
+        s = setup
+        insts = sorted(_issue(s, _plan(s)).created, key=lambda i: i.due_date)
+        _send(insts)
+        _pay(s, insts[2], real_account)                # August schon bezahlt
+        buyer = Customer(name="Käufer Kurt", customer_number=9)
+        db.session.add(buyer)
+        db.session.commit()
+        oc_svc.execute_owner_change(
+            prop=s["prop"], period=s["cur"], stichtag=date(Y, 7, 1),
+            new_customer_ids=[buyer.id],
+            meter_inputs={s["meter"].id: {"value": D("160"), "is_estimated": False}},
+            create_settlement=True, settlement_recipient_id=s["cust"].id,
+            tariff=s["tariff"], due_days=30, fee_mode=oc_svc.FEE_MODE_PRO_RATA,
+            created_by_id=s["user"].id)
+        db.session.commit()
+        aug = db.session.get(Invoice, insts[2].id)
+        assert aug.status == Invoice.STATUS_CANCELLED
+        assert aug.paid_amount == D("66.00")           # Zahlung nicht mitstorniert
+        assert Booking.query.filter(Booking.storno_of_id.isnot(None)).count() == 0
+        credit = aug.active_credit_note
+        assert refund_due(aug, exclude=credit) == D("66.00")
+        credit.status = Invoice.STATUS_SENT
+        create_or_update_open_item(credit)
+        db.session.commit()
+        assert credit.open_item.amount == D("-66.00")

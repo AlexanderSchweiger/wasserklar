@@ -17,21 +17,49 @@
   <a href="{{ url_for('installments.period', period_id=run.billing_period_id) }}" class="alert-link">Teilbetragspläne</a>
   {% if run.source_run %}· gehört zum Rechnungslauf
   <a href="{{ url_for('invoices.billing_run_detail', run_id=run.source_run_id) }}" class="alert-link">vom {{ run.source_run.created_at.strftime('%d.%m.%Y') }}</a>{% endif %}
+  {% if link_choices %}
+  <form method="post" action="{{ url_for('installments.link_run', run_id=run.id) }}"
+        class="d-flex flex-wrap align-items-center gap-2 mt-2" id="br-link-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <span>Gemeinsam versenden mit</span>
+    <select name="source_run_id" class="form-select form-select-sm w-auto">
+      {% for lr in link_choices %}
+      <option value="{{ lr.id }}" {{ 'selected' if lr.id == run.source_run_id }}>
+        Rechnungslauf {{ lr.billing_period.name if lr.billing_period }} vom {{ lr.created_at.strftime('%d.%m.%Y') }}</option>
+      {% endfor %}
+      <option value="" {{ 'selected' if not run.source_run_id }}>– nicht verknüpfen (eigener Versand) –</option>
+    </select>
+    <button type="submit" class="btn btn-sm btn-primary"><i class="fas fa-link me-1"></i> Übernehmen</button>
+  </form>
+  {% endif %}
 </div>
 {% elif next_period %}
 <div class="alert alert-info d-flex flex-wrap align-items-center gap-2">
   <div class="me-auto">
     <i class="fas fa-calendar-alt me-1"></i>
     {{ inst_words }} {{ next_period.name }}:
-    {% if next_plan_count %}{{ next_plan_count }} Pläne vorhanden.{% else %}noch nicht berechnet.{% endif %}
+    {% if next_plan_count %}{{ next_plan_count }} Pläne vorhanden{% if not next_open_count %}, alle {{ inst_title }}en erstellt{% endif %}.{% else %}noch nicht berechnet.{% endif %}
     {% if run.linked_runs %}Verknüpft:
       {% for lr in run.linked_runs %}<a href="{{ url_for('invoices.billing_run_detail', run_id=lr.id) }}" class="alert-link">{{ inst_title }}en vom {{ lr.created_at.strftime('%d.%m.%Y') }}</a>{{ ', ' if not loop.last }}{% endfor %}
       – sie werden mit diesem Lauf versendet (eine E-Mail je Mitglied).
     {% endif %}
   </div>
   <a href="{{ url_for('installments.period', period_id=next_period.id, source_run_id=run.id) }}" class="btn btn-sm btn-primary">
-    {{ inst_words }} {{ next_period.name }} {{ 'berechnen' if not next_plan_count else 'erstellen' }}
+    {{ inst_words }} {{ next_period.name }}
+    {{ 'berechnen' if not next_plan_count else ('erstellen' if next_open_count else 'ansehen') }}
   </a>
+  {% for r, drafts in unlinked_runs %}
+  <form method="post" action="{{ url_for('installments.link_run', run_id=r.id) }}"
+        class="w-100 d-flex flex-wrap align-items-center gap-2 border-top pt-2" id="br-link-{{ r.id }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="source_run_id" value="{{ run.id }}">
+    <input type="hidden" name="return_to" value="source">
+    <span class="me-auto"><i class="fas fa-unlink me-1"></i>
+      <a href="{{ url_for('invoices.billing_run_detail', run_id=r.id) }}" class="alert-link">{{ inst_title }}en {{ next_period.name }} vom {{ r.created_at.strftime('%d.%m.%Y') }}</a>
+      ({{ drafts }} Entwürfe) sind noch mit keinem Rechnungslauf verknüpft.</span>
+    <button type="submit" class="btn btn-sm btn-outline-primary"><i class="fas fa-link me-1"></i> Mit diesem Lauf verknüpfen</button>
+  </form>
+  {% endfor %}
 </div>
 {% endif %}
 
