@@ -86,6 +86,28 @@
 
 <form method="post" action="{{ url_for('owner_change.confirm', property_id=property.id) }}">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  {% set ip = installment_preview %}
+  {% if ip and ip.any %}
+  <div class="card mb-3">
+    <div class="card-header"><h3 class="card-title"><i class="fas fa-calendar-alt me-1"></i> {{ installment_words() }}</h3></div>
+    <div class="card-body small">
+      <ul class="mb-2">
+        {% if ip.deduct %}<li>Vor dem Stichtag fällig: {{ ip.deduct|map(attribute='invoice_number')|join(', ') }} –
+          {% if create_settlement %}werden in der Schlussrechnung verrechnet.{% else %}<span class="text-warning">ohne Schlussrechnung nicht verrechnet.</span>{% endif %}</li>{% endif %}
+        {% if ip.cancel %}<li>Ab dem Stichtag fällig: {{ ip.cancel|map(attribute='invoice_number')|join(', ') }} – werden storniert (Gutschrift als Entwurf).</li>{% endif %}
+        {% if ip.delete %}<li>Nie versendete Entwürfe: {{ ip.delete|map(attribute='invoice_number')|join(', ') }} – werden gelöscht.</li>{% endif %}
+        {% if ip.skip %}<li>{{ ip.skip }} geplante Fälligkeit(en) ab dem Stichtag entfallen für den Altbesitzer.</li>{% endif %}
+      </ul>
+      {% if ip.plan %}
+      <label class="form-check">
+        <input class="form-check-input" type="checkbox" name="transfer_installments" value="1" checked>
+        <span class="form-check-label">Der neue Eigentümer übernimmt die restlichen {{ installment_words() }}
+          ({{ ip.plan.installment_amount|de_number(2) }} € je Fälligkeit)</span>
+      </label>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
   <div class="d-flex">
     <a href="{{ url_for('owner_change.meters', property_id=property.id) }}" class="btn btn-link">Zurück</a>
     <button type="submit" class="btn btn-primary ms-auto">

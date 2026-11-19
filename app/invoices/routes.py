@@ -172,7 +172,7 @@ def _sync_open_item(invoice):
 # Standard-Betreff fuer den Rechnungsversand. WG-Name zuerst, damit der Kunde
 # den Absender erkennt — Mails mit nackter Rechnungsnummer im Betreff wirken
 # unserioes. Jinja-Platzhalter wie in der Body-Vorlage.
-DEFAULT_INVOICE_EMAIL_SUBJECT = "{{ wg_name }} - Rechnung {{ rechnungsnummer }}"
+DEFAULT_INVOICE_EMAIL_SUBJECT = "{{ wg_name }} - {{ belegart }} {{ rechnungsnummer }}"
 
 
 def _email_template_context(invoice):
@@ -190,8 +190,15 @@ def _email_template_context(invoice):
     else:
         hint = (f"Bitte überweisen Sie den Betrag bis {due} auf {get_wg('iban') or 'unser Konto'} "
                 f"(Verwendungszweck {invoice.invoice_number}).")
+    from app.installments.settlement import summary as _inst_summary
+    inst = _inst_summary(invoice)
+    credit = inst["credit"] if inst and inst.get("kind") == "settlement" and inst["is_credit"] else None
     return dict(
         name=invoice.customer.letter_name,
+        # Belegart („Rechnung“, „Teilrechnung“, „Jahresabrechnung“, …) und ein
+        # Guthaben aus der Gegenverrechnung (sonst leer).
+        belegart=invoice.document_title,
+        guthaben=(f"{credit:.2f}" if credit else ""),
         rechnungsnummer=invoice.invoice_number,
         buchungsjahr=(invoice.billing_period.name if invoice.billing_period else ""),
         betrag=f"{invoice.total_amount:.2f}",
@@ -478,6 +485,13 @@ def generate():
         run_project_id = request.form.get("project_id", type=int) or None
         run_account_id = water_comp.account_id
 
+        # Teilrechnungen (app/installments/): Guthaben-Behandlung dieses Laufs.
+        from app.installments import settlement as inst_settlement
+        from app.installments import terms as inst_terms
+        credit_mode = request.form.get("credit_mode") or inst_terms.credit_mode()
+        if credit_mode not in (inst_terms.CREDIT_OFFSET, inst_terms.CREDIT_REFUND):
+            credit_mode = inst_terms.credit_mode()
+
         # Rechnungsdatum für den Rechnungslauf ist heute.
         invoice_date = date.today()
         fy_error = acc_svc.open_fiscal_year_error(invoice_date)
@@ -491,13 +505,15 @@ def generate():
         vat_liable = acc_svc.is_year_vat_liable(invoice_date.year)
         water_tax = engine.effective_tax(water_comp.tax_rate, vat_liable)
 
-        # Alle Ablesungen der Periode holen (inkl. ausgebauter Zähler)
+        # Alle Ablesungen der Periode holen (inkl. ausgebauter Zähler).
+        # Subzähler nie: der Hauptzähler misst ihren Verbrauch schon mit
+        # (WaterMeter.billable_filter).
         readings = (
             MeterReading.query
             .filter_by(billing_period_id=period.id)
             .join(WaterMeter)
             .join(Property)
-            .filter(Property.active == True)
+            .filter(Property.active == True, WaterMeter.billable_filter())
             .all()
         )
 
@@ -557,6 +573,17 @@ def generate():
         wg_mode = engine.wg_mode_active()
         # Objekte, bei denen die Mindestabnahme aufgefuellt hat (Hinweis).
         minimum_filled = 0
+        # Teilrechnungen: nie versendete Entwuerfe der abzurechnenden Objekte
+        # sind mit der Jahresabrechnung gegenstandslos (die Faelligkeit wird
+        # wieder „geplant“). Gegenverrechnet werden nur versendete.
+        billing_prop_ids = [pid for pid, _r in sorted_items]
+        obsolete_drafts = inst_settlement.draft_installments(period.id, billing_prop_ids)
+        inst_settlement.delete_drafts(obsolete_drafts)
+        deducted_count = 0
+        credit_offset = credit_refund = 0
+        offset_customers = set()   # Guthaben verrechnet → evtl. schon erstellte Teilrechnungen
+        cancelled_credits = []
+        foreign_warnings = []
         for property_id, prop_readings in sorted_items:
             prop = prop_readings[0].meter.property
             ownership = prop.current_owner()
@@ -721,6 +748,29 @@ def generate():
                 tax_rate=water_tax, created_by_id=current_user.id,
             )
 
+            # Gegenverrechnung der versendeten Teilrechnungen dieser Periode
+            # (Soll: der vorgeschriebene Betrag) — ein negativer Saldo ist ein
+            # Guthaben: verrechnen (Uebertrag) oder auszahlen.
+            installments = inst_settlement.deductible_installments(
+                period.id, prop.id, ownership.customer_id)
+            if installments:
+                # Bei Guthaben werden ganz unbezahlte Teilrechnungen nicht
+                # abgezogen, sondern storniert (settlement.split_for_credit).
+                n_deducted, credits, applied_mode = inst_settlement.settle_installments(
+                    inv, installments, credit_mode=credit_mode,
+                    meter_id=prop_readings[0].meter_id, period_id=period.id,
+                    created_by_id=current_user.id)
+                deducted_count += n_deducted
+                cancelled_credits.extend(credits)
+                if applied_mode == inst_terms.CREDIT_OFFSET:
+                    credit_offset += 1
+                    offset_customers.add(ownership.customer_id)
+                elif applied_mode == inst_terms.CREDIT_REFUND:
+                    credit_refund += 1
+            for foreign in inst_settlement.foreign_installments(
+                    period.id, prop.id, ownership.customer_id):
+                foreign_warnings.append(f"{prop.label()} ({foreign.invoice_number})")
+
             # Kontierung nachziehen: ``apply_corrections_to_invoice`` und
             # ``cap_invoice_at_zero`` haengen eigene Positionen an die Rechnung.
             # Ein Sweep hier faengt sie alle ab — das ist die einzige Stelle, an
@@ -739,6 +789,11 @@ def generate():
 
         billing_run.invoices_created = created
         billing_run.invoices_skipped = skipped
+        # Teilrechnungen des Folgejahres, die schon VOR diesem Lauf erstellt
+        # wurden, ziehen das neue Guthaben sofort ein (frueheste zuerst).
+        from app.installments import invoicing as inst_invoicing
+        credit_into_drafts = inst_invoicing.pull_credit_into_drafts(
+            offset_customers, after_period=period)
 
         try:
             db.session.commit()
@@ -747,6 +802,29 @@ def generate():
             flash(f"Fehler beim Rechnungslauf – alle Änderungen wurden zurückgesetzt: {e}", "danger")
             return redirect(url_for("invoices.generate"))
         flash(f"{created} Rechnungen erstellt, {skipped} übersprungen.", "success")
+        if deducted_count:
+            word = inst_terms.installment_title()
+            parts = [f"{deducted_count} × {word} gegenverrechnet"]
+            if credit_offset:
+                parts.append(f"{credit_offset} Guthaben mit der nächsten {word} verrechnet")
+            if credit_refund:
+                parts.append(f"{credit_refund} Guthaben zur Auszahlung")
+            flash("Teilrechnungen: " + ", ".join(parts) + ".", "info")
+        if credit_into_drafts:
+            flash(f"Guthaben in {credit_into_drafts} schon erstellte "
+                  f"{inst_terms.installment_title()}(en) des Folgejahres eingerechnet.", "info")
+        if cancelled_credits:
+            flash(f"{len(cancelled_credits)} unbezahlte {inst_terms.installment_title()}(en) "
+                  "wegen Guthaben storniert statt abgezogen – die Storno-Gutschriften "
+                  f"({', '.join(c.invoice_number for c in cancelled_credits)}) gehen mit der "
+                  "Jahresabrechnung an den Kontakt.", "info")
+        if obsolete_drafts:
+            flash(f"{len(obsolete_drafts)} nie versendete {inst_terms.installment_title()}"
+                  f"-Entwürfe wurden gelöscht (die Periode ist jetzt abgerechnet).", "info")
+        if foreign_warnings:
+            flash("Teilrechnungen an einen anderen Kontakt als den jetzigen Eigentümer wurden "
+                  "nicht verrechnet – bitte prüfen (Eigentümerwechsel?): "
+                  + ", ".join(foreign_warnings) + ".", "warning")
         if minimum_filled:
             flash(f"Mindestabnahme bei {minimum_filled} "
                   f"{'Objekt' if minimum_filled == 1 else 'Objekten'} verrechnet "
@@ -768,10 +846,24 @@ def generate():
                 f"an den Altbesitzer manuell prüfen: {objs}.", "warning")
         return redirect(url_for("invoices.billing_run_detail", run_id=billing_run.id))
 
+    from app.installments import settlement as inst_settlement
+    from app.installments import terms as inst_terms
+    periods = _billing_period_list()
+    installment_info = {}
+    for p in periods:
+        sent = inst_settlement.sent_installment_count(p.id)
+        drafts = len(inst_settlement.draft_installments(p.id))
+        if sent or drafts:
+            installment_info[p.id] = {"sent": sent, "drafts": drafts}
     return render_template(
         "invoices/generate.html",
         tariffs=tariffs,
-        periods=_billing_period_list(),
+        installment_info=installment_info,
+        installments_on=inst_terms.is_enabled(),
+        credit_modes=inst_terms.CREDIT_MODES,
+        credit_mode=inst_terms.credit_mode(),
+        inst_title=inst_terms.installment_title(),
+        periods=periods,
         active_period=BillingPeriod.current(),
         sort_order_choices=BillingRun.SORT_ORDER_CHOICES,
         projects=Project.query.filter_by(closed=False).order_by(Project.name).all(),
@@ -900,6 +992,19 @@ def new():
         editor_projects=editor_projects,
         editor_tax_rates=tax_service.tax_rates(),
     )
+
+
+def _is_fixed_item(item):
+    """Positionen, die der Positions-Editor weder zeigt noch neu anlegt:
+    Mahngebuehren (ADR-003), Gegenverrechnung und Guthaben-Uebertrag."""
+    from app.installments.terms import KEY_CREDIT_CARRY
+    return bool(getattr(item, "is_dunning_fee", 0) or item.deducts_invoice_id
+                or item.charge_key == KEY_CREDIT_CARRY)
+
+
+def editable_items(invoice):
+    """Die im Positions-Editor bearbeitbaren Positionen (Jinja-Global)."""
+    return [i for i in invoice.items if not _is_fixed_item(i)]
 
 
 def _frozen_item_fields(items):
@@ -1202,9 +1307,11 @@ def items_save(invoice_id):
     # neuen Zustand inklusive der (als "free" gerenderten) bestehenden Items.
     # ADR-003: Mahngebühr-Items bleiben erhalten (werden nur vom Dunning-Service verwaltet).
     old_rates = [i.tax_rate for i in invoice.items]
-    carry = _frozen_item_fields(i for i in invoice.items if not getattr(i, "is_dunning_fee", 0))
+    carry = _frozen_item_fields(i for i in invoice.items if not _is_fixed_item(i))
     for old_item in list(invoice.items):
-        if getattr(old_item, "is_dunning_fee", 0):
+        # Mahngebuehren und Gegenverrechnungs-/Guthabenzeilen (Teilrechnungen)
+        # verwalten ihre Dienste selbst — der Editor zeigt sie gar nicht.
+        if _is_fixed_item(old_item):
             continue
         db.session.delete(old_item)
     db.session.flush()
@@ -1248,12 +1355,35 @@ def bulk_action():
     if action == "delete":
         deletable = [inv for inv in invoices if inv.status == Invoice.STATUS_DRAFT]
         skipped = len(invoices) - len(deletable)
+        from app.installments import settlement as inst_settlement
+        from app.models import OwnerChange
         try:
+            # Wie das Einzel-Löschen: Schätz-Korrekturen/Guthaben-Überträge
+            # zurückgeben (sonst bliebe das Guthaben eines gelöschten
+            # Jahresabrechnungs-Entwurfs offen und die nächste Teilrechnung zöge
+            # es ab), wegen Guthaben stornierte Teilrechnungen wieder öffnen,
+            # Verweis eines Eigentümerwechsels lösen. Belege, die ein Guthaben
+            # einziehen, zuerst — sonst scheitert das Zurückgeben des Guthabens
+            # an der Rechnung, die es erzeugt hat und die mitgelöscht wird.
+            deletable.sort(key=lambda i: (
+                0 if any(it.reading_correction_id for it in i.items) else 1, -i.id))
+            for inv in deletable:
+                reverse_corrections_for_invoice(inv)
+                inst_settlement.release_cancelled_installments(inv)
+            ids = [inv.id for inv in deletable]
+            if ids:
+                OwnerChange.query.filter(OwnerChange.settlement_invoice_id.in_(ids)).update(
+                    {"settlement_invoice_id": None, "fee_days_billed": None},
+                    synchronize_session=False)
             for inv in deletable:
                 if inv.open_item:
                     db.session.delete(inv.open_item)
                 db.session.delete(inv)
             db.session.commit()
+        except ValueError as e:
+            db.session.rollback()
+            flash(str(e), "warning")
+            return redirect(url_for("invoices.index"))
         except Exception as e:
             db.session.rollback()
             flash(f"Fehler beim Löschen – alle Änderungen wurden zurückgesetzt: {e}", "danger")
@@ -1301,10 +1431,17 @@ def bulk_action():
                         blocked_account.append(inv.invoice_number)
                         continue
                 else:
+                    if action == Invoice.STATUS_CANCELLED:
+                        # Teilrechnungen: verrechnete bleiben stehen (Meldung).
+                        from app.installments import settlement as inst_settlement
+                        if inst_settlement.cancel_blocker(inv):
+                            blocked_transition.append(inv.invoice_number)
+                            continue
                     inv.status = action
                     if action == Invoice.STATUS_SENT:
                         _create_or_update_open_item(inv)
                     elif action == Invoice.STATUS_CANCELLED:
+                        inst_settlement.release_after_cancel(inv)
                         if inv.open_item:
                             inv.open_item.status = OpenItem.STATUS_PAID
                         # ADR-003: Storno → alle aktiven Mahnungen der Rechnung stornieren
@@ -1595,6 +1732,13 @@ def set_status(invoice_id):
             storno_reason = (request.form.get("storno_reason") or "").strip()
             want_credit_note = request.form.get("create_credit_note") == "1"
 
+            # Teilrechnungen: eine verrechnete Teilrechnung bzw. eine Abrechnung,
+            # deren Guthaben schon eingezogen ist, bleibt stehen.
+            from app.installments import settlement as inst_settlement
+            blocker = inst_settlement.cancel_blocker(invoice)
+            if blocker:
+                raise ValueError(blocker)
+
             # Zahlungsbuchungen bleiben stehen: das Geld ist eingegangen, erst
             # die Rueckueberweisung auf den Posten der Gutschrift gleicht sie
             # aus (siehe credit_note.py „Zahlung bleibt stehen"). Mitstorniert
@@ -1616,6 +1760,8 @@ def set_status(invoice_id):
             # ADR-003: Storno → alle aktiven Mahnungen der Rechnung stornieren
             from app.dunning.services import cancel_dunnings_for_invoice
             cancel_dunnings_for_invoice(invoice)
+            # Noch nicht eingezogene Guthaben-Uebertraege entfallen mit.
+            inst_settlement.release_after_cancel(invoice)
 
             # Storno-Rechnung (Gutschrift) als eigenen Beleg ausstellen.
             # Ein Blocker (z.B. Storno einer Storno-Rechnung) darf den Storno
@@ -1744,6 +1890,10 @@ def delete(invoice_id):
         # Schätz-Korrekturen rückabwickeln (verrechnete zurückgeben, aus der
         # Kappung erzeugte entfernen) BEVOR die Rechnung verschwindet.
         reverse_corrections_for_invoice(invoice)
+        # Teilrechnungen, die erst dieser Entwurf wegen Guthaben storniert hat,
+        # wieder öffnen (samt Gutschrift-Entwurf entfernen).
+        from app.installments import settlement as inst_settlement
+        inst_settlement.release_cancelled_installments(invoice)
         # Verweis eines Eigentuemerwechsels auf diese (Schluss-)Rechnung lösen —
         # SQLite feuert das FK-``SET NULL`` nicht; ohne das bliebe ein toter
         # Verweis, den der Deduktions-Join (Status-Filter) zwar ignoriert, aber
@@ -2221,6 +2371,33 @@ def send_email_ajax(invoice_id):
         return jsonify({"ok": False, "error": str(exc)}), 500
 
 
+@bp.route("/send-email-bundle", methods=["POST"])
+@login_required
+def send_email_bundle():
+    """Sammelversand (JSON fuer ``wkSerialSend``): alle Belege EINES Kontakts in
+    einer E-Mail (app/invoices/mailing.py). ``invoice_ids`` kommagetrennt."""
+    from flask import jsonify
+    from app.invoices import mailing
+    raw = request.form.get("invoice_ids", "")
+    ids = [int(x) for x in raw.replace(";", ",").split(",") if x.strip().isdigit()]
+    invoices = Invoice.query.filter(Invoice.id.in_(ids or [-1])).all()
+    if len(invoices) != len(set(ids)):
+        return jsonify({"ok": False, "error": "Beleg nicht gefunden"}), 404
+    test_mode = request.form.get("test_mode") == "1"
+    try:
+        recipient = mailing.send_bundle(invoices, test_mode=test_mode,
+                                        test_recipient=current_user.email)
+    except mailing.BundleError as exc:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:  # noqa: BLE001 — Versandfehler je Zeile melden
+        db.session.rollback()
+        current_app.logger.exception("Sammel-E-Mail fehlgeschlagen")
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    return jsonify({"ok": True, "email": recipient, "test_mode": test_mode,
+                    "invoice_numbers": [i.invoice_number for i in invoices]})
+
+
 @bp.route("/<int:invoice_id>/email-events")
 @login_required
 def email_events(invoice_id):
@@ -2286,9 +2463,10 @@ def _charge_columns(runs, invoices=()):
         for row in run.tariff_components_snapshot:
             if row["key"] != ChargeType.KEY_WATER:
                 cols.setdefault(row["key"], row["label"])
+    from app.installments.terms import INTERNAL_KEYS
     extra = {item.charge_key for inv in invoices for item in inv.items
              if item.charge_key and item.charge_key != ChargeType.KEY_WATER
-             and item.charge_key not in cols}
+             and item.charge_key not in cols and item.charge_key not in INTERNAL_KEYS}
     if extra:
         labels = {ct.key: ct.label for ct in
                   ChargeType.query.filter(ChargeType.key.in_(extra)).all()}
@@ -2320,15 +2498,20 @@ def _invoice_amounts(invoice, columns, label_map):
     ``ust`` = Brutto (gespeichert in ``total_amount``) − Netto; bei nicht
     USt-pflichtigen Läufen 0. Mahngebühr-Items werden ignoriert.
     """
+    from app.installments.terms import INTERNAL_KEYS
     m3 = Decimal("0")
     water_net = Decimal("0")
     net = Decimal("0")
+    installments = Decimal("0")   # Teilbetraege, Gegenverrechnung, Guthaben-Uebertrag (netto)
     charges = {col["key"]: Decimal("0") for col in columns}
     for item in invoice.items:
         if getattr(item, "is_dunning_fee", 0):
             continue
         amount = Decimal(str(item.amount or 0))
         net += amount
+        if item.charge_key in INTERNAL_KEYS:
+            installments += amount
+            continue
         if item.is_water_consumption:
             water_net += amount
             m3 += item.quantity or Decimal("0")
@@ -2345,6 +2528,7 @@ def _invoice_amounts(invoice, columns, label_map):
         "m3": m3 or None,
         "water_net": water_net,
         "charges": charges,
+        "installments": installments,
         "net": net,
         "ust": gross - net,
         "gross": gross,
@@ -2483,10 +2667,101 @@ def _billing_run_overview(run):
 def billing_run_detail(run_id):
     run = db.get_or_404(BillingRun, run_id)
     doc_format = AppSetting.get("invoice.document_format", "pdf")
+    from app.installments import plans as inst_plans
+    from app.installments import terms as inst_terms
+    from app.installments import invoicing as inst_invoicing
+    next_period = None
+    next_plan_count = 0
+    next_open_count = 0
+    unlinked_runs = []
+    link_choices = []
+    if not run.is_installment_run and run.billing_period is not None and inst_terms.is_enabled():
+        next_period = inst_plans.next_period(run.billing_period)
+        if next_period is not None:
+            from app.models import InstallmentPlan
+            next_plan_count = InstallmentPlan.query.filter_by(
+                billing_period_id=next_period.id).count()
+            if next_plan_count:
+                next_open_count = len(inst_invoicing.open_entries(next_period))
+            # Teilrechnungen des Folgejahres, die vor diesem Lauf entstanden sind:
+            # nachtraeglich verknuepfbar, solange dieser Lauf Entwuerfe hat.
+            if run in inst_invoicing.linkable_runs(next_period):
+                unlinked_runs = inst_invoicing.unlinked_installment_runs(next_period)
+    elif run.is_installment_run and run.billing_period is not None:
+        # Teilrechnungslauf: (andere) Jahresabrechnung der Vorperiode waehlbar,
+        # solange hier noch etwas unversendet ist.
+        if run.invoices.filter(Invoice.status == Invoice.STATUS_DRAFT).count():
+            link_choices = inst_invoicing.linkable_runs(run.billing_period)
+    overview = _billing_run_overview(run)
+    send = _run_send_context(run, overview, request.args.get("with_installments"))
+    overview.update(post_ids=send["post_ids"], count_post=len(send["post_ids"]))
     return render_template(
         "invoices/billing_run_detail.html",
-        run=run, doc_format=doc_format, **_billing_run_overview(run),
+        **{k: v for k, v in send.items() if k != "post_ids"},
+        run=run, doc_format=doc_format, next_period=next_period,
+        next_plan_count=next_plan_count, next_open_count=next_open_count,
+        unlinked_runs=unlinked_runs, link_choices=link_choices,
+        inst_words=inst_terms.installment_words(),
+        inst_title=inst_terms.installment_title(),
+        **overview,
     )
+
+
+def _run_send_context(run, overview, with_installments=None):
+    """Inhalt des Versenden-Dialogs eines Laufs (E-Mail-Gruppen, Post-IDs).
+
+    Sammelversand: eine E-Mail je Kontakt fuer alle Entwuerfe des Laufs — mit
+    ``with_linked`` auch die der verknuepften Teilrechnungslaeufe (Jahresabrechnung
+    + Teilrechnungen des Folgejahres in einer E-Mail bzw. einem Kuvert). Die Wahl
+    kommt aus dem Schalter im Dialog (``with_installments`` = "1"/"0"), sonst aus
+    der Einstellung. Versendet wird ausschliesslich ueber die IDs, die dieser
+    Kontext liefert — Mail und Druck pruefen sie serverseitig gegen den Lauf."""
+    from app.installments import terms as inst_terms
+    from app.invoices import mailing
+    drafts = mailing.linked_drafts(run)
+    if with_installments in ("0", "1"):
+        with_linked = with_installments == "1"
+    else:
+        with_linked = inst_terms.send_with_settlement()
+    with_linked = with_linked and bool(drafts)
+    all_invoices = mailing.run_invoices_with_linked(run, include_linked=with_linked)
+    mail_bundles = mailing.bundles(all_invoices)
+    if not any(len(b["invoices"]) > 1 for b in mail_bundles):
+        mail_bundles = []        # nichts zu buendeln → Einzelversand des Laufs
+    post_ids = overview["post_ids"]
+    if with_linked or any(inv.is_credit_note for inv in all_invoices):
+        # Post: Belege eines Kontakts hintereinander (ein Kuvert) — Abrechnung,
+        # Storno-Gutschriften, dann die Teilrechnungen nach Faelligkeit.
+        from app.einvoice.obligation import electronic_reason
+        post = [inv for inv in all_invoices
+                if inv.status == Invoice.STATUS_DRAFT and not inv.customer.wants_email
+                and not electronic_reason(inv)]
+        post_ids = [inv.id for inv in mailing.post_order(post)]
+    periods = sorted({inv.billing_period.name for inv in drafts if inv.billing_period})
+    return {
+        "mail_bundles": mail_bundles,
+        "post_ids": post_ids,
+        "linked_choice": bool(drafts),
+        "with_linked": with_linked,
+        "linked_count": len(drafts),
+        "linked_period_name": ", ".join(periods),
+    }
+
+
+@bp.route("/billing-runs/<int:run_id>/send-panel")
+@login_required
+def billing_run_send_panel(run_id):
+    """Dialoginhalt „Rechnungen versenden“ neu (Schalter „Teilrechnungen
+    mitschicken“) — htmx-Fragment, schreibt nichts."""
+    from app.installments import terms as inst_terms
+    run = db.get_or_404(BillingRun, run_id)
+    overview = _billing_run_overview(run)
+    send = _run_send_context(run, overview, request.args.get("with_installments"))
+    return render_template(
+        "invoices/_run_send_body.html", run=run,
+        doc_format=AppSetting.get("invoice.document_format", "pdf"),
+        mailable=overview["mailable"], electronic_only=overview["electronic_only"],
+        inst_title=inst_terms.installment_title(), **send)
 
 
 def _period_completeness(period):
@@ -2512,14 +2787,15 @@ def _period_completeness(period):
     from app.models import PropertyOwnership
 
     # Objekte MIT Ablesung in der Periode (gleiche Bedingungen wie im Lauf:
-    # ueber alle Zaehler, auch ausgebaute; nur aktive Objekte).
+    # ueber alle abrechenbaren Zaehler, auch ausgebaute — Subzaehler zaehlen
+    # nicht; nur aktive Objekte).
     read_prop_ids = {
         pid for (pid,) in
         db.session.query(WaterMeter.property_id)
         .join(MeterReading, MeterReading.meter_id == WaterMeter.id)
         .join(Property, Property.id == WaterMeter.property_id)
         .filter(MeterReading.billing_period_id == period.id,
-                Property.active.is_(True))
+                Property.active.is_(True), WaterMeter.billable_filter())
         .distinct()
     }
 
@@ -2534,13 +2810,15 @@ def _period_completeness(period):
         .distinct()
     }
 
-    # Aktive Objekte mit mindestens einem aktiven Zaehler — die Grundgesamtheit
-    # dessen, was in der Periode ueberhaupt abgerechnet werden sollte.
+    # Aktive Objekte mit mindestens einem aktiven abrechenbaren Zaehler — die
+    # Grundgesamtheit dessen, was in der Periode ueberhaupt abgerechnet werden
+    # sollte (ein Objekt nur mit Subzaehler hat nichts abzurechnen).
     metered_prop_ids = {
         pid for (pid,) in
         db.session.query(Property.id)
         .join(WaterMeter, WaterMeter.property_id == Property.id)
-        .filter(Property.active.is_(True), WaterMeter.active.is_(True))
+        .filter(Property.active.is_(True), WaterMeter.active.is_(True),
+                WaterMeter.billable_filter())
         .distinct()
     }
 
@@ -2732,8 +3010,11 @@ def billing_run_delete(run_id):
     # zurückgeben, aus Kappung erzeugte entfernen). Schlägt fehl, wenn eine
     # erzeugte Gutschrift schon in einer späteren Rechnung verrechnet wurde.
     try:
+        from app.installments import settlement as inst_settlement
         for inv in deletable:
             reverse_corrections_for_invoice(inv)
+            # wegen Guthaben stornierte Teilrechnungen wieder öffnen
+            inst_settlement.release_cancelled_installments(inv)
         for inv in deletable:
             db.session.delete(inv)
         db.session.delete(run)
@@ -2808,13 +3089,13 @@ def billing_run_post_bulk(run_id):
         return redirect(url_for("invoices.billing_run_detail", run_id=run_id))
     from pypdf import PdfWriter
 
-    # Auf den Lauf einschränken: keine fremden Rechnungen über manipulierte IDs.
-    invoices = (
-        run.invoices
-        .filter(Invoice.id.in_(invoice_ids))
-        .order_by(Invoice.invoice_number)
-        .all()
-    )
+    # Auf den Lauf (und seine verknuepften Teilrechnungslaeufe) einschränken:
+    # keine fremden Rechnungen über manipulierte IDs. Reihenfolge je Kontakt
+    # zusammen (Kuvert), sonst nach Nummer.
+    # Auch die Storno-Gutschriften der wegen Guthaben stornierten Teilrechnungen
+    # gehoeren ins Kuvert (sie haben keinen Lauf) — eine Stelle fuer OSS + SaaS-Job.
+    from app.invoices import mailing
+    invoices = mailing.post_invoices_for_run(run, invoice_ids)
     if not invoices:
         flash("Keine Rechnungen gefunden.", "warning")
         return redirect(url_for("invoices.billing_run_detail", run_id=run_id))
@@ -2834,6 +3115,7 @@ def billing_run_post_bulk(run_id):
 
     from app.direct_debit.mandate_form import EnclosureAppender
     enclosures = EnclosureAppender()  # Lastschrift-Mandat als Beilage (Einstellung)
+    duplex = request.form.get("duplex") == "1"
     writer = PdfWriter()
     for invoice in invoices:
         # Der Post-Beleg wird jetzt versendet — seine E-Rechnungsdaten einfrieren,
@@ -2848,6 +3130,8 @@ def billing_run_post_bulk(run_id):
         writer.append(io.BytesIO(pdf_bytes))
         # Beilage nur im Sammel-PDF, nie im archivierten Rechnungsbeleg.
         enclosures.after(writer, invoice)
+        if duplex:
+            mailing.start_on_new_sheet(writer)
     db.session.commit()
     return send_pdf_writer(writer, "Rechnungen_Post.pdf")
 

@@ -8,39 +8,42 @@ der den UI-Flow ("Bank-Auszug hochladen") nachstellen will.
 ## bank_statements/
 
 Bank-Auszuege im Format **MT940**, **MT942** und **camt.053** zum Hochladen
-unter `/bank-import`. Alle drei Dateien stellen denselben Inhalt dar:
+unter `/bank-import`. Alle drei Dateien stellen denselben Inhalt dar
+(Tage vor dem Seed-Stichtag, `<Vorjahr>` = Jahr der Vorjahresrechnungen):
 
 | # | Datum | Gegenpartei | Betrag | Erwartetes Matching |
 |---|---|---|---|---|
-| 1 | 2025-09-02 | Karl Weidinger | +120,00 | OpenItem "Anschlussgebuehr Gartenzaehler Nachruestung" (Kunde Nr. 6) — voll |
-| 2 | 2025-09-03 | Petra Voglhuber | +8,50 | OpenItem "Saeumniszuschlag manuell" (Kunde Nr. 13) — voll |
-| 3 | 2025-09-04 | Brigitte Kogler | +218,46 | Rechnung RE-2024-0004 (via Referenz) — voll |
-| 4 | 2025-09-07 | Edith Fischer | +200,00 | Rechnung RE-2024-0005 — **Teilzahlung** (Forderung 367,84) |
-| 5 | 2025-09-08 | Hildegard Wagner | +163,02 | Rechnung RE-2024-0011 — voll |
-| 6 | 2025-09-10 | Monika Leitner | +229,24 | Rechnung RE-2024-0019 — voll |
-| 7 | 2025-09-12 | Energie AG Oberoesterreich | +285,40 | **Kein** Matching — fremde Buchung, soll Account-Override verlangen |
+| 1 | −13 Tage | Karl Weidinger | +120,00 | OpenItem "Anschlussgebuehr Gartenzaehler Nachruestung" (Kunde Nr. 6) — voll |
+| 2 | −12 Tage | Petra Voglhuber | +8,50 | OpenItem "Saeumniszuschlag manuell" (Kunde Nr. 13) — voll |
+| 3 | −11 Tage | Brigitte Kogler | +341,66 | Rechnung RE-`<Vorjahr>`-0007 (via Referenz) — voll |
+| 4 | −8 Tage | Hildegard Stadler | +200,00 | Rechnung RE-`<Vorjahr>`-0011 — **Teilzahlung** (Forderung 328,78) |
+| 5 | −7 Tage | Monika Leitner | +412,86 | Rechnung RE-`<Vorjahr>`-0001 — voll |
+| 6 | −5 Tage | Anna Schober | +362,16 | Rechnung RE-`<Vorjahr>`-0018 — voll |
+| 7 | −3 Tage | Energie AG Oberoesterreich | +285,40 | **Kein** Matching — fremde Buchung, soll Account-Override verlangen |
 
-Zielkonto: **Girokonto Raika**, IBAN `AT12 3456 7890 1111 0000` (aus dem
-Demo-Seed; siehe `flask --app run seed-demo`). Eroeffnungssaldo 8 500,00 €,
-Schlusssaldo 9 724,62 €.
+Zielkonto: **Girokonto Raika**, IBAN `AT93 3456 7890 1111 0000` (aus dem
+österreichischen Demo-Seed; siehe `flask --app run seed-demo`). Eroeffnungssaldo
+8 500,00 €, Schlusssaldo 10 230,58 €.
 
 ### Voraussetzung
 
 Vorher `flask --app run seed-demo --yes` (mit `WASSERKLAR_ALLOW_DEMO_SEED=1`)
-ausfuehren — die Open Items und Rechnungsnummern in den Dateien sind exakt
-auf den deterministischen Demo-Datensatz abgestimmt.
+ausfuehren. Der Demo-Datensatz startet immer im laufenden Jahr — die
+Rechnungsnummern tragen das Vorjahr, die Buchungen liegen kurz vor dem Seed-Tag.
+Die Dateien im Repo passen zu einem Seed vom 14.11.2026; fuer einen spaeteren
+Seed die Dateien mit dessen Datum neu erzeugen (Betraege und Kunden bleiben gleich).
 
 ### Regenerieren
 
 Die drei Dateien werden von [`generate.py`](bank_statements/generate.py)
-erzeugt. Bei Aenderung der Demo-Daten (oder anderer Betraege):
+erzeugt:
 
 ```
-.venv/Scripts/python sample_data/bank_statements/generate.py
+.venv/Scripts/python sample_data/bank_statements/generate.py --today 2026-11-14
 ```
 
-Schreibt `giro_2025-09.mt940.sta`, `giro_2025-09.mt942.sta` und
-`giro_2025-09.camt053.xml` neu.
+Ohne `--today` gilt heute. Schreibt `giro_demo.mt940.sta`, `giro_demo.mt942.sta`
+und `giro_demo.camt053.xml` neu.
 
 ## stammdaten_import/
 

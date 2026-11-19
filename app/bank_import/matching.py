@@ -1,5 +1,6 @@
 import re
 import unicodedata
+from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import func, or_
@@ -197,7 +198,8 @@ def _match_by_iban(line: BankStatementLine) -> bool:
         ).all()
     )
 
-    exact = [op for op in ops if _as_decimal(op.open_balance) == amount]
+    exact = _oldest_if_same_customer(
+        [op for op in ops if _as_decimal(op.open_balance) == amount])
     if len(exact) == 1:
         op = exact[0]
         line.matched_open_item_id = op.id
@@ -214,6 +216,17 @@ def _match_by_iban(line: BankStatementLine) -> bool:
     if len(custs_with_ops) == 1:
         line.matched_customer_id = next(iter(custs_with_ops))
     return False
+
+
+def _oldest_if_same_customer(exact):
+    """Mehrere gleich hohe offene Posten DESSELBEN Kontakts (vier gleiche
+    Teilbetraege, zwei gleiche Rechnungen): der aelteste faellige zuerst —
+    so wie der Kontakt in aller Regel zahlt. Posten verschiedener Kontakte
+    bleiben mehrdeutig (Liste unveraendert)."""
+    if len(exact) <= 1 or len({op.customer_id for op in exact}) != 1:
+        return exact
+    far = date.max
+    return [min(exact, key=lambda op: (op.due_date or op.date or far, op.id))]
 
 
 # Akademische Titel + Verbindungswoerter, die kein Namensbestandteil sind und
@@ -315,7 +328,8 @@ def _match_by_name_amount(line: BankStatementLine) -> None:
         ).all()
     )
 
-    exact = [op for op in ops if _as_decimal(op.open_balance) == amount]
+    exact = _oldest_if_same_customer(
+        [op for op in ops if _as_decimal(op.open_balance) == amount])
     if len(exact) == 1:
         op = exact[0]
         line.matched_open_item_id = op.id

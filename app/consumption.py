@@ -32,11 +32,19 @@ from sqlalchemy import func
 
 from app.extensions import db
 from app.models import (
+    AppSetting,
     BillingPeriod,
     ConsumptionYear,
     MeterReading,
     WaterMeter,
 )
+
+# Rechenregel der gemessenen Summe. Hochzaehlen, wenn sich aendert, welche
+# Ablesungen zaehlen: ``refresh_all`` rechnet dann beim naechsten Aufruf alle
+# Jahre einmal neu (ohne Migration — auch nach dem Import eines alten Exports).
+# 2 = Subzaehler zaehlen nicht mehr mit.
+RULE_VERSION = "2"
+RULE_SETTING = "consumption.rule_version"
 
 
 def _periods_by_year():
@@ -59,20 +67,26 @@ def _measure(period_ids):
     ``count(MeterReading.consumption)`` zaehlt nur Zeilen mit gesetztem
     Verbrauch — eine Ablesung ohne Vorgaenger und ohne ``initial_value`` hat
     ``consumption IS NULL`` und ist keine Abrechnungsbasis.
+
+    Subzaehler zaehlen nicht (``WaterMeter.billable_filter``): ihr Wasser
+    laeuft schon durch den Hauptzaehler und waere sonst doppelt in der Summe.
     """
     total, count = (
         db.session.query(
             func.coalesce(func.sum(MeterReading.consumption), 0),
             func.count(MeterReading.consumption),
         )
-        .filter(MeterReading.billing_period_id.in_(period_ids))
+        .join(WaterMeter, WaterMeter.id == MeterReading.meter_id)
+        .filter(MeterReading.billing_period_id.in_(period_ids),
+                WaterMeter.billable_filter())
         .one()
     )
     units = (
         db.session.query(func.count(func.distinct(WaterMeter.property_id)))
         .select_from(MeterReading)
         .join(WaterMeter, WaterMeter.id == MeterReading.meter_id)
-        .filter(MeterReading.billing_period_id.in_(period_ids))
+        .filter(MeterReading.billing_period_id.in_(period_ids),
+                WaterMeter.billable_filter())
         .scalar()
     ) or 0
     return Decimal(str(total or 0)), int(count or 0), int(units)
@@ -141,7 +155,11 @@ def refresh_all(force=False):
     fuer die noch keine Zeile existiert — der Normalfall beim Seitenaufruf.
     ``force=True`` rechnet alles (Button "Neu berechnen"), z.B. nachdem
     Zaehler-Stammdaten ausserhalb der ueblichen Pfade geaendert wurden.
+    Eine geaenderte Rechenregel (``RULE_VERSION``) erzwingt das einmal.
     """
+    if AppSetting.get(RULE_SETTING) != RULE_VERSION:
+        force = True
+        AppSetting.set(RULE_SETTING, RULE_VERSION)
     by_year = _periods_by_year()
     existing = {r.year: r for r in ConsumptionYear.query.all()}
     touched = []

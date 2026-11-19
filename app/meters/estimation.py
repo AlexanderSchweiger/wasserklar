@@ -29,8 +29,8 @@ from decimal import Decimal, ROUND_DOWN
 
 from app.extensions import db
 from app.models import (
-    MeterReading, BillingPeriod, Invoice, InvoiceItem, BillingRun,
-    ReadingCorrection,
+    MeterReading, BillingPeriod, Invoice, InvoiceItem, InvoiceMeterReading,
+    BillingRun, ReadingCorrection,
 )
 
 _ISSUED_STATUSES = (Invoice.STATUS_SENT, Invoice.STATUS_PAID, Invoice.STATUS_CREDIT)
@@ -140,6 +140,14 @@ def _issued_invoice_for(property_id, period_id):
         .order_by(Invoice.id.desc())
         .first()
     )
+
+
+def _billed_meter_on(invoice, meter):
+    """Steht ``meter`` im eingefrorenen Verbrauchsnachweis von ``invoice``?"""
+    return db.session.query(
+        InvoiceMeterReading.query
+        .filter_by(invoice_id=invoice.id, meter_id=meter.id).exists()
+    ).scalar()
 
 
 def _consumption_price(invoice):
@@ -292,6 +300,11 @@ def build_correction(reading, estimated_consumption, *, created_by_id=None):
     invoice = _issued_invoice_for(meter.property_id, reading.billing_period_id)
     if invoice is None:
         return None  # Schaetzung wurde nie abgerechnet -> nichts zu korrigieren
+    if not meter.is_billable() and not _billed_meter_on(invoice, meter):
+        # Subzaehler werden nie verrechnet — korrigiert wird nur, was die
+        # Rechnung nachweislich abgerechnet hat (Altbeleg vor der Regel: der
+        # Subzaehler steht dann im eingefrorenen Verbrauchsnachweis).
+        return None
 
     delta = Decimal(str(reading.consumption)) - Decimal(str(estimated_consumption))
     if delta == 0:
@@ -363,17 +376,23 @@ def build_correction(reading, estimated_consumption, *, created_by_id=None):
 # 3. Einziehen in die naechste Rechnung
 # ---------------------------------------------------------------------------
 
-def open_corrections_for_customer(customer_id):
-    """Offene/teils offene Korrekturposten eines Kunden, aelteste zuerst."""
+def open_corrections_for_customer(customer_id, kinds=None):
+    """Offene/teils offene Korrekturposten eines Kunden, aelteste zuerst.
+
+    ``kinds``: nur diese Arten (``ReadingCorrection.KIND_*``), ``None`` = alle.
+    Der Teilrechnungslauf zieht nur Guthaben-Uebertraege ein
+    (``KIND_CREDIT_CARRY``), Schaetzkorrekturen warten auf die Jahresabrechnung."""
+    query = ReadingCorrection.query.filter(
+        ReadingCorrection.customer_id == customer_id,
+        ReadingCorrection.status.in_([
+            ReadingCorrection.STATUS_OPEN,
+            ReadingCorrection.STATUS_PARTIAL,
+        ]),
+    )
+    if kinds is not None:
+        query = query.filter(ReadingCorrection.kind.in_(list(kinds)))
     return (
-        ReadingCorrection.query
-        .filter(
-            ReadingCorrection.customer_id == customer_id,
-            ReadingCorrection.status.in_([
-                ReadingCorrection.STATUS_OPEN,
-                ReadingCorrection.STATUS_PARTIAL,
-            ]),
-        )
+        query
         .order_by(ReadingCorrection.created_at.asc(), ReadingCorrection.id.asc())
         .all()
     )
@@ -426,7 +445,10 @@ def _add_correction_item(inv, corr, net_amount, *, partial):
         min_note = f"Mindestabnahme {fmt_qty(corr.min_quantity)} m³ berücksichtigt"
     part_suffix = (f" (Teilbetrag, Rest folgt{'; ' + min_note if min_note else ''})"
                    if partial else "")
-    if corr.delta_m3 is None:
+    if getattr(corr, "kind", None) == ReadingCorrection.KIND_CREDIT_CARRY:
+        # Guthaben einer Jahresabrechnung (app/installments/settlement.py).
+        desc = f"{corr.label or 'Guthaben aus der Jahresabrechnung'}{part_suffix}"
+    elif corr.delta_m3 is None:
         # Carry-forward aus einer auf 0 gekappten Vorperioden-Rechnung
         # (negativer Verbrauch) — kein m³-Delta, daher anders beschriften.
         desc = (
@@ -465,7 +487,7 @@ def _add_correction_item(inv, corr, net_amount, *, partial):
     db.session.flush()
 
 
-def apply_corrections_to_invoice(inv, customer_id):
+def apply_corrections_to_invoice(inv, customer_id, kinds=None):
     """Zieht offene Korrekturposten des Kunden in ``inv`` ein.
 
     Nachforderungen (amount > 0) werden immer voll als Position aufgenommen.
@@ -476,7 +498,7 @@ def apply_corrections_to_invoice(inv, customer_id):
     Erwartet, dass die regulaeren Positionen (Verbrauch/Gebuehren) bereits an
     ``inv`` haengen. Caller committet.
     """
-    corrs = open_corrections_for_customer(customer_id)
+    corrs = open_corrections_for_customer(customer_id, kinds=kinds)
     if not corrs:
         return []
 

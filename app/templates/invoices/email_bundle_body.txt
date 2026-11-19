@@ -1,0 +1,18 @@
+{{ customer.salutation_line }},
+
+anbei erhalten Sie {{ 'Ihre Belege' if anzahl > 1 else 'Ihren Beleg' }}:
+
+{{ belege }}
+{% for inv in invoices %}{% set inst = installment_summary(inv) %}{% if inst and inst.kind == 'settlement' and inst.is_credit %}
+Ihr Guthaben aus der {{ inv.document_title }} {{ inv.invoice_number }} beträgt {{ inst.credit|de_number }} Euro.{% if inst.credit_mode == 'offset' %} Es ist mit Ihren nächsten {{ installment_words() }}n verrechnet; die Beträge oben sind bereits entsprechend geringer.{% else %} Wir überweisen es auf Ihr Konto.{% endif %}
+{% endif %}{% endfor %}
+{% if bankeinzug %}
+Die Beträge buchen wir zu den genannten Terminen per SEPA-Lastschrift von Ihrem Konto ab – Sie brauchen nichts zu überweisen. Details stehen auf den einzelnen Belegen.
+{% else %}
+Bitte überweisen Sie die Beträge jeweils bis zum genannten Termin{% if iban %} auf {{ iban }}{% endif %} und geben Sie als Verwendungszweck die Belegnummer an.
+{% endif %}
+
+Die Dokumente finden Sie im Anhang.
+
+Mit freundlichen Grüßen
+{{ wg_name }}

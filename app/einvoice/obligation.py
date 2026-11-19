@@ -124,10 +124,12 @@ def delivery_problem(invoice):
     """
     if invoice.status == Invoice.STATUS_DRAFT or not required_for(invoice):
         return None
-    if invoice.last_email_status in _UNDELIVERED:
+    # Sammel-E-Mail: der Zustellstatus steht am Hauptbeleg.
+    mail = invoice.mail_status_invoice
+    if mail.last_email_status in _UNDELIVERED:
         return ("danger", "E-Rechnung nicht zugestellt: Die E-Mail an "
-                f"{invoice.email_recipient or 'den Kunden'} ist nicht angekommen "
-                f"({invoice.last_email_status_de}). Bitte die Adresse im Kundenstamm prüfen "
+                f"{mail.email_recipient or 'den Kunden'} ist nicht angekommen "
+                f"({mail.last_email_status_de}). Bitte die Adresse im Kundenstamm prüfen "
                 "und die Rechnung erneut versenden — Post ist hier nicht zulässig.")
     if not invoice.email_sent_at:
         return ("warning", "Pflicht-E-Rechnung noch nicht elektronisch zugestellt: Der Kunde ist "

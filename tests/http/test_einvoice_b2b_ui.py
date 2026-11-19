@@ -199,6 +199,14 @@ class TestDashboard:
 # Rechnungslauf und Post-Versand
 # ---------------------------------------------------------------------------
 
+def _post_ids(html):
+    """Post-IDs des Versenden-Dialogs (``#br-post-list[data-post-ids]``; ohne
+    Post-Belege gibt es die Liste gar nicht)."""
+    import re
+    m = re.search(r'data-post-ids="([^"]*)"', html)
+    return [int(x) for x in m.group(1).split(",") if x] if m else []
+
+
 class TestBillingRunShipping:
     def test_a_required_invoice_without_email_is_not_offered_for_post(
             self, client, admin, rendered, pdf_dir, invoices):
@@ -210,7 +218,7 @@ class TestBillingRunShipping:
         html = client.get(f"/invoices/billing-runs/{run.id}").get_data(as_text=True)
         assert "Nur elektronisch zustellbar" in html
         assert obligation.REASON_REQUIRED in html
-        assert "const BR_POST_IDS = [];" in html          # nichts zum Drucken
+        assert _post_ids(html) == []                       # nichts zum Drucken
         assert "1 nur elektronisch" in html               # Zusammenfassung
 
     def test_a_required_invoice_with_email_goes_to_the_mail_list(
@@ -223,7 +231,7 @@ class TestBillingRunShipping:
         html = client.get(f"/invoices/billing-runs/{run.id}").get_data(as_text=True)
         assert "Nur elektronisch zustellbar" not in html
         assert "buchhaltung@mueller-bau.example" in html
-        assert "const BR_POST_IDS = [];" in html
+        assert _post_ids(html) == []
 
     def test_an_xrechnung_customer_without_email_is_listed_with_an_xml_link(
             self, client, admin, rendered, pdf_dir, invoices):
@@ -247,7 +255,7 @@ class TestBillingRunShipping:
         _login(client)
         html = client.get(f"/invoices/billing-runs/{run.id}").get_data(as_text=True)
         assert "Nur elektronisch zustellbar" not in html
-        assert f"const BR_POST_IDS = [{draft.id}];" in html
+        assert _post_ids(html) == [draft.id]
 
     def test_post_bulk_refuses_a_draft_that_must_be_electronic(
             self, client, admin, rendered, pdf_dir, invoices):

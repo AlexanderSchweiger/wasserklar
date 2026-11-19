@@ -1150,6 +1150,9 @@ def _apply_payment_fields(customer, form) -> str | None:
 
     if form.get("payment_fields") != "1":
         return None
+    # Teilrechnungen: Schalter nur, wenn er im Formular steht (Verfahren aktiv).
+    if form.get("installment_fields") == "1":
+        customer.installment_opt_out = form.get("installment_opt_out") == "1"
     method = form.get("payment_method", "").strip()
     if method not in Customer.PAYMENT_METHODS:
         method = Customer.PAYMENT_TRANSFER

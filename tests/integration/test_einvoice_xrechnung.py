@@ -257,3 +257,15 @@ class TestXRechnungService:
                        customer=_government())
         with app.test_request_context():
             assert xrechnung_attachment(inv, freeze=True) is None
+
+
+class TestInstallmentXRechnung:
+    def test_g13x_partial_invoice_326(self, app):
+        """Teilrechnung an eine Behoerde: XRechnung kennt 386 nicht → 326 (BR-DE-17)."""
+        from app.installments.terms import KEY_INSTALLMENT
+        _seller(XR_SELLER)
+        inv = _invoice([_item("1. Teilbetrag 2025/26", "1", "Pauschal", "75.00", "7",
+                              charge_key=KEY_INSTALLMENT)],
+                       customer=_government(), kind=Invoice.KIND_INSTALLMENT)
+        e, tree = _xrechnung(inv, "G13x_teilrechnung_xrechnung", pdf=FAKE_PDF)
+        assert _text(tree, "//rsm:ExchangedDocument/ram:TypeCode") == "326"

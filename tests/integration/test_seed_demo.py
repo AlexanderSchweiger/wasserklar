@@ -1,10 +1,12 @@
 """Demo-Datensatz (``app/seed/demo.py``) für Österreich und Deutschland.
 
-Seedet gegen die SQLite-In-Memory-Test-DB (``PDF_DIR`` zeigt in einen Temp-Ordner),
-``now`` bleibt auf dem historischen Anker — der Datensatz ist damit deterministisch.
+Seedet gegen die SQLite-In-Memory-Test-DB (``PDF_DIR`` zeigt in einen Temp-Ordner).
+Der Stichtag ist fest (``ANCHOR``) — im Betrieb ist er das heutige Datum, der
+Datensatz startet dann immer im laufenden Jahr.
 """
 import hashlib
 import math
+from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -12,7 +14,10 @@ import pytest
 from app.extensions import db
 
 
-def _seed(country=None, identity=False):
+ANCHOR = date(2026, 9, 15)
+
+
+def _seed(country=None, identity=False, today=ANCHOR, installments=False):
     from cli import (run_data_migrations, seed_default_billing_period, seed_default_charge_types,
                      seed_default_dunning_policy, seed_default_roles, seed_default_tax_rates)
     from app.seed.demo import fill_demo_identity, seed_demo_data
@@ -24,7 +29,8 @@ def _seed(country=None, identity=False):
     seed_default_roles(db)
     if identity:
         fill_demo_identity(country)
-    counts = seed_demo_data(db, verbose=False, country=country)
+    counts = seed_demo_data(db, verbose=False, country=country, today=today,
+                            installments=installments)
     db.session.commit()
     run_data_migrations(db)
     db.session.commit()
@@ -173,3 +179,121 @@ def test_unknown_country_is_rejected(app):
     from app.seed.demo import switch_country
     with pytest.raises(ValueError):
         switch_country(db, "CH")
+
+
+class TestDates:
+    """Der Datensatz richtet sich nach dem Stichtag: Vorjahr + laufendes Jahr."""
+
+    def _future(self, today):
+        from app.models import (Booking, Invoice, MaintenanceLog, Meeting, MeterReading,
+                                MeterReplacement)
+        return {
+            "readings": MeterReading.query.filter(MeterReading.reading_date > today).count(),
+            "swaps": MeterReplacement.query.filter(
+                MeterReplacement.replacement_date > today).count(),
+            "bookings": Booking.query.filter(Booking.date > today).count(),
+            "invoices": Invoice.query.filter(Invoice.date > today).count(),
+            "maintenance": MaintenanceLog.query.filter(MaintenanceLog.date > today).count(),
+            "held_meetings": Meeting.query.filter(Meeting.meeting_date > today,
+                                                  Meeting.status == Meeting.STATUS_HELD).count(),
+        }
+
+    def test_periods_follow_the_anchor(self, app):
+        from app.models import BillingPeriod, FiscalYear, WaterTariff
+        _seed(today=date(2031, 10, 2))
+        assert BillingPeriod.current().name == "2031"
+        assert [p.name for p in BillingPeriod.query.order_by(BillingPeriod.start_date)] == [
+            "2030", "2031"]
+        assert [f.year for f in FiscalYear.query.filter_by(closed=False)] == [2031]
+        assert {t.name for t in WaterTariff.query} == {"Tarif 2030", "Tarif 2031"}
+        assert all(v == 0 for v in self._future(date(2031, 10, 2)).values())
+
+    def test_early_in_the_year_nothing_lies_in_the_future(self, app):
+        """Vor dem 15.09. wird das laufende Jahr gestaucht (Zaehlertausch, Buchungen,
+        Sitzungen …) — kein Termin nach dem Stichtag, Verbraeuche im Verhaeltnis."""
+        from app.models import MeterReading, MeterReplacement
+        today = date(2027, 2, 20)
+        counts = _seed(today=today)
+        assert counts["meter_swaps"] == 20
+        assert all(v == 0 for v in self._future(today).values())
+        swap = MeterReplacement.query.first()
+        assert date(2027, 1, 1) <= swap.replacement_date < today
+        current = MeterReading.query.filter(MeterReading.reading_date == today).all()
+        assert current and max(r.consumption for r in current) < 60
+
+    def test_bavarian_water_levy_by_year(self):
+        """Wassercent: vor 2026 keiner, 2026 ab 01.07. (zeitanteilig), danach ganzjährig."""
+        from app.seed.demo import levy_for_year
+        from app.seed.demo_locale import locale_for
+        de = locale_for("DE")
+        assert levy_for_year(de, 2025) == (None, None)
+        assert levy_for_year(de, 2026) == (Decimal("0.10"), date(2026, 7, 1))
+        assert levy_for_year(de, 2027) == (Decimal("0.10"), None)
+        assert levy_for_year(locale_for("AT"), 2027) == (None, None)
+
+
+class TestInstallments:
+    """Testdaten mit Teilrechnungen: Plaene, versendete/bezahlte Teilrechnungen,
+    Folgeperiode — und der Jahres-Rechnungslauf verrechnet sie."""
+
+    @pytest.mark.parametrize("country,title", [("AT", "Teilrechnung"),
+                                                ("DE", "Abschlagsrechnung")])
+    def test_installments_through_the_year(self, app, country, title):
+        from app.installments import terms
+        from app.models import BillingPeriod, BillingRun, InstallmentPlan, Invoice, OpenItem
+        counts = _seed(country, today=date(2026, 11, 14), installments=True)
+        assert terms.is_enabled()
+        props = 120 if country == "AT" else 140
+        # je Objekt mit aktivem Zaehler + Eigentuemer ein Plan, ausser den Ausgenommenen
+        assert props - 10 < counts["installment_plans"] <= props - counts["installment_opt_out"]
+        assert counts["installment_opt_out"] == 3
+        # 15.02., 15.05., 15.08. (meist bezahlt), 15.11. ausgestellt und noch offen
+        assert counts["installment_invoices"] == 4 * counts["installment_plans"]
+        assert BillingRun.query.filter_by(run_kind=BillingRun.KIND_INSTALLMENT).count() == 4
+        insts = Invoice.query.filter_by(invoice_kind=Invoice.KIND_INSTALLMENT).all()
+        assert {i.document_title for i in insts} == {title}
+        latest = max(i.due_date for i in insts)
+        assert all(i.status == Invoice.STATUS_SENT for i in insts if i.due_date == latest)
+        paid = [i for i in insts if i.status == Invoice.STATUS_PAID]
+        assert len(paid) == counts["installment_invoices_paid"]
+        assert len(paid) > 2 * counts["installment_plans"]
+        assert OpenItem.query.filter(OpenItem.invoice_id.in_([i.id for i in insts])).count() \
+            == len(insts)
+        # Folgeperiode mit Plaenen (Vorschau auf der Jahresabrechnung)
+        nxt = BillingPeriod.query.filter_by(name="2027").one()
+        assert not nxt.active
+        assert InstallmentPlan.query.filter_by(billing_period_id=nxt.id).count() \
+            == counts["installment_plans_next"] > 0
+        if country == "AT":
+            first = min(insts, key=lambda i: (i.due_date, i.id))
+            assert (first.service_date_from, first.service_date_to) == (
+                date(2026, 1, 1), date(2026, 3, 31))
+        else:
+            assert all(i.service_date_from is None for i in insts)
+            assert any(i.tax_breakdown for i in insts)             # 7 % USt
+
+    def test_no_next_period_early_in_the_year(self, app):
+        from app.models import BillingPeriod, Invoice
+        counts = _seed(today=date(2027, 3, 1), installments=True)
+        assert counts["installment_invoices"] == counts["installment_plans"]   # nur 15.02.
+        assert "installment_plans_next" not in counts
+        assert BillingPeriod.query.count() == 2
+        assert not Invoice.query.filter(Invoice.date > date(2027, 3, 1)).count()
+
+    def test_annual_billing_settles_them(self, app, client):
+        """Der Rechnungslauf rechnet mit dem echten Datum — der Stichtag ist heute."""
+        from app.installments import settlement
+        from app.models import BillingPeriod, Invoice, WaterTariff
+        _seed(today=date.today(), installments=True)
+        client.get("/auth/logout")
+        client.post("/auth/login", data={"username": "admin", "password": "demo1234"})
+        period = BillingPeriod.current()
+        tariff = WaterTariff.query.filter_by(name=f"Tarif {period.name}").one()
+        resp = client.post("/invoices/generate", data={
+            "billing_period_id": period.id, "tariff_id": tariff.id, "due_days": 30})
+        assert resp.status_code == 302
+        summaries = [settlement.summary(i) for i in Invoice.query.filter_by(
+            invoice_kind=Invoice.KIND_STANDARD, billing_period_id=period.id)]
+        summaries = [s for s in summaries if s]
+        assert len(summaries) > 50
+        assert all(s["deductions"] for s in summaries)

@@ -18,6 +18,7 @@ from app.meters import meter_import_service
 from app.imports import common as import_common
 from app.meters.services import save_reading, recompute_meter_chain
 from app.meters.estimation import estimate_meter_value
+from app import consumption as consumption_years
 from app.extensions import db
 from app.models import (
     WaterMeter, MeterReading, MeterReplacement, Property, PropertyOwnership,
@@ -1023,6 +1024,10 @@ def meter_edit(meter_id):
         old_initial_value = meter.initial_value
         meter.initial_value = Decimal(initial_value_str) if initial_value_str else None
         meter.eichjahr = int(eichjahr_str) if eichjahr_str else None
+        if meter.meter_type != meter_type:
+            # Haupt-/Subzaehler entscheidet, ob der Verbrauch zaehlt
+            # (WaterMeter.billable_filter) — Jahressummen neu rechnen.
+            consumption_years.mark_stale()
         meter.meter_type = meter_type
         meter.parent_meter_id = parent_id
         if meter.initial_value != old_initial_value:

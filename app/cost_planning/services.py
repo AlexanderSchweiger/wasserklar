@@ -296,7 +296,8 @@ def _property_consumptions():
         rows = (
             db.session.query(WaterMeter.property_id, MeterReading.consumption)
             .join(MeterReading, MeterReading.meter_id == WaterMeter.id)
-            .filter(MeterReading.billing_period_id == period.id)
+            .filter(MeterReading.billing_period_id == period.id,
+                    WaterMeter.billable_filter())  # wie der Rechnungslauf
             .all()
         )
         per_prop = defaultdict(lambda: ZERO)

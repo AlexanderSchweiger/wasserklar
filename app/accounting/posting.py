@@ -395,8 +395,9 @@ def late_entry_context():
     from app.models import FiscalYear
     vat_years = [fy.year for fy in FiscalYear.query.filter_by(is_vat_liable=True).all()]
     if not vat_years:
-        return {"closed_through": None, "vat_years": []}
-    return {"closed_through": closed_through(), "vat_years": sorted(vat_years)}
+        return {"closed_through": None, "vat_years": [], "auto_post": True}
+    return {"closed_through": closed_through(), "vat_years": sorted(vat_years),
+            "auto_post": settings().effective_mode != MODE_OFF}
 
 
 def late_entry_warning(booking_date):
@@ -407,10 +408,13 @@ def late_entry_warning(booking_date):
     through = ctx["closed_through"]
     if through is None or booking_date > through or booking_date.year not in ctx["vat_years"]:
         return None
-    label = period_label(period_end_for(booking_date, settings().period), settings().period)
+    cfg = settings()
+    label = period_label(period_end_for(booking_date, cfg.period), cfg.period)
+    when = ("und wird in der nächsten Nacht verbucht" if cfg.effective_mode != MODE_OFF
+            else "(automatisches Verbuchen ist ausgeschaltet)")
     return (f"{label} ist bereits abgeschlossen — die Umsatzsteuer-Voranmeldung dafür ist vermutlich "
-            "schon abgegeben. Die Buchung zählt trotzdem zu diesem Zeitraum und wird in der nächsten "
-            "Nacht verbucht. Bitte prüfen, ob die Voranmeldung berichtigt werden muss.")
+            f"schon abgegeben. Die Buchung zählt trotzdem zu diesem Zeitraum {when}. "
+            "Bitte prüfen, ob die Voranmeldung berichtigt werden muss.")
 
 
 def example_sentence(cfg=None, today=None):
