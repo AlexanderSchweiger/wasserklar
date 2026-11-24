@@ -1,0 +1,16 @@
+{# Schalter „Abrechnungsperiode andrucken“ fuer Einzelrechnungen (Neu + Bearbeiten).
+   Ohne ``invoice`` (Neuanlage) ist er aus: die Periode ergibt sich dort nur aus
+   dem Rechnungsdatum und ordnet die Rechnung in die Uebersicht ein. #}
+<input type="hidden" name="billing_period_field" value="1">
+<div class="mb-3">
+  <label class="form-check form-switch mb-0">
+    <input class="form-check-input" type="checkbox" name="show_billing_period" value="1"
+           {{ 'checked' if invoice is defined and invoice and invoice.prints_billing_period }}>
+    <span class="form-check-label">Abrechnungsperiode auf der Rechnung andrucken
+      {%- if invoice is defined and invoice and invoice.billing_period %} ({{ invoice.billing_period.name }}){% endif %}</span>
+  </label>
+  <small class="form-hint">
+    Die Periode ergibt sich aus dem Rechnungsdatum und ordnet die Rechnung in die
+    Periodenübersicht ein — auf dem Beleg steht sie nur, wenn Sie das hier einschalten.
+  </small>
+</div>

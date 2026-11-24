@@ -161,7 +161,7 @@
   {% else %}
   <strong>Fällig bis:</strong> {{ invoice.due_date.strftime('%d.%m.%Y') if invoice.due_date else '—' }}<br>
   {% endif %}
-  {% if invoice.billing_period %}<strong>Abrechnungsperiode:</strong> {{ invoice.billing_period.name }}<br>{% endif %}
+  {% if invoice.prints_billing_period %}<strong>Abrechnungsperiode:</strong> {{ invoice.billing_period.name }}<br>{% endif %}
 </div>
 
 <div class="recipient">

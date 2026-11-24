@@ -2500,6 +2500,11 @@ class Invoice(EmailTrackableMixin, db.Model):
     # Nur die Beschriftung auf dem Beleg: 'delivery' (Lieferdatum) oder
     # 'service' (Leistungsdatum). NULL = Standard je nach Tag/Zeitraum.
     service_type = db.Column(db.String(10), nullable=True)
+    # Abrechnungsperiode auf dem Beleg andrucken? NULL = ja (Rechnungslauf,
+    # Schlussrechnung, Altbestand). Bei Einzelrechnungen waehlt der Nutzer —
+    # dort ist die Periode nur aus dem Rechnungsdatum abgeleitet und ordnet
+    # die Rechnung in die Uebersicht ein. Lesen nur ueber ``prints_billing_period``.
+    show_billing_period = db.Column(db.Boolean, nullable=True)
     status = db.Column(db.String(20), default=STATUS_DRAFT)
     invoice_kind = db.Column(
         db.String(20), nullable=False, default=KIND_STANDARD,
@@ -2752,6 +2757,18 @@ class Invoice(EmailTrackableMixin, db.Model):
         if self.mailed_with_invoice_id and self.mailed_with is not None:
             return self.mailed_with
         return self
+
+    @property
+    def prints_billing_period(self):
+        """Steht die Abrechnungsperiode auf dem Beleg (PDF, Word, SaaS-Designs)?"""
+        return self.billing_period is not None and self.show_billing_period is not False
+
+    @property
+    def billing_period_choice(self):
+        """Darf der Nutzer waehlen, ob die Periode angedruckt wird? Nur bei
+        Einzelrechnungen (nicht aus einem Lauf) und deren Gutschriften."""
+        return (self.billing_period_id is not None and self.billing_run_id is None
+                and self.invoice_kind in (self.KIND_STANDARD, self.KIND_CREDIT_NOTE))
 
     @property
     def document_title(self):

@@ -33,6 +33,9 @@
           </div>
           {% set service_narrow = true %}
           {% include "invoices/_service_date_fields.html" %}
+          {% if invoice.billing_period_choice %}
+          {% include "invoices/_billing_period_field.html" %}
+          {% endif %}
           <div class="mb-3">
             <label class="form-label">Notizen</label>
             <textarea name="notes" class="form-control" rows="3">{{ invoice.notes or '' }}</textarea>

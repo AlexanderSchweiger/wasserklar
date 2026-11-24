@@ -83,6 +83,16 @@
             {% for crs in stats.crs_names %}<span class="badge bg-azure-lt">{{ crs }}</span>{% endfor %}
             <span class="text-secondary small">→ WGS84</span>
           </div>
+          {% if stats.center %}
+          <div class="col-auto">
+            <span class="text-secondary small">Lage (Mitte):</span>
+            <a href="https://www.openstreetmap.org/?mlat={{ stats.center[0] }}&amp;mlon={{ stats.center[1] }}#map=14/{{ stats.center[0] }}/{{ stats.center[1] }}"
+               target="_blank" rel="noopener noreferrer" hx-boost="false">
+              {{ stats.center[0] }}° N, {{ stats.center[1] }}° O <i class="fas fa-external-link-alt small"></i>
+            </a>
+            <span class="text-secondary small">– liegt das im Versorgungsgebiet?</span>
+          </div>
+          {% endif %}
         </div>
 
         {% if counts %}
@@ -134,6 +144,24 @@
           <div class="mb-3">
             <label class="form-label">Kataster-ZIP</label>
             <input type="file" name="file" class="form-control" required accept=".zip,application/zip">
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="wlk-fallback-crs">Koordinatensystem, falls keine <code>.prj</code> im ZIP liegt</label>
+            <select name="fallback_crs" id="wlk-fallback-crs" class="form-select">
+              <option value="">– aus der .prj-Datei lesen –</option>
+              {% for group, entries in fallback_crs_choices %}
+              <optgroup label="{{ group }}">
+                {% for code, label in entries %}
+                <option value="{{ code }}">{{ label }} (EPSG:{{ code }})</option>
+                {% endfor %}
+              </optgroup>
+              {% endfor %}
+            </select>
+            <div class="form-hint">
+              Nur nötig, wenn das ZIP keine Projektionsdateien enthält. Das System steht meist im
+              Begleitschreiben oder Prüfbericht des Planers (z.&nbsp;B. „Gauß-Krüger M31“).
+              Eine vorhandene <code>.prj</code> hat immer Vorrang.
+            </div>
           </div>
           <button type="submit" class="btn btn-primary"><i class="fas fa-upload me-1"></i>Hochladen &amp; Vorschau</button>
           <a href="{{ url_for('network.index') }}" class="btn ms-2" hx-boost="false">Zurück zum Plan</a>

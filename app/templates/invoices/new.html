@@ -64,6 +64,7 @@
           </div>
           {% set service_sync_from = 'inv-date' %}
           {% include "invoices/_service_date_fields.html" %}
+          {% include "invoices/_billing_period_field.html" %}
           <div class="mb-3">
             <label class="form-label">Notizen / Freitext (erscheint auf der Rechnung)</label>
             <textarea name="notes" class="form-control" rows="2"

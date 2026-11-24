@@ -483,9 +483,75 @@ def _looks_like_lonlat(bbox):
     return -180 <= xmin <= 180 and -180 <= xmax <= 180 and -90 <= ymin <= 90 and -90 <= ymax <= 90
 
 
-def _make_transformer(pyproj, prj_text, bbox):
-    """Transformer von der Shapefile-CRS nach WGS84 (lng/lat). Ohne ``.prj``:
-    Pass-through, falls die Koordinaten schon nach Grad aussehen, sonst Fehler."""
+# Koordinatensysteme zur Auswahl, wenn dem ZIP die ``.prj`` fehlt (kommt bei
+# Planer-Exporten vor; Landes-Pruefdienste wie der LIS-Pruefdienst OOe fragen das
+# KBS deshalb im Formular ab). Automatisch erkennen laesst es sich nicht: die
+# Gauss-Krueger-Streifen M28/M31/M34 nutzen dieselben Zahlenbereiche, falsch
+# gewaehlt landet der Plan um 3 Grad versetzt — oft noch im selben Land.
+FALLBACK_CRS = {
+    "AT": [
+        (31254, "Gauß-Krüger M28 (Westösterreich)"),
+        (31255, "Gauß-Krüger M31 (Mitte)"),
+        (31256, "Gauß-Krüger M34 (Ostösterreich)"),
+        (31257, "BMN M28"),
+        (31258, "BMN M31"),
+        (31259, "BMN M34"),
+        (31287, "Lambert Österreich (MGI)"),
+        (3416, "Lambert Österreich (ETRS89)"),
+    ],
+    "DE": [
+        (25832, "ETRS89 / UTM Zone 32N"),
+        (25833, "ETRS89 / UTM Zone 33N"),
+        (31467, "DHDN / Gauß-Krüger Zone 3"),
+        (31468, "DHDN / Gauß-Krüger Zone 4"),
+        (31469, "DHDN / Gauß-Krüger Zone 5"),
+    ],
+}
+_FALLBACK_COUNTRY_LABELS = {"AT": "Österreich", "DE": "Deutschland"}
+
+# Grober Rahmen um Oesterreich + Deutschland (lat/lng). Liegt der Plan mit dem
+# gewaehlten System ausserhalb, war die Wahl sicher falsch (z.B. UTM-Daten als
+# Gauss-Krueger gelesen).
+_PLAUSIBLE_LAT = (45.0, 56.0)
+_PLAUSIBLE_LNG = (5.0, 18.0)
+
+
+def fallback_crs_choices(country_code=None):
+    """Auswahl fuer das Upload-Formular: ``[(gruppe, [(epsg, label), ...])]``,
+    das Land des Mandanten zuerst."""
+    order = sorted(FALLBACK_CRS, key=lambda c: (c != (country_code or "").upper(), c))
+    return [(_FALLBACK_COUNTRY_LABELS.get(c, c), FALLBACK_CRS[c]) for c in order]
+
+
+def parse_fallback_crs(value):
+    """Formularwert -> EPSG-Code aus der Auswahl (``None`` = keiner gewaehlt).
+    Alles ausserhalb der Liste ist ein Fehler, kein stiller Rueckfall."""
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    allowed = {code for entries in FALLBACK_CRS.values() for code, _ in entries}
+    try:
+        code = int(raw)
+    except ValueError:
+        code = None
+    if code not in allowed:
+        raise WlkImportError("Unbekanntes Koordinatensystem gewählt.")
+    return code
+
+
+def _fallback_label(epsg):
+    for entries in FALLBACK_CRS.values():
+        for code, label in entries:
+            if code == epsg:
+                return label
+    return f"EPSG:{epsg}"
+
+
+def _make_transformer(pyproj, prj_text, bbox, fallback_epsg=None):
+    """Transformer von der Shapefile-CRS nach WGS84 (lng/lat).
+
+    Reihenfolge: ``.prj`` im ZIP > Koordinaten schon in Grad > das beim Upload
+    gewaehlte Koordinatensystem (``fallback_epsg``) > Fehler."""
     if prj_text:
         try:
             src = pyproj.CRS.from_wkt(prj_text)
@@ -494,14 +560,30 @@ def _make_transformer(pyproj, prj_text, bbox):
         return pyproj.Transformer.from_crs(src, "EPSG:4326", always_xy=True), src.name
     if _looks_like_lonlat(bbox):
         return pyproj.Transformer.from_crs("EPSG:4326", "EPSG:4326", always_xy=True), "WGS84 (angenommen)"
+    if fallback_epsg:
+        transformer = pyproj.Transformer.from_crs(
+            f"EPSG:{fallback_epsg}", "EPSG:4326", always_xy=True
+        )
+        label = _fallback_label(fallback_epsg)
+        xmin, ymin, xmax, ymax = bbox
+        lng, lat = transformer.transform((xmin + xmax) / 2, (ymin + ymax) / 2)
+        if not (_PLAUSIBLE_LAT[0] <= lat <= _PLAUSIBLE_LAT[1]
+                and _PLAUSIBLE_LNG[0] <= lng <= _PLAUSIBLE_LNG[1]):
+            raise WlkImportError(
+                f"Mit „{label}“ liegen die Daten nicht in Österreich oder "
+                "Deutschland — das gewählte Koordinatensystem passt nicht zu "
+                "den Koordinaten. Bitte ein anderes wählen."
+            )
+        return transformer, f"{label} (gewählt, keine .prj)"
     raise WlkImportError(
-        "Keine Projektionsdatei (.prj) gefunden und die Koordinaten sind nicht "
-        "in Grad — das Koordinatensystem ist unbekannt. Bitte die .prj ins ZIP "
-        "legen oder vorab nach EPSG:4326 exportieren."
+        "Im ZIP fehlt die Projektionsdatei (.prj), das Koordinatensystem ist "
+        "daher unbekannt. Bitte beim Hochladen das Koordinatensystem auswählen "
+        "(steht meist im Begleitschreiben oder Prüfbericht des Planers, z. B. "
+        "„Gauß-Krüger M31“) oder die .prj-Dateien mit ins ZIP legen."
     )
 
 
-def _convert_one(shapefile, pyproj, shp_path):
+def _convert_one(shapefile, pyproj, shp_path, fallback_epsg=None):
     """Verarbeitet ein einzelnes Shapefile -> (features, layer, crs_name, skipped)."""
     base = shp_path[:-4]
     prj_text = None
@@ -511,12 +593,21 @@ def _convert_one(shapefile, pyproj, shp_path):
 
     # Austria-DBF ist i.d.R. cp1252; pyshp respektiert ein .cpg falls vorhanden.
     reader = shapefile.Reader(base, encoding="cp1252", encodingErrors="replace")
+    # Immer schliessen — auch bei einem Fehler. Unter Windows liesse ein offener
+    # Reader sonst das Aufraeumen des Temp-Ordners scheitern, und dessen
+    # PermissionError verdeckte die eigentliche Meldung.
+    try:
+        return _read_layer(reader, pyproj, prj_text, fallback_epsg)
+    finally:
+        reader.close()
+
+
+def _read_layer(reader, pyproj, prj_text, fallback_epsg):
     kind = _geometry_kind(reader.shapeType)
     if kind is None:
-        reader.close()
         return [], None, None, reader.numRecords  # unbekannte Geometrie -> alles skippen
 
-    transformer, crs_name = _make_transformer(pyproj, prj_text, reader.bbox)
+    transformer, crs_name = _make_transformer(pyproj, prj_text, reader.bbox, fallback_epsg)
 
     field_names = [f[0] for f in reader.fields if f[0] != "DeletionFlag"]
     prefix = _detect_prefix(field_names) or ("L" if kind == "line" else "E")
@@ -561,8 +652,23 @@ def _convert_one(shapefile, pyproj, shp_path):
         for geom in geoms:
             features.append({"type": "Feature", "geometry": geom, "properties": props})
 
-    reader.close()
     return features, layer, crs_name, skipped
+
+
+def _center(features):
+    """Mittelpunkt (lat, lng) der Bounding-Box aller Features — fuer die
+    Lage-Kontrolle in der Vorschau (eine falsch gewaehlte GK-Zone landet um
+    3 Grad versetzt, oft noch im selben Land)."""
+    lngs, lats = [], []
+    for feat in features:
+        geom = feat["geometry"]
+        coords = [geom["coordinates"]] if geom["type"] == "Point" else geom["coordinates"]
+        for lng, lat in coords:
+            lngs.append(lng)
+            lats.append(lat)
+    if not lngs:
+        return None
+    return (round((min(lats) + max(lats)) / 2, 5), round((min(lngs) + max(lngs)) / 2, 5))
 
 
 def _iter_shp_paths(root):
@@ -593,14 +699,16 @@ def _safe_extract(zip_path, dest):
     return extracted
 
 
-def convert_zip(file_or_path):
+def convert_zip(file_or_path, fallback_epsg=None):
     """Liest ein hochgeladenes Shapefile-ZIP und liefert
     ``{"features": [...], "stats": {...}}``.
 
     ``file_or_path`` ist ein Werkzeug-``FileStorage`` (bzw. ein file-like mit
-    ``.read``) oder ein Pfad zu einer ``.zip``. Wirft ``WlkImportError`` mit
-    benutzerfreundlicher Meldung bei harten Fehlern (fehlende Libs, kaputtes ZIP,
-    keine Shapefiles)."""
+    ``.read``) oder ein Pfad zu einer ``.zip``. ``fallback_epsg`` (aus
+    ``FALLBACK_CRS``, siehe ``parse_fallback_crs``) gilt nur fuer Shapefiles
+    ohne ``.prj`` — eine vorhandene ``.prj`` hat immer Vorrang. Wirft
+    ``WlkImportError`` mit benutzerfreundlicher Meldung bei harten Fehlern
+    (fehlende Libs, kaputtes ZIP, keine Shapefiles, unbekanntes KBS)."""
     shapefile, pyproj = _load_libs()
 
     with tempfile.TemporaryDirectory(prefix="wlk_import_") as tmp:
@@ -638,7 +746,9 @@ def convert_zip(file_or_path):
 
         for shp in shp_paths:
             try:
-                feats, layer, crs_name, skipped = _convert_one(shapefile, pyproj, shp)
+                feats, layer, crs_name, skipped = _convert_one(
+                    shapefile, pyproj, shp, fallback_epsg
+                )
             except WlkImportError:
                 raise
             except Exception as exc:  # defensiv: ein kaputtes Shapefile soll den Rest nicht killen
@@ -664,6 +774,7 @@ def convert_zip(file_or_path):
             )
 
         stats = {
+            "center": _center(all_features),
             "total": len(all_features),
             "type_counts": type_counts,
             "layer_counts": layer_counts,

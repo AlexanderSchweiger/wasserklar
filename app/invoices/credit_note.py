@@ -165,6 +165,7 @@ def create_credit_note(original, *, reason=None, created_by_id=None,
         # gehoert nicht dazu (sie wuerde dessen Kennzahlen verfaelschen).
         billing_run_id=None,
         billing_period_id=original.billing_period_id,
+        show_billing_period=original.show_billing_period,
         date=credit_date,
         # Die Gutschrift nimmt dieselbe Leistung zurueck.
         service_date_from=original.service_date_from,

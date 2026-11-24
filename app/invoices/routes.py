@@ -953,6 +953,8 @@ def new():
             invoice_number=_next_invoice_number(inv_date.year),
             customer_id=customer.id,
             billing_period_id=inv_period.id if inv_period else None,
+            # Die abgeleitete Periode steht nur auf Wunsch auf dem Beleg.
+            show_billing_period=request.form.get("show_billing_period") == "1",
             date=inv_date,
             service_date_from=service_start,
             service_date_to=service_end,
@@ -1273,6 +1275,9 @@ def edit(invoice_id):
         invoice.date = date.fromisoformat(request.form["date"])
         invoice.due_date = date.fromisoformat(request.form["due_date"]) if request.form.get("due_date") else None
         invoice.notes = request.form.get("notes", "")
+        # Nur mit Marker: ein Formular ohne den Schalter aendert nichts.
+        if request.form.get("billing_period_field") == "1" and invoice.billing_period_choice:
+            invoice.show_billing_period = request.form.get("show_billing_period") == "1"
         db.session.commit()
         flash("Rechnung gespeichert.", "success")
         if invoice.date > date.today():

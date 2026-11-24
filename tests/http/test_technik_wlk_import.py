@@ -31,9 +31,10 @@ GK31_PRJ = (
 _PX, _PY = 14751.0, 189314.0
 
 
-def _wlk_zip_bytes():
+def _wlk_zip_bytes(with_prj=True):
     """Baut ein ZIP mit zwei Shapefiles (Leitung-Polyline + Einbau-Multipoint)
-    in GK M31. Ueberspringt den Test, wenn pyshp/pyproj fehlen."""
+    in GK M31. Ueberspringt den Test, wenn pyshp/pyproj fehlen. ``with_prj=False``
+    laesst die Projektionsdateien weg (kommt bei Planer-Exporten vor)."""
     shapefile = pytest.importorskip("shapefile")
     pytest.importorskip("pyproj")
 
@@ -71,11 +72,12 @@ def _wlk_zip_bytes():
         zf.writestr("leitung.shp", lshp)
         zf.writestr("leitung.shx", lshx)
         zf.writestr("leitung.dbf", ldbf)
-        zf.writestr("leitung.prj", GK31_PRJ)
         zf.writestr("einbau.shp", eshp)
         zf.writestr("einbau.shx", eshx)
         zf.writestr("einbau.dbf", edbf)
-        zf.writestr("einbau.prj", GK31_PRJ)
+        if with_prj:
+            zf.writestr("leitung.prj", GK31_PRJ)
+            zf.writestr("einbau.prj", GK31_PRJ)
     return buf.getvalue()
 
 
@@ -214,6 +216,62 @@ class TestConverter:
         with pytest.raises(wlk.WlkImportError):
             wlk.convert_zip(io.BytesIO(b"das ist kein ZIP"))
 
+    def test_center_in_stats(self):
+        lat, lng = wlk.convert_zip(io.BytesIO(_wlk_zip_bytes()))["stats"]["center"]
+        assert 46.8 < lat < 46.9
+        assert 13.5 < lng < 13.6
+
+
+class TestFallbackCrs:
+    """ZIP ohne ``.prj``: Koordinatensystem kommt aus der Auswahl beim Upload."""
+
+    def test_missing_prj_without_choice_raises(self):
+        zip_bytes = _wlk_zip_bytes(with_prj=False)
+        # Laeuft auch unter Windows sauber durch: der Reader wird vor dem
+        # Aufraeumen des Temp-Ordners geschlossen (sonst PermissionError).
+        with pytest.raises(wlk.WlkImportError, match=r"\.prj"):
+            wlk.convert_zip(io.BytesIO(zip_bytes))
+
+    def test_missing_prj_with_choice_reprojects(self):
+        res = wlk.convert_zip(io.BytesIO(_wlk_zip_bytes(with_prj=False)), fallback_epsg=31255)
+        assert res["stats"]["total"] == 2
+        assert res["stats"]["crs_names"] == ["Gauß-Krüger M31 (Mitte) (gewählt, keine .prj)"]
+        point = next(f for f in res["features"] if f["geometry"]["type"] == "Point")
+        lng, lat = point["geometry"]["coordinates"]
+        assert 46.8 < lat < 46.9
+        assert 13.5 < lng < 13.6
+
+    def test_prj_wins_over_choice(self):
+        # M34 gewaehlt, aber die .prj sagt M31 -> die .prj gilt.
+        res = wlk.convert_zip(io.BytesIO(_wlk_zip_bytes()), fallback_epsg=31256)
+        assert "GK_31" in res["stats"]["crs_names"]
+        lat, lng = res["stats"]["center"]
+        assert 13.5 < lng < 13.6
+
+    def test_implausible_choice_raises(self):
+        # GK-Koordinaten als UTM 32N gelesen landen weit ausserhalb AT/DE.
+        with pytest.raises(wlk.WlkImportError, match="passt nicht"):
+            wlk.convert_zip(io.BytesIO(_wlk_zip_bytes(with_prj=False)), fallback_epsg=25832)
+
+    @pytest.mark.parametrize("value, expected", [("", None), (None, None), ("31255", 31255), (" 25832 ", 25832)])
+    def test_parse_choice(self, value, expected):
+        assert wlk.parse_fallback_crs(value) == expected
+
+    @pytest.mark.parametrize("value", ["4326", "abc", "31255; DROP"])
+    def test_parse_rejects_unknown(self, value):
+        with pytest.raises(wlk.WlkImportError):
+            wlk.parse_fallback_crs(value)
+
+    def test_all_choices_known_to_pyproj(self):
+        pyproj = pytest.importorskip("pyproj")
+        for entries in wlk.FALLBACK_CRS.values():
+            for code, _label in entries:
+                assert pyproj.CRS.from_epsg(code).is_projected
+
+    def test_choices_put_tenant_country_first(self):
+        assert [g for g, _ in wlk.fallback_crs_choices("DE")] == ["Deutschland", "Österreich"]
+        assert [g for g, _ in wlk.fallback_crs_choices("AT")] == ["Österreich", "Deutschland"]
+
 
 # ---------------------------------------------------------------------------
 # HTTP-Flow: Upload -> Vorschau -> Commit
@@ -248,6 +306,38 @@ class TestHttpShapefileImport:
         log = MaintenanceLog.query.filter_by(feature_id=schieber.id).one()
         assert log.interval_months == 24
         assert log.next_due is not None
+
+    def test_upload_page_offers_crs_choice(self, client, admin, active_plan):
+        _login(client)
+        body = client.get("/network/import").get_data(as_text=True)
+        assert 'name="fallback_crs"' in body
+        assert "EPSG:31255" in body
+
+    def test_upload_without_prj_uses_choice(self, client, admin, active_plan):
+        zip_bytes = _wlk_zip_bytes(with_prj=False)
+        _login(client)
+
+        r = client.post(
+            "/network/import/shapefile",
+            data={"file": (io.BytesIO(zip_bytes), "kataster.zip")},
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+        assert "Koordinatensystem auswählen" in r.get_data(as_text=True)
+
+        r = client.post(
+            "/network/import/shapefile",
+            data={"file": (io.BytesIO(zip_bytes), "kataster.zip"), "fallback_crs": "31255"},
+            content_type="multipart/form-data",
+        )
+        assert r.status_code == 200
+        body = r.get_data(as_text=True)
+        assert "gewählt, keine .prj" in body
+        assert "openstreetmap.org/?mlat=46.8" in body
+
+        client.post("/network/import/shapefile/commit")
+        schieber = NetworkFeature.query.filter_by(feature_type="schieber").one()
+        assert 46.8 < schieber.lat < 46.9
 
     def test_commit_without_session_redirects(self, client, admin, active_plan):
         _login(client)

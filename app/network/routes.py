@@ -30,6 +30,7 @@ from flask import (
 from flask_login import login_required, current_user
 from werkzeug.utils import secure_filename
 
+from app import country
 from app.documents import service as doc_svc
 from app.network import bp
 from app.network import services as svc
@@ -1162,6 +1163,7 @@ def _render_import(**kwargs):
     kwargs.setdefault("plan", current_plan())
     kwargs.setdefault("plans", NetworkPlan.query.order_by(NetworkPlan.name.asc()).all())
     kwargs.setdefault("shapefile_available", wlk.dependencies_available())
+    kwargs.setdefault("fallback_crs_choices", wlk.fallback_crs_choices(country.current_code()))
     kwargs.setdefault("vocab", vocab)
     return render_template("network/import.html", **kwargs)
 
@@ -1244,7 +1246,8 @@ def import_shapefile():
         return redirect(url_for("network.import_view"))
 
     try:
-        result = wlk.convert_zip(file)
+        fallback_epsg = wlk.parse_fallback_crs(request.form.get("fallback_crs"))
+        result = wlk.convert_zip(file, fallback_epsg=fallback_epsg)
     except wlk.WlkImportError as exc:
         flash(str(exc), "danger")
         return redirect(url_for("network.import_view"))

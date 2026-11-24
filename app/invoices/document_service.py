@@ -305,7 +305,7 @@ def generate_docx(invoice, wg: dict, design: dict | None = None,
             "Fällig bis",
             invoice.due_date.strftime("%d.%m.%Y") if invoice.due_date else "—"
         ))
-    if invoice.billing_period:
+    if invoice.prints_billing_period:
         meta_lines.append(("Abrechnungsperiode", invoice.billing_period.name))
     if legal["vat_id"]:
         meta_lines.append((legal["vat_id_label"], legal["vat_id"]))
